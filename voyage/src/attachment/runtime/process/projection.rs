@@ -61,6 +61,11 @@ pub(super) fn recent(messages: &[Message]) -> Result<(Vec<Value>, usize)> {
 
 /// Only authored failure labels cross this surface, never underlying diagnostics.
 pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
+    if let Some(reason) = reason
+        && super::super::checkpoint_failure::is_public_reason(reason)
+    {
+        return Some(reason);
+    }
     match reason {
         Some(
             reason @
@@ -149,6 +154,27 @@ pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
 #[cfg(test)]
 mod reliability_tests {
     use super::*;
+    #[test]
+    fn checkpoint_summary_accepts_only_authored_operations_and_categories() {
+        let reason = "Checkpoint failed during provider attempt: database busy.";
+        assert_eq!(failure_summary(Some(reason)), Some(reason));
+        assert_eq!(
+            failure_summary(Some(
+                "Checkpoint failed during provider attempt: /private/secret."
+            )),
+            None
+        );
+        assert_eq!(
+            failure_summary(Some(
+                "Checkpoint failed during /private/secret: database busy."
+            )),
+            None
+        );
+        assert_eq!(
+            failure_summary(Some("durable checkpoint failed")),
+            Some("Durable checkpoint failed.")
+        );
+    }
     #[test]
     fn typed_outcome_survives_full_and_bounded_projection() {
         let mut message = Message::tool_result("call", "x".repeat(40000), false);

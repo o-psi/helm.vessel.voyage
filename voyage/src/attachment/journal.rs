@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 // Version 12 fences writers that cannot atomically persist notification intents.
 const SCHEMA_VERSION: i64 = 12;
+pub(super) mod checkpoint_wait;
 mod notifications;
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};

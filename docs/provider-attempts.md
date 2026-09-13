@@ -59,6 +59,24 @@ runs cannot be changed. A record left in flight after process death means **outc
 not recorded**, never that a request survived restart. Recovery does not replay it.
 Legacy runs have no fabricated attempt history.
 
+Managed checkpoint workers tolerate brief SQLite lock contention, including
+Vessel catalogue reads of the same journal. A shared two-second deadline bounds
+lock waits within each blocking storage callback, beginning after the owner mutex
+is acquired. SQLite retries the pending statement; the callback, provider request
+and tool execution are not replayed. Cancellation interrupts lock waits. Canonical
+history, working-context and acceptance waits also recheck foreground grant
+authority; outcome metadata can still be recorded after revocation. Other journal
+callers retain their nonblocking behavior. This is not a two-second limit on the
+entire callback or on mutex acquisition.
+
+Persistent contention or other errors still stop the run. When terminal persistence
+succeeds, the run retains an authored checkpoint operation and category (`database
+busy`, `storage error`, or `state or authority validation failed`), shown by Helm
+and Vessel inspection. Raw SQLite messages, paths and grant diagnostics are never
+included. An inability to save the terminal record can still prevent durable
+diagnostics; older failures retain their original generic label. These labels do
+not retroactively establish the cause of an earlier failure.
+
 Helm's `/attempts` reads history without starting a run. Use `/attempts RUN_UUID`
 to inspect one run, or follow the displayed `/attempts all OFFSET` or
 `/attempts RUN_UUID OFFSET` continuation. Each view reads at most 16 records.

@@ -21,6 +21,10 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+mod checkpoint_failure;
+use checkpoint_failure::Operation;
+#[cfg(test)]
+mod checkpoint_tests;
 mod steering;
 mod titles;
 pub use steering::{ManagedSteeringHandle, SteeringAuthorization};
@@ -57,6 +61,8 @@ struct TurnToken {
     execution_authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     steering_authority: OnceLock<(Arc<dyn SteeringAuthorization>, Arc<dyn RuntimeClock>)>,
     poisoned: AtomicBool,
+    checkpoint_cancel: OnceLock<CancellationToken>,
+    checkpoint_failure: Mutex<Option<String>>,
     title_input: tokio::sync::Notify,
 }
 impl TurnToken {
@@ -66,6 +72,8 @@ impl TurnToken {
             execution_authority: None,
             steering_authority: OnceLock::new(),
             poisoned: AtomicBool::new(false),
+            checkpoint_cancel: OnceLock::new(),
+            checkpoint_failure: Mutex::new(None),
             title_input: tokio::sync::Notify::new(),
         }
     }
@@ -345,21 +353,54 @@ impl ManagedRunCheckpoint {
         &self,
         operation: impl FnOnce(&mut Store) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, CheckpointError> {
+        self.storage_named(Operation::RuntimeState, operation).await
+    }
+
+    async fn storage_named<T: Send + 'static>(
+        &self,
+        name: Operation,
+        operation: impl FnOnce(&mut Store) -> anyhow::Result<T> + Send + 'static,
+    ) -> Result<T, CheckpointError> {
         let shared = self.store.clone();
         let token = self.token.clone();
         tokio::task::spawn_blocking(move || {
             let mut store = shared.lock().map_err(|_| CheckpointError)?;
-            if store.run_id != token.run_id {
-                return Err(CheckpointError);
-            }
-            let record = store
-                .journal
-                .run(token.run_id)
-                .map_err(|_| CheckpointError)?;
-            if record.session_id != store.session_id {
-                return Err(CheckpointError);
-            }
-            operation(&mut store).map_err(|_| CheckpointError)
+            // Only this blocking worker opts into waiting. The callback runs once;
+            // SQLite retries pending statements, never provider/tool effects.
+            // Outcome metadata remains writable after grant revocation. Hooks
+            // that require current effect authority also recheck it during waits.
+            let authority = name
+                .requires_authority()
+                .then(|| token.execution_authority.clone())
+                .flatten();
+            let wait = super::journal::checkpoint_wait::Wait::new(
+                token.checkpoint_cancel.get().cloned(),
+                authority,
+            );
+            let result = (|| -> anyhow::Result<T> {
+                store.journal.begin_checkpoint_wait()?;
+                anyhow::ensure!(store.run_id == token.run_id, "run identity changed");
+                let record = store.journal.run(token.run_id)?;
+                anyhow::ensure!(
+                    record.session_id == store.session_id,
+                    "session identity changed"
+                );
+                operation(&mut store)
+            })();
+            // Restore nonblocking behavior before releasing the shared store.
+            let reset = store.journal.end_checkpoint_wait();
+            let result = result.and_then(|value| reset.map(|()| value));
+            let result = if wait.revoked() {
+                Err(anyhow::anyhow!("checkpoint authority withdrawn"))
+            } else {
+                result
+            };
+            result.map_err(|error| {
+                if let Ok(mut failure) = token.checkpoint_failure.lock() {
+                    *failure = Some(checkpoint_failure::reason(name, &error));
+                }
+                CheckpointError
+            })
         })
         .await
         .map_err(|_| CheckpointError)?
@@ -373,7 +414,7 @@ impl RunOwner {
     async fn persist_terminal(
         &self,
         state: RunState,
-        reason: Option<&'static str>,
+        reason: Option<String>,
         classification: Option<StopReason>,
         cancel: CancellationToken,
     ) -> Result<RunRecord, CheckpointError> {
@@ -394,7 +435,7 @@ impl RunOwner {
                     let (state, reason, classification) = if cancel.is_cancelled() {
                         (RunState::Cancelled, Some("run cancelled"), None)
                     } else {
-                        (state.clone(), reason, classification.as_ref())
+                        (state.clone(), reason.as_deref(), classification.as_ref())
                     };
                     let Store {
                         journal,
@@ -533,6 +574,7 @@ impl RunOwner {
         input: Option<SteeringReceiver>,
         before_finish: impl FnOnce() -> Result<(), AgentError>,
     ) -> Result<AgentOutcome, AgentError> {
+        let _ = self.token.checkpoint_cancel.set(cancel.clone());
         let external_input = input.is_some();
         drop(input);
         let input = self.steering_receiver.take();
@@ -633,6 +675,16 @@ impl RunOwner {
             }
             Err(error) => (RunState::Failed, Some(error.public_failure_reason())),
         };
+        let reason = if matches!(&result, Err(AgentError::Checkpoint(_))) {
+            self.token
+                .checkpoint_failure
+                .lock()
+                .ok()
+                .and_then(|v| v.clone())
+                .or_else(|| reason.map(str::to_owned))
+        } else {
+            reason.map(str::to_owned)
+        };
         let classification = result
             .as_ref()
             .ok()
@@ -661,7 +713,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let attempt = attempt.clone();
         // Outcome recording remains possible after cancellation/revocation. The
         // storage token and journal execution guard fence ownership, not effects.
-        self.storage(move |store| {
+        self.storage_named(Operation::ProviderAttempt, move |store| {
             store
                 .journal
                 .provider_attempt(&store.guard, store.run_id, &attempt)
@@ -670,7 +722,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     }
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::WorkingContext, move |store| {
             if let Some(authority) = &token.execution_authority {
                 authority.check()?;
             }
@@ -687,7 +739,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     ) -> Result<(), CheckpointError> {
         let context = context.clone();
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::WorkingContext, move |store| {
             if let Some(authority) = &token.execution_authority {
                 authority.check()?;
             }
@@ -702,7 +754,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let messages = messages.to_vec();
         let usage = usage.clone();
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::CanonicalHistory, move |store| {
             if let Some(authority) = &token.execution_authority {
                 authority.check()?;
             }
@@ -728,7 +780,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let messages = messages.to_vec();
         let usage = usage.clone();
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::CanonicalHistory, move |store| {
             if let Some(authority) = &token.execution_authority {
                 authority.check()?;
             }
@@ -758,7 +810,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         reason: &StopReason,
     ) -> Result<(), CheckpointError> {
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::Acceptance, move |store| {
             if let Some(authority) = &token.execution_authority {
                 authority.check()?;
             }
@@ -774,7 +826,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
             let messages = messages.to_vec();
             let usage = usage.clone();
             let token = self.token.clone();
-            self.storage(move |store| {
+            self.storage_named(Operation::Acceptance, move |store| {
                 if let Some(authority) = &token.execution_authority {
                     authority.check()?;
                 }
@@ -796,7 +848,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     ) -> Result<(), CheckpointError> {
         let previews = previews.to_vec();
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::ToolPreview, move |store| {
             anyhow::ensure!(
                 !token.poisoned.load(Ordering::SeqCst),
                 "steering persistence uncertain"
@@ -810,7 +862,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     async fn partial(&self, text: &str) -> Result<(), CheckpointError> {
         let text = text.to_owned();
         let token = self.token.clone();
-        self.storage(move |store| {
+        self.storage_named(Operation::PartialText, move |store| {
             anyhow::ensure!(
                 !token.poisoned.load(Ordering::SeqCst),
                 "steering persistence uncertain"
