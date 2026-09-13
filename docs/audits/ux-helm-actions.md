@@ -2,6 +2,7 @@
 
 Companion to [the comparative audit](ux-comparison.md). Evidence: source review,
 not executed TUI acceptance. Paths below are relative to this document. This
+[The comparative recheck](ux-comparative-review.md) qualifies the UX conclusions. This
 inventory separates fixed UI actions from runtime-advertised tools: a schema-driven
 operator action is not a permanently installed command.
 
@@ -66,7 +67,7 @@ commands; do not assume plain chat implements them.
 | H039 | `/answer UUID TEXT` | Question response, not a secret-entry surface. | H1,H6 |
 | H040 | `/cancel` | Exact observed active run; requested cancellation is not cleanup completion. | H1 |
 | H041 | `/clear FULL_VOYAGE_UUID` | Explicit target confirmation; conversation reset, not filesystem undo. | H1 |
-| H042 | `/compact N` | Retain N recent messages with omission marker, preserve canonical history; not generated summary. | H1,H6 |
+| H042 | `/compact N` | Keep recent N unchanged; retain older user messages and extract older assistant/tool context; canonical history unchanged, no generated summary. | H1,H6 |
 | H043 | `/archive` | Archive current voyage; lifecycle guards apply. | H1,H3 |
 | H044 | `/archived` | Browse archived views. | H1,H3 |
 | H045 | `/voyages` | Return to current views. | H1,H3 |
@@ -114,7 +115,7 @@ Context changes are intentional and need scenario verification.
 | H079 | Actions Cancel current run | Exact observed run/target guards. | H3 |
 | H080 | Actions Details | Read selected identity and process details. | H3 |
 | H081 | Actions Clear | Type `CLEAR`; reviewed revision; no workspace rollback. | H3,H6 |
-| H082 | Actions Compact | Type `KEEP N`, 1–100000; omission not summarization. | H3,H6 |
+| H082 | Actions Compact | Type `KEEP N`, 1–100000; extractive working context, not model-generated summary. | H3,H6 |
 | H083 | Actions Delete | Type `DELETE`; preserve unsent composer, cannot erase exports. | H3,H6 |
 | H084 | F5 current/archive | Changes catalogue filter, not archive mutation. | H2,H3 |
 | H085 | F1 help, Up/Down/Page keys, Esc | Scroll/close help; help text itself needs context-accurate shortcut wording. | H2 |

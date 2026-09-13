@@ -34,6 +34,7 @@ are not presented as usable commands.
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and objective executable verification |
 | [Action-by-action UX comparison](audits/ux-comparison.md) | Source audit of Helm, Pi, OpenCode and Codex CLI, complete core action inventories and prioritized findings |
+| [Comparative findings review](audits/ux-comparative-review.md) | Journey-based recheck: actual screen/focus transitions, corrected claims and UX hypotheses |
 | [Design lessons](design-lessons.md) | Consolidated design principles from 13 terminal apps, source evidence and Helm design guidance |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |

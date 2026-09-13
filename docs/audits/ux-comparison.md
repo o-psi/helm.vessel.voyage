@@ -4,6 +4,11 @@ Issue: [#271](https://github.com/o-psi/voyage/issues/271). Research date:
 2026-09-13 UTC. **This is a comprehensive source-level action audit, not a
 completed hands-on usability study or an implementation delivery.**
 
+> **Comparative findings recheck:** [journey-based evidence review](ux-comparative-review.md)
+> qualifies the conclusions below, corrects source/interaction mismatches and
+> separates existing affordances from UX hypotheses. Inventories are supporting
+> evidence, not usability acceptance.
+
 ## Read this first
 
 Helm has substantial operational capability, but capability breadth is not the
@@ -14,7 +19,7 @@ same thing as a coherent interaction model. The strongest opportunities are:
    conversation branching versus file rollback.
 2. **Reduce discovery fragmentation:** command completion, F8 Explore, F9 Actions,
    sidebar, account controls and private panels are distinct discovery surfaces.
-   Build one searchable action catalogue backed by the real handlers, while
+   Evaluate a shared searchable action catalogue backed by the real handlers, while
    preserving private input and execution authority boundaries.
 3. **Make coding work easier to inspect:** live tool-call construction, separate
    reasoning visibility, first-class scoped diffs, easy response copy/export and
@@ -95,8 +100,8 @@ for the compressed descriptions below.
 | Discover actions | `/` completion + F1 + F8 + F9 + private panels | `/` + `/hotkeys` + settings; extension commands | Command palette + slash aliases + keybinding registry | Slash menu + help/keymap; feature-filtered commands | Helm's split catalogue adds search burden; no measured speed claim |
 | Change keybindings | NI unified in-app configurable keymap | Keybindings JSON and `/hotkeys` | Configurable bindings, leader patterns | `/keymap`, `/vim`, configurable action registry at pin | Add effective per-context key help before wholesale rebinding |
 | Submit ordinary prompt | Enter; running state changes it to Steer | Enter; while streaming queues steering | Submit with session status handling | Submit/steer with turn state handling | H051: show delivery intent before send |
-| Explicit follow-up after current run | NI dedicated composer queue action | Alt+Enter follow-up queue | Busy-session prompt handling; exact queue semantics in appendix | Enter submit/steer, Tab queue (context-sensitive); queued-message UI | Separate “after completion” from “steer now”; don't label all as send |
-| Inspect/edit queued message | Pending command receipt is not editable message queue | Alt+Up retrieves queued messages; one-at-time/all settings | See prompt history/stash and session behavior; not equivalent to durable receipts | Queue editor actions | Add cancellation/edit boundary only before immutable admission |
+| Explicit follow-up after current run | NI dedicated composer queue action | Alt+Enter follow-up queue | Default TUI submits to session backend; declared queue-editor key is not registered here (mini interface differs) | Enter submit/steer; idle Tab submits, active/forced Tab queues; queued-message UI | Separate “after completion” from “steer now”; don't label all as send |
+| Inspect/edit queued message | Pending command receipt is not editable message queue | Alt+Up drains queued steering/follow-ups into one draft; one-at-time/all controls delivery, not editing | Manual prompt history/stash; no reached default TUI queue editor found | Queue editor actions | Add cancellation/edit boundary only before immutable admission |
 | Multiline newline | Alt/Shift+Enter | Shift+Enter/Ctrl+J | Keybinding-configured newline alternatives | Keymap/newline actions; terminal protocol dependent | Modifier transmission needs actual terminal tests |
 | Move/select Unicode text | Grapheme movement, selection, word edit | TUI editor registry | Prompt editor/keybindings | Textarea/editor/keymap | H054–59: test emoji, ZWJ, wrapping, mixed-width text |
 | Recall prompt | Alt+Up/Down; one-row context also Up/Down | History keys | Prompt history | Composer history | H060: help currently oversimplifies context |
@@ -115,12 +120,12 @@ for the compressed descriptions below.
 | Action | Helm | Pi | OpenCode | Codex CLI | Assessment / next Helm check |
 |---|---|---|---|---|---|
 | See active state | Voyage/process/run and provider attempt observations | Streaming indicator, footer, tool output | Session busy/status and title/tool UI | Status/turn/tool UI | Distinguish liveness from forward progress |
-| See model reasoning | `/thinking` config is not display; live display tracked in #255 | Reasoning display toggle separate from effort | Reasoning display modes | Reasoning summary/raw display controls with gates | Keep setting and display separate; don't invent unavailable reasoning |
+| See model reasoning | `/thinking` config is not display; live display tracked in #255 | Reasoning display toggle separate from effort | Reasoning display modes | Transcript reasoning summaries and derived main status; raw tool output is separate | Keep setting and display separate; don't invent unavailable reasoning |
 | Watch tool arguments form | Full parity not established; #255 open | Partial tool UI update lifecycle | Tool parts rendered as state evolves | Tool/exec/MCP activity rendering | Existing saved-detail expansion is not live-generation evidence |
 | Watch tool output | Persisted/live activity and owned process boundaries | Incremental tool updates | Tool output/detail toggles | Execution output/tool cells | Compare truncation, ordering and interruption with same fixture |
-| Expand/collapse details | Ctrl+T, double-click saved call | Ctrl+O tool expansion, thinking toggle | Tool details/generic-output/conceal toggles | Transcript/raw/reasoning display controls | H098–99: preserve read anchor across reconciliation |
+| Expand/collapse details | Ctrl+T, double-click saved call | Ctrl+O tool expansion, thinking toggle | Tool details/generic-output/conceal toggles | Read-only transcript detail; raw-tool-output mode is separate | H098–99: preserve read anchor across reconciliation |
 | Read while new output arrives | Transcript anchoring and bounded older loading | Inline/alternate-screen navigation | Page/half-page/line/message navigation | Transcript view/scrolling | Need real timing/layout evidence before claiming stability |
-| Stop current model run | `/cancel` or F9 action | Esc abort | Session interrupt action | Interrupt action | Helm lacks same obvious Esc stop convention; expose Stop without changing private controls blindly |
+| Stop current model run | `/cancel` or F9 action | Composer Esc requests abort; completion/selector/retry/compaction differ | Session interrupt action | Interrupt action | Helm lacks same obvious Esc stop convention; expose Stop without changing private controls blindly |
 | Quit/detach client | Ctrl+C/Ctrl+Q, `/quit`; voyage continues | Quit/shutdown session process | Exit/connected server distinctions | Exit/detach session behavior | Helm must explicitly say “work continues” |
 | Interrupt attached program | Ctrl+C goes to child | Shell execution abort paths | Tool/session interrupt | Exec/tool interrupt | Not the same target as cancelling whole voyage |
 | Recover transient provider error | Bounded durable attempt recovery; `/attempts` | Auto retry settings and abort | Retry/status behavior | Stream retry/error handling | Display reason/count/deadline and eventual outcome, never replay uncertain tools |
@@ -136,22 +141,22 @@ for the compressed descriptions below.
 
 | Action | Helm | Pi | OpenCode | Codex CLI | Assessment / next Helm check |
 |---|---|---|---|---|---|
-| Find/switch session | F2 searchable route-qualified voyages/drafts; Tab | `/resume`, session selector | Session list/palette | `/resume` / picker | Test duplicate titles across hosts and preserved draft |
+| Find/switch session | F2 searchable route-qualified voyages/drafts; Tab | `/resume`, session selector; outgoing runtime retires, not background concurrency | Session list/palette | `/resume` / picker | Test duplicate titles across hosts and preserved draft |
 | Rename | Slash/F9 | `/name` | `/rename` | `/rename` | Low conceptual gap; stale target and title wrapping still matter |
 | New conversation | Draft then first-send creation | `/new` | New session | `/new`, `/clear` semantics | Do not conflate clearing history and creating identity |
 | Branch/fork | `/branch` separate voyage | `/tree`, `/fork`, `/clone` differ | Fork selected historical message | `/fork`, rewind/backtrack/session worktree flows | Helm branch not equivalent to message-level tree navigation |
-| Navigate historical branch tree | NI dedicated conversation tree | First-class `/tree` with filters/labels | Timeline/fork rather than same tree | Backtrack/fork rather than Pi tree | Candidate P2; maintain canonical owner and context disclosure |
+| Navigate historical branch tree | NI dedicated conversation tree | First-class `/tree` with filters/labels; committed navigation can stop work/change draft | Timeline/fork rather than same tree | Backtrack/fork rather than Pi tree | Candidate P2; maintain canonical owner and context disclosure |
 | Jump to message | Search/earlier/latest | Semantic prompt jumps/tree | Timeline and message jumps | Transcript/backtrack actions | Add next/previous user message before elaborate tree UI |
 | Search conversation | Ctrl+F **loaded messages** | Alternate-screen search/tree search | Timeline/session search surfaces | Transcript/session selection capabilities; see inventory | Always expose search scope; cross-history parity NV |
 | Copy last response | NI fixed first-class response-copy action found | `/copy` | Copy last assistant message | `/copy` | Small, high-value action; separate canonical text from styled rendering |
 | Copy full transcript | Local export, not same as clipboard copy | `/export` HTML and copy response | Copy transcript | Export/transcript actions | Disclose scope, omitted content and sensitive material |
 | Export | `/export` local Markdown destination | HTML export | Transcript export | Markdown export at pin | Formats and remote/local destination differ |
 | Public share | NI built-in upload/share | Share destinations differ; see warning in Pi appendix | Share/unshare session URL | Local export; other app/share surfaces not assumed | Not priority parity; uploading needs explicit destination/audience consent |
-| Compact context | Keep N, omission marker, canonical history retained | Generated summary / automatic compaction | Session summarization | Context compaction | **Material semantic gap**; “Compact” should not suggest summary parity |
+| Compact context | Extractive working-context reduction; recent N unchanged, older user messages retained, canonical history intact | Generated summary / automatic compaction | Session summarization | Context compaction | **Material semantic gap**; “Compact” should not suggest summary parity |
 | Clear conversation | Explicit UUID or `CLEAR` review | New/tree context flows | New/undo session flows differ | New/clear session behavior | State identity/history consequences before confirmation |
 | Archive/restore | Explicit lifecycle and catalogue | Session manager operations differ | Session listing/deletion; no assumed archive equivalence | Archive command at pin | Preserve cleanup obligations and exact target |
 | Delete | Explicit confirmation, cannot recall copies | Session selector deletion | Session delete UI | Delete command with gating/state constraints | Actual copy/remote deletion is not implied |
-| Review working-tree diff | NI dedicated fixed TUI diff/review action; tools can inspect | No built-in review parity assumed; tools/extensions | File/diff/session undo UI | `/diff` (unstaged + untracked, not staged-only), `/review` | First-class read-only scoped diff is high-value P1 |
+| Review working-tree diff | NI dedicated fixed TUI diff/review action; tools can inspect | No built-in review parity assumed; tools/extensions | Working-tree/conditional-branch diff UI; normal Last turn route lacks message ID; session undo is distinct | `/diff` (unstaged + untracked, not staged-only), `/review` | First-class read-only scoped diff is high-value P1 |
 | Rewind files/turn | Composer undo/branch do not restore workspace | Tree does not mean file rollback | Undo/redo includes snapshot/revert semantics | No `/undo` in this pin; conversation backtrack and editor undo are distinct | Never market a generic Undo without naming affected state |
 | Create isolated worktree | Runtime tool/subagent mechanism, not fixed coding-session flow | Shell/extensions | Worktree/workspace features depend on surface/config | `/worktree` and CLI flows at pin | Useful only with lifecycle, dirty-work preservation and failure recovery |
 
@@ -186,9 +191,9 @@ friction; P2 is a larger or preference-dependent enhancement.
 
 | Finding | Priority / confidence | Evidence | Acceptance target |
 |---|---|---|---|
-| U01: Stop, detach, deny and back are conflated by key expectations | P0 / high source confidence | H089/H091/H115/H123; Pi Esc abort; competitor interrupt registries | Every active context names Esc/Ctrl+C outcome; one discoverable Stop action names exact run; detach says work continues; no changed privacy routing |
+| U01: Stop, detach, deny and back are conflated by key expectations | P0 / high source confidence | H089/H091/H115/H123; Pi context-dependent Esc abort; competitor interrupt registries | Every active context names Esc/Ctrl+C outcome; one discoverable Stop action names exact run; detach says work continues; no changed privacy routing |
 | U02: Send does not expose steering/follow-up intent clearly enough as a unified contract | P1 / high semantics, UX impact hypothesis | H051, Pi queues, Codex queue controls | Composer shows idle submit vs active steer; admitted/delivered distinct; explicit after-run queue only if owner supports it; recover unsent text safely |
-| U03: Compact label encourages false equivalence to summarization | P1 / high | H042/H082 versus all three compaction implementations | Preview retained/omitted scope and canonical-history effect; rename current action or implement separately specified generated summarization |
+| U03: Compact label encourages false equivalence to summarization | P1 / high | H042/H082 versus all three compaction implementations | Preview recent/older retained and extracted content plus canonical-history effect; distinguish extractive compaction from generated summarization |
 | U04: Action discovery split across too many surfaces | P1 / high topology, unmeasured cost | H001/H053/H074/H086/H106; competitor catalogues | Searchable action catalogue with scope, shortcut, disabled reason and destination; generated from handlers; private fields never leak to general composer |
 | U05: Live tool-call generation/reasoning inspection incomplete | P1 / open implementation scope | [#255](https://github.com/o-psi/voyage/issues/255), H098–99, competitor tool lifecycle | Slow/interleaved provisional calls visible before execution; no premature execution/duplicate final calls; reasoning-display capability is separate from effort |
 | U06: Coding result inspection requires too much tool/chat indirection | P1 / NI fixed UI | Diff/review/copy/mention rows above | Add first-class copy response and read-only scoped diff/file navigation; staged/untracked/binary/remote-host scope explicit; no silent rollback |
