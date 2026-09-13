@@ -141,3 +141,11 @@ fixtures are preserved. No deleted infrastructure was restored. Consequently no
 release-package/installer-asset verification or update to the absent release
 manifest is claimed. Existing staged rendering comments remain user work, outside
 this delivery. This is source delivery, not a new released installer.
+
+## Subsequent finish-up
+
+[Finish-up delivery](ux-273-finish-up.md) records the additional real Chromium,
+workflow/private, image/steering/lifecycle and expanded streaming checks, two
+journey-discovered fixes, updated coverage and concrete remaining #274 diagnostics.
+The earlier unavailable-dependency status above is historical, not the latest
+browser result.

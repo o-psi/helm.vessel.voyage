@@ -70,13 +70,14 @@ try{
   let chooser;for(let i=0;i<40;i++){chooser=(await api({op:'state'})).chooser;if(chooser)break;await new Promise(r=>setTimeout(r,25));}assert.ok(chooser);
   await api({op:'upload',chooser_id:chooser,name:'local.txt',data_base64:Buffer.from('synthetic human upload').toString('base64')});
   for(let i=0;i<40&&!websiteUploads.length;i++)await new Promise(r=>setTimeout(r,25));assert.deepEqual(websiteUploads,[{name:'local.txt',type:'application/octet-stream',body:'synthetic human upload'}]);
+  assert.equal((await local({op:'mode',mode:'agent'})).status,403,'sharing requires independent local confirmation');await api({op:'state'});
   await api({op:'mode',mode:'agent',confirm_share:true});
   let inspected=await action({action:'inspect',page_id:null});assert.equal(inspected.result.state,'completed');let obs=JSON.parse(inspected.result.text);assert.equal(obs.title,'Local fixture');assert.ok(!obs.refs.some(x=>x.password));
   const target={page_id:obs.page_id,observation_id:obs.observation_id};
   const shot=await action({action:'screenshot',target});assert.equal(shot.result.image.mime_type,'image/jpeg');assert.ok(Buffer.from(shot.result.image.data_base64,'base64').length<=2097152);
   const button=obs.refs.find(x=>x.label==='Count');assert.ok(button);
   const click={action:'click',target,element:button.ref};
-  let denied=action(click);await api({op:'confirm',prompt_id:(await pending()).id,allow:false});assert.equal((await denied).result.state,'refused');
+  let denied=action(click);await api({op:'confirm',prompt_id:(await pending()).id,allow:false});const denial=await denied;assert.equal(denial.result.state,'refused');assert.equal(denial.result.local_reason,'denied');
   const clickID=crypto.randomUUID(),clicked=action(click,clickID);await api({op:'confirm',prompt_id:(await pending()).id,allow:true});assert.equal((await clicked).result.state,'completed');
   const replay=await action(click,clickID);assert.equal(replay.result.state,'completed');assert.equal(replay.result.text,'duplicate_content_withheld');
   const conflict=await action({action:'inspect',page_id:null},clickID);assert.equal(conflict.error.code,'request_id_conflict');
@@ -103,8 +104,8 @@ try{
   await api({op:'disclose_download',download_id:empty.id,allow:true});obs=JSON.parse((await action({action:'inspect',page_id:obs.page_id})).result.text);
   const emptyDisclosure=action({action:'download',target:{page_id:obs.page_id,observation_id:obs.observation_id},download_id:empty.id});await api({op:'confirm',prompt_id:(await pending()).id,allow:true});const emptyResult=await emptyDisclosure;assert.equal(emptyResult.result.state,'refused');assert.equal(emptyResult.result.text,'empty_download_local_save_only');assert.equal(emptyResult.result.file,null);
   const fill={action:'fill',target:{page_id:obs.page_id,observation_id:obs.observation_id},element:obs.refs.find(x=>x.label==='Fixture input').ref,text:'remote fixture text'};
-  const promptStart=Date.now(),unattended=action(fill);await pending();assert.equal((await unattended).result.state,'refused');assert.ok(Date.now()-promptStart<4000,'local prompt deadline is bounded');
-  const interrupted=action(fill);const fillPrompt=await pending();assert.equal(fillPrompt.summary.text,'remote fixture text');assert.equal(fillPrompt.summary.element.label,'Fixture input');assert.equal(fillPrompt.summary.current_origin,fixture);await api({op:'mode',mode:'private'});const cancelled=await interrupted;assert.equal(cancelled.result.state,'cancelled');assert.equal(cancelled.result.image,null);assert.ok(!cancelled.result.text.includes('remote fixture text'));
+  const promptStart=Date.now(),unattended=action(fill);await pending();const expired=await unattended;assert.equal(expired.result.state,'refused');assert.equal(expired.result.local_reason,'expired');assert.ok(Date.now()-promptStart<4000,'local prompt deadline is bounded');
+  const interrupted=action(fill);const fillPrompt=await pending();assert.equal(fillPrompt.summary.text,'remote fixture text');assert.equal(fillPrompt.summary.element.label,'Fixture input');assert.equal(fillPrompt.summary.current_origin,fixture);await api({op:'mode',mode:'private'});const cancelled=await interrupted;assert.equal(cancelled.result.state,'refused');assert.equal(cancelled.result.local_reason,'invalidated');assert.equal(cancelled.result.image,null);assert.ok(!cancelled.result.text.includes('remote fixture text'));
   assert.equal((await action({action:'inspect',page_id:null})).ok,false);
   // Idle heartbeats never erase the first actual run pin; a later run must explicitly reshare.
   await api({op:'mode',mode:'agent',confirm_share:true});await action({action:'inspect',page_id:null});await ok({op:'heartbeat',binding});
@@ -132,9 +133,38 @@ try{
   await new Promise(r=>setTimeout(r,5300));
   const ui=await uiContext.newPage();await ui.goto(base);await ui.waitForFunction(()=>document.querySelector('#frame').naturalWidth>0);
   const box=await ui.locator('#viewport').boundingBox();await ui.locator('#viewport').click({position:{x:150*box.width/1280,y:160*box.height/720}});await ui.keyboard.type('LOCAL-TYPED');await new Promise(r=>setTimeout(r,1000));assert.equal(await ui.locator('#error').textContent(),'');assert.ok(!transcript.includes('LOCAL-TYPED'),'private input never enters helper stdout');
-  await new Promise(r=>setTimeout(r,500));ui.on('dialog',d=>d.accept());await ui.locator('#share').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('AGENT'));epoch=(await ok({op:'status'})).epoch;const afterTyping=await action({action:'inspect',page_id:obs.page_id});assert.match(JSON.parse(afterTyping.result.text).text,/LOCAL-TYPED/);
+  // Sharing can be dismissed locally; remote stdio cannot bypass that decision.
+  ui.once('dialog',d=>d.dismiss());await ui.locator('#share').click();
+  assert.equal((await ok({op:'status'})).shared,false);
+  assert.equal((await rpc({op:'control',mode:'agent'})).error.code,'local_sharing_required');
+  ui.on('dialog',d=>d.accept());await ui.locator('#share').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('AGENT'));epoch=(await ok({op:'status'})).epoch;const afterTyping=await action({action:'inspect',page_id:obs.page_id});assert.match(JSON.parse(afterTyping.result.text).text,/LOCAL-TYPED/);
   assert.ok(await ui.locator('#frame').evaluate(e=>e.naturalWidth>=640));
-  await uiBrowser.close();uiBrowser=null;
+  // Exercise consent and takeover through the rendered companion, not direct local API calls.
+  let uiObs=JSON.parse(afterTyping.result.text);
+  const uiFill=()=>({action:'fill',target:{page_id:uiObs.page_id,observation_id:uiObs.observation_id},element:uiObs.refs.find(r=>r.label==='Fixture input').ref,text:'SYNTHETIC-UI-APPROVED'});
+  const uiDenied=action(uiFill());await ui.getByRole('button',{name:'Deny',exact:true}).click();
+  assert.equal((await uiDenied).result.local_reason,'denied');await ui.getByRole('button',{name:'Allow once',exact:true}).waitFor({state:'hidden'});
+  const uiAllowed=action(uiFill());await ui.getByRole('button',{name:'Allow once',exact:true}).click();
+  const uiAllowedResult=await uiAllowed;assert.equal(uiAllowedResult.result.state,'completed',JSON.stringify(uiAllowedResult));await ui.getByRole('button',{name:'Allow once',exact:true}).waitFor({state:'hidden'});
+  uiObs=JSON.parse((await action({action:'inspect',page_id:uiObs.page_id})).result.text);assert.match(uiObs.text,/SYNTHETIC-UI-APPROVED/);
+  const uiInterrupted=action(uiFill());await ui.getByRole('button',{name:'Allow once',exact:true}).waitFor();
+  await ui.locator('#human').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('HUMAN'));
+  const uiInvalidated=await uiInterrupted;assert.equal(uiInvalidated.result.local_reason,'invalidated');assert.equal(uiInvalidated.result.image,null);
+  epoch=(await ok({op:'status'})).epoch;assert.equal((await action({action:'inspect',page_id:null})).ok,false);
+  await ui.locator('#private').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('PRIVATE'));
+  await ui.locator('#share').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('AGENT'));epoch=(await ok({op:'status'})).epoch;
+  // Stop only the transport heartbeat while the real companion controller remains live.
+  clearInterval(heartbeat);await ui.waitForFunction(()=>document.querySelector('#mode').textContent.includes('Helm disconnected'),{},{timeout:8000});
+  assert.equal(await ui.locator('#share').isDisabled(),true);assert.equal((await ok({op:'status'})).shared,false);
+  await ok({op:'heartbeat',binding});await ui.waitForFunction(()=>!document.querySelector('#mode').textContent.includes('Helm disconnected'));
+  assert.equal((await ok({op:'status'})).shared,false,'transport recovery cannot reshare');
+  assert.equal((await action({action:'inspect',page_id:null})).ok,false);
+  heartbeat=setInterval(()=>void rpc({op:'heartbeat',binding}),700);
+  await ui.locator('#share').click();await ui.waitForFunction(()=>document.querySelector('#mode').textContent.startsWith('AGENT'));
+  epoch=(await ok({op:'status'})).epoch;assert.equal((await action({action:'inspect',page_id:null})).result.state,'completed');
+  // Closing the companion alone expires its controller despite continued Helm heartbeat.
+  await uiBrowser.close();uiBrowser=null;await new Promise(r=>setTimeout(r,5500));
+  assert.equal((await ok({op:'status'})).shared,false,'controller disconnect revokes sharing independently');
   clearInterval(heartbeat);await new Promise(r=>setTimeout(r,5500));assert.equal((await ok({op:'status'})).shared,false);await ok({op:'heartbeat',binding});assert.equal((await ok({op:'status'})).shared,false,'heartbeat cannot restore sharing');assert.equal((await action({action:'inspect',page_id:null})).ok,false);
   const receipts=await fs.readdir(path.join(root,'receipts'));assert.ok(receipts.length>=5);for(const name of receipts){assert.equal((await fs.stat(path.join(root,'receipts',name))).mode&0o077,0);const data=await fs.readFile(path.join(root,'receipts',name),'utf8');assert.ok(!data.includes('remote fixture text'));assert.ok(!data.includes(fixture));assert.ok(!data.includes('private-password-marker'));}
   assert.equal((await fs.stat(root)).mode&0o077,0);assert.equal((await fs.stat(path.join(root,'executor.lock'))).mode&0o077,0);
@@ -149,7 +179,7 @@ try{
   const budgetRoot=await fs.mkdtemp(path.join(path.dirname(root),'helm-browser-budget-'));await fs.chmod(budgetRoot,0o700);
   await restarted(budgetRoot,async(call,r)=>{assert.equal(r.ok,true);const f=await fs.open(path.join(budgetRoot,'synthetic-budget-file'),'wx',0o600);await f.truncate(257*1024*1024);await f.close();let fenced;for(let i=0;i<50;i++){await new Promise(r=>setTimeout(r,100));fenced=await call({op:'status'});if(!fenced.ok)break;}assert.equal(fenced.error?.code,'not_initialized','live session disk accounting closes Chromium');});
   const checkPrivate=async dir=>{for(const entry of await fs.readdir(dir,{withFileTypes:true})){const file=path.join(dir,entry.name),stat=await fs.lstat(file);if(stat.isSymbolicLink())continue;assert.equal(stat.mode&0o077,0,'session files remain private');if(stat.isDirectory())await checkPrivate(file);assert.ok(!/trace|\.webm$/.test(entry.name),'no recording or trace artifact');}};await checkPrivate(root);
-  console.log('PASS: sandboxed persistent Chromium; loopback Host/Origin/CSRF/CSP; explicit private-network grant; real companion rendering/input transport; local controller exclusion; private refusal; inspect/ref/screenshot; local deny/allow; durable duplicate/conflict; staged upload/grant and local-save versus remote-disclosure; verified keyboard input and private stdout withholding; screenshot/control race; in-flight navigation takeover; idle/active/later run binding and explicit reshare; prompt and heartbeat deadlines; clean restart and unknown/no-replay receipts; untouched unexpected lock; private filesystem; live disk budget shutdown.');
+  console.log('PASS: sandboxed persistent Chromium; loopback Host/Origin/CSRF/CSP; explicit private-network grant; real companion rendering/input transport; local controller exclusion; private refusal; inspect/ref/screenshot; local deny/allow; durable duplicate/conflict; staged upload/grant and local-save versus remote-disclosure; verified keyboard input and private stdout withholding; screenshot/control race; in-flight navigation takeover; idle/active/later run binding and explicit reshare; rendered share dismissal/consent/takeover; independent companion and Helm disconnect/explicit reconnect reshare; prompt and heartbeat deadlines; clean restart and unknown/no-replay receipts; untouched unexpected lock; private filesystem; live disk budget shutdown.');
   console.log(`Evidence profile and non-content receipts retained privately at ${root}`);
 }catch(e){console.error('PROBE FAILED:',e.stack);process.exitCode=1;}
 finally{clearInterval(heartbeat);if(uiBrowser)await uiBrowser.close();if(helper.exitCode===null){helper.stdin.end();await new Promise(r=>{helper.once('exit',r);setTimeout(()=>{helper.kill('SIGKILL');r();},5000).unref();});}await new Promise(r=>fixtures.close(r));}

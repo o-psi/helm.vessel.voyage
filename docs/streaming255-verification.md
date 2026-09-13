@@ -94,19 +94,99 @@ source and binary hashes throughout. This verifies the streaming surface on v2,
 not its unrelated inspection/branch fixes. The earlier run9 evidence remains
 available for the prior build.
 
+## Additional #273 acceptance execution
+
+The extended script was executed against the parent's **ux273 v2** released
+manifest, separately from the historical v2 measurement above. Nine real Helm
+journeys ran in `target/ux273/stream255-extended4`: the original four local/scoped
+journeys plus five new local synthetic-provider cases. All four original journeys
+passed again. Both source and binaries remained unchanged during the run. The
+aggregate result is **failed**, not a full #255 acceptance pass, because the
+finalized reasoning keyboard anchor is lost.
+
+| Additional case | Executed result |
+| --- | --- |
+| Malformed streamed JSON | PASS: invalid argument delta and final arguments; failed run, no canonical tool call, no file effect, one provider request |
+| Cancellation mid-stream | PASS: cancelled run, no calls/effects, one provider request; real Helm detach/reattach did not replay |
+| Explicit `response.failed` | PASS: failed run, no calls/effects, one provider request; detach/reattach did not replay |
+| Configured secret split across chunks | PASS: account-secret prefix withheld before remaining chunk; full value redacted after assembly in public snapshot and Helm; cancelled with no effect/replay |
+| Anthropic thinking | PASS: separate **Provider-exposed thinking** label, initially collapsed, keyboard-expandable live text; signature and redacted-thinking canaries absent from public snapshot, finalized history and provider-attempt history |
+| Finalization collapse | PASS: expanded Anthropic thinking automatically collapsed on finalization |
+| Finalization keyboard anchor | **FAIL**: Ctrl+Space without re-selection does not expand the finalized disclosure. Ctrl+Shift+Down to reselect it restores expansion/collapse |
+
+The executed v2 failure identifies the cause in
+`helm/src/process_client/ui/transcript/stream.rs`: finalization changes the
+reasoning key's `false` suffix to `true`, while `reconcile()` maps only tool-call
+anchors. A narrow fix now transfers the reasoning reading anchor to offset zero
+of the finalized key without copying expansion. Its focused regression covers
+summary/thinking, unrelated anchors and repeated snapshots after manual expansion.
+Rustfmt and diff checks passed; parent build, Rust test/coverage and post-fix
+real-PTY verification are pending. The v2 failure evidence above is unchanged.
+
+Final test-script verification reran the five new journeys in
+`target/ux273/stream255-extended5`; exit status **1** correctly reports the recorded
+anchor failure. `result.json` records `source_unchanged: true`,
+`binaries_unchanged: true`, and `passed: false`. These directories and `.log` files
+are under the parent checkout's ignored `target/`, with source-before hashes and
+per-case summaries. Private fixture roots contain PTY transcripts, snapshots and
+provider-attempt evidence. All owned fixture cleanup checks passed. No credentials
+or raw diagnostics are published here.
+
+Run1 refused mismatched Voyage binary identity before launching any fixture.
+Run2 had a harness error: valid streamed arguments were contradicted only in the
+redundant final output; execution of those valid streamed arguments was observed.
+The corrected malformed case invalidates both deltas and final output and passed
+in runs3–5. Run3 first reproduced the anchor failure; run4 completed the entire
+matrix and recorded it, and run5 verified the final nonzero failure exit. Earlier
+evidence remains intact rather than being relabelled as passing.
+
+Pinned ux273 v2 release for these added measurements:
+
+- Manifest: `target/ux273/build-manifest-v2.json`
+- Source: `dfdecea084aab46501c3d04e618c9940d4924fff+dirty-tests-and-preserved-user-work`
+- Build-owner fingerprint: `964815dac62d3137b73672aeb50e32b1db3e17d6d0917c9b1f0d9fab0dab3072`
+- Helm: `2a84a4d5e5f49e04f96f1c493cb9f9d1e88d63d5a88702ec4a6e322a17c44322`
+- Vessel: `42313601f087cbf91c512c613e4a6f05c06d703e491dbd96537479f43372e8ce`
+- Voyage: `9bdd7c4483efbeadb32e3731b7efda3ff8e3919bf259105ddbfbd84da0ebd5cf`
+
+Reproduce the five added journeys (omit `--extended-only` for all nine):
+
+```sh
+python3 helm/tests/streaming255.py --extended-only \
+  --source-root /home/psi/voyage --bin-dir /home/psi/voyage/target/debug \
+  --manifest /home/psi/voyage/target/ux273/build-manifest-v2.json \
+  --evidence /home/psi/voyage/target/ux273/stream255-next
+```
+
+The script refuses a binary/manifest mismatch. Parent builds and coverage must
+remain serialized with these source/binary-frozen journeys.
+
 ## Remaining acceptance gaps
 
-This focused verification does not close all of #255. It does not cover Anthropic
-thinking disclosure, a separate provider **thinking** label, opaque/signature
-handling, malformed JSON, cancellation, explicit provider-error events,
-fragmented call IDs, secret-redaction canaries, all-tool preview parity,
-final expanded-to-collapsed transition, strict pixel/cell Unicode typography,
-scroll-anchor transfer to final cards, or an exhaustive duplicate-card visual
-count. Canonical reconciliation and absence of provisional records are asserted;
-these should not be overstated as those additional UI checks. Unsupported-provider
-behavior and Pi UX research are outside this script. Full native macOS/Windows,
-real provider, separate-host remote, TLS and browser evidence remain unestablished.
+The failing reasoning keyboard anchor is an observed product gap. Fragmented call
+IDs, all-tool preview parity, strict pixel/cell Unicode typography, tool-card
+scroll-anchor transfer and exhaustive duplicate-card visual counts remain outside
+this bounded extension. Canonical reconciliation and absence of provisional
+records are asserted, not those additional UI properties. Cancellation here is
+an exact runtime command with real Helm reattachment, not the Helm stop-confirmation
+interaction or automatic replay after process death. Anthropic is synthetic SSE,
+not a live provider/protocol conformance claim. Signature non-display assertions
+cover the public snapshot/Helm/attempt history, not every private transport byte.
+Unsupported-provider behavior and Pi UX research remain outside this script.
+Native macOS/Windows, live providers, separate-host remote and TLS remain untested.
 
-Python syntax compilation and `git diff --check` passed. No Rust source, Cargo
-manifest or lockfile was changed by this verification task, and no Cargo command
-was run.
+Python syntax compilation, CLI help, Rustfmt and `git diff --check` passed. Rust
+changes are confined to `helm/src/process_client/ui/transcript/stream.rs`; no Cargo
+manifest or lockfile was changed and no Cargo command was run by this worker.
+Parent owns the build, coverage, integration, issue update and publication.
+
+## Post-fix finish-up verification
+
+The integration owner applied the narrow finalized-reasoning anchor migration and
+ran `helm/tests/streaming255.py` against `target/ux273/build-manifest-v3.json`.
+`target/ux273/stream255-final/result.json` records all nine journeys passing,
+unchanged binaries/source during measurement and observed fixture cleanup.
+The Anthropic case now expands/collapses finalized thinking at the same keyboard
+anchor without reselection; final collapse remains the default. Earlier failure
+records are retained. Malformed calls, cancellation, explicit provider failure,
+split-secret withholding and opaque thinking/signature exclusion also passed.

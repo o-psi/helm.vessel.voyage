@@ -115,3 +115,159 @@ same-user process/Chromium is claimed. See README for the precise interaction,
 network and zero-byte disclosure limits. Close rejection remains an unresolved
 production cleanup obligation regardless of helper exit; these synthetic checks
 do not authorize removing a real orphan lock or replaying an uncertain effect.
+
+# #273 X14 acceptance extension — 2026-09-13
+
+Base `dfdecea084aab46501c3d04e618c9940d4924fff`, isolated `ux273/browser`
+worktree. Read #273 scope/comments and relevant #272/#260 issue bodies through
+GitHub's public API (CLI authentication was unavailable). Parent owns Rust
+coverage, integration, issue updates and publication. No Rust edits/builds here.
+
+## Executed Linux Chromium checks
+
+Node 26.8.2, Chromium 152.0.7977.82, pinned playwright-core 1.63.0.
+`npm ci --ignore-scripts --no-audit --no-fund` installed one dependency locally.
+No machine configuration, personal profile, external website or real credential
+was used. Chromium sandbox remained enabled, including the companion renderer.
+
+Run from the worktree root:
+
+```sh
+mkdir -p target/ux273-browser
+chmod 700 target/ux273-browser
+(cd helm/browser && npm ci --ignore-scripts --no-audit --no-fund)
+HELM_BROWSER_PROBE_ROOT="$PWD/target/ux273-browser" node helm/browser/probe.mjs
+HELM_BROWSER_PROBE_ROOT="$PWD/target/ux273-browser" node helm/browser/cleanup-probe.mjs
+node helm/browser/outcomes-probe.mjs
+node helm/browser/ux272-offline-boundaries.mjs helm/browser/helper.mjs
+```
+
+Actual results:
+
+- Expanded `probe.mjs`: **PASS**, exit 0 (`probe-v3.log`). In addition to its
+  existing navigation/input/transfers/receipt/race/budget checks, real companion
+  buttons dismiss sharing, deny and allow one effect, interrupt pending consent
+  by human takeover, return private, and explicitly reshare. Denial and expiry
+  reasons are asserted separately. The companion remains alive while Helm's
+  heartbeat stops: it reports disconnect, disables sharing and revokes remote
+  access. Heartbeat recovery alone cannot reshare. Explicit local reshare restores
+  access. Closing the companion then revokes sharing despite continued heartbeat.
+- `cleanup-probe.mjs`: **PASS**, exit 0 (`cleanup.log`). Real contexts closed in
+  both fixtures. Overlapping shutdown awaits one close; synthetic rejection retains
+  lock/staging and unresolved status even after helper exit. This is not an actual
+  unkillable Chromium failure and does not establish parent reconciliation.
+- `outcomes-probe.mjs`: **PASS**, consent outcomes and unresolved precedence.
+- Offline boundaries with the required helper argument: **PASS**, six duplicate
+  states, six conflicting identities, five pre-admission refusals, no dispatch.
+  An initial invocation without its documented argument failed; not counted as pass.
+- Node syntax, Python compilation, and Git diff whitespace checks passed.
+
+The first real probe exposed a stale assertion: private-mode takeover now returns
+`refused` / `invalidated`, not `cancelled`. Only the test expectation changed.
+An initial expanded run raced the previous rendered approval button; awaiting its
+removal before creating the next request fixed the test synchronization. No
+runtime helper/permission/sandbox change was needed. Evidence remains private under
+`target/ux273-browser`; process inspection after these runs found no matching live
+fixture helper, Chromium, Helm, Vessel or Voyage processes.
+
+## Transport runner and concrete blocker
+
+`transport-probe.py` adapts the pre-existing local #234 one-off transport probe,
+not the retired broad test suite. It uses isolated HOME/XDG/TMP, loopback website
+and synthetic Responses provider, a fake env-backed account enrolled via normal
+Vessel commands, and checks parent binary hashes before any product launch.
+Setup installs only into the fixture's private worktree-local XDG directory.
+Its intended checks include actual image/click/history transport, private marker
+withholding, close and explicit reconciliation without replay; optional TUI mode
+adds F6, detach cleanup and unsent draft retention. These are **not yet passing
+#273 transport evidence**.
+
+```sh
+BROWSER_PROBE_RUNTIME_ROOT=/home/psi/voyage/target \
+BROWSER_PROBE_BIN=/home/psi/voyage/target/debug \
+BROWSER_PROBE_MANIFEST=/home/psi/voyage/target/ux273/build-manifest.json \
+python3 helm/browser/transport-probe.py
+# Add BROWSER_PROBE_TUI=1 for the actual TUI variant.
+```
+
+The runtime root must be short enough for Linux Unix sockets and writable; it
+contains only newly allocated private fixture directories. Keep adapter installs
+and other evidence inside the worktree. Do not bypass the identity check.
+
+Observed preparation failures and fixes:
+
+1. A mise shim refused under isolated HOME. Resolve Node's actual executable
+   directory for the fixture PATH, without changing mise trust or host config.
+2. Worktree-local Vessel runtime path exceeded Linux's Unix-socket limit. Allocate
+   only its runtime directory in the explicitly supplied short root above.
+3. Legacy config-only creation refused `default_account_required`. Updated fixture
+   to enroll an explicit synthetic account and bind it in config; no real account.
+4. Before executing that updated journey, the supplied manifest no longer matched
+   `target/debug/voyage`. The check refused before launch. Expected hash began
+   `9bdd7c4483ef`; observed hash began `3b27d0bb94b6`. Helm/Vessel hashes matched.
+   Parent must supply a stable, refreshed binary attestation before rerun. The
+   account adaptation and later journey/reconcile assertions remain unverified.
+
+Full Helm/Vessel transport close/reconcile, native macOS/Windows, remote-host
+routing and live-provider acceptance remain open; helper passes cannot close those
+gates. Independent remote policy and local consent are unchanged. No user frames,
+private receipt files, synthetic credentials or diagnostic logs are published.
+
+## Resumed transport acceptance — v2 manifest, 2026-09-13
+
+The stale-manifest blocker above is resolved, not a current refusal. Executed the
+following against the parent's released v2 hashes (source fingerprint
+`964815dac62d3137b73672aeb50e32b1db3e17d6d0917c9b1f0d9fab0dab3072`), with
+Chromium `152.0.7977.82`, real Helm/Vessel/Voyage and only synthetic loopback
+provider/website traffic. No Cargo or runtime/security edits:
+
+```sh
+BROWSER_PROBE_RUNTIME_ROOT=/home/psi/voyage/target \
+BROWSER_PROBE_BIN=/home/psi/voyage/target/debug \
+BROWSER_PROBE_MANIFEST=/home/psi/voyage/target/ux273/build-manifest-v2.json \
+python3 helm/browser/transport-probe.py
+# Repeat with BROWSER_PROBE_TUI=1 for the real PTY/F6 variant.
+```
+
+Harness corrections: use `start_settings` with an explicit synthetic account
+binding and set the isolated host default through `account_set_default` for
+reconciliation. A TOML `config_path` was invalid (the launch config is JSON), and
+config-only creation did not convey the account binding. Keep Chromium TMPDIR
+under the short, freshly allocated runtime fixture too: the long worktree TMPDIR
+made browser startup refuse; shortening TMPDIR allowed startup without relaxing
+sandbox or policy. No real account, host default or browser profile was touched.
+
+Final executions after adding explicit cleanup observation:
+
+- **CLI PASS, exit 0:** `browser-integration-j5d3cq36`, log
+  `target/ux273-browser/transport-v2-final.log`.
+- **TUI PASS, exit 0:** `browser-integration-b3t7_k5_`, log
+  `target/ux273-browser/transport-tui-v2-final.log`.
+- Both explicitly share from a suspended voyage, inspect/screenshot/click through
+  the real transport, approve the local click, observe exactly one visible click,
+  verify actual JPEG input to the synthetic provider and canonical image artifact
+  history, then verify private-mode marker withholding. Command, lease and delayed
+  browser-work traffic retain one duplex socket. Browser close leaves the voyage
+  intact. Retained old-inner-binding reconciliation resumes the suspended owner,
+  removes pending action evidence, and causes no provider/effect replay.
+- TUI additionally launches via F6, exits with Ctrl+C and retains the unsent draft.
+  Local companion consent is driven through its authenticated API; rendered
+  companion interaction is covered by the separately recorded helper probe.
+- Each final fixture's private `cleanup-audit.json` records child exits `[0,0]`,
+  **zero matching live processes, zero remaining fixture loopback listeners and
+  zero executor locks**. Receipts/profile evidence are retained, not deleted.
+  A separate process inspection also found no matching earlier transport fixtures.
+
+**Important intermittent gap:** first TUI fixture `browser-integration-hnkd1f6n`
+failed after sharing, during the tool/consent run: companion connection refused;
+TUI reported `Conversation unavailable` then unresolved cleanup/effects. Its
+`cleanup.json` says local cleanup observed, but action receipts remain; local exit
+is not proof of remote effect reconciliation. No lock/receipt was erased and no
+uncertain effect was replayed. A fresh independent TUI fixture
+`browser-integration-a3b74nzf` and the final TUI fixture both passed without product
+changes. This failure's cause is **unresolved**, not a proven fixed runtime bug.
+Parent should retain it as a stability investigation; successful journeys alone
+do not establish reliable repeated TUI operation or real failed-cleanup recovery.
+Remote-host policy, native platforms, live providers and an actual unkillable
+Chromium remain outside this evidence. Prior helper-level synthetic close rejection
+must not be relabeled transport failed-cleanup acceptance.

@@ -275,3 +275,18 @@ unanswered expiry, invalidation, unavailable controller and cancellation, includ
 unresolved receipt precedence. This is not a native-browser or cleanup journey.
 Local result `local_reason` is a fixed optional enum, separate from page text;
 `state: unresolved` always remains unknown even if a gate reason is present.
+
+### X14 acceptance extension
+
+The expanded `probe.mjs` also exercises rendered share dismissal, local consent,
+human/private takeover, separate companion/Helm heartbeat disconnects and explicit
+resharing after recovery. See [VERIFICATION.md](VERIFICATION.md) for actual #273
+results and the bounded `transport-probe.py` invocation. The latter requires a
+parent-supplied stable binary manifest and short isolated runtime root; helper-only
+success does not establish transport reconciliation or remote policy acceptance.
+
+The resumed v2 transport runs pass for CLI and F6 TUI, including exact fixture
+process/listener cleanup and suspended-owner reconciliation. Use the v2 manifest
+command in VERIFICATION.md. That evidence also retains an unresolved intermittent
+TUI disconnect; passing later fixtures do not erase the failed run or establish
+actual failed-cleanup recovery.

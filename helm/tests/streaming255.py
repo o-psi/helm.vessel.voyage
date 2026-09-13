@@ -83,8 +83,173 @@ class Provider(http.server.BaseHTTPRequestHandler):
             s.errors.append(repr(error))
 
 
+class AcceptanceProvider(Provider):
+    """Bounded gates expose each security boundary before provider finalization."""
+    def do_POST(self):
+        s = self.server
+        s.bodies.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+        self.close_connection = True
+        def emit(value):
+            self.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode())
+            self.wfile.flush()
+        def gate(name):
+            assert getattr(s, name).wait(30), name + ' timeout'
+        try:
+            if s.case == 'anthropic':
+                emit({'type': 'message_start', 'message': {'id': 'thinking255', 'role': 'assistant', 'content': [], 'usage': {'input_tokens': 1}}})
+                emit({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'thinking', 'thinking': ''}})
+                emit({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'thinking_delta', 'thinking': 'THINKING255 café independent disclosure.'}})
+                emit({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'signature_delta', 'signature': 'OPAQUE_SIGNATURE255'}})
+                emit({'type': 'content_block_stop', 'index': 0})
+                emit({'type': 'content_block_start', 'index': 1, 'content_block': {'type': 'redacted_thinking', 'data': 'OPAQUE_REDACTED255'}})
+                emit({'type': 'content_block_stop', 'index': 1})
+                s.stage.set()
+                gate('finish')
+                emit({'type': 'content_block_start', 'index': 2, 'content_block': {'type': 'text', 'text': ''}})
+                emit({'type': 'content_block_delta', 'index': 2, 'delta': {'type': 'text_delta', 'text': 'FINAL255'}})
+                emit({'type': 'content_block_stop', 'index': 2})
+                emit({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}})
+                emit({'type': 'message_stop'})
+                return
+            emit({'type': 'response.output_item.added', 'output_index': 0, 'item': {'type': 'function_call', 'call_id': 'accept255', 'name': 'write_file', 'arguments': ''}})
+            arguments = '{"path":"effect.txt","content":"'
+            arguments += s.secret[:16] if s.case == 'secret' else 'PREVIEW255'
+            emit({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'delta': arguments})
+            s.stage.set()
+            gate('advance')
+            tail = s.secret[16:] + '"}' if s.case == 'secret' else '"}'
+            if s.case == 'malformed':
+                tail += 'INVALID'
+            emit({'type': 'response.function_call_arguments.delta', 'output_index': 0, 'delta': tail})
+            s.generated.set()
+            gate('finish')
+            if s.case == 'failure':
+                emit({'type': 'response.failed', 'response': {'error': {'code': 'invalid_request_error', 'message': 'Synthetic explicit failure255'}}})
+            elif s.case in ('cancel', 'secret'):
+                return
+            else:
+                emit({'type': 'response.completed', 'response': {'id': 'malformed255', 'status': 'completed', 'output': [{'type': 'function_call', 'call_id': 'accept255', 'name': 'write_file', 'arguments': arguments + tail}], 'usage': {'input_tokens': 1, 'output_tokens': 1}}})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except BaseException as error:
+            s.errors.append(repr(error))
+
+
+def extended_acceptance(args, Fixture, session, wait_for, OuterPTY, result):
+    from provider_attempts import SECRET, history
+    for case in ('malformed', 'cancel', 'failure', 'secret', 'anthropic'):
+        f = Fixture(args.bin_dir)
+        f.provider.RequestHandlerClass = AcceptanceProvider
+        f.provider.case, f.provider.secret, f.provider.errors = case, SECRET, []
+        for name in ('stage', 'advance', 'generated', 'finish'):
+            setattr(f.provider, name, threading.Event())
+        label = 'acceptance-' + case
+        record = result[label] = {'evidence': str(f.root), 'checks': []}
+        tui = None
+        def check(text):
+            record['checks'].append(text)
+            print('PASS', label, text, flush=True)
+        def observe():
+            snap = f.command(sid, {'op': 'snapshot'})
+            text = tui.pump().text()
+            (f.root / 'observed.json').write_text(json.dumps(snap))
+            (f.root / 'observed.screen.txt').write_text(text)
+            return snap, text
+        try:
+            f.start()
+            sid = session(f, 'anthropic' if case == 'anthropic' else 'responses', 'cancel_stream')
+            receipt = f.command(sid, f.submit(sid, 'Offline acceptance255 fixture.'))
+            wait_for(f.provider.stage.is_set)
+            tui = OuterPTY([str(args.bin_dir / 'helm'), 'connect', '--directory', str(f.directory), '--no-start'], f.env, f.workspace, f.root / 'acceptance.ansi')
+            tui.until(lambda s: ('Provider-exposed thinking' if case == 'anthropic' else 'write_file') in s.text(), 'acceptance preview')
+            snap, text = observe()
+            assert not (f.workspace / 'effect.txt').exists()
+            check('real Helm provisional disclosure visible; no early file effect')
+            if case == 'anthropic':
+                assert 'THINKING255' not in text
+                tui.send(b'\x1b[1;6B')
+                time.sleep(.15)
+                tui.send(b'\x00')
+                tui.until(lambda s: 'THINKING255' in s.text(), 'thinking expanded')
+                snap, text = observe()
+                assert 'OPAQUE_' not in json.dumps(snap) + text
+                check('thinking expands independently; signature and redacted block payload absent from snapshot and Helm')
+            if case == 'secret':
+                assert SECRET[:16] not in json.dumps(snap) + text
+                check('configured account-secret prefix withheld before remaining chunk arrives')
+            f.provider.advance.set()
+            if case != 'anthropic':
+                wait_for(f.provider.generated.is_set)
+                time.sleep(.3)
+            if case == 'secret':
+                snap, text = observe()
+                assert SECRET not in json.dumps(snap) + text and SECRET[:16] not in json.dumps(snap) + text
+                assert '[REDACTED]' in json.dumps(snap['run']['tool_previews'])
+                check('split configured secret redacted after assembly, absent from public snapshot and Helm')
+            if case in ('cancel', 'secret'):
+                snap = f.command(sid, {'op': 'snapshot'})
+                f.command(sid, {'op': 'cancel', 'command_id': str(uuid.uuid4()), 'expected_revision': snap['revision'], 'expires_at_ms': int(time.time()*1000)+60000, 'run_id': receipt['run_id']})
+            f.provider.finish.set()
+            final = f.finished(sid)
+            (f.root / 'final.json').write_text(json.dumps(final))
+            expected = 'completed' if case == 'anthropic' else 'cancelled' if case in ('cancel', 'secret') else 'failed'
+            assert final['run']['state'] == expected, final['run']
+            assert not (f.workspace / 'effect.txt').exists()
+            assert not [c for m in final['messages'] for c in m.get('tool_calls', [])]
+            attempts = history(f, sid)
+            (f.root / 'attempts.json').write_text(json.dumps(attempts))
+            assert len(f.provider.bodies) == 1, len(f.provider.bodies)
+            check(expected + '; zero canonical tool calls/effects; exactly one provider request')
+            if case == 'anthropic':
+                tui.until(lambda s: 'FINAL255' in s.text(), 'anthropic final')
+                snap, text = observe()
+                assert 'THINKING255' not in text, text
+                assert 'OPAQUE_' not in json.dumps(final) + json.dumps(attempts) + text
+                check('expanded live thinking automatically collapsed on finalization; opaque payload absent from final/attempt history')
+                # No traversal here: the keyboard disclosure anchor must survive reconciliation.
+                tui.send(b'\x00')
+                try:
+                    tui.until(lambda s: 'THINKING255' in s.text(), 'final anchor expansion', timeout=3)
+                except AssertionError:
+                    record['failure'] = 'finalized reasoning keyboard anchor lost; Ctrl+Space does not expand without re-selection'
+                    print('FAIL', label, record['failure'], flush=True)
+                    tui.send(b'\x1b[1;6B')
+                    time.sleep(.15)
+                    tui.send(b'\x00')
+                    tui.until(lambda s: 'THINKING255' in s.text(), 'reselected final thinking')
+                    check('explicit keyboard re-selection recovers finalized disclosure access')
+                tui.send(b'\x00')
+                tui.until(lambda s: 'THINKING255' not in s.text(), 'final anchor collapse')
+                if 'failure' not in record:
+                    check('same keyboard anchor expands/collapses finalized thinking without re-selection')
+            else:
+                tui.send(b'\x11')
+                tui.exited_restored()
+                tui.close()
+                tui = OuterPTY([str(args.bin_dir / 'helm'), 'connect', '--directory', str(f.directory), '--no-start'], f.env, f.workspace, f.root / 'reattach.ansi')
+                tui.until(lambda s: 'Offline acceptance255' in s.text(), 'reattach history')
+                time.sleep(.5)
+                assert len(f.provider.bodies) == 1 and not (f.workspace / 'effect.txt').exists()
+                check('real Helm detach/reattach after terminal state does not replay provider or effect')
+            assert not f.provider.errors, f.provider.errors
+            record['passed'] = 'failure' not in record
+        finally:
+            f.provider.advance.set()
+            f.provider.finish.set()
+            if tui:
+                tui.close()
+            f.close()
+            check('owned fixture cleanup observed')
+            (args.evidence / (label + '.json')).write_text(json.dumps(record, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--extended-only', action='store_true', help='run only the five additional local acceptance journeys')
     parser.add_argument('--source-root', type=Path, required=True)
     parser.add_argument('--bin-dir', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
@@ -113,12 +278,16 @@ def main():
     manifest = json.loads(args.manifest.read_text())
     before = source_hash(args.source_root)
     binaries = {name: sha(args.bin_dir / name) for name in ('helm', 'vessel', 'voyage')}
-    assert binaries == manifest['binary_sha256'], 'released binary hash mismatch'
+    if binaries != manifest['binary_sha256']:
+        (args.evidence / 'preflight.json').write_text(json.dumps({
+            'passed': False, 'reason': 'released binary hash mismatch',
+            'manifest': manifest, 'observed_binary_sha256': binaries}, indent=2))
+        raise AssertionError('released binary hash mismatch')
     result = {'binary_sha256': binaries, 'build_manifest': manifest, 'checks': [], 'platform': sys.platform,
               'scope': 'synthetic provider; real Helm PTY; local and scoped loopback HTTP gateway, not separate host/TLS/native/live provider'}
     (args.evidence / 'source-before.json').write_text(json.dumps(before, sort_keys=True))
     try:
-        for remote in (False, True):
+        for remote in (() if args.extended_only else (False, True)):
             for interrupt in (False, True):
                 f = Fixture(args.bin_dir)
                 f.provider.RequestHandlerClass = Provider
@@ -239,7 +408,8 @@ def main():
                     check('owned fixture cleanup observed')
                     # Runtime credentials/state stay in the private fixture root.
                     (args.evidence / (label + '.json')).write_text(json.dumps(result[label], indent=2))
-        result['behavioral_checks_passed'] = True
+        extended_acceptance(args, Fixture, session, wait_for, OuterPTY, result)
+        result['behavioral_checks_passed'] = all(v.get('passed', True) for k, v in result.items() if k.startswith('acceptance-'))
     finally:
         after = source_hash(args.source_root)
         result['source_unchanged'] = before == after
@@ -248,6 +418,7 @@ def main():
         result['passed'] = result.get('behavioral_checks_passed', False) and result['source_unchanged'] and result['binaries_unchanged']
         (args.evidence / 'result.json').write_text(json.dumps(result, indent=2))
         assert result['source_unchanged'] and result['binaries_unchanged'], 'source/build changed during journey'
+        assert result['passed'], 'acceptance matrix has recorded failures'
 
 
 if __name__ == '__main__':

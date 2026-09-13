@@ -384,5 +384,19 @@ fn approval_outcome_matrix_preserves_reason_and_fixed_diagnostics() {
             serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, report.outcome);
         assert!(!report.output.text_fallback().contains("fixture-secret"));
+        let text = report.output.text_fallback();
+        let mut message = crate::model::Message::tool_result("approval-call", text.clone(), false);
+        message.tool_outcome = Some(report.outcome.clone());
+        message.tool_output = Some(Box::new(report.output.clone()));
+        let saved = serde_json::to_vec(&message).unwrap();
+        let reloaded: crate::model::Message = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(reloaded.content, text);
+        assert_eq!(reloaded.tool_outcome.unwrap().execution, expected);
+        assert_eq!(reloaded.tool_output.unwrap().text_fallback(), text);
+        if approval == ApprovalOutcome::Expired {
+            assert!(text.contains("expired"));
+            assert!(!text.contains("denied") && !text.contains("declined"));
+            assert_eq!(report.outcome.label(), "Approval expired");
+        }
     }
 }

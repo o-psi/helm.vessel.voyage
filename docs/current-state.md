@@ -29,7 +29,7 @@ provides executing-host staged/unstaged/untracked scopes and canonical response
 copy with explicit local clipboard disclosure. [Tool previews](tool-previews.md)
 separate provisional arguments and provider-exposed reasoning from final calls,
 canonical answers and effort settings. See the [#272 delivery ledger](audits/ux-272-delivery.md)
-for actual checks and remaining limitations; source behavior is not a hands-on
+and [finish-up evidence](audits/ux-273-finish-up.md) for actual checks and remaining limitations; source behavior is not a hands-on
 four-product usability certification.
 
 ## Notification inbox and owner references

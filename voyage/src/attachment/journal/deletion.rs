@@ -41,7 +41,17 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
         )?;
     }
     drop(query);
-    tx.execute("DELETE FROM remote_events", [])?;
+    // Retired remote-worker journals may retain this table; fresh independent
+    // Voyage journals never create it. Scrub legacy content without requiring or
+    // recreating retired infrastructure, and propagate real database failures.
+    let legacy_events: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_events')",
+        [],
+        |r| r.get(0),
+    )?;
+    if legacy_events {
+        tx.execute("DELETE FROM remote_events", [])?;
+    }
     tx.execute(
         "UPDATE steering SET record=json_set(record,'$.request.text','') WHERE session_id=?1",
         [session.to_string()],
@@ -128,5 +138,79 @@ impl Journal {
         commit(tx, &self.commit_fence)?;
         File::open(&self.directory)?.sync_all()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voyage_protocol::process::RuntimeCommand;
+
+    #[test]
+    fn delete_fresh_and_legacy_journals_preserves_receipt_identity() {
+        for legacy in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut journal = Journal::open(root.path().join("journal")).unwrap();
+            let mut session =
+                crate::session::Session::new(root.path().to_path_buf(), "fixture".into());
+            session.messages = vec![crate::model::Message::new(
+                crate::model::Role::User,
+                "private fixture text",
+            )];
+            journal.create_session(&session).unwrap();
+            let guard = journal.acquire_execution(session.id).unwrap();
+            journal.initialize_lifecycle(&guard).unwrap();
+            journal.initialize_process_commands(&guard).unwrap();
+            journal
+                .initialize_command_bindings(&guard, Uuid::new_v4())
+                .unwrap();
+            journal.initialize_decisions(&guard).unwrap();
+            if legacy {
+                journal.connection.execute_batch("CREATE TABLE remote_events(payload TEXT); INSERT INTO remote_events VALUES('legacy private text');").unwrap();
+            }
+            let command = RuntimeCommand::Delete {
+                command_id: Uuid::new_v4(),
+                expected_revision: 0,
+                expires_at_ms: (chrono::Utc::now().timestamp_millis() + 60000) as u64,
+                confirm_session_id: session.id,
+            };
+            let receipt = journal
+                .apply_lifecycle(
+                    &guard,
+                    &command,
+                    chrono::Utc::now().timestamp_millis(),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(receipt["deleted"], true);
+            assert!(
+                journal
+                    .load_session(session.id)
+                    .unwrap()
+                    .session
+                    .messages
+                    .is_empty()
+            );
+            assert_eq!(
+                journal
+                    .apply_lifecycle(
+                        &guard,
+                        &command,
+                        chrono::Utc::now().timestamp_millis(),
+                        None
+                    )
+                    .unwrap(),
+                receipt
+            );
+            let exists: bool = journal.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_events')", [], |r| r.get(0)).unwrap();
+            assert_eq!(exists, legacy);
+            if legacy {
+                let count: i64 = journal
+                    .connection
+                    .query_row("SELECT count(*) FROM remote_events", [], |r| r.get(0))
+                    .unwrap();
+                assert_eq!(count, 0);
+            }
+        }
     }
 }

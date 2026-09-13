@@ -92,6 +92,46 @@ mod tests {
         assert!(!state.tool_expanded.contains(&key));
     }
     #[test]
+    fn finalized_reasoning_migrates_anchor_without_expansion_and_preserves_later_toggle() {
+        for kind in ["summary", "thinking"] {
+            let snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+                "session_id":uuid::Uuid::nil(),"revision":1,"name":null,"model":"fixture","messages":[],
+                "run":{"run_id":uuid::Uuid::nil(),"state":"completed","reasoning_previews":[{
+                    "attempt_id":uuid::Uuid::nil(),"index":0,"kind":kind,"text":"disclosed text","truncated":false,"finalized":true
+                }]}
+            })).unwrap();
+            let block = &snapshot.run.as_ref().unwrap().reasoning_previews[0];
+            let live = format!("reasoning:{}:0:{:?}:false", block.attempt_id, block.kind);
+            let saved = format!("reasoning:{}:0:{:?}:true", block.attempt_id, block.kind);
+            let mut state = State::default();
+            state.tool_expanded.insert(live.clone());
+            state.anchor = Some(super::super::Anchor {
+                key: Key::Tool(live.clone()),
+                offset: 7,
+            });
+            reconcile(&Some(snapshot.clone()), &mut state);
+            assert_eq!(state.anchor.as_ref().unwrap().key, Key::Tool(saved.clone()));
+            assert_eq!(state.anchor.as_ref().unwrap().offset, 0);
+            assert!(!state.tool_expanded.contains(&live));
+            assert!(!state.tool_expanded.contains(&saved));
+            let mut rows = Vec::new();
+            reasoning(&mut rows, &snapshot, &state, 100);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.line.to_string().contains("disclosed text"))
+            );
+            // A subsequent human expansion must survive repeated snapshots.
+            state.tool_expanded.insert(saved.clone());
+            reconcile(&Some(snapshot.clone()), &mut state);
+            assert!(state.tool_expanded.contains(&saved));
+            let unrelated = Key::Tool("unrelated".into());
+            state.anchor.as_mut().unwrap().key = unrelated.clone();
+            reconcile(&Some(snapshot), &mut state);
+            assert_eq!(state.anchor.as_ref().unwrap().key, unrelated);
+        }
+    }
+    #[test]
     fn reasoning_collapses_by_default_and_on_completion_and_labels_interruption() {
         let mut snapshot: Snapshot = serde_json::from_value(serde_json::json!({
             "session_id":uuid::Uuid::nil(),"revision":1,"name":null,"model":"fixture","messages":[],
@@ -142,6 +182,27 @@ mod tests {
 pub(super) fn reconcile(snapshot: &Option<Snapshot>, state: &mut State) {
     let Some(snapshot) = snapshot else { return };
     if let Some(run) = &snapshot.run {
+        for block in &run.reasoning_previews {
+            if !block.finalized {
+                continue;
+            }
+            let live = format!(
+                "reasoning:{}:{}:{:?}:false",
+                block.attempt_id, block.index, block.kind
+            );
+            // Finalization intentionally collapses disclosure, but its keyboard
+            // reading position must follow the new key. Do not copy expansion.
+            state.tool_expanded.remove(&live);
+            if let Some(anchor) = &mut state.anchor {
+                if anchor.key == Key::Tool(live) {
+                    anchor.key = Key::Tool(format!(
+                        "reasoning:{}:{}:{:?}:true",
+                        block.attempt_id, block.index, block.kind
+                    ));
+                    anchor.offset = 0;
+                }
+            }
+        }
         for preview in &run.tool_previews {
             if let Some(id) = &preview.call_id {
                 state.preview_calls.insert(

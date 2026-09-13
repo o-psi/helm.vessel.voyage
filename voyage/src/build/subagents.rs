@@ -411,3 +411,66 @@ pub async fn build_subagents_managed(
 fn worktree_manager(workspace: &std::path::Path) -> Result<Option<WorktreeManager>> {
     WorktreeManager::discover_managed(workspace, &resource_root())
 }
+
+#[cfg(test)]
+mod approval_outcome_tests {
+    use super::*;
+    use crate::tools::{ApprovalOutcome, ApprovalRequest, ApprovalSource};
+
+    struct RecordingApprover {
+        outcome: ApprovalOutcome,
+        observed: std::sync::Mutex<Option<ApprovalRequest>>,
+    }
+    #[async_trait]
+    impl Approver for RecordingApprover {
+        async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+            *self.observed.lock().unwrap() = Some(request.clone());
+            self.outcome.clone()
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_attribution_preserves_each_gate_outcome_and_request_identity() {
+        for outcome in [
+            ApprovalOutcome::Approved,
+            ApprovalOutcome::Denied,
+            ApprovalOutcome::Expired,
+            ApprovalOutcome::Cancelled,
+            ApprovalOutcome::Invalidated,
+            ApprovalOutcome::Unavailable,
+        ] {
+            let inner = Arc::new(RecordingApprover {
+                outcome: outcome.clone(),
+                observed: Default::default(),
+            });
+            let source = ApprovalSource {
+                agent_id: uuid::Uuid::new_v4(),
+                name: "synthetic worker".into(),
+            };
+            let worker = WorkerApprover {
+                inner: inner.clone(),
+                source: source.clone(),
+            };
+            let request = ApprovalRequest {
+                source: None,
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                access_generation: None,
+                id: uuid::Uuid::new_v4(),
+                execution_id: uuid::Uuid::new_v4(),
+                action: "write".into(),
+                target: "fixture".into(),
+                reason: "fixture approval".into(),
+                mode: InteractionMode::Unattended,
+            };
+            assert_eq!(worker.approve(&request).await, outcome);
+            let observed = inner.observed.lock().unwrap().take().unwrap();
+            assert_eq!(observed.id, request.id);
+            assert_eq!(observed.execution_id, request.execution_id);
+            assert_eq!(observed.mode, InteractionMode::Attended);
+            assert_eq!(observed.source.unwrap().agent_id, source.agent_id);
+            assert!(request.source.is_none());
+            request.cancellation.cancel();
+            assert!(observed.cancellation.is_cancelled());
+        }
+    }
+}

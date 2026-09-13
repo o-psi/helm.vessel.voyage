@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-13T18:30:18.830638+00:00",
+  "measured_at_utc": "2026-09-13T22:31:55.900060+00:00",
   "source": {
-    "commit": "b2d935c86f8795613c946abc779da5beedbd3cc3",
+    "commit": "dfdecea084aab46501c3d04e618c9940d4924fff",
     "dirty": true,
-    "fingerprint_sha256": "490e04e0f6e35c7eea54f6f4ba46ae37eab9156957c279497bf2b0a4dee06d23",
+    "fingerprint_sha256": "9691b581ac005cdb118b3b83a24c34dbe1f259641d5a1b7ce7c474883c7b6f67",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and new delivery file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null; unrelated untracked inspiration/worktrees excluded",
-    "note": "Source unchanged through tests and current-artifact export. Dirty source includes issue #272 plus preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not delivered."
+    "note": "Source unchanged through tests and current-artifact export. Dirty source includes #273 finish-up fixes/tests and preserved unrelated rendering comments and deleted scripts/fixtures; unrelated work is not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue272-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue273-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,26 +23,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 466,
+    "passed": 469,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 95956,
-      "covered": 35457,
-      "percent": 36.951311017549706
+      "count": 96160,
+      "covered": 35750,
+      "percent": 37.177620632279535
     },
     "functions": {
-      "count": 9382,
-      "covered": 3320,
-      "percent": 35.38691110637391
+      "count": 9391,
+      "covered": 3336,
+      "percent": 35.523373442657864
     },
     "regions": {
-      "count": 156854,
-      "covered": 56292,
-      "notcovered": 100562,
-      "percent": 35.88815076440511
+      "count": 157136,
+      "covered": 56724,
+      "notcovered": 100412,
+      "percent": 36.09866612361267
     }
   },
   "report_selection": {
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report and missing distribution source diagnostics retained; corrected export includes all 11 current workspace executable artifacts and no duplicate logical sources or mismatched functions.",
-    "Prior comparison: lines +2.0622 percentage points, functions +1.7687 percentage points, regions +2.0117 percentage points.",
+    "Prior comparison: lines +0.2263 percentage points, functions +0.1365 percentage points, regions +0.2105 percentage points.",
     "No live-provider or native macOS/Windows claim. Coverage measures execution, not correctness."
   ]
 }
