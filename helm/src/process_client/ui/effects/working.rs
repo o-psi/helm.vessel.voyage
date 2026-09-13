@@ -17,6 +17,41 @@ pub(crate) struct Working {
     shimmer: RefCell<Effect>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_labels_are_never_decorated_or_claimed_live_without_a_process() {
+        let working = Working {
+            enabled: true,
+            labels: Labels {
+                frames: vec![std::array::from_fn(|_| "decorative status".into())],
+                width: 17,
+            },
+            epoch: Instant::now(),
+            animated: Cell::new(false),
+            area: Cell::new(None),
+            shimmer: RefCell::new(fx::fade_to_fg(Color::Cyan, (1200, Interpolation::Linear))),
+        };
+        for status in [
+            "Reconnecting to provider",
+            "Continuing interrupted response",
+        ] {
+            assert_eq!(working.label(status, true), status);
+            assert!(!working.animated.get());
+            assert_eq!(working.label(status, false), "Status unavailable");
+        }
+        assert_eq!(
+            working.label("Recovery needs attention", false),
+            "Recovery needs attention"
+        );
+        assert_eq!(working.label("Working", true), "decorative status");
+        assert!(working.animated.get());
+        assert_eq!(working.label("Working", false), "Status unavailable");
+    }
+}
+
 impl Working {
     pub(crate) fn new(enabled: bool) -> anyhow::Result<Self> {
         Ok(Self {
@@ -48,11 +83,16 @@ impl Working {
     }
 
     fn at(&self, status: &'static str, live: bool, elapsed: Duration) -> &str {
+        if !live
+            && matches!(
+                status,
+                "Working" | "Reconnecting to provider" | "Continuing interrupted response"
+            )
+        {
+            return "Status unavailable";
+        }
         if status != "Working" {
             return status;
-        }
-        if !live {
-            return "Status unavailable";
         }
         if !self.enabled {
             return status;

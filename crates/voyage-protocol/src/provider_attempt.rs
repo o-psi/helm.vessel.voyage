@@ -16,6 +16,8 @@ pub enum RetryDecision {
     InFlight,
     Completed,
     RetryScheduled,
+    ContinuationScheduled,
+    RecoveryInterrupted,
     AttemptsExhausted,
     ElapsedBudget,
     ServerDelayLimit,
@@ -53,6 +55,10 @@ pub struct ProviderAttempt {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RetryObservation {
+    /// Previous interrupted attempt retained in history before a new request.
+    pub recovery_of: Option<Uuid>,
+    /// Absolute deadline for admitting further attempts; not a live-process lease.
+    pub recovery_deadline_at_ms: Option<u64>,
     pub upstream_request_id: Option<String>,
     pub response_timeout_ms: Option<u64>,
     pub stream_idle_ms: Option<u64>,
@@ -77,7 +83,13 @@ impl ProviderAttempt {
                 AttemptPhase::Backoff => "backoff recorded; next dispatch not yet recorded",
             },
             RetryDecision::Completed => "response completed",
-            RetryDecision::RetryScheduled => "retry scheduled",
+            RetryDecision::RetryScheduled => "reconnection retry scheduled",
+            RetryDecision::ContinuationScheduled => {
+                "partial response retained; history-based continuation scheduled"
+            }
+            RetryDecision::RecoveryInterrupted => {
+                "recovery interrupted; previous request is not active; review saved outcomes before continuing"
+            }
             RetryDecision::AttemptsExhausted => "attempt limit reached; try again later",
             RetryDecision::ElapsedBudget => "retry time budget reached; try again later",
             RetryDecision::ServerDelayLimit => "server wait exceeds retry limit; try again later",
@@ -85,7 +97,7 @@ impl ProviderAttempt {
                 "request cannot be retried automatically; check provider configuration"
             }
             RetryDecision::PartialResponse => {
-                "partial response retained; automatic retry stopped to avoid duplicate effects; review saved output before submitting continuation"
+                "partial response retained; failure does not permit automatic continuation; review saved output before continuing"
             }
             RetryDecision::Cancelled => "cancelled; no further automatic retry",
             RetryDecision::LocalFailure => {
@@ -106,6 +118,7 @@ impl ProviderAttempt {
             Some("unavailable") => "service unavailable",
             Some("timeout") => "timeout",
             Some("transport_timeout") => "connection timeout",
+            Some("stream_interrupted") => "response stream interrupted",
             Some("connection") => "connection establishment failed",
             Some("transport") => "transport failure; remote outcome uncertain",
             Some("request") => "request failure",
@@ -120,8 +133,10 @@ impl ProviderAttempt {
         if let Some(status) = self.http_status {
             summary.push_str(&format!(" · HTTP {status}"));
         }
-        if self.decision == RetryDecision::RetryScheduled
-            && let Some(delay) = self.retry_delay_ms
+        if matches!(
+            self.decision,
+            RetryDecision::RetryScheduled | RetryDecision::ContinuationScheduled
+        ) && let Some(delay) = self.retry_delay_ms
         {
             summary.push_str(&format!(" · wait {delay} ms"));
         }
@@ -139,6 +154,15 @@ impl ProviderAttempt {
         }
         if let Some(max) = self.retry.max_elapsed_ms {
             summary.push_str(&format!(" · retry window {max} ms"));
+        }
+        if let (Some(max), Some(elapsed)) = (self.retry.max_elapsed_ms, self.retry.elapsed_ms) {
+            summary.push_str(&format!(
+                " · recovery budget at observation {} ms",
+                max.saturating_sub(elapsed)
+            ));
+        }
+        if self.retry.recovery_of.is_some() {
+            summary.push_str(" · continues an earlier interrupted response");
         }
         summary
     }
@@ -175,10 +199,24 @@ mod tests {
         attempt.retry.stream_idle_ms = Some(300_000);
         attempt.retry.max_delay_ms = Some(30_000);
         let summary = attempt.summary();
+        assert!(attempt.retry.recovery_of.is_none());
+        assert!(attempt.retry.recovery_deadline_at_ms.is_none());
         assert!(summary.contains("connection timeout"));
         assert!(summary.contains("response-start limit 60000 ms"));
         assert!(summary.contains("stream idle limit 300000 ms"));
         assert!(summary.contains("retry delay limit 30000 ms"));
+        attempt.decision = RetryDecision::ContinuationScheduled;
+        attempt.category = Some("stream_interrupted".into());
+        attempt.retry.recovery_of = Some(Uuid::new_v4());
+        attempt.retry.max_elapsed_ms = Some(120_000);
+        attempt.retry.elapsed_ms = Some(5_000);
+        let summary = attempt.summary();
+        assert!(summary.contains("history-based continuation scheduled"));
+        assert!(summary.contains("wait 500 ms"));
+        assert!(summary.contains("recovery budget at observation 115000 ms"));
+        assert!(summary.contains("response stream interrupted"));
+        attempt.decision = RetryDecision::RecoveryInterrupted;
+        assert!(attempt.summary().contains("previous request is not active"));
     }
     #[test]
     fn every_decision_has_stable_snake_case_encoding() {
@@ -186,6 +224,11 @@ mod tests {
             (RetryDecision::InFlight, "in_flight"),
             (RetryDecision::Completed, "completed"),
             (RetryDecision::RetryScheduled, "retry_scheduled"),
+            (
+                RetryDecision::ContinuationScheduled,
+                "continuation_scheduled",
+            ),
+            (RetryDecision::RecoveryInterrupted, "recovery_interrupted"),
             (RetryDecision::AttemptsExhausted, "attempts_exhausted"),
             (RetryDecision::ElapsedBudget, "elapsed_budget"),
             (RetryDecision::ServerDelayLimit, "server_delay_limit"),

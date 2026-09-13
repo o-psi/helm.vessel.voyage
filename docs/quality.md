@@ -270,7 +270,18 @@ When using a shared build target, retain every current Cargo compiler-artifact
 executable in the LLVM report and exclude historical stale binaries, not workspace
 packages. See [#251](https://github.com/o-psi/voyage/issues/251).
 
-## Provider attempt recovery (#261)
+## Provider attempt recovery (#261, #269)
 
 See [provider failures and recovery](provider-attempts.md) for the focused native
-process fixture, diagnostic contract, timeout semantics and explicit continuation.
+process fixture, diagnostic contract, activity/timeout semantics and bounded
+history-based continuation. The 66 offline cases use Responses, Chat Completions
+and Anthropic loopback endpoints with actual independent Voyage processes. They
+cover connection recovery, interruption/exhaustion, retained partial lineage,
+completed tool-result preservation, activity-only progress and comment-only timeout,
+plus the existing rejection, cancellation, paging and exact-command checks.
+The separate Helm PTY failure check verifies truthful notices after three partial
+attempts exhaust their shared budget. These process checks remain separate from
+workspace Rust coverage. A separate `provider_restart_recovery.py` check kills its
+owned process during backoff, recovers without attestations and verifies no saved
+inference replay after restart before explicitly submitting a new turn. These
+checks do not establish live-provider, WebSocket or native macOS/Windows behavior.

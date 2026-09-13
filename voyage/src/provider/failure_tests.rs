@@ -226,6 +226,7 @@ fn failure_metadata_is_content_free_and_wrappers_preserve_policy() {
         ),
         (ProviderError::Timeout("PRIVATE".into()), "timeout", true),
         (ProviderError::TransportTimeout, "transport_timeout", true),
+        (ProviderError::StreamInterrupted, "stream_interrupted", true),
         (
             ProviderError::Transport("PRIVATE".into()),
             "transport",

@@ -28,6 +28,8 @@ pub struct Target {
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct Message {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupted_attempt: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     #[serde(default)]
     pub message_index: usize,
@@ -53,6 +55,12 @@ pub struct Message {
     pub content: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<voyage_protocol::content::ContentPart>,
+}
+
+impl Message {
+    pub(super) fn interrupted(&self) -> bool {
+        self.role == "assistant" && self.interrupted_attempt.is_some_and(|id| !id.is_nil())
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]

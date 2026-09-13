@@ -100,7 +100,7 @@ async fn locate(
     let mut found = Vec::new();
     for message in &messages {
         if matches!(message.role.as_str(), "user" | "assistant")
-            && (!message.content.is_empty() || !message.parts.is_empty())
+            && (!message.content.is_empty() || !message.parts.is_empty() || message.interrupted())
         {
             group = None;
         }

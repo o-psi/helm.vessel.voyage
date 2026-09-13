@@ -13,6 +13,7 @@ enum Failure {
     Timeout,
     SilentStart,
     Idle,
+    Activity,
     Text,
     Tool,
     Request,
@@ -38,6 +39,9 @@ impl Provider for ProviderFixture {
         match self.failure {
             Failure::SilentStart => futures_util::future::pending().await,
             Failure::Idle => Ok(Box::pin(futures_util::stream::pending())),
+            Failure::Activity => Ok(Box::pin(futures_util::stream::repeat_with(|| {
+                Ok(ProviderStreamEvent::Activity)
+            }))),
             Failure::Timeout => Err(ProviderError::Timeout("SECRET_DIAGNOSTIC".into())),
             Failure::Request => Err(ProviderError::Request("SECRET_DIAGNOSTIC".into())),
             Failure::LongWait => Err(ProviderError::RateLimit {
@@ -216,13 +220,7 @@ async fn execute(
     agent: &Agent,
     checkpoint: &dyn RunCheckpoint,
     cancel: &CancellationToken,
-) -> Result<
-    (
-        crate::model::ModelResponse,
-        Option<crate::inference::Permit>,
-    ),
-    AgentError,
-> {
+) -> Result<provider_attempts::RequestOutcome, AgentError> {
     agent
         .provider_request_attempts(
             request(),
@@ -230,6 +228,7 @@ async fn execute(
             Some(checkpoint),
             &mut String::new(),
             None,
+            &mut provider_attempts::RecoveryState::new(&agent.retry),
         )
         .await
 }
@@ -258,7 +257,8 @@ async fn timeout_exhaustion_is_bounded_attributed_and_secret_safe() {
 }
 
 #[tokio::test]
-async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
+async fn partial_transient_failure_requests_checkpointed_continuation_but_context_rejection_stops()
+{
     for failure in [
         Failure::Text,
         Failure::Tool,
@@ -268,9 +268,13 @@ async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
         let root = tempfile::tempdir().unwrap();
         let (agent, calls, checkpoint, _, _) = fixture(root.path(), failure);
         let result = execute(&agent, &checkpoint, &CancellationToken::new()).await;
-        assert!(result.is_err());
         if matches!(failure, Failure::ContextText) {
-            assert!(result.unwrap_err().is_incomplete());
+            assert!(matches!(result, Err(ref error) if error.is_incomplete()));
+        } else {
+            assert!(matches!(
+                result,
+                Ok(provider_attempts::RequestOutcome::Interrupted(_))
+            ));
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let previews = checkpoint.previews.lock().unwrap();
@@ -283,7 +287,14 @@ async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
             assert_eq!(preview.arguments, "{");
         }
         let records = checkpoint.attempts.lock().unwrap();
-        assert_eq!(records[0].decision, RetryDecision::PartialResponse);
+        assert_eq!(
+            records[0].decision,
+            if matches!(failure, Failure::ContextText) {
+                RetryDecision::PartialResponse
+            } else {
+                RetryDecision::ContinuationScheduled
+            }
+        );
         assert_eq!(records[0].phase, AttemptPhase::Stream);
         if matches!(failure, Failure::TransportText) {
             assert_eq!(records[0].category.as_deref(), Some("transport_timeout"));
@@ -299,7 +310,7 @@ async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
 async fn nonretryable_eof_and_long_server_delay_are_explained_without_early_retry() {
     for (failure, decision) in [
         (Failure::Request, RetryDecision::NonRetryable),
-        (Failure::Eof, RetryDecision::NonRetryable),
+        (Failure::Eof, RetryDecision::AttemptsExhausted),
         (Failure::LongWait, RetryDecision::ServerDelayLimit),
     ] {
         let root = tempfile::tempdir().unwrap();
@@ -309,8 +320,18 @@ async fn nonretryable_eof_and_long_server_delay_are_explained_without_early_retr
                 .await
                 .is_err()
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(checkpoint.attempts.lock().unwrap()[0].decision, decision);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            if matches!(failure, Failure::Eof) {
+                3
+            } else {
+                1
+            }
+        );
+        assert_eq!(
+            checkpoint.attempts.lock().unwrap().last().unwrap().decision,
+            decision
+        );
     }
 }
 
@@ -450,4 +471,28 @@ async fn checkpoint_delay_cannot_dispatch_beyond_retry_window() {
     let rows = checkpoint.0.attempts.lock().unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[1].decision, RetryDecision::ElapsedBudget);
+}
+
+mod continuation_tests;
+
+#[tokio::test]
+async fn activity_flood_remains_cancellable_without_becoming_conversation_text() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, calls, checkpoint, _, _) = fixture(root.path(), Failure::Activity);
+    agent.retry.stream_idle = Duration::from_millis(5);
+    let cancel = CancellationToken::new();
+    let trigger = async {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        cancel.cancel();
+    };
+    let (result, _) = tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::join!(execute(&agent, &checkpoint, &cancel), trigger)
+    })
+    .await
+    .unwrap();
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let rows = checkpoint.attempts.lock().unwrap();
+    assert_eq!(rows[0].decision, RetryDecision::Cancelled);
+    assert!(!rows[0].text_observed && !rows[0].tool_fragment_observed);
 }

@@ -1002,7 +1002,8 @@ impl Agent {
                     }
                 };
                 match event {
-                    crate::provider::ProviderStreamEvent::ResponseMetadata { .. } => {}
+                    crate::provider::ProviderStreamEvent::Activity
+                    | crate::provider::ProviderStreamEvent::ResponseMetadata { .. } => {}
                     crate::provider::ProviderStreamEvent::UsageReported(report) => {
                         self.inference_report(permit.as_ref(), report).await.ok()?
                     }
@@ -1300,23 +1301,46 @@ impl Agent {
                 gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
                     .map_err(|_| CheckpointError)??;
             }
+            let mut provider_recovery = provider_attempts::RecoveryState::new(&self.retry);
             let mut recovery_attempt = 0;
-            let mut rejected_size = None;
             let (response, permit) = loop {
                 let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
                 completion_continuation.project(&mut messages);
                 crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
                 let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
                 completion_continuation.append_to(&mut instructions);
+                if provider_recovery.continuing() || history.iter().any(|message| message.interrupted_attempt.is_some()) {
+                    instructions.push_str("\nHistory contains interrupted assistant response segments. They are incomplete output, not completed answers. Continue the task from that history without repeating the segment. Tool-call fragments from the interrupted response were not executed. Previously recorded tool results remain authoritative: do not repeat completed operations; inspect and reconcile any uncertain effects before acting. Follow the current user request and any later user corrections.\n");
+                }
                 messages.insert(0, Message::new(crate::model::Role::System, instructions));
                 let request = ModelRequest {
                     model: active_model.clone(), messages, tools: self.tools.definitions(),
                     temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
-                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut rejected_size).await;
+                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut provider_recovery).await;
                 match result {
-                    Ok(response) => break response,
+                    Ok(provider_attempts::RequestOutcome::Completed(response, permit)) => break (*response, permit),
+                    Ok(provider_attempts::RequestOutcome::Interrupted(attempt_id)) => {
+                        let prepared: Result<(), AgentError> = async {
+                            let mut segment = Message::new(crate::model::Role::Assistant, partial_output.clone());
+                            segment.interrupted_attempt = Some(attempt_id);
+                            // Even tool-only interruptions retain an identity, without accepting a call.
+                            history.push(segment);
+                            gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+                            partial_output.clear();
+                            provider_recovery.previous_request_size = None;
+                            working_context.prepare(&history).map_err(|_| CheckpointError)?;
+                            if let Some(checkpoint) = checkpoint {
+                                gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?.map_err(|_| CheckpointError)??;
+                            }
+                            Ok(())
+                        }.await;
+                        if let Err(error) = prepared {
+                            provider_recovery.stop_pending(self, checkpoint, &error).await?;
+                            return Err(error);
+                        }
+                    },
                     Err(AgentError::Provider(error)) if error.is_context_length() => {
                         // Stay inside this provider boundary: tools already checkpointed above
                         // are never replayed, and each changed request receives new admission.
@@ -1325,14 +1349,18 @@ impl Agent {
                             changed = working_context.recover(&history, recovery_attempt).map_err(|_| CheckpointError)?;
                             recovery_attempt += 1;
                         }
-                        if changed == 0 { return Err(AgentError::ContextExhausted(None).with_recovery(&history, &usage)); }
+                        if changed == 0 || !provider_recovery.has_attempt(&self.retry) { return Err(AgentError::ContextExhausted(None).with_recovery(&history, &usage)); }
                         if let Some(checkpoint) = checkpoint {
                             gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
                                 .map_err(|_| CheckpointError)??;
                         }
+                        provider_recovery.next_request();
                         tracing::info!(recovery_attempt, compacted_messages=changed, "provider context rejection: durable working context reduced");
                     }
-                    Err(error) => return Err(error.with_recovery(&history, &usage)),
+                    Err(error) => {
+                        provider_recovery.stop_pending(self, checkpoint, &error).await?;
+                        return Err(error.with_recovery(&history, &usage));
+                    },
                 }
             };
             let had_streamed_text = !partial_output.is_empty();
@@ -1623,14 +1651,8 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
         reference: Option<&crate::completion::runtime::RunReference>,
-        previous_request_size: &mut Option<usize>,
-    ) -> Result<
-        (
-            crate::model::ModelResponse,
-            Option<crate::inference::Permit>,
-        ),
-        AgentError,
-    > {
+        recovery: &mut provider_attempts::RecoveryState,
+    ) -> Result<provider_attempts::RequestOutcome, AgentError> {
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
@@ -1674,6 +1696,23 @@ impl Agent {
         for definition in &mut request.tools {
             crate::provider::redact_tool_definition(definition, &self.context.redactor)?;
         }
+        // Empty tool-only interruption markers are local durable evidence, not
+        // valid empty assistant content for every provider.
+        request.messages.retain(|message| {
+            !(message.interrupted_attempt.is_some()
+                && message.content.is_empty()
+                && message.tool_calls.is_empty())
+        });
+        for message in &mut request.messages {
+            if message.interrupted_attempt.is_some()
+                && message.role == crate::model::Role::Assistant
+            {
+                message
+                    .content
+                    .insert_str(0, "[Interrupted assistant response; incomplete]\n");
+                message.provider_state = None;
+            }
+        }
         tool_replay::project_interrupted_calls(&mut request.messages);
         let limit = self.context_limit(&request.model);
         if limit > 0 {
@@ -1689,14 +1728,22 @@ impl Agent {
         // Compare the actual post-redaction, tool-replay and explicit-limit projection.
         // A raw-history decrease is insufficient if preflight had already omitted it.
         let request_size = crate::context::estimate(&request);
-        if previous_request_size
+        if recovery
+            .previous_request_size
             .is_some_and(|previous| request_size.saturating_add(128) >= previous)
         {
             return Err(AgentError::ContextExhausted(None));
         }
-        *previous_request_size = Some(request_size);
-        self.provider_request_attempts(request, cancel, checkpoint, partial_output, reference)
-            .await
+        recovery.previous_request_size = Some(request_size);
+        self.provider_request_attempts(
+            request,
+            cancel,
+            checkpoint,
+            partial_output,
+            reference,
+            recovery,
+        )
+        .await
     }
 
     pub fn workspace(&self) -> &std::path::Path {

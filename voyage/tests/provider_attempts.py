@@ -1,4 +1,4 @@
-"""Focused #261 offline native retry/history/continuation checks; no live provider."""
+"""Focused #261/#269 offline native retry/history/continuation checks; no live provider."""
 import argparse
 import http.server
 import json
@@ -14,7 +14,7 @@ from delivery_recovery import Fixture as BaseFixture, wait_for
 SECRET = 'PRIVATE_PROVIDER_DIAGNOSTIC_261'
 PARTIAL = 'Saved partial answer before interruption. '
 ANSWER = 'Continuation completed with retained history.'
-CASES = ('connection', 'recover', 'exhaust', 'auth', 'quota', 'request', 'long_wait', 'text', 'tool', 'eof', 'cancel', 'silent_headers', 'silent_stream', 'text_idle', 'tool_idle', 'heartbeat', 'cancel_stream')
+CASES = ('connection', 'recover', 'exhaust', 'auth', 'quota', 'request', 'long_wait', 'text', 'tool', 'eof', 'cancel', 'silent_headers', 'silent_stream', 'text_idle', 'tool_idle', 'heartbeat', 'cancel_stream', 'activity', 'recover_text', 'recover_tool', 'recover_after_tool', 'connection_recover')
 MODES = {'responses': 'openai-responses', 'chat': 'openai-chat', 'anthropic': 'anthropic'}
 
 
@@ -72,6 +72,37 @@ def frames(mode, partial=None):
         {'type': 'message_stop'}]
 
 
+def tool_frames(mode):
+    arguments = {'path': 'recovery-effect.txt', 'content': 'Recorded exactly once.'}
+    if mode == 'responses':
+        return [{'type': 'response.completed', 'response': {'id': 'tool269', 'status': 'completed',
+            'output': [{'type': 'function_call', 'call_id': 'completed269', 'name': 'write_file',
+                'arguments': json.dumps(arguments)}], 'usage': {'input_tokens': 1, 'output_tokens': 1}}}]
+    if mode == 'chat':
+        return [{'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': 0,
+            'id': 'completed269', 'type': 'function', 'function': {'name': 'write_file',
+            'arguments': json.dumps(arguments)}}]}, 'finish_reason': None}]},
+            {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]}]
+    return [{'type': 'message_start', 'message': {'id': 'tool269', 'role': 'assistant',
+        'content': [], 'usage': {'input_tokens': 1, 'output_tokens': 0}}},
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'tool_use',
+            'id': 'completed269', 'name': 'write_file', 'input': {}}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'input_json_delta',
+            'partial_json': json.dumps(arguments)}},
+        {'type': 'content_block_stop', 'index': 0},
+        {'type': 'message_delta', 'delta': {'stop_reason': 'tool_use'}, 'usage': {'output_tokens': 1}},
+        {'type': 'message_stop'}]
+
+
+def activity_frame(mode):
+    if mode == 'responses':
+        return {'type': 'response.reasoning_summary_text.delta', 'delta': 'Synthetic reasoning activity.'}
+    if mode == 'chat':
+        return {'choices': [{'index': 0, 'delta': {'reasoning_content': 'Synthetic reasoning activity.'},
+            'finish_reason': None}]}
+    return {'type': 'ping'}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_):
         pass
@@ -84,6 +115,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             mode, case = self.server.scenario
             step = len(self.server.bodies)
             assert body['stream'] is True
+            if case == 'activity':
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.send_header('x-request-id', 'req261')
+                self.end_headers()
+                for _ in range(12):
+                    self.wfile.write(('data: ' + json.dumps(activity_frame(mode)) + '\n\n').encode())
+                    self.wfile.flush()
+                    time.sleep(.04)
+                for value in frames(mode):
+                    self.wfile.write(('data: ' + json.dumps(value) + '\n\n').encode())
+                self.wfile.flush()
+                self.close_connection = True
+                return
+            if case == 'recover_after_tool' and step == 1:
+                self.stream(tool_frames(mode))
+                return
+            if case in ('recover_text', 'recover_tool', 'recover_after_tool'):
+                interrupted_step = 2 if case == 'recover_after_tool' else 1
+                if case == 'recover_after_tool':
+                    effect = self.server.workspace / 'recovery-effect.txt'
+                    assert effect.read_text() == 'Recorded exactly once.'
+                    if step == 2:
+                        self.server.effect_mtime = effect.stat().st_mtime_ns
+                    else:
+                        assert effect.stat().st_mtime_ns == self.server.effect_mtime
+                self.stream(frames(mode, ('tool' if case == 'recover_tool' else 'text')
+                    if step == interrupted_step else None), incomplete=step == interrupted_step)
+                return
             if case == 'silent_headers':
                 time.sleep(1)
                 return
@@ -103,7 +163,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         self.wfile.flush()
                     time.sleep(.02)
                 return
-            if case == 'success' or (case == 'recover' and step == 2):
+            if case in ('success', 'connection_recover') or (case == 'recover' and step == 2):
                 self.stream(frames(mode))
                 return
             if case in ('text', 'tool'):
@@ -147,8 +207,8 @@ def session(fixture, mode, case):
     config.write_text(f'provider = "{MODES[mode]}"\nmodel = "fixture-model"\n'
         f'base_url = "http://127.0.0.1:{0 if case == "connection" else fixture.provider.server_port}/v1"\n'
         f'api_key_required = {str(mode == "anthropic").lower()}\naccess = "unrestricted"\nmax_tokens = 1024\n'
-        'provider_retry_attempts = 3\nprovider_retry_initial_ms = 10\n'
-        f'provider_retry_max_ms = {3000 if case == "cancel" else 40}\n'
+        f'provider_retry_attempts = 3\nprovider_retry_initial_ms = {2000 if case == "connection_recover" else 10}\n'
+        f'provider_retry_max_ms = {3000 if case in ("cancel", "connection_recover") else 40}\n'
         'provider_retry_elapsed_ms = 10000\ncommand_timeout_secs = 2\n'
         f'provider_response_timeout_ms = {100 if case == "silent_headers" else 3000}\n'
         f'provider_stream_idle_ms = {100 if case != "cancel_stream" else 3000}\n')
@@ -233,9 +293,22 @@ def main():
         for case in cases:
             fixture = Fixture(args.bin_dir.resolve())
             fixture.env["ANTHROPIC_API_KEY"] = SECRET
+            deferred_connection = case == 'connection_recover'
+            if deferred_connection:
+                fixture.provider.shutdown()
+                fixture.provider.server_close()
+                fixture.thread.join(timeout=5)
+                fixture.provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler,
+                    bind_and_activate=False)
+                # Reserve the endpoint without listening. It refuses connections
+                # until the first durable recovery observation permits our fixture
+                # to restore service at exactly that address.
+                fixture.provider.server_bind()
+                fixture.thread = threading.Thread(target=fixture.provider.serve_forever, daemon=True)
             fixture.provider.RequestHandlerClass = Handler
             fixture.provider.errors = []
             fixture.provider.times = []
+            fixture.provider.workspace = fixture.workspace
             try:
                 fixture.start()
                 fixture.provider.bodies = []
@@ -245,7 +318,18 @@ def main():
                 original = fixture.submit(sid, 'Remember lighthouse and do the task.')
                 receipt = fixture.command(sid, original)
                 assert receipt['status'] == 'accepted', receipt
+                if case == 'connection_recover':
+                    def refused():
+                        snapshot = fixture.command(sid, {'op': 'snapshot'})
+                        rows = snapshot['run']['provider_attempts']
+                        return rows if rows and rows[-1]['category'] == 'connection' and rows[-1]['decision'] == 'retry_scheduled' else None
+                    refused_rows = wait_for(refused)
+                    assert len(refused_rows) == 1 and not fixture.provider.bodies, refused_rows
+                    fixture.provider.server_activate()
+                    fixture.thread.start()
+                    deferred_connection = False
                 if case in ('cancel', 'cancel_stream'):
+
                     def backoff():
                         s = fixture.command(sid, {'op': 'snapshot'})
                         return s if s['run']['provider_attempts'] and (s['run']['provider_attempts'][-1]['decision'] == 'retry_scheduled' if case == 'cancel' else s['run']['provider_attempts'][-1]['phase'] == 'stream') else None
@@ -256,18 +340,48 @@ def main():
                 saved = fixture.finished(sid)
                 fixture.suspended(sid)
                 attempts = history(fixture, sid, receipt['run_id'])
-                count = {'connection': 3, 'recover': 2, 'exhaust': 3, 'silent_headers': 3, 'silent_stream': 3, 'heartbeat': 3}.get(case, 1)
+                count = {'connection': 3, 'recover': 2, 'exhaust': 3, 'silent_headers': 3, 'silent_stream': 3, 'heartbeat': 3, 'text': 3, 'tool': 3, 'text_idle': 3, 'tool_idle': 3, 'eof': 3, 'recover_text': 2, 'recover_tool': 2, 'recover_after_tool': 3, 'connection_recover': 2}.get(case, 1)
+                received_count = 0 if case == 'connection' else count - (case == 'connection_recover')
                 assert len(attempts) == count, (case, attempts)
-                assert len(fixture.provider.bodies) == (0 if case == 'connection' else count), (case, attempts)
+                assert len(fixture.provider.bodies) == received_count, (case, attempts)
                 decision = {'connection': 'attempts_exhausted', 'recover': 'completed', 'exhaust': 'attempts_exhausted',
-                    'long_wait': 'server_delay_limit', 'text': 'partial_response',
-                    'tool': 'partial_response', 'text_idle': 'partial_response', 'tool_idle': 'partial_response', 'cancel': 'cancelled', 'cancel_stream': 'cancelled', 'silent_headers': 'attempts_exhausted', 'silent_stream': 'attempts_exhausted', 'heartbeat': 'attempts_exhausted'}.get(case, 'non_retryable')
+                    'long_wait': 'server_delay_limit', 'text': 'attempts_exhausted',
+                    'tool': 'attempts_exhausted', 'text_idle': 'attempts_exhausted', 'tool_idle': 'attempts_exhausted', 'cancel': 'cancelled', 'cancel_stream': 'cancelled', 'silent_headers': 'attempts_exhausted', 'silent_stream': 'attempts_exhausted', 'heartbeat': 'attempts_exhausted', 'eof': 'attempts_exhausted', 'activity': 'completed', 'recover_text': 'completed', 'recover_tool': 'completed', 'recover_after_tool': 'completed', 'connection_recover': 'completed'}.get(case, 'non_retryable')
                 last = attempts[-1]['attempt']
                 assert last['decision'] == decision, last
                 assert SECRET not in json.dumps(saved) + json.dumps(attempts)
                 assert len({a['attempt']['attempt_id'] for a in attempts}) == count
-                assert len({a['attempt']['request_id'] for a in attempts}) == 1
-                assert not any(m['role'] == 'tool' for m in saved['messages'])
+                continuing = case in ('text', 'tool', 'text_idle', 'tool_idle', 'recover_text', 'recover_tool', 'recover_after_tool')
+                rows = [a['attempt'] for a in attempts]
+                assert len({a['request_id'] for a in rows}) == (count if continuing else 1)
+                recovery_rows = rows[1:] if case == 'recover_after_tool' else rows
+                assert [a['attempt'] for a in recovery_rows] == list(range(1, len(recovery_rows) + 1))
+                if continuing:
+                    for previous, current in zip(recovery_rows, recovery_rows[1:]):
+                        assert previous['decision'] == 'continuation_scheduled', previous
+                        assert current['retry']['recovery_of'] == previous['attempt_id'], current
+                        assert current['retry']['recovery_deadline_at_ms'] == previous['retry']['recovery_deadline_at_ms']
+                    segments = [m for m in saved['messages'] if m.get('interrupted_attempt')]
+                    assert len(segments) == len(recovery_rows) - 1, saved['messages']
+                    assert [m['interrupted_attempt'] for m in segments] == [a['attempt_id'] for a in recovery_rows[:-1]]
+                    assert all(not m.get('tool_calls') for m in segments)
+                    if case not in ('tool', 'tool_idle', 'recover_tool'):
+                        assert all(m['content'] == PARTIAL for m in segments), segments
+                        assert PARTIAL in json.dumps(fixture.provider.bodies[-1])
+                tool_results = [m for m in saved['messages'] if m['role'] == 'tool']
+                if case == 'recover_after_tool':
+                    assert len(tool_results) == 1 and tool_results[0]['tool_call_id'] == 'completed269', tool_results
+                    assert 'completed269' in json.dumps(fixture.provider.bodies[-1])
+                    assert (fixture.workspace / 'recovery-effect.txt').stat().st_mtime_ns == fixture.provider.effect_mtime
+                else:
+                    assert not tool_results
+                if decision == 'completed':
+                    assert saved['run']['state'] == 'completed', saved['run']
+                    assert saved['messages'][-1]['content'] == ANSWER
+                    assert not saved['messages'][-1].get('interrupted_attempt')
+                if case == 'activity':
+                    assert rows[0]['duration_ms'] >= 400, rows
+                    assert 'Synthetic reasoning activity.' not in json.dumps(saved['messages'])
                 if case not in ('connection', 'silent_headers'):
                     assert last['retry']['upstream_request_id'] == 'req261', last
                     assert last['http_status'] is not None, last
@@ -285,7 +399,7 @@ def main():
                 assert stale.get('error'), stale
                 replay = fixture.command(sid, original)
                 assert replay['run_id'] == receipt['run_id']
-                assert len(fixture.provider.bodies) == (0 if case == 'connection' else count)
+                assert len(fixture.provider.bodies) == received_count
                 # Explicit continuation is a new command, retaining the old run and history.
                 if case in ('text', 'tool'):
                     fixture.provider.scenario = (mode, 'success')
@@ -295,7 +409,7 @@ def main():
                     assert continued['run']['state'] == 'completed', continued['run']
                     assert continued['messages'][:len(saved['messages'])] == saved['messages']
                     assert 'lighthouse' in json.dumps(fixture.provider.bodies[-1])
-                    assert len(history(fixture, sid, receipt['run_id'])) == 1
+                    assert len(history(fixture, sid, receipt['run_id'])) == count
                     fixture.suspended(sid)
                 if mode == 'responses' and case == 'exhaust':
                     helm_attempts(fixture, sid, receipt['run_id'])
@@ -304,6 +418,11 @@ def main():
                     'observation_retries': fixture.observation_retries})
                 assert not fixture.provider.errors, fixture.provider.errors
             finally:
+                if deferred_connection:
+                    # Allow the common fixture cleanup to shut down/join this server
+                    # even if setup or the durable-refusal assertion failed.
+                    fixture.provider.server_activate()
+                    fixture.thread.start()
                 fixture.close()
     print(f'PASS: {len(modes) * len(cases)} selected native failure/retry/history scenarios and observed cleanup')
 

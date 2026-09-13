@@ -36,6 +36,9 @@ pub struct Message {
     /// Durable local message time; absent for legacy history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Local interruption identity; never sent as provider-owned replay state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupted_attempt: Option<uuid::Uuid>,
     pub role: Role,
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,6 +70,7 @@ impl Message {
             coordination: None,
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
+            interrupted_attempt: None,
             role,
             content: content.into(),
             tool_output: None,
@@ -102,6 +106,7 @@ impl Message {
             coordination: None,
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
+            interrupted_attempt: None,
             role: Role::Tool,
             content: content.into(),
             tool_output: None,

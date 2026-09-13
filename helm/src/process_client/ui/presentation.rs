@@ -141,6 +141,17 @@ pub(super) fn voyage_state(snapshot: &super::state::Snapshot) -> &'static str {
     let Some(run) = &snapshot.run else {
         return "Ready";
     };
+    if run.state == "running"
+        && let Some(attempt) = run.provider_attempts.last()
+    {
+        use voyage_protocol::provider_attempt::RetryDecision;
+        match attempt.decision {
+            RetryDecision::RetryScheduled => return "Reconnecting to provider",
+            RetryDecision::ContinuationScheduled => return "Continuing interrupted response",
+            RetryDecision::RecoveryInterrupted => return "Recovery needs attention",
+            _ => {}
+        }
+    }
     if run.state == "completed"
         && snapshot
             .turns
@@ -286,5 +297,56 @@ mod compaction_receipt_tests {
             !receipt(&serde_json::json!({"status":"applied","removed_messages":12}))
                 .contains("history is retained")
         );
+    }
+}
+
+#[cfg(test)]
+mod recovery_status_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn active_recovery_status_tracks_latest_attempt_and_clears_at_run_stop() {
+        let mut snapshot: super::super::state::Snapshot = serde_json::from_value(json!({
+            "session_id":uuid::Uuid::new_v4(),"revision":1,"model":"fixture","messages":[],
+            "run":{"run_id":uuid::Uuid::new_v4(),"state":"running","provider_attempts":[{
+                "request_id":uuid::Uuid::new_v4(),"attempt_id":uuid::Uuid::new_v4(),
+                "provider":"fixture","model":"fixture","attempt":1,"limit":8,
+                "started_at_ms":1,"duration_ms":1,"phase":"backoff","category":"connection",
+                "http_status":null,"text_observed":false,"tool_fragment_observed":false,
+                "retry_delay_ms":1000,"decision":"retry_scheduled"
+            }]}
+        }))
+        .unwrap();
+        assert_eq!(voyage_state(&snapshot), "Reconnecting to provider");
+        use voyage_protocol::provider_attempt::RetryDecision;
+        snapshot.run.as_mut().unwrap().provider_attempts[0].decision =
+            RetryDecision::ContinuationScheduled;
+        assert_eq!(voyage_state(&snapshot), "Continuing interrupted response");
+        for (state, label) in [
+            ("failed", "Needs attention"),
+            ("interrupted", "Interrupted"),
+            ("cancel_requested", "Stopping"),
+            ("cancelled", "Stopped"),
+            ("completed", "Finished"),
+            ("awaiting_decision", "Waiting for you"),
+        ] {
+            snapshot.run.as_mut().unwrap().state = state.into();
+            assert_eq!(voyage_state(&snapshot), label);
+        }
+        snapshot.run.as_mut().unwrap().state = "running".into();
+        let mut next = snapshot.run.as_ref().unwrap().provider_attempts[0].clone();
+        next.attempt_id = uuid::Uuid::new_v4();
+        next.attempt = 2;
+        next.decision = RetryDecision::InFlight;
+        snapshot.run.as_mut().unwrap().provider_attempts.push(next);
+        assert_eq!(voyage_state(&snapshot), "Working");
+        snapshot.run.as_mut().unwrap().provider_attempts[1].decision =
+            RetryDecision::RecoveryInterrupted;
+        assert_eq!(voyage_state(&snapshot), "Recovery needs attention");
+        snapshot.run.as_mut().unwrap().provider_attempts.clear();
+        assert_eq!(voyage_state(&snapshot), "Working");
+        snapshot.run = None;
+        assert_eq!(voyage_state(&snapshot), "Ready");
     }
 }

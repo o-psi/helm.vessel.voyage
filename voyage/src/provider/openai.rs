@@ -161,7 +161,7 @@ struct CallAssembly {
     arguments: String,
 }
 
-fn openai_stream<S>(
+pub(super) fn openai_stream<S>(
     mut source: S,
 ) -> impl futures_util::Stream<Item = Result<ProviderStreamEvent, ProviderError>> + Send
 where
@@ -172,7 +172,7 @@ where
         let mut pending = Vec::new();
         let mut assembly = StreamAssembly::default();
         while let Some(chunk) = source.next().await {
-            pending.extend_from_slice(&chunk.map_err(map_transport)?);
+            pending.extend_from_slice(&chunk.map_err(super::map_stream_transport)?);
             if pending.len() > MAX_SSE_BUFFER_BYTES {
                 Err(ProviderError::InvalidResponse("OpenAI stream event exceeded 4 MiB".into()))?;
             }
@@ -185,11 +185,16 @@ where
                     return;
                 }
                 let value: Value = serde_json::from_slice(data).map_err(|e| ProviderError::InvalidResponse(format!("invalid OpenAI stream event: {e}")))?;
+                if !value.is_object() {
+                    Err(ProviderError::InvalidResponse("OpenAI stream event must be an object".into()))?;
+                }
+                let deltas = apply_stream_chunk(&value, &mut assembly)?;
+                yield ProviderStreamEvent::Activity;
                 if let Some(tier) = super::reported_service_tier(value.get("service_tier")) { assembly.service_tier = Some(tier); }
                 if let Some(usage) = value.get("usage") {
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "prompt_tokens", "completion_tokens")?);
                 }
-                for event in apply_stream_chunk(&value, &mut assembly)? {
+                for event in deltas {
                     yield ProviderStreamEvent::Delta(event);
                 }
             }
@@ -198,7 +203,7 @@ where
             yield ProviderStreamEvent::Completed(Box::new(finish_stream(assembly)?));
             return;
         }
-        Err(ProviderError::InvalidResponse("OpenAI stream ended before [DONE]".into()))?;
+        Err(ProviderError::StreamInterrupted)?;
     }
 }
 
@@ -304,6 +309,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            interrupted_attempt: None,
             coordination: None,
             tool_outcome: None,
             tool_output: None,
@@ -458,6 +464,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: super::reported_service_tier(value.get("service_tier")),
         message: Message {
+            interrupted_attempt: None,
             coordination: None,
             tool_outcome: None,
             tool_output: None,
@@ -493,27 +500,27 @@ mod context_rejection_tests {
     use futures_util::StreamExt;
 
     #[tokio::test]
-    async fn sse_body_transport_failure_is_distinct_from_clean_eof() {
+    async fn sse_body_premature_eof_is_recoverable_interruption() {
         let response = super::super::failure_tests::http_response(200, "0", "data: {", 100).await;
         let stream = openai_stream(response.bytes_stream());
         futures_util::pin_mut!(stream);
         let error = stream.next().await.unwrap().unwrap_err();
-        assert_eq!(error.category(), "transport");
+        assert_eq!(error.category(), "stream_interrupted");
         assert_eq!(error.http_status(), None);
-        assert!(!error.is_retryable());
+        assert!(error.is_retryable());
         assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]
-    async fn truncated_sse_is_not_context_rejection_or_retryable() {
+    async fn truncated_sse_is_recoverable_interruption_not_context_rejection() {
         let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"data: {"))]);
         let stream = openai_stream(source);
         futures_util::pin_mut!(stream);
         let error = stream.next().await.unwrap().unwrap_err();
-        assert_eq!(error.category(), "invalid_response");
+        assert_eq!(error.category(), "stream_interrupted");
         assert_eq!(error.http_status(), None);
         assert!(!error.is_context_length());
-        assert!(!error.is_retryable());
+        assert!(error.is_retryable());
         assert!(stream.next().await.is_none());
     }
 

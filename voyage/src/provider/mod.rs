@@ -41,6 +41,8 @@ pub use openai_responses::OpenAiResponsesProvider;
 #[cfg(test)]
 mod account_identity_tests;
 #[cfg(test)]
+mod activity_tests;
+#[cfg(test)]
 mod failure_tests;
 
 pub(crate) const USAGE_LIMIT_MESSAGE: &str = "Provider account usage limit reached. Wait for the account allowance to reset before sending another message.";
@@ -72,6 +74,10 @@ pub enum ProviderError {
     Timeout(String),
     #[error("provider transport timed out")]
     TransportTimeout,
+    /// The response stream ended before its completion boundary. Recovery must
+    /// preserve observed output and must not replay uncertain tool effects.
+    #[error("provider response stream was interrupted")]
+    StreamInterrupted,
     /// A transport failure does not establish whether the remote effect occurred.
     #[error("provider transport failed: {0}")]
     Transport(String),
@@ -110,6 +116,9 @@ pub enum ProviderDelta {
 
 #[derive(Debug)]
 pub enum ProviderStreamEvent {
+    /// A complete, valid provider data event, including reasoning and protocol
+    /// progress. Resets stream inactivity without exposing provider-only content.
+    Activity,
     /// Internal native accounting metadata; not a public Vessel event.
     UsageReported(ReportedUsage),
     ResponseMetadata {
@@ -327,6 +336,7 @@ impl ProviderError {
             Self::Unavailable(_) => "unavailable",
             Self::Timeout(_) => "timeout",
             Self::TransportTimeout => "transport_timeout",
+            Self::StreamInterrupted => "stream_interrupted",
             Self::Transport(_) => "transport",
             Self::Connection => "connection",
             Self::Request(_) => "request",
@@ -384,6 +394,7 @@ impl ProviderError {
                 | Self::Unavailable(_)
                 | Self::Timeout(_)
                 | Self::TransportTimeout
+                | Self::StreamInterrupted
                 | Self::Connection
         )
     }
@@ -413,6 +424,9 @@ impl ProviderError {
                 "Provider connection timed out before the response completed."
             }
             Self::Transport(_) => "Provider connection failed; request outcome may be uncertain.",
+            Self::StreamInterrupted => {
+                "Provider response stream was interrupted before completion."
+            }
             Self::Connection => "Provider connection could not be established.",
             Self::Request(_) => "Provider request failed.",
             Self::InvalidResponse(_) => "Provider returned an invalid or incomplete response.",
@@ -677,6 +691,43 @@ pub(crate) fn map_transport(error: reqwest::Error) -> ProviderError {
     } else {
         ProviderError::Transport("connection failed; outcome may be uncertain".into())
     }
+}
+
+/// Only stream adapters use this classification: dispatch failures may have an
+/// uncertain request outcome and are not made retryable by a generic I/O error.
+pub(crate) fn map_stream_transport(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        ProviderError::TransportTimeout
+    } else if interrupted_stream_io(&error) {
+        ProviderError::StreamInterrupted
+    } else {
+        map_transport(error)
+    }
+}
+
+fn interrupted_stream_io(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if error
+            .downcast_ref::<hyper::Error>()
+            .is_some_and(|e| e.is_incomplete_message() || e.is_closed())
+        {
+            return true;
+        }
+        if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
+            )
+        }) {
+            return true;
+        }
+        source = error.source();
+    }
+    false
 }
 
 pub(crate) async fn checked_json(

@@ -193,18 +193,20 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     let mut calls = Vec::new();
     for message in messages {
         if matches!(message.role.as_str(), "user" | "assistant")
-            && (!message.content.is_empty() || !message.parts.is_empty())
+            && (!message.content.is_empty() || !message.parts.is_empty() || message.interrupted())
         {
             super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
         }
         if matches!(message.role.as_str(), "user" | "assistant")
-            && (!message.content.is_empty() || !message.parts.is_empty())
+            && (!message.content.is_empty() || !message.parts.is_empty() || message.interrupted())
         {
             let key = Key::Message(message.message_index);
             let final_answer = snapshot.turns.iter().any(|t| {
                 t.phase == "completed" && t.message_end == Some(message.message_index + 1)
             });
-            let label = if message.operator_name.is_some() {
+            let label = if message.interrupted() {
+                "Interrupted response"
+            } else if message.operator_name.is_some() {
                 "Action"
             } else if message.role == "user" {
                 "You"
@@ -776,6 +778,56 @@ mod provider_attempt_tests {
     use super::*;
 
     #[test]
+    fn interrupted_segments_render_distinctly_in_snapshot_and_loaded_history() {
+        use serde_json::json;
+        let session_id = uuid::Uuid::new_v4();
+        let id = uuid::Uuid::new_v4();
+        let mut view = View::new(voyage_protocol::vessel::ProcessInfo {
+            catalogue: None,
+            archive: None,
+            deletion: None,
+            session_id,
+            incarnation: uuid::Uuid::new_v4(),
+            workspace: "/tmp".into(),
+            state: voyage_protocol::process::ProcessState::Live,
+            name: None,
+        });
+        let messages = json!([
+            {"message_index":0,"role":"assistant","content":"retained prefix","interrupted_attempt":id},
+            {"message_index":1,"role":"assistant","content":"","interrupted_attempt":uuid::Uuid::new_v4()},
+            {"message_index":2,"role":"assistant","content":"completed continuation"}
+        ]);
+        view.snapshot = Some(serde_json::from_value(json!({
+            "session_id":session_id,"revision":1,"name":null,"model":"fixture",
+            "messages":messages,"run":null,"total_messages":3,
+            "turns":[{"run_id":uuid::Uuid::new_v4(),"phase":"completed","message_start":0,"message_end":3}]
+        })).unwrap());
+        for loaded in [false, true] {
+            let mut state = State::default();
+            if loaded {
+                state.loaded_revision = Some(1);
+                state.messages = serde_json::from_value(messages.clone()).unwrap();
+            }
+            let rendered = build(&view, &state, 100)
+                .iter()
+                .map(|row| row.line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(rendered.matches("Interrupted response").count(), 2);
+            assert_eq!(rendered.matches("retained prefix").count(), 1);
+            assert_eq!(rendered.matches("completed continuation").count(), 1);
+            assert!(rendered.contains("Answer"));
+            assert!(!rendered.contains(&id.to_string()));
+        }
+        let legacy: Message =
+            serde_json::from_value(json!({"role":"assistant","content":"legacy"})).unwrap();
+        assert!(!legacy.interrupted());
+        let invalid =
+            json!({"role":"assistant","content":"unchanged","interrupted_attempt":"\u{1b}[31m"});
+        assert!(serde_json::from_value::<Message>(invalid).is_err());
+    }
+
+    #[test]
     fn saved_attempts_render_authored_retry_history_not_diagnostics() {
         let run_id = uuid::Uuid::new_v4();
         let turn: super::super::super::state::Turn = serde_json::from_value(serde_json::json!({
@@ -808,7 +860,12 @@ mod provider_attempt_tests {
                 .join(" ")
                 .contains("partial response retained")
         );
-        assert!(text.contains("duplicate effects"));
+        assert!(
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("failure does not permit automatic continuation")
+        );
         assert!(!text.contains("SECRET"));
         assert!(!text.contains('\u{1b}'));
     }

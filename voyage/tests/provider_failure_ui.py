@@ -23,7 +23,7 @@ try:
  send(ui,'/use '+sid+'\r')
  time.sleep(.4)
  send(ui,'Check this synthetic partial response.\r')
- wait_for(lambda:len(f.provider.bodies)==1,timeout=15)
+ wait_for(lambda:len(f.provider.bodies)>=1,timeout=15)
  saved=f.finished(sid)
  f.suspended(sid)
  wait_for(lambda:'Provider request timed out.' in screen(ui),timeout=15)
@@ -33,12 +33,16 @@ try:
  assert 'Request received.' in shown,shown
  assert 'Waiting for the result' not in shown,shown
  assert 'Checking programs' not in shown,shown
- assert 'Program status not current' in shown,shown
+ # A fresh empty inventory may be observed even after suspension; both it and
+ # a stale/unavailable inventory must retain the Console entry without claiming work.
+ assert 'F3 Console' in shown,shown
+ assert shown.count('Interrupted response') == 2,shown
+ assert 'attempt limit reached' in shown,shown
  assert 'Ready to continue' in shown,shown
- assert len(f.provider.bodies)==1
- assert saved['run']['provider_attempts'][-1]['decision']=='partial_response'
+ assert len(f.provider.bodies)==3
+ assert saved['run']['provider_attempts'][-1]['decision']=='attempts_exhausted'
  f.record('failure-status',{'screen':shown,'requests':len(f.provider.bodies),'state':saved['run']['state']})
- print('PASS: actual Helm PTY submit, partial timeout, suspended inventory, truthful receipt and no retry',flush=True)
+ print('PASS: actual Helm PTY submit, partial timeout, suspended inventory, truthful receipt and bounded continuation exhaustion',flush=True)
 finally:
  if ui:stop_pty(ui,wait_for)
  f.close()

@@ -1,4 +1,4 @@
-//! Provider attempts are not tool outcomes. No partial response is replayed.
+//! Bounded provider recovery. Partial responses continue from checkpointed history.
 use super::*;
 use crate::provider::{ProviderDelta, ProviderStreamEvent};
 use futures_util::StreamExt;
@@ -6,6 +6,84 @@ use voyage_protocol::provider_attempt::{AttemptPhase, ProviderAttempt, RetryDeci
 
 fn millis(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+/// One bounded recovery group, including new history-based continuation requests.
+pub(super) struct RecoveryState {
+    request_id: uuid::Uuid,
+    next_attempt: usize,
+    window: Option<tokio::time::Instant>,
+    delay: Duration,
+    recovery_of: Option<uuid::Uuid>,
+    deadline_at_ms: Option<u64>,
+    pending: Option<ProviderAttempt>,
+    pub(super) previous_request_size: Option<usize>,
+}
+impl RecoveryState {
+    pub(super) fn new(policy: &RetryPolicy) -> Self {
+        Self {
+            request_id: uuid::Uuid::new_v4(),
+            next_attempt: 1,
+            window: None,
+            delay: policy.initial_delay,
+            recovery_of: None,
+            deadline_at_ms: None,
+            pending: None,
+            previous_request_size: None,
+        }
+    }
+    fn elapsed(&self) -> Duration {
+        self.window.map(|start| start.elapsed()).unwrap_or_default()
+    }
+    fn begin(&mut self, policy: &RetryPolicy) {
+        if self.window.is_none() {
+            self.window = Some(tokio::time::Instant::now());
+            self.deadline_at_ms = Some(
+                millis(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default(),
+                )
+                .saturating_add(millis(policy.max_elapsed)),
+            );
+        }
+    }
+    pub(super) fn next_request(&mut self) {
+        self.request_id = uuid::Uuid::new_v4();
+    }
+    pub(super) fn has_attempt(&self, policy: &RetryPolicy) -> bool {
+        self.next_attempt <= policy.max_attempts.max(1)
+    }
+    pub(super) async fn stop_pending(
+        &mut self,
+        agent: &Agent,
+        checkpoint: Option<&dyn RunCheckpoint>,
+        error: &AgentError,
+    ) -> Result<(), AgentError> {
+        if let Some(mut record) = self.pending.take() {
+            record.decision = match error {
+                AgentError::Cancelled => RetryDecision::Cancelled,
+                AgentError::Policy(_) => RetryDecision::PolicyRevoked,
+                _ => RetryDecision::LocalFailure,
+            };
+            record.retry.eligible = false;
+            agent.record_provider_attempt(checkpoint, &record).await?;
+        }
+        Ok(())
+    }
+    pub(super) fn continuing(&self) -> bool {
+        self.recovery_of.is_some()
+    }
+}
+
+pub(super) enum RequestOutcome {
+    Completed(
+        Box<crate::model::ModelResponse>,
+        Option<crate::inference::Permit>,
+    ),
+    /// No tools from this response have been admitted. Caller must checkpoint
+    /// its safe text as a distinct interrupted segment before the next request.
+    Interrupted(uuid::Uuid),
 }
 
 impl Agent {
@@ -16,7 +94,7 @@ impl Agent {
         elapsed: Duration,
         delay: Duration,
     ) -> (RetryDecision, Option<Duration>) {
-        if record.text_observed || record.tool_fragment_observed {
+        if (record.text_observed || record.tool_fragment_observed) && !error.is_retryable() {
             return (RetryDecision::PartialResponse, None);
         }
         if !error.is_retryable() {
@@ -37,7 +115,14 @@ impl Agent {
         if elapsed.saturating_add(wait) >= self.retry.max_elapsed {
             return (RetryDecision::ElapsedBudget, None);
         }
-        (RetryDecision::RetryScheduled, Some(wait))
+        (
+            if record.text_observed || record.tool_fragment_observed {
+                RetryDecision::ContinuationScheduled
+            } else {
+                RetryDecision::RetryScheduled
+            },
+            Some(wait),
+        )
     }
 
     async fn record_provider_attempt(
@@ -60,17 +145,10 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
         reference: Option<&crate::completion::runtime::RunReference>,
-    ) -> Result<
-        (
-            crate::model::ModelResponse,
-            Option<crate::inference::Permit>,
-        ),
-        AgentError,
-    > {
-        let request_id = uuid::Uuid::new_v4();
-        let window = tokio::time::Instant::now();
-        let mut delay = self.retry.initial_delay;
-        for attempt in 1..=self.retry.max_attempts.max(1) {
+        recovery: &mut RecoveryState,
+    ) -> Result<RequestOutcome, AgentError> {
+        for attempt in recovery.next_attempt..=self.retry.max_attempts.max(1) {
+            recovery.next_attempt = attempt.saturating_add(1);
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
@@ -91,13 +169,15 @@ impl Agent {
             let started = tokio::time::Instant::now();
             let mut record = ProviderAttempt {
                 retry: voyage_protocol::provider_attempt::RetryObservation {
+                    recovery_of: recovery.recovery_of,
+                    recovery_deadline_at_ms: recovery.deadline_at_ms,
                     response_timeout_ms: Some(millis(self.retry.response_timeout)),
                     stream_idle_ms: Some(millis(self.retry.stream_idle)),
                     max_delay_ms: Some(millis(self.retry.max_delay)),
                     max_elapsed_ms: Some(millis(self.retry.max_elapsed)),
                     ..Default::default()
                 },
-                request_id,
+                request_id: recovery.request_id,
                 attempt_id: permit
                     .as_ref()
                     .map(|p| p.id)
@@ -133,13 +213,19 @@ impl Agent {
                 decision: RetryDecision::InFlight,
             };
             // Durable intent precedes the external request; failure here never dispatches.
-            self.record_provider_attempt(checkpoint, &record).await?;
-            if attempt > 1 && window.elapsed() >= self.retry.max_elapsed {
-                record.decision = RetryDecision::ElapsedBudget;
-                record.retry.elapsed_ms = Some(millis(window.elapsed()));
-                self.record_provider_attempt(checkpoint, &record).await?;
+            if let Err(error) = self.record_provider_attempt(checkpoint, &record).await {
                 self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
                     .await?;
+                return Err(error);
+            }
+            recovery.pending = None;
+            if attempt > 1 && recovery.elapsed() >= self.retry.max_elapsed {
+                record.decision = RetryDecision::ElapsedBudget;
+                record.retry.elapsed_ms = Some(millis(recovery.elapsed()));
+                let saved = self.record_provider_attempt(checkpoint, &record).await;
+                self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
+                    .await?;
+                saved?;
                 return Err(ProviderError::Timeout(
                     "retry admission window elapsed before dispatch".into(),
                 )
@@ -159,10 +245,21 @@ impl Agent {
             match outcome {
                 Ok(response) => {
                     record.decision = RetryDecision::Completed;
-                    self.record_provider_attempt(checkpoint, &record).await?;
-                    return Ok((response, permit));
+                    if let Err(error) = self.record_provider_attempt(checkpoint, &record).await {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Completed,
+                        )
+                        .await?;
+                        return Err(error);
+                    }
+                    return Ok(RequestOutcome::Completed(Box::new(response), permit));
                 }
                 Err(AgentError::Provider(error)) => {
+                    if error.is_retryable() {
+                        recovery.begin(&self.retry);
+                    }
+                    record.retry.recovery_deadline_at_ms = recovery.deadline_at_ms;
                     record.category = Some(error.category().into());
                     record.http_status = error.http_status().or(record.http_status);
                     if let Some(id) = error
@@ -172,17 +269,15 @@ impl Agent {
                         record.retry.upstream_request_id = Some(id.to_owned());
                     }
                     record.retry.server_delay_ms = error.retry_after().map(millis);
-                    record.retry.elapsed_ms = Some(millis(window.elapsed()));
+                    record.retry.elapsed_ms = Some(millis(recovery.elapsed()));
                     record.retry.failure_phase = Some(record.phase.clone());
-                    record.retry.eligible = error.is_retryable()
-                        && !record.text_observed
-                        && !record.tool_fragment_observed;
+                    record.retry.eligible = error.is_retryable();
                     record.retry.provider_code = error.safe_code().map(str::to_owned);
                     let (decision, wait) =
-                        self.retry_decision(&error, &record, window.elapsed(), delay);
+                        self.retry_decision(&error, &record, recovery.elapsed(), recovery.delay);
                     record.decision = decision;
                     record.retry_delay_ms = wait.map(millis);
-                    self.record_provider_attempt(checkpoint, &record).await?;
+                    let saved = self.record_provider_attempt(checkpoint, &record).await;
                     // Failed provider outcome does not mean unbilled, no usage, or a tool failure.
                     if let Err(error) = self
                         .inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
@@ -192,6 +287,7 @@ impl Agent {
                         self.record_provider_attempt(checkpoint, &record).await?;
                         return Err(error);
                     }
+                    saved?;
                     let Some(wait) = wait else {
                         // An explicit context rejection after any delta is interruption,
                         // not permission for the outer compaction loop to replay the request.
@@ -215,7 +311,7 @@ impl Agent {
                     let backoff_start = tokio::time::Instant::now();
                     let stop = self.retry_wait(wait, cancel).await;
                     record.retry.backoff_ms = Some(millis(backoff_start.elapsed()));
-                    record.retry.elapsed_ms = Some(millis(window.elapsed()));
+                    record.retry.elapsed_ms = Some(millis(recovery.elapsed()));
                     if let Err(stop) = stop {
                         record.phase = AttemptPhase::Backoff;
                         record.decision = match &stop {
@@ -226,16 +322,27 @@ impl Agent {
                         return Err(stop);
                     }
                     // Scheduler delay must not cause a late retry beyond the admitted window.
-                    if window.elapsed() >= self.retry.max_elapsed {
+                    if recovery.elapsed() >= self.retry.max_elapsed {
                         record.phase = AttemptPhase::Backoff;
                         record.decision = RetryDecision::ElapsedBudget;
                         self.record_provider_attempt(checkpoint, &record).await?;
                         return Err(error.into());
                     }
                     self.record_provider_attempt(checkpoint, &record).await?;
-                    delay = delay.saturating_mul(2).min(self.retry.max_delay);
+                    recovery.delay = recovery.delay.saturating_mul(2).min(self.retry.max_delay);
+                    if record.text_observed || record.tool_fragment_observed {
+                        recovery.pending = Some(record.clone());
+                        recovery.recovery_of = Some(record.attempt_id);
+                        recovery.request_id = uuid::Uuid::new_v4();
+                        return Ok(RequestOutcome::Interrupted(record.attempt_id));
+                    }
                 }
                 Err(error) => {
+                    self.inference_finish(
+                        permit.as_ref(),
+                        crate::inference::AttemptOutcome::Failed,
+                    )
+                    .await?;
                     record.decision = match &error {
                         AgentError::Cancelled => RetryDecision::Cancelled,
                         AgentError::Policy(_) => RetryDecision::PolicyRevoked,
@@ -285,6 +392,7 @@ impl Agent {
                         request_id.filter(|id| !self.context.redactor.contains_secret(id));
                     self.record_provider_attempt(checkpoint, record).await?;
                 }
+                Some(Ok(ProviderStreamEvent::Activity)) => tokio::task::yield_now().await,
                 Some(Ok(ProviderStreamEvent::UsageReported(report))) => {
                     self.inference_report(permit, report).await?
                 }
@@ -342,10 +450,7 @@ impl Agent {
                 }
                 Some(Err(error)) => return Err(error.into()),
                 None => {
-                    return Err(ProviderError::InvalidResponse(
-                        "provider stream ended without completion".into(),
-                    )
-                    .into());
+                    return Err(ProviderError::StreamInterrupted.into());
                 }
             }
         }

@@ -32,6 +32,14 @@ fn render(value: serde_json::Value, run: Option<Uuid>) -> Result<String> {
         }) {
             out.push_str(&format!("Upstream request {id}\n"));
         }
+        if let Some(previous) = attempt.retry.recovery_of {
+            out.push_str(&format!("Continues interrupted attempt {previous}\n"));
+        }
+        if let Some(deadline) = attempt.retry.recovery_deadline_at_ms {
+            out.push_str(&format!(
+                "Recovery admission deadline: {deadline} ms since Unix epoch\n"
+            ));
+        }
         out.push_str(&format!(
             "Run {id} · Request {}\n{}\n\n",
             attempt.request_id,
@@ -57,7 +65,7 @@ fn render(value: serde_json::Value, run: Option<Uuid>) -> Result<String> {
             run.map(|id| id.to_string()).unwrap_or("all".into())
         ));
     }
-    out.push_str("\nPages are fresh observations; running attempts may change between reads.\nPartial output: review saved text and tool outcomes before explicitly sending a continuation. Unknown tool effects require reconciliation. This view never retries a run. Esc returns to the conversation.");
+    out.push_str("\nPages are fresh observations; running attempts may change between reads.\nScheduled recovery is a saved observation, not proof that a request remains active after a process restart. Interrupted text and completed tool outcomes are retained for continuation. Unknown tool effects require reconciliation. This view never retries a run. Esc returns to the conversation.");
     Ok(out)
 }
 impl App {
@@ -103,5 +111,30 @@ mod tests {
         )
         .unwrap();
         assert!(text.contains("no recorded diagnostic detail"));
+    }
+    #[test]
+    fn continuation_history_exposes_lineage_without_claiming_liveness() {
+        let previous = Uuid::new_v4();
+        let text = render(
+            serde_json::json!({"attempts": [{
+                "run_id": Uuid::new_v4(),
+                "attempt": {
+                    "request_id": Uuid::new_v4(), "attempt_id": Uuid::new_v4(),
+                    "provider": "private", "model": "private", "attempt": 2, "limit": 8,
+                    "started_at_ms": 1, "duration_ms": 3, "phase": "backoff",
+                    "category": "stream_interrupted", "http_status": 200,
+                    "text_observed": true, "tool_fragment_observed": false,
+                    "retry_delay_ms": 1000, "decision": "continuation_scheduled",
+                    "retry": {"recovery_of": previous, "recovery_deadline_at_ms": 120001}
+                }
+            }]}),
+            None,
+        )
+        .unwrap();
+        assert!(text.contains(&format!("Continues interrupted attempt {previous}")));
+        assert!(text.contains("history-based continuation scheduled"));
+        assert!(text.contains("Recovery admission deadline: 120001"));
+        assert!(text.contains("not proof that a request remains active"));
+        assert!(!text.contains("private"));
     }
 }

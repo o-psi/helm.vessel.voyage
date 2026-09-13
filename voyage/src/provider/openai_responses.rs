@@ -523,25 +523,31 @@ where
     async_stream::try_stream! {
         let mut pending=Vec::new();let mut assembly=Assembly::default();
         while let Some(chunk)=source.next().await {
-            pending.extend_from_slice(&chunk.map_err(map_transport)?);
+            pending.extend_from_slice(&chunk.map_err(super::map_stream_transport)?);
             if pending.len()>MAX_SSE_BUFFER_BYTES{Err(ProviderError::InvalidResponse("OpenAI Responses stream event exceeded 4 MiB".into()))?;}
             while let Some(frame)=super::openai::take_sse_frame(&mut pending){let data=super::openai::sse_data(&frame);if data.is_empty(){continue}let event:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid OpenAI Responses stream event: {e}")))?;
+                if !event.is_object() {
+                    Err(ProviderError::InvalidResponse("OpenAI Responses stream event must be an object".into()))?;
+                }
+                let kind=event.get("type").and_then(Value::as_str).unwrap_or_default();
+                if matches!(kind, "response.failed" | "response.incomplete" | "response.cancelled" | "error") {
+                    Err(decode_stream_error(&event))?;
+                }
+                yield ProviderStreamEvent::Activity;
                 if let Some(usage) = event.pointer("/response/usage") {
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
                 }
-                let kind=event.get("type").and_then(Value::as_str).unwrap_or_default();
                 match kind {
                     "response.output_text.delta"=>if let Some(delta)=event.get("delta").and_then(Value::as_str){assembly.content.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::Text(delta.into()));},
                     "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
                     "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},
                     "response.output_item.done"=>merge_output_item(&event,&mut assembly)?,
                     "response.completed"=>{if let Some(response)=event.get("response"){validate_status(response)?;merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(Box::new(finish(assembly)?));return},
-                    "response.failed"|"response.incomplete"|"response.cancelled"|"error"=>Err(decode_stream_error(&event))?,
                     _=>{}
                 }
             }
         }
-        Err(ProviderError::InvalidResponse("OpenAI Responses stream ended before response.completed".into()))?;
+        Err(ProviderError::StreamInterrupted)?;
     }
 }
 fn merge_output_item(event: &Value, assembly: &mut Assembly) -> Result<(), ProviderError> {
@@ -637,6 +643,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            interrupted_attempt: None,
             coordination: None,
             tool_outcome: None,
             tool_output: None,
@@ -812,27 +819,27 @@ mod context_rejection_tests {
 
     // ChatGPT OAuth and native Responses both use this stream decoder.
     #[tokio::test]
-    async fn sse_body_transport_failure_is_distinct_from_clean_eof() {
+    async fn sse_body_premature_eof_is_recoverable_interruption() {
         let response = super::super::failure_tests::http_response(200, "0", "data: {", 100).await;
         let stream = responses_stream(response.bytes_stream());
         futures_util::pin_mut!(stream);
         let error = stream.next().await.unwrap().unwrap_err();
-        assert_eq!(error.category(), "transport");
+        assert_eq!(error.category(), "stream_interrupted");
         assert_eq!(error.http_status(), None);
-        assert!(!error.is_retryable());
+        assert!(error.is_retryable());
         assert!(stream.next().await.is_none());
     }
 
     #[tokio::test]
-    async fn truncated_sse_is_not_context_rejection_or_retryable() {
+    async fn truncated_sse_is_recoverable_interruption_not_context_rejection() {
         let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"data: {"))]);
         let stream = responses_stream(source);
         futures_util::pin_mut!(stream);
         let error = stream.next().await.unwrap().unwrap_err();
-        assert_eq!(error.category(), "invalid_response");
+        assert_eq!(error.category(), "stream_interrupted");
         assert_eq!(error.http_status(), None);
         assert!(!error.is_context_length());
-        assert!(!error.is_retryable());
+        assert!(error.is_retryable());
         assert!(stream.next().await.is_none());
     }
 

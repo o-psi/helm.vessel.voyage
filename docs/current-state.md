@@ -917,10 +917,19 @@ read-only mode are not started by a mid-run access change.
 ## Provider attempt diagnostics
 
 Provider failures retain sanitized attempt history and explicit retry-stop reasons.
-Native connection refusal, bounded retries, response-start and decoded-event idle
-timeouts, and Helm `/attempts` inspection are described in
-[provider failures and recovery](provider-attempts.md). Partial-output failures
-require explicit continuation; uncertain effects are not automatically replayed.
+Native HTTP/SSE recovery counts decoded provider activity, including reasoning-only
+progress, toward stream liveness without publishing private reasoning. Connection
+failures and typed stream interruptions, including premature EOF, recover within
+bounded attempts and admission time. The default eight-attempt group includes new
+history-based requests after partial output; its 120-second admission window starts
+at the first recoverable failure. Safe partial text is checkpointed as a distinct
+interrupted segment, and continuation stays within the same run. Partial tool
+arguments are never executed, completed tool results remain in context, and
+uncertain effects are not automatically replayed. Restart marks pending recovery
+interrupted and requires an explicit later turn to execute again. Authentication,
+quota and malformed responses do not trigger automatic retry. Provider WebSockets
+are not implemented. See [provider failures and recovery](provider-attempts.md) for
+exact classifications, limits, retained lineage and Helm `/attempts` inspection.
 
 ## Live tool-call generation
 
