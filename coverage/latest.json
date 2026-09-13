@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-13T04:36:22.365916+00:00",
+  "measured_at_utc": "2026-09-13T15:03:28.463481+00:00",
   "source": {
-    "commit": "51359551f99d9827419250aa132d265845a3adfb",
+    "commit": "cb2fd96b4fd8f269067c78b902dc260587f473f5",
     "dirty": true,
-    "fingerprint_sha256": "49bc4bd1d3e06095f92ab1f030c76f3c1f2baf9ac415cab6e087abba51306215",
+    "fingerprint_sha256": "e7767193f2832191bee79ed0f3fd8cbe8d488e8456f176f4b6d96e50f1ec9509",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null",
-    "note": "Source unchanged through tests and current-artifact export. Dirty source includes issue #269 and preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not delivered."
+    "note": "Source unchanged through tests and current-artifact export. Dirty source includes issue #270 and preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue269-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue270-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,26 +23,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 403,
+    "passed": 406,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 92612,
-      "covered": 32116,
-      "percent": 34.67801148879195
+      "count": 92774,
+      "covered": 32368,
+      "percent": 34.88908530407226
     },
     "functions": {
-      "count": 9113,
-      "covered": 3046,
-      "percent": 33.42477778997037
+      "count": 9126,
+      "covered": 3068,
+      "percent": 33.61823361823362
     },
     "regions": {
-      "count": 151441,
-      "covered": 50956,
-      "notcovered": 100485,
-      "percent": 33.64742705079866
+      "count": 151657,
+      "covered": 51376,
+      "notcovered": 100281,
+      "percent": 33.87644487231054
     }
   },
   "report_selection": {
@@ -64,8 +64,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected export includes all 11 current workspace executable artifacts and no duplicate logical sources or mismatched functions.",
-    "First measurement found one outdated Helm wording assertion (402 passed, 1 failed, 1 ignored); its evidence is preserved. Full measurement after correcting the assertion passed.",
-    "Prior comparison: lines +0.6882 percentage points, functions +0.4366 percentage points, regions +0.6854 percentage points.",
+    "Prior comparison: lines +0.2111 percentage points, functions +0.1935 percentage points, regions +0.2290 percentage points.",
     "No live-provider or native macOS/Windows claim. Coverage measures execution, not correctness."
   ]
 }

@@ -55,6 +55,13 @@ an intermediate disconnected state, but cannot hide the loss counter. Explicit
 voyage. Reconnection of a retired route needs a new activation generation. This
 is distinct from an explicit run cancellation command and from observed cleanup.
 
+Helm retires an individual event subscription when its reader closes or its bounded
+queue fills. The observer refreshes canonical state and resumes from its durable
+cursor; unrelated commands and private account views retain the same socket.
+Cancelled subscription acknowledgements are explicitly unsubscribed, and reader
+cleanup cannot send a duplicate unsubscribe. Actual transport loss still applies
+the connection-loss fence and clears private material.
+
 ## Browser extension and private traffic
 
 The same socket supports typed `ReverseRequest::BrowserWork` metadata and a correlated

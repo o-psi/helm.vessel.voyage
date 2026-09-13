@@ -134,7 +134,9 @@ impl PendingReply {
     fn closed(&self) -> bool {
         match self {
             Self::Command(tx) => tx.is_closed(),
-            Self::Subscribe { reply, .. } => reply.is_closed(),
+            // Retain cancelled subscriptions until acknowledgement or timeout so
+            // the server always receives their unsubscribe.
+            Self::Subscribe { .. } => false,
         }
     }
     fn fail(self) {
@@ -396,7 +398,11 @@ impl Slot {
         Ok(Box::pin(async_stream::try_stream! {
             let _guard = guard;
             while let Some(event) = receiver.recv().await { yield event?; }
-            Err(anyhow::anyhow!("Vessel socket event subscription ended; reconnect from durable cursor"))?;
+            // Local subscription retirement requests a fresh observation without
+            // presenting a healthy route as disconnected.
+            if _guard.0.stop.is_cancelled() {
+                Err(anyhow::anyhow!("Vessel socket event subscription ended; reconnect from durable cursor"))?;
+            }
         }))
     }
 }
@@ -450,13 +456,17 @@ async fn run(
     let mut last_received = tokio::time::Instant::now();
     let result: Result<()> = async {
       loop {
+        let mut cleanup = Vec::new();
         let send = tokio::select! {
             _ = stop.cancelled() => break,
             _ = tick.tick() => {
                 ensure!(last_received.elapsed() < Duration::from_secs(DEADLINE_SECONDS), "Vessel socket heartbeat expired");
                 let now = tokio::time::Instant::now();
                 let expired: Vec<_> = pending.iter().filter(|(_,p)| p.deadline <= now || p.reply.closed()).map(|(id,_)|*id).collect();
-                for id in expired { if let Some(p) = pending.remove(&id) { p.reply.fail(); } }
+                for id in expired { if let Some(p) = pending.remove(&id) {
+                    if matches!(&p.reply, PendingReply::Subscribe{..}) { cleanup.push(encoded(&ClientFrame::Unsubscribe{subscription_id:id})?); }
+                    p.reply.fail();
+                } }
                 Some(Message::Ping(Vec::new().into()))
             },
             Some((id, reply)) = reverse_pending.next(), if !reverse_pending.is_empty() => {
@@ -466,7 +476,10 @@ async fn run(
             item = receiver.recv() => {
                 let Some(item) = item else { break; };
                 match item {
-                    Outbound::Unsubscribe(id) => { subscriptions.remove(&id); Some(encoded(&ClientFrame::Unsubscribe{subscription_id:id})?) },
+                    Outbound::Unsubscribe(id) => {
+                        if subscriptions.remove(&id).is_none() { continue; }
+                        Some(encoded(&ClientFrame::Unsubscribe{subscription_id:id})?)
+                    },
                     Outbound::Command{request,reply} => {
                         if reply.is_closed() { continue; }
                         if pending.len() >= MAX_IN_FLIGHT { let _ = reply.send(Err(super::transport::Refusal("Vessel in-flight limit; request not sent".into()).into())); continue; }
@@ -506,7 +519,7 @@ async fn run(
                                 if let Some(p)=pending.remove(&request_id) {
                                     let PendingReply::Subscribe{reply,subscription}=p.reply else {anyhow::bail!("Vessel reply type mismatch");};
                                     subscriptions.insert(request_id,subscription);
-                                    if reply.send(Ok(request_id)).is_err() { subscriptions.remove(&request_id); return Err(anyhow::anyhow!("abandoned Vessel subscription")); }
+                                    if reply.send(Ok(request_id)).is_err() { subscriptions.remove(&request_id); cleanup.push(encoded(&ClientFrame::Unsubscribe{subscription_id:request_id})?); }
                                 }
                             },
                             ServerFrame::Event{subscription_id,event} => {
@@ -517,7 +530,12 @@ async fn run(
                                         ensure!(event.result.get("owner_changed")==Some(&serde_json::Value::Bool(true)) && event.result.get("replay_gap")==Some(&serde_json::Value::Bool(true)), "Vessel event incarnation mismatch");
                                         *incarnation=event.incarnation;
                                     }
-                                    subscription.events.try_send(Ok(event)).map_err(|_|anyhow::anyhow!("Vessel event consumer stalled"))?;
+                                    // Reader replacement and bounded backlog are subscription-local.
+                                    // Closing its stream makes the observer recover from its durable cursor.
+                                    if subscription.events.try_send(Ok(event)).is_err() {
+                                        subscriptions.remove(&subscription_id);
+                                        cleanup.push(encoded(&ClientFrame::Unsubscribe{subscription_id})?);
+                                    }
                                 }
                             },
                             ServerFrame::ReverseRequest{request_id,request} => {
@@ -534,7 +552,8 @@ async fn run(
                 }
             }
         };
-        if let Some(message)=send { tokio::time::timeout(Duration::from_secs(5),sink.send(message)).await.map_err(|_|anyhow::anyhow!("Vessel socket write stalled"))?.map_err(|_|anyhow::anyhow!("Vessel socket write failed"))?; }
+        cleanup.extend(send);
+        for message in cleanup { tokio::time::timeout(Duration::from_secs(5),sink.send(message)).await.map_err(|_|anyhow::anyhow!("Vessel socket write stalled"))?.map_err(|_|anyhow::anyhow!("Vessel socket write failed"))?; }
       }
       Ok(())
     }.await;
@@ -615,5 +634,172 @@ mod terminal_socket_tests {
                 .is_err()
         );
         assert!(receiver.try_recv().is_err());
+    }
+}
+
+#[cfg(test)]
+mod subscription_tests {
+    use super::*;
+    use voyage_protocol::vessel::VesselEventSubscription;
+
+    type Peer = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+    async fn frame(peer: &mut Peer) -> ClientFrame {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                match peer.next().await.unwrap().unwrap() {
+                    Message::Text(text) => return serde_json::from_str(&text).unwrap(),
+                    Message::Ping(bytes) => peer.send(Message::Pong(bytes)).await.unwrap(),
+                    Message::Pong(_) => {}
+                    _ => panic!("shared socket closed"),
+                }
+            }
+        })
+        .await
+        .expect("socket response deadline")
+    }
+    async fn send(peer: &mut Peer, frame: ServerFrame) {
+        peer.send(Message::Text(serde_json::to_string(&frame).unwrap().into()))
+            .await
+            .unwrap();
+    }
+
+    // Exercise the real socket actor, including queued reader-drop cleanup after
+    // actor-side retirement. Vessel rejects duplicate unsubscribe identifiers.
+    async fn reader_retirement(cancel_ack: bool, close_reader: bool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            tokio_tungstenite::accept_async(listener.accept().await.unwrap().0)
+                .await
+                .unwrap()
+        });
+        let (socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        let mut peer = server.await.unwrap();
+        let (sender, receiver) = mpsc::channel(8);
+        let stop = CancellationToken::new();
+        let socket_id = Uuid::new_v4();
+        let state = watch::channel(ConnectionState {
+            socket_id: Some(socket_id),
+            loss_generation: 0,
+        })
+        .0;
+        let observed = state.subscribe();
+        let task = tokio::spawn(run(
+            socket,
+            receiver,
+            stop.clone(),
+            socket_id,
+            Arc::new(Mutex::new(None)),
+            state,
+        ));
+        let session_id = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let (events, event_reader) = mpsc::channel(1);
+        let (reply, acknowledged) = oneshot::channel();
+        sender
+            .send(Outbound::Subscribe {
+                request: VesselEventRequest {
+                    protocol: VESSEL_API_VERSION,
+                    subscriptions: vec![VesselEventSubscription {
+                        session_id,
+                        incarnation,
+                        after: 0,
+                    }],
+                },
+                events,
+                reply,
+            })
+            .await
+            .unwrap();
+        let ClientFrame::Subscribe { request_id, .. } = frame(&mut peer).await else {
+            panic!("expected subscribe")
+        };
+        if cancel_ack {
+            drop(acknowledged);
+        } else {
+            send(&mut peer, ServerFrame::Subscribed { request_id }).await;
+            assert_eq!(acknowledged.await.unwrap().unwrap(), request_id);
+        }
+        if close_reader {
+            drop(event_reader);
+        }
+        if cancel_ack {
+            // Cross a cleanup tick: caller cancellation must retain correlation
+            // until the server acknowledgement can be explicitly retired.
+            tokio::time::sleep(Duration::from_secs(HEARTBEAT_SECONDS + 1)).await;
+            send(&mut peer, ServerFrame::Subscribed { request_id }).await;
+        } else {
+            for _ in 0..2 {
+                send(
+                    &mut peer,
+                    ServerFrame::Event {
+                        subscription_id: request_id,
+                        event: VesselEvent {
+                            protocol: VESSEL_API_VERSION,
+                            session_id,
+                            incarnation,
+                            result: serde_json::json!({"cursor": 1}),
+                            error: None,
+                            outcome_unknown: false,
+                        },
+                    },
+                )
+                .await;
+            }
+        }
+        let ClientFrame::Unsubscribe { subscription_id } = frame(&mut peer).await else {
+            panic!("expected unsubscribe")
+        };
+        assert_eq!(subscription_id, request_id);
+        // Simulate the reader guard completing its own drop after retirement.
+        sender
+            .send(Outbound::Unsubscribe(request_id))
+            .await
+            .unwrap();
+        let (reply, response) = oneshot::channel();
+        sender
+            .send(Outbound::Command {
+                request: Box::new(VesselRequest {
+                    protocol: VESSEL_API_VERSION,
+                    command: VesselCommand::Capabilities,
+                }),
+                reply,
+            })
+            .await
+            .unwrap();
+        let ClientFrame::Command { request_id, .. } = frame(&mut peer).await else {
+            panic!("duplicate unsubscribe or lost command")
+        };
+        send(
+            &mut peer,
+            ServerFrame::Reply {
+                request_id,
+                response: VesselResponse {
+                    protocol: VESSEL_API_VERSION,
+                    result: serde_json::json!({"alive": true}),
+                    error: None,
+                    outcome_unknown: false,
+                },
+            },
+        )
+        .await;
+        assert_eq!(response.await.unwrap().unwrap().result["alive"], true);
+        assert_eq!(observed.borrow().socket_id, Some(socket_id));
+        assert_eq!(observed.borrow().loss_generation, 0);
+        stop.cancel();
+        assert!(task.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn closed_event_reader_preserves_shared_socket() {
+        reader_retirement(false, true).await;
+    }
+    #[tokio::test]
+    async fn full_event_reader_preserves_shared_socket() {
+        reader_retirement(false, false).await;
+    }
+    #[tokio::test]
+    async fn cancelled_subscription_ack_preserves_shared_socket() {
+        reader_retirement(true, false).await;
     }
 }
