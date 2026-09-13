@@ -46,3 +46,5 @@ pub mod accounts;
 
 #[cfg(unix)]
 pub mod catalogue;
+
+pub mod start_settings;

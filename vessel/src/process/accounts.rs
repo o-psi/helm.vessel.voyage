@@ -612,6 +612,81 @@ impl Supervisor {
 }
 
 impl Supervisor {
+    async fn start_settings(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        base_config_path: Option<PathBuf>,
+        settings: voyage_protocol::start_settings::StartSettings,
+        binding: Option<AccountBinding>,
+        original: VesselCommand,
+    ) -> Result<Value> {
+        ensure!(
+            !command_id.is_nil() && !session_id.is_nil(),
+            "session and command IDs must be nonnil"
+        );
+        let workspace = workspace.canonicalize()?;
+        let directory = self.directory.join("account-launch");
+        let config_path = directory.join(format!("{session_id}-{command_id}-settings.json"));
+        let request_path = directory.join(format!("{session_id}-{command_id}-request.json"));
+        let lock = {
+            let mut locks = self.lifecycle_locks.lock().await;
+            locks
+                .entry(session_id)
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        let _lock = lock.lock().await;
+        // Bind the exact public request before retaining private host configuration.
+        registry::command_record(&self.directory, command_id, &original, false).await?;
+        registry::private_directory(&directory)?;
+        let request = serde_json::to_value(&original)?;
+        if request_path.exists() {
+            let prior: Value = store::load_bounded(&request_path, 1024 * 1024)?;
+            ensure!(prior == request, "settings start request conflict");
+        } else {
+            store::save_bounded(&request_path, &request, 1024 * 1024)?;
+        }
+        if config_path.exists() {
+            // Never recapture mutable defaults for a retry. Resolution rechecks policy ceilings.
+            store::load_bounded::<voyage_runtime::launch_config::LaunchConfig>(
+                &config_path,
+                1024 * 1024,
+            )?
+            .resolve(&workspace)?;
+        } else {
+            let mut config = if let Some(path) = &base_config_path {
+                ensure!(
+                    path.is_absolute(),
+                    "configuration must be an absolute host file"
+                );
+                store::load_bounded::<voyage_runtime::launch_config::LaunchConfig>(
+                    path,
+                    1024 * 1024,
+                )?
+                .resolve(&workspace)?
+            } else {
+                voyage_runtime::Config::load(None)?
+            };
+            if let Some(account) = binding {
+                config.select_account(account)?;
+            }
+            voyage_runtime::start_settings::apply(&mut config, &settings)?;
+            let launch = voyage_runtime::launch_config::LaunchConfig::capture(&config, &workspace)?;
+            store::save_bounded(&config_path, &launch, 1024 * 1024)?;
+        }
+        self.start_initialized(
+            command_id,
+            session_id,
+            workspace,
+            Some(config_path),
+            None,
+            original,
+        )
+        .await
+    }
+
     async fn start_account(&self, command: VesselCommand, scope: Scope) -> Result<Value> {
         let (
             resolve,
@@ -624,6 +699,55 @@ impl Supervisor {
             reasoning_effort,
             service_tier,
         ) = match &command {
+            VesselCommand::StartSettings {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+                settings,
+                binding,
+            } => {
+                let right = match &scope {
+                    Scope::Session(_) => ProcessRight::Lifecycle,
+                    _ => ProcessRight::Create,
+                };
+                scope.check(&self.directory, workspace, right)?;
+                ensure!(
+                    matches!(scope, Scope::Owner) || config_path.is_none(),
+                    "scoped starts cannot select host configuration files"
+                );
+                let account = if let Some(account) = binding {
+                    account.clone()
+                } else if let Some(path) = config_path {
+                    store::load_bounded::<voyage_runtime::launch_config::LaunchConfig>(
+                        path,
+                        1024 * 1024,
+                    )?
+                    .resolve(workspace)?
+                    .account
+                    .ok_or_else(|| anyhow::anyhow!("configuration has no account"))?
+                } else {
+                    voyage_runtime::accounts::Registry::default_host()?
+                        .default_account()?
+                        .1
+                        .ok_or_else(|| anyhow::anyhow!("default_account_required"))?
+                };
+                scope.use_account(&self.directory, workspace, &account)?;
+                if let Scope::Connection(grant) = &scope {
+                    self.connection_session(grant, *session_id, workspace)?;
+                }
+                return self
+                    .start_settings(
+                        *command_id,
+                        *session_id,
+                        workspace.clone(),
+                        config_path.clone(),
+                        settings.clone(),
+                        Some(account),
+                        command.clone(),
+                    )
+                    .await;
+            }
             VesselCommand::StartAccount {
                 command_id,
                 session_id,

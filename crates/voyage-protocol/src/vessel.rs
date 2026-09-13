@@ -528,6 +528,14 @@ pub enum VesselCommand {
         workspace: PathBuf,
         account: crate::accounts::AccountBinding,
     },
+    StartSettings {
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: Option<PathBuf>,
+        settings: crate::start_settings::StartSettings,
+        binding: Option<crate::accounts::AccountBinding>,
+    },
     StartAccount {
         command_id: Uuid,
         session_id: Uuid,

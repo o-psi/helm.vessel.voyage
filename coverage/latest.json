@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-13T01:30:18.800987+00:00",
+  "measured_at_utc": "2026-09-13T02:50:07.806654+00:00",
   "source": {
-    "commit": "50f7b9bfaeac6ca67edbfdc716ad116255ce46dd",
+    "commit": "1d05d5f0da5d2654657645344d0f42e358fdf092",
     "dirty": true,
-    "fingerprint_sha256": "d5f75fec5c5c5ea9dbe3f9e60905d36cb896ecffc6575b82923772e31b7667b2",
+    "fingerprint_sha256": "4f3a3014b4fd23406dbd743ca96e7c79ff07653be45e9c09e09c6ea679412968",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null",
-    "note": "Primary checkout, measured source unchanged through tests and current-artifact export. Dirty source includes the issue #266 checkpoint fix and preserved unrelated rendering comments and deleted auxiliary scripts/Python fixtures; unrelated changes are not part of this delivery."
+    "note": "Primary checkout measured unchanged through tests and current-artifact export. Includes issue #267 settings changes and preserved unrelated staged rendering comments and deleted auxiliary scripts/Python fixtures; unrelated changes are not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue266-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue267-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +23,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 380,
+    "passed": 384,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 91813,
-      "covered": 31087,
-      "percent": 33.85903956955987
+      "count": 92066,
+      "covered": 31224,
+      "percent": 33.914800251993135
     },
     "functions": {
-      "count": 9059,
-      "covered": 2978,
-      "percent": 32.87338558339773
+      "count": 9078,
+      "covered": 2989,
+      "percent": 32.92575457149152
     },
     "regions": {
-      "count": 150039,
-      "covered": 49251,
-      "notcovered": 100788,
-      "percent": 32.825465379001464
+      "count": 150492,
+      "covered": 49499,
+      "notcovered": 100993,
+      "percent": 32.891449379369
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 436,
+    "logical_source_files": 438,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report preserved but not published because it includes historical objects. Current Cargo artifact export retains all 11 current workspace executables, with no duplicate logical sources or mismatched functions.",
-    "Prior comparison: lines +0.3388 percentage points, functions +0.3925 percentage points, regions +0.2982 percentage points.",
+    "Prior comparison: lines +0.0558 percentage points, functions +0.0524 percentage points, regions +0.0660 percentage points.",
     "No live-provider or native macOS/Windows claim. Synthetic Linux process and Helm PTY checks are separate. Coverage measures execution, not correctness."
   ]
 }

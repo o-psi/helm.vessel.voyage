@@ -349,3 +349,14 @@ fn search_output_rewinds_to_withheld_match_and_reports_unsearched_records() {
         .validate(&shown["next_read"])
         .unwrap();
 }
+
+#[test]
+fn create_settings_schema_matches_typed_overrides() {
+    let schema = CompiledSchema::compile(&input_schema()).unwrap();
+    let mut request = json!({"action":"create","command_id":Uuid::new_v4(),"session_id":Uuid::new_v4(),"workspace":"/workspace","task":"task","settings":{"access_mode":"unrestricted","reasoning_effort":null,"max_output_tokens":2048}});
+    schema.validate(&request).unwrap();
+    serde_json::from_value::<Action>(request.clone()).unwrap();
+    request["settings"]["env"] = json!({"SECRET":"no"});
+    assert!(schema.validate(&request).is_err());
+    assert!(serde_json::from_value::<Action>(request).is_err());
+}

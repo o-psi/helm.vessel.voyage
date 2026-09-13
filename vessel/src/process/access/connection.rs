@@ -47,6 +47,7 @@ impl Supervisor {
             | VesselCommand::AccountSetDefault { .. }
             | VesselCommand::AccountModels { .. }
             | VesselCommand::StartAccount { .. }
+            | VesselCommand::StartSettings { .. }
             | VesselCommand::ResolveStartAccount { .. }
             | VesselCommand::EnrollAccount { .. }
             | VesselCommand::CancelAccountEnrollment { .. }

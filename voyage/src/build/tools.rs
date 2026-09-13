@@ -137,10 +137,10 @@ pub(crate) fn builtin_tools(config: &Config) -> ToolRegistry {
         config.terminal_max_unread_bytes,
     );
     if config.vessel.enabled {
-        tools.register(crate::tools::VesselTool::new(
-            config.vessel.clone(),
-            config.vessel_context.clone(),
-        ));
+        tools.register(
+            crate::tools::VesselTool::new(config.vessel.clone(), config.vessel_context.clone())
+                .with_launch(config),
+        );
     }
     if config.github_enabled && crate::github::Credential::from_config(config).is_some() {
         tools.register(crate::github::tool::GithubTool);

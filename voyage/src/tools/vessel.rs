@@ -82,6 +82,7 @@ pub struct VesselTool {
     settings: VesselSettings,
     context: Option<VesselContext>,
     pages: std::sync::Arc<pagination::Pages>,
+    launch: Option<crate::Config>,
 }
 impl VesselTool {
     pub fn new(settings: VesselSettings, context: Option<VesselContext>) -> Self {
@@ -89,7 +90,12 @@ impl VesselTool {
             settings,
             context,
             pages: Default::default(),
+            launch: None,
         }
+    }
+    pub fn with_launch(mut self, config: &crate::Config) -> Self {
+        self.launch = Some(config.clone());
+        self
     }
     fn local(&self) -> Result<&Path, ToolError> {
         self.context
@@ -99,6 +105,20 @@ impl VesselTool {
             .ok_or_else(|| failed("local Vessel discovery is not configured"))
     }
 }
+
+fn create_settings_schema() -> Value {
+    json!({"type":"object","additionalProperties":false,"properties":{
+        "model":{"type":"string","minLength":1,"maxLength":1024},
+        "reasoning_effort":{"type":["string","null"]},"service_tier":{"type":["string","null"]},
+        "temperature":{"type":["number","null"]},
+        "max_output_tokens":{"type":"integer","minimum":1},"context_window":{"type":"integer","minimum":0},
+        "access_mode":{"enum":["read_only","approval","unrestricted"]},
+        "terminal_max_count":{"type":"integer","minimum":1},"terminal_max_unread_bytes":{"type":"integer","minimum":1},
+        "subagent_max_concurrency":{"type":"integer","minimum":1},"command_timeout_secs":{"type":"integer","minimum":1},
+        "max_output_bytes":{"type":"integer","minimum":1}
+    }})
+}
+
 fn invalid(message: &str) -> ToolError {
     ToolError::InvalidArguments(message.into())
 }
@@ -230,6 +250,10 @@ enum Action {
         session_id: Uuid,
         workspace: PathBuf,
         config_path: Option<PathBuf>,
+        #[serde(default)]
+        settings: voyage_protocol::start_settings::StartSettings,
+        #[serde(default)]
+        account: Option<voyage_protocol::accounts::AccountBinding>,
         task: String,
     },
     Submit {
@@ -312,6 +336,10 @@ fn input_schema() -> Value {
             "section":{"enum":["models","policy"]},
             "query":{"type":"string","pattern":"\\S","maxLength":4096,"description":"Nonblank; at most 4096 UTF-8 bytes."},
             "workspace":{"type":"string"},"config_path":{"type":["string","null"]},
+            "settings":create_settings_schema(),"account": {"type":["object","null"],"additionalProperties":false,"required":["account_id","connection_id","identity_generation","connection_revision","transport"],"properties":{
+                "account_id":{"type":"string","format":"uuid"},"connection_id":{"type":"string","format":"uuid"},
+                "identity_generation":{"type":"integer","minimum":0},"connection_revision":{"type":"integer","minimum":0},
+                "transport":{"enum":["openai_responses","openai_chat","chatgpt_oauth","anthropic"]}}},
             "task":{"type":"string","pattern":"\\S","maxLength":65536,"description":"Nonblank; at most 65536 UTF-8 bytes."},
             "prompt":{"type":"string","pattern":"\\S","maxLength":65536,"description":"Nonblank; at most 65536 UTF-8 bytes."},
             "name":{"type":"string","pattern":"\\S","maxLength":256,"description":"Nonblank; at most 256 UTF-8 bytes."}
@@ -361,7 +389,7 @@ fn input_schema() -> Value {
             (
                 "create",
                 &["command_id", "session_id", "workspace", "task"],
-                &["config_path"],
+                &["config_path", "settings", "account"],
             ),
             (
                 "submit",
@@ -440,7 +468,7 @@ impl Tool for VesselTool {
             output_schema: None,
             annotations: None,
             name: "vessel".into(),
-            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). provider_attempts pages durable provider diagnostics separately from messages (limit 1..32); follow next_read with its revision. history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
+            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). provider_attempts pages durable provider diagnostics separately from messages (limit 1..32); follow next_read with its revision. history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create inherits initiating portable settings and current live access by default; settings overrides them, config_path selects a host base, and account selects an exact target-host binding. Credentials and roots are not copied. Target must support start_settings. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: input_schema(),
         }
     }
@@ -487,6 +515,7 @@ impl Tool for VesselTool {
                 task,
                 command_id,
                 session_id,
+                ..
             } => {
                 text(task, 65536)?;
                 if !workspace.is_absolute()
@@ -601,6 +630,7 @@ impl Tool for VesselTool {
             task,
             command_id,
             session_id,
+            ..
         } = &action
         {
             if !workspace.is_absolute() || config_path.as_ref().is_some_and(|p| !p.is_absolute()) {
@@ -655,7 +685,7 @@ impl Tool for VesselTool {
         let timeout = context.timeout.min(Duration::from_secs(35));
         let result = tokio::select! {
             _ = context.cancellation.cancelled() => Err(ToolError::Cancelled),
-            result = tokio::time::timeout(timeout, perform(action, &transport, context, self.context.as_ref())) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
+            result = tokio::time::timeout(timeout, perform(action, &transport, context, self.context.as_ref(), self.launch.as_ref())) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
         };
         if let Some((root, id)) = journal {
             let value = match result {
@@ -741,6 +771,7 @@ async fn perform(
     t: &transport::Transport,
     context: &ToolContext,
     owner: Option<&VesselContext>,
+    launch: Option<&crate::Config>,
 ) -> Result<Value, ToolError> {
     check(context)?;
     let coordination = if action.executes() && context.tool_call_id.is_some() {
@@ -969,20 +1000,41 @@ async fn perform(
             session_id,
             workspace,
             config_path,
+            settings,
+            account,
             task,
         } => {
-            let command = match config_path {
-                Some(config_path) => VesselCommand::StartConfigured {
-                    command_id: session_id,
-                    session_id,
-                    workspace,
-                    config_path,
-                },
-                None => VesselCommand::Start {
-                    command_id: session_id,
-                    session_id,
-                    workspace,
-                },
+            let mut resolved = if config_path.is_none() {
+                let config =
+                    launch.ok_or_else(|| failed("initiating launch settings unavailable"))?;
+                crate::start_settings::portable(config, context.policy.access_mode())
+            } else {
+                Default::default()
+            };
+            crate::start_settings::overlay(&mut resolved, &settings);
+            let binding = account.or_else(|| {
+                if config_path.is_none() {
+                    launch.and_then(|c| c.account.clone())
+                } else {
+                    None
+                }
+            });
+            let capabilities = t.exchange(VesselCommand::Capabilities).await?;
+            if !capabilities["features"]
+                .as_array()
+                .is_some_and(|features| features.iter().any(|v| v == "start_settings"))
+            {
+                return Err(failed(
+                    "target Vessel does not support start_settings; upgrade target before creating",
+                ));
+            }
+            let command = VesselCommand::StartSettings {
+                command_id: session_id,
+                session_id,
+                workspace,
+                config_path,
+                settings: resolved,
+                binding,
             };
             let started = t.exchange(command).await?;
             if started.get("status").is_some() {

@@ -46,7 +46,7 @@ identity/version and actual route capabilities/rights.
 | `history_search` | `session_id`, `pattern` | `role`, `offset`, `limit`, `expected_revision` |
 | `follow`, `wait` | `session_id` | `after`, `limit`, `wait_ms` |
 | `receipt` | `command_id` | `session_id` |
-| `create` | `command_id`, `session_id`, `workspace`, `task` | `config_path` |
+| `create` | `command_id`, `session_id`, `workspace`, `task` | `config_path`, `settings`, `account` |
 | `submit` | `session_id`, `command_id`, `expected_revision`, `prompt` | — |
 | `steer` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision`, `prompt` | — |
 | `cancel` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision` | — |
@@ -156,10 +156,33 @@ from `inspect` for mutations, the registration's `incarnation` for live-resource
 operations, and `snapshot.run.run_id` for the run. Do not infer these identities
 from names. Archived catalogue metadata carries the revision needed for restore.
 
-Creation paths must be absolute paths on the target host. `config_path` selects
-an existing owned private launch configuration; omitted configuration uses target
-host defaults. Model, reasoning, service and other launch settings come from that
-configuration, not separate `create` overrides. The task/prompt limit is 64 KiB.
+Creation paths must be absolute paths on the target host. By default, `create`
+inherits the initiating voyage's model, reasoning effort, service tier, temperature,
+output-token/context-window settings, current live access mode, command timeout,
+output limit, terminal limits and subagent concurrency. `settings` overrides those
+portable preferences. `reasoning_effort`, `service_tier` and `temperature` accept
+explicit `null` to clear an inherited value; omission preserves it. `context_window`
+zero retains automatic sizing. The settings object rejects unknown fields.
+
+`config_path` instead selects an existing owned private launch configuration as the
+base, with only explicit `settings` applied. The optional `account` is an exact
+executing-host account binding, not a credential. Without a configuration or account
+override, the initiating account binding is inherited. A binding from another host
+is refused: remote creation needs an explicit target-host account (or a target-host
+configuration), not a silent identity fallback. The account determines the provider.
+
+Supported override keys are `model`, `reasoning_effort`, `service_tier`,
+`temperature`, `max_output_tokens`, `context_window`, `access_mode` (`read_only`,
+`approval`, `unrestricted`), `command_timeout_secs`, `max_output_bytes`,
+`terminal_max_count`, `terminal_max_unread_bytes`, and `subagent_max_concurrency`.
+Other configuration, roots, credentials, environment values, browser sharing and
+runtime authority are not copied. Destination policy/defaults and ceilings are
+resolved before launch; a requested setting does not bypass them. Scoped callers
+still need create/lifecycle and account-use rights and cannot select host files.
+The target must advertise `start_settings`; older targets refuse without starting.
+A private, command-bound launch file freezes resolved settings before process start.
+The task/prompt limit is 64 KiB.
+
 A create request needs two distinct fresh UUIDs: `session_id` is also its stable
 start-command ID; `command_id` is the initial-submit ID and local operation ID.
 All other mutations use a fresh stable `command_id` and the observed revision.
