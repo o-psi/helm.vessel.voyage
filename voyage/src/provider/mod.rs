@@ -70,6 +70,8 @@ pub enum ProviderError {
     },
     #[error("provider request timed out: {0}")]
     Timeout(String),
+    #[error("provider transport timed out")]
+    TransportTimeout,
     /// A transport failure does not establish whether the remote effect occurred.
     #[error("provider transport failed: {0}")]
     Transport(String),
@@ -324,6 +326,7 @@ impl ProviderError {
             Self::RateLimit { .. } => "rate_limit",
             Self::Unavailable(_) => "unavailable",
             Self::Timeout(_) => "timeout",
+            Self::TransportTimeout => "transport_timeout",
             Self::Transport(_) => "transport",
             Self::Connection => "connection",
             Self::Request(_) => "request",
@@ -377,7 +380,11 @@ impl ProviderError {
         }
         matches!(
             self,
-            Self::RateLimit { .. } | Self::Unavailable(_) | Self::Timeout(_) | Self::Connection
+            Self::RateLimit { .. }
+                | Self::Unavailable(_)
+                | Self::Timeout(_)
+                | Self::TransportTimeout
+                | Self::Connection
         )
     }
     pub fn retry_after(&self) -> Option<std::time::Duration> {
@@ -402,6 +409,9 @@ impl ProviderError {
             Self::RateLimit { .. } => "Provider rate limit prevented completion.",
             Self::Unavailable(_) => "Provider temporarily unavailable.",
             Self::Timeout(_) => "Provider request timed out.",
+            Self::TransportTimeout => {
+                "Provider connection timed out before the response completed."
+            }
             Self::Transport(_) => "Provider connection failed; request outcome may be uncertain.",
             Self::Connection => "Provider connection could not be established.",
             Self::Request(_) => "Provider request failed.",
@@ -599,7 +609,13 @@ pub(crate) fn native_http_client() -> reqwest::Client {
 }
 
 fn native_http_client_builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    // reqwest otherwise sets a 30-second TCP_USER_TIMEOUT on these platforms.
+    // Do not let that implicit timer preempt the runtime's configured response
+    // and stream-idle waits during temporary loss of acknowledgements.
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    let builder = builder.tcp_user_timeout(None);
+    builder
 }
 
 /// Literal loopback HTTP must remain local even when HTTP_PROXY is configured.
@@ -653,7 +669,7 @@ fn connection_refused(error: &(dyn std::error::Error + 'static)) -> bool {
 
 pub(crate) fn map_transport(error: reqwest::Error) -> ProviderError {
     if error.is_timeout() {
-        ProviderError::Timeout("request deadline elapsed".into())
+        ProviderError::TransportTimeout
     } else if error.is_connect() && connection_refused(&error) {
         ProviderError::Connection
     } else if error.is_builder() {

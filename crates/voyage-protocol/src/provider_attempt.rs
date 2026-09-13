@@ -105,6 +105,7 @@ impl ProviderAttempt {
             Some("rate_limit") => "rate limit",
             Some("unavailable") => "service unavailable",
             Some("timeout") => "timeout",
+            Some("transport_timeout") => "connection timeout",
             Some("connection") => "connection establishment failed",
             Some("transport") => "transport failure; remote outcome uncertain",
             Some("request") => "request failure",
@@ -127,8 +128,14 @@ impl ProviderAttempt {
         if let Some(wait) = self.retry.server_delay_ms {
             summary.push_str(&format!(" · server wait {wait} ms"));
         }
+        if let Some(timeout) = self.retry.response_timeout_ms {
+            summary.push_str(&format!(" · response-start limit {timeout} ms"));
+        }
+        if let Some(idle) = self.retry.stream_idle_ms {
+            summary.push_str(&format!(" · stream idle limit {idle} ms"));
+        }
         if let Some(max) = self.retry.max_delay_ms {
-            summary.push_str(&format!(" · wait limit {max} ms"));
+            summary.push_str(&format!(" · retry delay limit {max} ms"));
         }
         if let Some(max) = self.retry.max_elapsed_ms {
             summary.push_str(&format!(" · retry window {max} ms"));
@@ -150,7 +157,7 @@ mod tests {
             "phase": "backoff", "http_status": 429, "text_observed": false,
             "tool_fragment_observed": false, "retry_delay_ms": 500, "decision": "retry_scheduled"
         });
-        let attempt: ProviderAttempt = serde_json::from_value(value.clone()).unwrap();
+        let mut attempt: ProviderAttempt = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
             serde_json::from_value::<ProviderAttempt>(serde_json::to_value(&attempt).unwrap())
                 .unwrap(),
@@ -163,6 +170,15 @@ mod tests {
         for forbidden in ["secret", "private-model", "raw-diagnostic", "\u{1b}"] {
             assert!(!summary.contains(forbidden));
         }
+        attempt.category = Some("transport_timeout".into());
+        attempt.retry.response_timeout_ms = Some(60_000);
+        attempt.retry.stream_idle_ms = Some(300_000);
+        attempt.retry.max_delay_ms = Some(30_000);
+        let summary = attempt.summary();
+        assert!(summary.contains("connection timeout"));
+        assert!(summary.contains("response-start limit 60000 ms"));
+        assert!(summary.contains("stream idle limit 300000 ms"));
+        assert!(summary.contains("retry delay limit 30000 ms"));
     }
     #[test]
     fn every_decision_has_stable_snake_case_encoding() {

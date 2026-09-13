@@ -87,6 +87,7 @@ impl Session {
                     | "rate_limit"
                     | "unavailable"
                     | "timeout"
+                    | "transport_timeout"
                     | "connection"
                     | "transport"
                     | "request"

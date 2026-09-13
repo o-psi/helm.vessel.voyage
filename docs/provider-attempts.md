@@ -20,7 +20,19 @@ idle timer; raw byte trickles, SSE comments/heartbeats and unrecognized events d
 not. A healthy stream may last longer than the retry admission window. That window
 only prevents another attempt, and is neither a turn deadline nor a stream timer.
 All three time limits are positive milliseconds; shell `command_timeout_secs` is
-separate. Policy and authority are rechecked at least every 100ms while awaiting
+separate. On Linux, Android and Fuchsia, native clients do not install reqwest's
+implicit 30-second `TCP_USER_TIMEOUT`; the operating system retains its normal TCP
+failure handling. This avoids preempting configured application waits during
+unacknowledged traffic. Connection/response and decoded-event waits remain bounded
+by Voyage and cancellable. This is not a guarantee that the network or upstream
+will keep a connection alive until those limits.
+
+New native transport timeouts are recorded as `transport_timeout`, separately from
+Voyage's `timeout` deadline category. Legacy `timeout` observations cannot establish
+which timer fired. Helm labels response-start, stream-idle, retry-delay and retry
+admission limits separately; retry delay is not an active stream deadline.
+
+Policy and authority are rechecked at least every 100ms while awaiting
 provider progress or backoff. Cancellation stops waiting and enters normal cleanup;
 it is not proof the provider stopped computing or that no usage was billed.
 
@@ -87,6 +99,11 @@ while the voyage is suspended. A stale revision is refused; restart inspection
 from offset zero. Helm page reads are fresh observations, so a running attempt
 may have changed between pages.
 
+Helm acceptance notices say “Request received.” They acknowledge submission and do
+not claim the run is still executing. Terminal inventory that is absent, stale or
+unavailable is labelled as such, including after suspension; it does not claim an
+active “Checking programs” operation.
+
 Routine snapshots retain the latest 128 turn summaries and the latest attempt per
 turn, with explicit counts/truncation. Full durable attempt history remains available
 through paging. Successful attempts stay quiet in the transcript; failed attempts
@@ -122,7 +139,13 @@ Anthropic endpoints:
 ```sh
 cargo build -p helm -p vessel -p voyage --locked -j 8
 python3 voyage/tests/provider_attempts.py --bin-dir target/debug
+python3 voyage/tests/provider_failure_ui.py --bin-dir target/debug
 ```
+
+The fixture provisions named synthetic accounts and private launch settings; it never
+uses the operator's account. The failure-screen PTY check submits through Helm, waits
+for partial-output timeout and suspension, and checks receipt and inventory notices
+without another inference request.
 
 It checks transient recovery, exhaustion, rejection/quota, server delay limits,
 truncated and idle streams, silent response headers, heartbeat-only streams,

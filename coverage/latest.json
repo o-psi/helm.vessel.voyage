@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-13T02:50:07.806654+00:00",
+  "measured_at_utc": "2026-09-13T03:23:22.948855+00:00",
   "source": {
-    "commit": "1d05d5f0da5d2654657645344d0f42e358fdf092",
+    "commit": "5ed658ad1ed074d0f38c07f0c1980c4d3cff32b1",
     "dirty": true,
-    "fingerprint_sha256": "4f3a3014b4fd23406dbd743ca96e7c79ff07653be45e9c09e09c6ea679412968",
+    "fingerprint_sha256": "a0fd7ac44c1edcaa4df0abaa605adf0066cdc56ee6d195d13679c14082238031",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null",
-    "note": "Primary checkout measured unchanged through tests and current-artifact export. Includes issue #267 settings changes and preserved unrelated staged rendering comments and deleted auxiliary scripts/Python fixtures; unrelated changes are not delivered."
+    "note": "Primary checkout, source unchanged through tests and current-artifact export. Dirty source includes issue #268 and preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not part of this delivery."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue267-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue268-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,26 +23,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 384,
+    "passed": 386,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 92066,
-      "covered": 31224,
-      "percent": 33.914800251993135
+      "count": 92107,
+      "covered": 31307,
+      "percent": 33.98981619203752
     },
     "functions": {
-      "count": 9078,
-      "covered": 2989,
-      "percent": 32.92575457149152
+      "count": 9079,
+      "covered": 2995,
+      "percent": 32.988214561075004
     },
     "regions": {
-      "count": 150492,
-      "covered": 49499,
-      "notcovered": 100993,
-      "percent": 32.891449379369
+      "count": 150561,
+      "covered": 49628,
+      "notcovered": 100933,
+      "percent": 32.962055246710634
     }
   },
   "report_selection": {
@@ -63,8 +63,9 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Default shared-target report preserved but not published because it includes historical objects. Current Cargo artifact export retains all 11 current workspace executables, with no duplicate logical sources or mismatched functions.",
-    "Prior comparison: lines +0.0558 percentage points, functions +0.0524 percentage points, regions +0.0660 percentage points.",
-    "No live-provider or native macOS/Windows claim. Synthetic Linux process and Helm PTY checks are separate. Coverage measures execution, not correctness."
+    "Default shared-target report retained; corrected export includes all 11 current workspace executable artifacts and no duplicate logical sources or mismatched functions.",
+    "Initial measurement failed two existing private-storage fixture tests under the ambient umask; logs retained. Complete measurement rerun with owner-only umask 0077 passed without source changes.",
+    "Prior comparison: lines +0.0750 percentage points, functions +0.0625 percentage points, regions +0.0706 percentage points.",
+    "No live-provider or native macOS/Windows claim. Coverage measures execution, not correctness."
   ]
 }

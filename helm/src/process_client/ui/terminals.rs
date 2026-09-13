@@ -105,8 +105,11 @@ impl Browser {
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5))
     }
     pub fn summary(&self) -> String {
+        if self.error.is_some() {
+            return "Program status unavailable · F3 Console".into();
+        }
         if !self.fresh() {
-            return "Checking programs...".into();
+            return "Program status not current · F3 Console".into();
         }
         let entries = self
             .inventory
@@ -373,4 +376,27 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         )),
         areas[2],
     );
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn absent_stale_and_failed_inventory_never_claim_active_checks() {
+        let mut browser = Browser::default();
+        assert!(browser.summary().contains("not current"));
+        browser.update(
+            Ok(Inventory {
+                run_id: None,
+                entries: Vec::new(),
+            }),
+            Instant::now(),
+        );
+        assert_eq!(browser.summary(), "F3 Console");
+        browser.observed = Some(Instant::now() - Duration::from_secs(6));
+        assert!(browser.summary().contains("not current"));
+        browser.update(Err("private transport detail".into()), Instant::now());
+        assert_eq!(browser.summary(), "Program status unavailable · F3 Console");
+    }
 }

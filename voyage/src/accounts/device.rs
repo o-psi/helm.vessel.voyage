@@ -522,7 +522,7 @@ fn failure<T>(
         Err(_) => (EnrollmentFailureKind::Timeout, None),
         Ok(Err(error)) => (
             match error.category() {
-                "timeout" => EnrollmentFailureKind::Timeout,
+                "timeout" | "transport_timeout" => EnrollmentFailureKind::Timeout,
                 "connection" | "transport" => EnrollmentFailureKind::Connection,
                 "invalid_response" => EnrollmentFailureKind::InvalidResponse,
                 _ => EnrollmentFailureKind::Rejected,

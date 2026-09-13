@@ -415,6 +415,7 @@ pub(crate) fn redact(error: ProviderError) -> ProviderError {
             request_id: None,
         },
         ProviderError::Connection => ProviderError::Connection,
+        ProviderError::TransportTimeout => ProviderError::TransportTimeout,
         ProviderError::Transport(_) => ProviderError::Transport(MESSAGE.into()),
         ProviderError::Authentication(_) => ProviderError::Authentication(MESSAGE.into()),
         ProviderError::UsageLimit => ProviderError::UsageLimit,

@@ -102,7 +102,7 @@ pub(super) fn receipt(value: &Value) -> String {
         );
     }
     let status = match value["status"].as_str().unwrap_or("received") {
-        "accepted" => "Request received. Waiting for the result.",
+        "accepted" => "Request received.",
         "applied" => "Update confirmed.",
         "completed" => "Done.",
         "rejected" | "not_admitted" => "The request wasn't accepted. Your draft is saved.",

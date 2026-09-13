@@ -225,6 +225,7 @@ fn failure_metadata_is_content_free_and_wrappers_preserve_policy() {
             true,
         ),
         (ProviderError::Timeout("PRIVATE".into()), "timeout", true),
+        (ProviderError::TransportTimeout, "transport_timeout", true),
         (
             ProviderError::Transport("PRIVATE".into()),
             "transport",
@@ -373,7 +374,7 @@ async fn actual_reqwest_timeout_keeps_existing_retry_policy() {
         .unwrap_err();
     assert!(error.is_timeout());
     let error = map_transport(error);
-    assert_eq!(error.category(), "timeout");
+    assert_eq!(error.category(), "transport_timeout");
     assert!(error.is_retryable());
     assert_eq!(error.http_status(), None);
 }
@@ -396,5 +397,86 @@ fn device_poll_wait_survives_http_metadata_but_not_other_failures() {
     assert_eq!(
         ProviderError::Authentication("device authorization denied".into()).device_poll_delay(5),
         None
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn native_socket_does_not_install_a_hidden_thirty_second_deadline() {
+    use std::os::fd::RawFd;
+    async fn configured_timeout(client: reqwest::Client) -> u32 {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n")
+                .await
+                .unwrap();
+            let _ = wait.await;
+        });
+        let response = client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        let mut found = None;
+        for entry in std::fs::read_dir("/proc/self/fd").unwrap().flatten() {
+            let Ok(fd) = entry.file_name().to_string_lossy().parse::<RawFd>() else {
+                continue;
+            };
+            let mut peer: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+            let mut len = std::mem::size_of_val(&peer) as libc::socklen_t;
+            // Inspect only the connected client socket for this fixture's port.
+            let result = unsafe {
+                libc::getpeername(fd, (&mut peer as *mut libc::sockaddr_in).cast(), &mut len)
+            };
+            if result != 0
+                || peer.sin_family != libc::AF_INET as libc::sa_family_t
+                || u16::from_be(peer.sin_port) != address.port()
+            {
+                continue;
+            }
+            let mut value = 0u32;
+            let mut len = std::mem::size_of_val(&value) as libc::socklen_t;
+            assert_eq!(
+                unsafe {
+                    libc::getsockopt(
+                        fd,
+                        libc::IPPROTO_TCP,
+                        libc::TCP_USER_TIMEOUT,
+                        (&mut value as *mut u32).cast(),
+                        &mut len,
+                    )
+                },
+                0
+            );
+            assert!(found.replace(value).is_none());
+        }
+        drop(response);
+        release.send(()).unwrap();
+        server.await.unwrap();
+        found.expect("native client TCP socket")
+    }
+    assert_eq!(
+        configured_timeout(reqwest::Client::builder().no_proxy().build().unwrap()).await,
+        30_000
+    );
+    assert_eq!(
+        configured_timeout(native_http_client_builder().no_proxy().build().unwrap()).await,
+        0
+    );
+    assert_eq!(
+        configured_timeout(endpoint_http_client(
+            &native_http_client(),
+            "http://127.0.0.1"
+        ))
+        .await,
+        0
     );
 }

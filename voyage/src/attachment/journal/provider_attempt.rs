@@ -109,6 +109,7 @@ mod tests {
                 || Ok(2),
             )
             .unwrap();
+        attempt.category = Some("transport_timeout".into());
         attempt.decision = RetryDecision::Cancelled;
         attempt.duration_ms = 2;
         journal.provider_attempt(&guard, run.id, &attempt).unwrap();

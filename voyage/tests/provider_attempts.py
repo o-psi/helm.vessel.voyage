@@ -2,18 +2,43 @@
 import argparse
 import http.server
 import json
+import subprocess
+import tomllib
 from pathlib import Path
 import threading
 import time
 import uuid
 
-from delivery_recovery import Fixture, wait_for
+from delivery_recovery import Fixture as BaseFixture, wait_for
 
 SECRET = 'PRIVATE_PROVIDER_DIAGNOSTIC_261'
 PARTIAL = 'Saved partial answer before interruption. '
 ANSWER = 'Continuation completed with retained history.'
 CASES = ('connection', 'recover', 'exhaust', 'auth', 'quota', 'request', 'long_wait', 'text', 'tool', 'eof', 'cancel', 'silent_headers', 'silent_stream', 'text_idle', 'tool_idle', 'heartbeat', 'cancel_stream')
 MODES = {'responses': 'openai-responses', 'chat': 'openai-chat', 'anthropic': 'anthropic'}
+
+
+class Fixture(BaseFixture):
+    def __init__(self, binaries):
+        super().__init__(binaries)
+        self.env['PROVIDER_FIXTURE_KEY'] = SECRET
+        self.observation_retries = 0
+
+    def command(self, session, command, allow_error=False):
+        if allow_error or command['op'] not in ('snapshot', 'provider_attempts'):
+            return super().command(session, command, allow_error)
+        # Retry positive read observations only. Deliberate invalid-page/revision
+        # probes must return their refusal immediately; never replay mutations.
+        deadline = time.monotonic() + 10
+        while True:
+            response = super().command(session, command, allow_error=True)
+            if (response.get('error') == 'suspended observation unavailable'
+                    and time.monotonic() < deadline):
+                self.observation_retries += 1
+                time.sleep(.05)
+                continue
+            assert response.get('error') is None, response
+            return response['result']
 
 
 def frames(mode, partial=None):
@@ -118,7 +143,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def session(fixture, mode, case):
     sid = str(uuid.uuid4())
-    fixture.sessions.append(sid)
     config = fixture.root / (sid + '.toml')
     config.write_text(f'provider = "{MODES[mode]}"\nmodel = "fixture-model"\n'
         f'base_url = "http://127.0.0.1:{0 if case == "connection" else fixture.provider.server_port}/v1"\n'
@@ -128,9 +152,37 @@ def session(fixture, mode, case):
         'provider_retry_elapsed_ms = 10000\ncommand_timeout_secs = 2\n'
         f'provider_response_timeout_ms = {100 if case == "silent_headers" else 3000}\n'
         f'provider_stream_idle_ms = {100 if case != "cancel_stream" else 3000}\n')
+    settings = tomllib.loads(config.read_text())
+    config.write_text(json.dumps({'version': 1, 'workspace': str(fixture.workspace),
+        'config': settings, 'explicit': {'access': 'unrestricted'},
+        'selection': None, 'confirmation': None}))
     config.chmod(0o600)
-    fixture.request({'op': 'start_configured', 'session_id': sid, 'command_id': str(uuid.uuid4()),
-        'workspace': str(fixture.workspace), 'config_path': str(config)})
+    # Creation now requires an explicit named account. All credentials/endpoints
+    # remain synthetic and local; never inherit the operator's default account.
+    def account_cli(*args):
+        result = subprocess.run([str(fixture.binaries / 'vessel'), 'auth', 'accounts', *args],
+            env=fixture.env, cwd=fixture.workspace, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+    connection = account_cli('connect', '--label', sid, '--endpoint',
+        f'http://127.0.0.1:{0 if case == "connection" else fixture.provider.server_port}/v1',
+        '--transports', MODES[mode])
+    account = account_cli('add', '--connection', connection['id'], '--account', sid,
+        '--env', 'PROVIDER_FIXTURE_KEY')
+    binding = {'account_id': account['id'], 'connection_id': connection['id'],
+        'identity_generation': account['identity_generation'],
+        'connection_revision': connection['revision'], 'transport': MODES[mode].replace('-', '_')}
+    if not getattr(fixture, 'provider_default_set', False):
+        fixture.request({'op': 'account_set_default', 'command_id': str(uuid.uuid4()),
+            'workspace': str(fixture.workspace), 'account': binding, 'expected_revision': 0})
+        fixture.provider_default_set = True
+    launch = json.loads(config.read_text())
+    launch['config']['account'] = binding
+    config.write_text(json.dumps(launch))
+    fixture.request({'op': 'start_settings', 'session_id': sid, 'command_id': str(uuid.uuid4()),
+        'workspace': str(fixture.workspace), 'config_path': str(config),
+        'binding': binding, 'settings': {}})
+    fixture.sessions.append(sid)
     return sid
 
 
@@ -170,16 +222,22 @@ def helm_attempts(fixture, sid, run_id):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, required=True)
+    parser.add_argument('--mode', choices=tuple(MODES))
+    parser.add_argument('--case', choices=CASES)
     args = parser.parse_args()
-    fixture = Fixture(args.bin_dir.resolve())
-    fixture.env["ANTHROPIC_API_KEY"] = SECRET
-    fixture.provider.RequestHandlerClass = Handler
-    fixture.provider.errors = []
-    fixture.provider.times = []
-    try:
-        fixture.start()
-        for mode in MODES:
-            for case in CASES:
+    modes = [args.mode] if args.mode else MODES
+    cases = [args.case] if args.case else CASES
+    # Each adverse case owns a fresh supervisor/account registry. This matrix
+    # verifies provider recovery; multi-session catalogue stress is a separate check.
+    for mode in modes:
+        for case in cases:
+            fixture = Fixture(args.bin_dir.resolve())
+            fixture.env["ANTHROPIC_API_KEY"] = SECRET
+            fixture.provider.RequestHandlerClass = Handler
+            fixture.provider.errors = []
+            fixture.provider.times = []
+            try:
+                fixture.start()
                 fixture.provider.bodies = []
                 fixture.provider.times = []
                 fixture.provider.scenario = (mode, case)
@@ -242,11 +300,12 @@ def main():
                 if mode == 'responses' and case == 'exhaust':
                     helm_attempts(fixture, sid, receipt['run_id'])
                     assert len(fixture.provider.bodies) == count
-                fixture.record(mode + '-' + case, {'run': saved['run'], 'attempts': attempts})
+                fixture.record(mode + '-' + case, {'run': saved['run'], 'attempts': attempts,
+                    'observation_retries': fixture.observation_retries})
                 assert not fixture.provider.errors, fixture.provider.errors
-    finally:
-        fixture.close()
-    print('PASS: 51 native failure/retry/history scenarios, duplicate receipts, explicit continuation and observed cleanup')
+            finally:
+                fixture.close()
+    print(f'PASS: {len(modes) * len(cases)} selected native failure/retry/history scenarios and observed cleanup')
 
 
 if __name__ == '__main__':

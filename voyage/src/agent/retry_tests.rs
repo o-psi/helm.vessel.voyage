@@ -19,6 +19,7 @@ enum Failure {
     LongWait,
     Eof,
     ContextText,
+    TransportText,
 }
 struct ProviderFixture {
     failure: Failure,
@@ -44,7 +45,7 @@ impl Provider for ProviderFixture {
                 retry_after: Some(Duration::from_secs(60)),
             }),
             Failure::Eof => Ok(Box::pin(futures_util::stream::empty())),
-            Failure::Text | Failure::Tool | Failure::ContextText => {
+            Failure::Text | Failure::Tool | Failure::ContextText | Failure::TransportText => {
                 let delta = if matches!(self.failure, Failure::Tool) {
                     ProviderDelta::ToolCall {
                         index: 0,
@@ -57,6 +58,8 @@ impl Provider for ProviderFixture {
                 };
                 let error = if matches!(self.failure, Failure::ContextText) {
                     ProviderError::ContextLength
+                } else if matches!(self.failure, Failure::TransportText) {
+                    ProviderError::TransportTimeout
                 } else {
                     ProviderError::Timeout("SECRET_DIAGNOSTIC".into())
                 };
@@ -256,7 +259,12 @@ async fn timeout_exhaustion_is_bounded_attributed_and_secret_safe() {
 
 #[tokio::test]
 async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
-    for failure in [Failure::Text, Failure::Tool, Failure::ContextText] {
+    for failure in [
+        Failure::Text,
+        Failure::Tool,
+        Failure::ContextText,
+        Failure::TransportText,
+    ] {
         let root = tempfile::tempdir().unwrap();
         let (agent, calls, checkpoint, _, _) = fixture(root.path(), failure);
         let result = execute(&agent, &checkpoint, &CancellationToken::new()).await;
@@ -277,6 +285,9 @@ async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
         let records = checkpoint.attempts.lock().unwrap();
         assert_eq!(records[0].decision, RetryDecision::PartialResponse);
         assert_eq!(records[0].phase, AttemptPhase::Stream);
+        if matches!(failure, Failure::TransportText) {
+            assert_eq!(records[0].category.as_deref(), Some("transport_timeout"));
+        }
         assert_eq!(
             records[0].tool_fragment_observed,
             matches!(failure, Failure::Tool)
