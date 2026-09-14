@@ -78,3 +78,14 @@ from this answer/file journey. #274's intermittent browser/image diagnosis and
 because these actions are implemented. Managed installation and normal-command
 verification are recorded separately after actual completion; an already-running
 Helm client still needs reopening to load a new executable.
+
+## Observed managed delivery
+
+Installed release `9cf87cc5d0f387aca90f12803aa069ae687b6875ff32623abd87c7557c7cd16c`
+completed with exit 0. Normal `helm` resolves there and matches tested client SHA-256
+`db083ddd28a3cacdc8546fdb0184132ac2829215a9e8416085d97543d3eb0b89`.
+The installed binaries passed the full result-action PTY journey with observed
+fixture cleanup. Supervisor active/running and installer authenticated readiness/
+retained-owner checks completed. Journal pending is null; previous release retained.
+Reopen Helm normally to load it. Evidence: `target/results-ui/install-result.txt`
+and `target/results-ui/installed-pty/` (ignored).
