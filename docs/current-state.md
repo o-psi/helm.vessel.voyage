@@ -643,6 +643,18 @@ the runtime's built-in definitions without starting an agent, MCP transport or P
 process. It is preflight metadata, not permission/readiness; configured MCP tools
 remain unavailable there until an active runtime discovers them.
 
+Helm asynchronously warms model metadata for the selected live voyage or startup
+draft after automatic account/default hydration. A bounded in-memory cache (eight
+entries, at most 1 MiB of metadata each, 60-second freshness) makes a warmed model
+chooser open without another catalogue request. Cache scopes include destination,
+exact account binding and provider, workspace, route/client activation, socket ID
+and monotonic connection-loss generation, voyage incarnation, and observed settings.
+Changed contexts discard late results; nothing is persisted or applied to inference.
+An early open joins the pending preload. Expired successful metadata in the same
+scope remains immediately usable while refreshing; refresh retains search and local
+candidate selection. Requests retain the 12-second bound; sanitized failures stay cached until
+explicit Retry, scope change, or eviction, rather than periodic error retries.
+
 Saved workflows use named executing-host inventory, exact digest trust, typed
 public inputs, isolated masked private inputs and a separate executing-host preview
 and submit confirmation. Required and supplied optional private references must

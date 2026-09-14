@@ -254,6 +254,7 @@ impl App {
             return;
         }
         if start_models
+            && !self.use_warm_models()
             && let Err(e) = self.load_inference_models()
             && let Some(p) = self.inference.picker.as_mut()
         {
@@ -284,7 +285,11 @@ impl App {
         p.selected = 0;
         p.notice="Account selected for review only. Choose its model, then Use model. Current work is unchanged.".into();
         self.inference.picker = Some(p);
-        self.load_inference_models()
+        if self.use_warm_models() {
+            Ok(())
+        } else {
+            self.load_inference_models()
+        }
     }
 }
 

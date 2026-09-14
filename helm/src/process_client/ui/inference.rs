@@ -3,6 +3,7 @@
 mod access;
 mod account_choices;
 mod chooser;
+mod preload;
 mod render;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result, drafts,
@@ -143,6 +144,7 @@ fn catalog_payload(
 #[derive(Default)]
 pub(super) struct Controls {
     account_load: Option<account_choices::Load>,
+    cache: preload::Cache,
     catalog_job: Option<(Uuid, std::time::Instant, tokio::task::JoinHandle<()>)>,
     pub(super) return_to_model: Option<Destination>,
     return_choice: Option<(Settings, chooser::Draft)>,
@@ -181,6 +183,7 @@ impl Picker {
     fn install_models(&mut self, models: Option<Vec<crate::provider::ModelInfo>>) {
         self.loading = false;
         let available = models.is_some();
+        let selected = self.options().get(self.selected).cloned();
         self.models = models.unwrap_or_default();
         self.original.resolve(&self.models);
         self.options = match self.field {
@@ -201,7 +204,9 @@ impl Picker {
         self.options.retain(|v| {
             safe(v) == *v && !v.chars().any(char::is_whitespace) && seen.insert(v.clone())
         });
-        self.selected = 0;
+        self.selected = selected
+            .and_then(|s| self.options().iter().position(|v| *v == s))
+            .unwrap_or(0);
         self.notice = if !available {
             "Catalog unavailable or context changed. Defaults/support are unknown. Explicit values receive runtime validation; reopen to retry."
         } else {
@@ -344,10 +349,13 @@ impl App {
             }
         }
         self.inference.picker = Some(picker);
-        self.load_inference_models()?;
+        if !self.use_warm_models() {
+            self.load_inference_models()?;
+        }
         Ok(())
     }
     pub(super) fn cancel_model_catalog(&mut self) {
+        self.inference.cache.foreground = None;
         if let Some((_, _, job)) = self.inference.catalog_job.take() {
             job.abort();
             self.retired_observers.push(job);
@@ -373,65 +381,42 @@ impl App {
             "Fetching models from the executing host… You can cancel or keep the current model."
                 .into();
         self.inference.choices.borrow_mut().clear();
-        let setup = (|| -> Result<_> {
-            let (route, workspace) = self.account_destination(destination)?;
-            let command = if let Some(account) = account.clone() {
-                voyage_protocol::vessel::VesselCommand::AccountModels { workspace, account }
-            } else {
-                let Destination::Live(target) = destination else {
-                    anyhow::bail!("Choose an account before loading models")
-                };
-                let view = &self.views[&target];
-                voyage_protocol::vessel::VesselCommand::Voyage(
-                    voyage_protocol::vessel::VoyageRequest {
-                        session_id: target.session,
-                        incarnation: Some(view.process.incarnation),
-                        command: VoyageCommand::Controls {
-                            run_id: view
-                                .snapshot
-                                .as_ref()
-                                .and_then(|s| s.run.as_ref())
-                                .filter(|r| r.active())
-                                .map(|r| r.run_id),
-                            section: "models".into(),
-                        },
-                    },
-                )
-            };
-            Ok((route, command))
-        })();
-        let (route, command) = match setup {
+        let provider = if picker.field == Field::Model {
+            picker.chooser.provider.clone()
+        } else {
+            picker.original.provider.clone()
+        };
+        let setup = self
+            .model_scope(destination, account.clone(), provider)
+            .and_then(|scope| self.model_command(&scope).map(|command| (scope, command)));
+        let (scope, command) = match setup {
             Ok(v) => v,
             Err(_) => {
                 self.inference_models(
                     id,
                     None,
                     None,
-                    Err("Choose an account before loading models".into()),
+                    Err("Choose an account or reconnect before loading models".into()),
                 );
                 return Ok(());
             }
         };
+        let route = scope.route;
+        let preload = self.take_model_preload(&scope);
+        self.inference.cache.foreground = Some((id, scope));
         if let Destination::Draft(draft) = destination {
             self.inference.draft_generations.insert(draft, id);
         }
         let client = self.clients[route].clone();
         let sender = self.sender.clone();
         let job = tokio::spawn(async move {
-            let result =
-                tokio::time::timeout(std::time::Duration::from_secs(12), client.request(command))
+            let result = if let Some(mut job) = preload {
+                (&mut job.receiver)
                     .await
-                    .map_err(|_| "Model loading timed out".to_owned())
-                    .and_then(|v| {
-                        v.map_err(|e| {
-                            voyage_protocol::model_discovery::Failure::from_diagnostic(
-                                &e.to_string(),
-                            )
-                            .map(|f| format!("[model_catalog:{}]", f.code()))
-                            .unwrap_or_else(|| "Model catalog unavailable".into())
-                        })
-                    })
-                    .and_then(|v| catalog_payload(v, account.as_ref()));
+                    .unwrap_or_else(|_| Err("Model preload stopped".into()))
+            } else {
+                preload::fetch(client, command, account).await
+            };
             let _ = sender
                 .send(Update::InferenceModels {
                     route: Some(route),
@@ -463,7 +448,15 @@ impl App {
             self.cancel_model_catalog();
             return;
         }
-        if std::time::Instant::now() >= *deadline {
+        let stale = self
+            .inference
+            .cache
+            .foreground
+            .as_ref()
+            .is_some_and(|(_, scope)| !self.model_scope_current(scope));
+        if stale || std::time::Instant::now() >= *deadline {
+            // Back off even when the foreground deadline wins the response race.
+            self.cache_model_response(id, &Err("Model loading stopped".into()));
             self.cancel_model_catalog();
             if let Some(p) = self.inference.picker.as_mut().filter(|p| p.id == id) {
                 p.loading = false;
@@ -516,6 +509,13 @@ impl App {
         generation: Option<Uuid>,
         result: std::result::Result<serde_json::Value, String>,
     ) {
+        if !self.cache_model_response(id, &result) {
+            if let Some(p) = self.inference.picker.as_mut().filter(|p| p.id == id) {
+                p.loading = false;
+                p.notice = "Destination changed. Stale catalog discarded; Retry to refresh.".into();
+            }
+            return;
+        }
         if self
             .inference
             .catalog_job
@@ -590,13 +590,14 @@ impl App {
         let account_changed =
             picker.field == Field::Model && picker.chooser.account != picker.original.account;
         let loaded = models.clone();
+        let selected = picker.options().get(picker.selected).cloned();
         picker.install_models(models);
         if account_changed {
             picker.options = loaded
                 .as_ref()
                 .map(|v| v.iter().map(|m| m.id.clone()).collect())
                 .unwrap_or_default();
-            if !picker.options.contains(&picker.chooser.model) {
+            if loaded.is_some() && !picker.options.contains(&picker.chooser.model) {
                 picker.chooser.model = loaded
                     .as_ref()
                     .and_then(|v| v.iter().find(|m| m.is_default).or(v.first()))
@@ -604,6 +605,9 @@ impl App {
                     .unwrap_or_default();
             }
         }
+        picker.selected = selected
+            .and_then(|s| picker.options().iter().position(|v| *v == s))
+            .unwrap_or(0);
         if failed {
             picker.notice=diagnostic.map(|f|f.message().to_owned()).unwrap_or_else(||"Could not load models. Current model is still available; Retry or check the account/connection.".into());
         }
@@ -613,6 +617,7 @@ impl App {
         self.poll_model_catalog();
         self.poll_chooser_accounts();
         self.resume_model_after_account();
+        self.warm_selected_models();
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {
         ensure!(

@@ -752,7 +752,7 @@ mod tests {
     use super::*;
     use crossterm::event::{KeyEvent, MouseEvent};
     use ratatui::{Terminal, backend::TestBackend};
-    fn app_fixture(app: &mut App) -> Target {
+    pub(super) fn app_fixture(app: &mut App) -> Target {
         let target = Target {
             route: app.clients.first_route().unwrap(),
             session: Uuid::new_v4(),
@@ -764,7 +764,7 @@ mod tests {
         app.selected = Some(target);
         target
     }
-    fn picker(app: &mut App, t: Target) {
+    pub(super) fn picker(app: &mut App, t: Target) {
         let original = app.inference_settings(Destination::Live(t)).unwrap();
         app.inference.picker = Some(Picker {
             id: Uuid::new_v4(),
@@ -1140,5 +1140,64 @@ mod tests {
         app.input(key(KeyCode::Enter)).unwrap();
         assert!(app.inference.picker.is_none());
         assert!(app.views[&t].pending.is_none());
+    }
+}
+
+#[cfg(test)]
+mod preload_tests {
+    use super::tests::{app_fixture, picker};
+    use super::*;
+
+    fn catalog() -> serde_json::Value {
+        serde_json::json!([{"id":"current","display_name":"Current"},{"id":"other","display_name":"Other"}])
+    }
+
+    #[tokio::test]
+    async fn warmed_open_preserves_query_and_candidate_without_request() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        let scope = app
+            .model_scope(Destination::Live(t), None, "fixture".into())
+            .unwrap();
+        let id = app.inference.picker.as_ref().unwrap().id;
+        app.inference.cache.foreground = Some((id, scope));
+        assert!(app.cache_model_response(id, &Ok(catalog())));
+        let p = app.inference.picker.as_mut().unwrap();
+        p.query = "oth".into();
+        p.chooser.select("other".into());
+        assert!(app.use_warm_models());
+        let p = app.inference.picker.as_ref().unwrap();
+        assert!(!p.loading);
+        assert_eq!(p.query, "oth");
+        assert_eq!(p.chooser.model, "other");
+        assert!(app.inference.catalog_job.is_none());
+        assert!(app.use_warm_models());
+    }
+
+    #[tokio::test]
+    async fn changed_owner_discards_inflight_result_and_failure_is_cached() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        let scope = app
+            .model_scope(Destination::Live(t), None, "fixture".into())
+            .unwrap();
+        let id = app.inference.picker.as_ref().unwrap().id;
+        app.inference.cache.foreground = Some((id, scope));
+        app.views.get_mut(&t).unwrap().process.incarnation = Uuid::new_v4();
+        assert!(!app.cache_model_response(id, &Ok(catalog())));
+        assert!(!app.use_warm_models());
+        let scope = app
+            .model_scope(Destination::Live(t), None, "fixture".into())
+            .unwrap();
+        app.inference.cache.foreground = Some((id, scope));
+        assert!(app.cache_model_response(id, &Err("Model catalog unavailable".into())));
+        assert!(app.use_warm_models());
+        assert!(!app.inference.picker.as_ref().unwrap().loading);
+        app.warm_selected_models();
+        assert!(app.inference.catalog_job.is_none());
     }
 }

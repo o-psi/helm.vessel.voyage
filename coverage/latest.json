@@ -1,12 +1,11 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T21:03:51.653846+00:00",
+  "measured_at_utc": "2026-09-14T21:54:15.968112+00:00",
   "source": {
-    "commit": "98283abacd9e43916b1a314feec4059534aca566",
+    "base_commit": "b0609c9477607112fd37c205293577d3a2233b16",
     "dirty": true,
-    "fingerprint_sha256": "9addbee827817f819e77f6fde2bb2cc8f623a4a544f1151c5b553d97180a4d22",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and nonignored untracked workspace files to SHA-256 or null for missing files; excludes inspiration apps and subordinate worktrees. Includes preserved pre-existing render comments and deleted scripts/tests.",
-    "note": "Unified chooser initialization and reconnect; dirty measured source unchanged, unrelated staged comments/deletions preserved."
+    "fingerprint_sha256": "3cb0940c38bcf4d035fe59fa64ac0b873ddd625447f6b6eea8f749fa798d63cb",
+    "fingerprint_scope": "Tracked and nonignored files, excluding inspiration apps/ and worktrees; existing unrelated staged render comments and deleted scripts included. Full per-file hash map retained under ignored target/coverage-report/model-preload-final."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +13,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/chooser-init-final/default-report\" -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/model-preload-final/default-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +22,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 499,
+    "passed": 503,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 98810,
-      "covered": 39281,
-      "percent": 39.7540734743447
+      "count": 99237,
+      "covered": 39620,
+      "percent": 39.92462488789464
     },
     "functions": {
-      "count": 9589,
-      "covered": 3613,
-      "percent": 37.67859005110022
+      "count": 9634,
+      "covered": 3652,
+      "percent": 37.907411251816484
     },
     "regions": {
-      "count": 161506,
-      "covered": 62373,
-      "notcovered": 99133,
-      "percent": 38.61961784701497
+      "count": 162293,
+      "covered": 63017,
+      "notcovered": 99276,
+      "percent": 38.829154677034744
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 452,
+    "logical_source_files": 453,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -63,8 +62,8 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Default shared-target report retained; corrected report selects all 11 current Cargo executable artifacts, excluding stale historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines +0.2214 percentage points, functions +0.1225 percentage points, regions +0.2637 percentage points.",
-    "First-use/default hydration and connection errors stay in unified chooser; no native/live-provider claims."
+    "Default shared-target report retained; corrected export selects every current Cargo executable artifact, excluding historical binaries. No duplicate logical sources or mismatched functions.",
+    "Compared with prior measurement: lines +0.1706 percentage points, functions +0.2288 percentage points, regions +0.2095 percentage points.",
+    "Model preloading and scoped cache verified offline; no native macOS/Windows or live-provider claim."
   ]
 }
