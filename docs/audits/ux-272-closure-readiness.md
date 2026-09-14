@@ -105,3 +105,22 @@ checking that prior live owners retain their identities. Apply only after review
 its actual plan; preserve previous releases and do not restart voyage owners.
 Installation outcome and normal-command executable/hash must be observed before
 claiming that `helm` is updated. Running clients still require reopening.
+
+### Observed installation outcome
+
+Managed installation completed with exit 0 for release
+`20845d6d5722343fe6b8176e7cab7ca10877ff9c2af72bafcef77992f8d8b7bf`.
+The normal `helm` command resolves to that release and matches the tested binary
+SHA-256 `b25067b3dee31dd5d8a28895dc01e2825d22139987f534a871fc82c8b801de3c`.
+The supervisor reports active/running; installer authenticated readiness and
+prior-owner identity checks completed. The installation journal has `pending: null`
+and retains the previous release. The installed four-binary directory passed the
+main workspace PTY journey, including combined options, work menu and narrow
+question, with fixture cleanup observed (`target/finish-ui/installed-pty/`).
+
+The first shell installation call timed out during staging before publication;
+inspection confirmed the old current pointer and no pending journal mutation.
+The same reviewed installation resumed its verified staging under a persistent
+terminal and completed. It was not blindly replayed after an uncertain service
+change. Existing Helm processes still require reopening; no voyage-owner restart
+or cancellation was requested.

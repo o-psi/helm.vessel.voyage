@@ -84,3 +84,10 @@ The local managed installer dry-run would restart the active Vessel even with
 `--no-start`. This UI-only delivery did not apply that service change. The runnable
 client is `target/debug/helm`; reopen using that explicit path to see it. The
 installed `helm` command is not claimed updated.
+
+
+The subsequent finish-up **did** complete the reviewed managed installation.
+The normal `helm` command now resolves to the tested finish-up release. Reopen
+Helm normally; existing clients keep their loaded executable until exit. See the
+[observed installation outcome](audits/ux-272-closure-readiness.md#observed-installation-outcome)
+for release identity, checks and retained previous release.
