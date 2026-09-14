@@ -33,6 +33,8 @@ pub(super) struct Draft {
     pub(super) accounts_loading: bool,
     pub(super) account_row: usize,
     pub(super) requires_default: bool,
+    pub(super) initializing: bool,
+    pub(super) automatic: bool,
     pub(super) model: String,
     pub(super) thinking: Option<String>,
     pub(super) service: Option<String>,
@@ -52,6 +54,8 @@ impl Draft {
             accounts_loading: false,
             account_row: 0,
             requires_default: false,
+            initializing: false,
+            automatic: false,
             model: settings.model.clone(),
             thinking: settings.reasoning_effort.clone(),
             service: settings.service_tier.clone(),
@@ -65,7 +69,7 @@ impl Draft {
         if self.accounts_open {
             let mut v = vec![Control::Account];
             v.extend((0..self.accounts.len()).map(Control::AccountRow));
-            v.extend([Control::SignIn, Control::Cancel]);
+            v.extend([Control::SignIn, Control::Retry, Control::Cancel]);
             return v;
         }
         let mut v = vec![Control::Search, Control::Account, Control::Advanced];
@@ -104,6 +108,60 @@ impl App {
             p.chooser.requires_default = required;
         }
     }
+    pub(in crate::process_client::ui) fn mark_chooser_automatic(&mut self) {
+        if let Some(p) = self.inference.picker.as_mut() {
+            p.chooser.automatic = true;
+        }
+    }
+    #[cfg(test)]
+    pub(in crate::process_client::ui) fn chooser_initializing(&self) -> bool {
+        self.inference
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.chooser.initializing)
+    }
+    pub(in crate::process_client::ui) fn open_initial_account_chooser(
+        &mut self,
+        destination: Destination,
+    ) -> Result<()> {
+        self.cancel_model_catalog();
+        self.cancel_chooser_accounts();
+        let original = match destination {
+            Destination::Draft(d) => self
+                .new_drafts
+                .get(&d)
+                .context("Draft unavailable")?
+                .saved
+                .account_settings
+                .clone()
+                .or_else(|| self.draft_account_seed(d))
+                .unwrap_or_default(),
+            Destination::Live(_) => Settings::default(),
+        };
+        let mut chooser = Draft::new(&original);
+        chooser.initializing = true;
+        self.inference.picker = Some(Picker {
+            id: Uuid::new_v4(),
+            destination,
+            incarnation: match destination {
+                Destination::Live(t) => self.views.get(&t).map(|v| v.process.incarnation),
+                _ => None,
+            },
+            chooser,
+            original,
+            models: vec![],
+            field: Field::Model,
+            query: String::new(),
+            selected: 0,
+            options: vec![],
+            loading: false,
+            notice: "Resolving accounts on this host…".into(),
+            confirmation: None,
+            command_text: String::new(),
+            preserve_draft: true,
+        });
+        self.load_chooser_accounts()
+    }
     pub(in crate::process_client::ui) fn open_model_options(&mut self) -> Result<()> {
         let destination = self
             .active_draft
@@ -111,9 +169,7 @@ impl App {
             .or(self.selected.map(Destination::Live))
             .context("Choose a conversation or start a draft first")?;
         if self.inference_settings(destination).is_err() {
-            self.inference.return_to_model = Some(destination);
-            self.open_accounts(destination, "")?;
-            self.mark_account_initialization(destination);
+            self.open_initial_account_chooser(destination)?;
             return Ok(());
         }
         self.cancel_paste_for_private_panel();
@@ -214,8 +270,13 @@ impl App {
                 return Ok(());
             }
             Control::Retry => {
+                let accounts = p.chooser.accounts_open || p.chooser.initializing;
                 self.inference.picker = Some(p);
-                return self.load_inference_models();
+                return if accounts {
+                    self.load_chooser_accounts()
+                } else {
+                    self.load_inference_models()
+                };
             }
             Control::Account => {
                 p.chooser.accounts_open = !p.chooser.accounts_open;
@@ -267,7 +328,8 @@ impl App {
             }
             Control::Apply => {
                 ensure!(
-                    p.chooser.account.is_some() || p.original.account.is_none(),
+                    !p.chooser.initializing
+                        && (p.chooser.account.is_some() || p.original.account.is_none()),
                     "Select an account before applying"
                 );
                 if (p.chooser.model != p.original.model || p.chooser.account != p.original.account)
@@ -747,6 +809,48 @@ mod tests {
             .map(|c| c.symbol())
             .collect()
     }
+    #[tokio::test]
+    async fn initial_metadata_failure_stays_in_chooser_and_never_opens_private_accounts() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        app.create(Some(f.0.path().to_str().unwrap())).unwrap();
+        let d = app.active_draft.unwrap();
+        app.new_draft_composer_mut(d).unwrap().text = "retained setup".into();
+        app.open_model_options().unwrap();
+        assert!(!app.accounts.open());
+        assert!(app.chooser_initializing());
+        let load = app.inference.account_load.take().unwrap();
+        load.task.abort();
+        let _ = load.task.await;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        assert!(
+            tx.send(Err(anyhow::anyhow!("Account list unavailable")))
+                .is_ok()
+        );
+        app.inference.account_load = Some(account_choices::Load {
+            destination: Destination::Draft(d),
+            incarnation: None,
+            receiver: rx,
+            task: tokio::spawn(async {}),
+        });
+        app.poll_chooser_accounts();
+        assert!(!app.accounts.open());
+        let p = app.inference.picker.as_ref().unwrap();
+        assert!(p.chooser.accounts_open && !p.chooser.accounts_loading);
+        assert!(p.notice.contains("unavailable"));
+        let screen = text(&paint(&app, 40, 18));
+        assert!(screen.contains("Choose a model") && screen.contains("[Retry]"));
+        assert!(!screen.contains("Choose account"));
+        assert!(app.new_drafts[&d].saved.start.is_none());
+        assert_eq!(
+            app.copy_new_draft_images(d).unwrap().0.text,
+            "retained setup"
+        );
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
+    }
+
     #[tokio::test]
     async fn missing_reply_times_out_and_late_reply_cannot_repopulate_picker() {
         let f = super::super::super::account_test_support::Fixture::new();

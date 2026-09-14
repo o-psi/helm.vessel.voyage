@@ -442,7 +442,7 @@ impl App {
                 .as_ref()
                 .is_none_or(|settings| settings.account.is_none())
         {
-            self.open_accounts(super::inference::Destination::Draft(id), "")?;
+            self.open_initial_account_chooser(super::inference::Destination::Draft(id))?;
             self.status =
                 "Choose an account to get ready. Your message is retained; setup does not send it."
                     .into();

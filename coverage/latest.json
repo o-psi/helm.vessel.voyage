@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T20:39:09.136195+00:00",
+  "measured_at_utc": "2026-09-14T21:03:51.653846+00:00",
   "source": {
-    "commit": "f1e530bdf09f9f7393435921c6eaacfdb2f1e475",
+    "commit": "98283abacd9e43916b1a314feec4059534aca566",
     "dirty": true,
-    "fingerprint_sha256": "d3ff8515ccd520c8b020362cf5df4d4dd18fbed0813511a6e1818243c39b559d",
+    "fingerprint_sha256": "9addbee827817f819e77f6fde2bb2cc8f623a4a544f1151c5b553d97180a4d22",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and nonignored untracked workspace files to SHA-256 or null for missing files; excludes inspiration apps and subordinate worktrees. Includes preserved pre-existing render comments and deleted scripts/tests.",
-    "note": "Inline staged account choice; legacy account settings form removed; dirty source unchanged, unrelated staged comments/deletions not delivered."
+    "note": "Unified chooser initialization and reconnect; dirty measured source unchanged, unrelated staged comments/deletions preserved."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/inline-account-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/chooser-init-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,26 +23,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 498,
+    "passed": 499,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 98655,
-      "covered": 39001,
-      "percent": 39.53271501697836
+      "count": 98810,
+      "covered": 39281,
+      "percent": 39.7540734743447
     },
     "functions": {
-      "count": 9583,
-      "covered": 3599,
-      "percent": 37.55608890744026
+      "count": 9589,
+      "covered": 3613,
+      "percent": 37.67859005110022
     },
     "regions": {
-      "count": 161237,
-      "covered": 61844,
-      "notcovered": 99393,
-      "percent": 38.35596048053487
+      "count": 161506,
+      "covered": 62373,
+      "notcovered": 99133,
+      "percent": 38.61961784701497
     }
   },
   "report_selection": {
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected report selects all 11 current Cargo executable artifacts, excluding stale historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines -0.0705 percentage points, functions -0.0485 percentage points, regions -0.1003 percentage points. Legacy form code/tests replaced by inline account staged-selection invariants; unchanged whole workspace scope.",
-    "One account/model Apply; no native/live-provider claims. Coverage measures execution, not correctness."
+    "Compared with prior measurement: lines +0.2214 percentage points, functions +0.1225 percentage points, regions +0.2637 percentage points.",
+    "First-use/default hydration and connection errors stay in unified chooser; no native/live-provider claims."
   ]
 }

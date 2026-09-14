@@ -375,17 +375,6 @@ impl Picker {
     }
 }
 impl App {
-    pub(super) fn mark_account_initialization(&mut self, destination: Destination) {
-        if matches!(destination, Destination::Draft(_))
-            && let Some(p) = self
-                .accounts
-                .picker
-                .as_mut()
-                .filter(|p| p.destination == destination)
-        {
-            p.auto_initialize = true;
-        }
-    }
     pub(super) fn cache_model_account_label(
         &mut self,
         destination: Destination,
@@ -684,21 +673,23 @@ impl App {
             {
                 let _ = self.poll_account_enrollment();
             }
-        } else if self.accounts.reply.is_none() {
-            if let Some(id) = self.active_draft {
-                if self.new_drafts.get(&id).is_some_and(|d| {
+        } else if self.accounts.reply.is_none() && !self.inference_picker_open() {
+            if let Some(id) = self.active_draft
+                && self.new_drafts.get(&id).is_some_and(|d| {
                     d.saved
                         .account_settings
                         .as_ref()
                         .is_none_or(|s| s.account.is_none())
                         && d.saved.start.is_none()
                         && !d.busy
-                }) && self.accounts.initializing.insert(id)
+                })
+                && self.accounts.initializing.insert(id)
+            {
+                if self
+                    .open_initial_account_chooser(Destination::Draft(id))
+                    .is_ok()
                 {
-                    // The unresolved draft is visibly reviewed, never silently retargeted later.
-                    if self.open_accounts(Destination::Draft(id), "").is_ok() {
-                        self.mark_account_initialization(Destination::Draft(id));
-                    }
+                    self.mark_chooser_automatic();
                 }
             }
         }

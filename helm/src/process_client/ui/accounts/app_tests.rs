@@ -906,7 +906,8 @@ async fn unresolved_first_send_opens_setup_and_keeps_original_text() {
     let draft = app.active_draft.unwrap();
     app.new_draft_composer_mut(draft).unwrap().text = "explain this project".into();
     app.send_draft(draft).unwrap();
-    assert!(app.accounts.open());
+    assert!(!app.accounts.open());
+    assert!(app.chooser_initializing());
     assert!(app.new_drafts[&draft].saved.start.is_none());
     assert!(!app.new_drafts[&draft].busy);
     assert_eq!(

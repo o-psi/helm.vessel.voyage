@@ -21,7 +21,7 @@ pub(super) struct Catalogue {
 pub(super) struct Load {
     pub destination: Destination,
     pub incarnation: Option<Uuid>,
-    pub receiver: tokio::sync::oneshot::Receiver<Result<(Uuid, Catalogue)>>,
+    pub receiver: tokio::sync::oneshot::Receiver<Result<(Uuid, Catalogue, Option<Settings>)>>,
     pub task: tokio::task::JoinHandle<()>,
 }
 impl Catalogue {
@@ -105,11 +105,23 @@ impl App {
                 );
                 let value = client
                     .request(voyage_protocol::vessel::VesselCommand::Accounts {
-                        workspace,
+                        workspace: workspace.clone(),
                         transport: None,
                     })
                     .await?;
-                Ok::<_, anyhow::Error>((host, serde_json::from_value::<Catalogue>(value)?))
+                let catalogue = serde_json::from_value::<Catalogue>(value)?;
+                let defaults = if catalogue.default_account.is_some() {
+                    Some(serde_json::from_value::<Settings>(
+                        client
+                            .request(voyage_protocol::vessel::VesselCommand::AccountDefaults {
+                                workspace: workspace.clone(),
+                            })
+                            .await?,
+                    )?)
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>((host, catalogue, defaults))
             })
             .await
             .map_err(|_| anyhow::anyhow!("Account list timed out"))
@@ -165,25 +177,88 @@ impl App {
         };
         self.retired_observers.push(load.task);
         self.inference.chooser_hits.borrow_mut().clear();
-        if let Ok((host, _)) = &result {
+        if let Ok((host, _, _)) = &result {
             let route = match load.destination {
                 Destination::Live(t) => t.route,
                 Destination::Draft(d) => self.new_drafts[&d].route,
             };
             self.cache_account_host(route, *host);
         }
-        let p = self.inference.picker.as_mut().unwrap();
-        p.chooser.accounts_loading = false;
-        match result.and_then(|(_, c)| Ok((c.default_account.is_none(), c.choices()?))) {
-            Ok((requires_default, choices)) => {
-                p.chooser.requires_default = requires_default;
+        let parsed = result.and_then(|(host, c, defaults)| {
+            Ok((host, c.default_account.clone(), c.choices()?, defaults))
+        });
+        let mut start_models = false;
+        let automatic = self.inference.picker.as_ref().unwrap().chooser.automatic;
+        match parsed {
+            Ok((host, default, choices, defaults)) => {
+                let destination = load.destination;
+                let initializing = self.inference.picker.as_ref().unwrap().chooser.initializing;
+                if initializing {
+                    let seed = self.inference.picker.as_ref().unwrap().original.clone();
+                    let mut resolved = seed.clone();
+                    if resolved.account.is_none()
+                        && let Some(defaults) = defaults
+                        && (resolved.provider.is_empty() || resolved.provider == defaults.provider)
+                    {
+                        resolved.account = defaults.account;
+                        resolved.provider = defaults.provider;
+                        if resolved.model.is_empty() {
+                            resolved.model = defaults.model;
+                        }
+                    }
+                    if let Destination::Draft(d) = destination
+                        && let Err(e) = self.set_draft_account(d, host, resolved.clone())
+                    {
+                        let p = self.inference.picker.as_mut().unwrap();
+                        p.chooser.accounts_loading = false;
+                        p.notice = safe(&e.to_string());
+                        return;
+                    }
+                    let p = self.inference.picker.as_mut().unwrap();
+                    p.original = resolved.clone();
+                    p.chooser = chooser::Draft::new(&resolved);
+                    p.chooser.accounts_open = true;
+                    if let Some(c) = choices
+                        .iter()
+                        .find(|c| c.ready && Some(&c.binding) == resolved.account.as_ref())
+                    {
+                        p.chooser.account_label = c.label.clone();
+                        p.chooser.accounts_open = false;
+                        start_models = true;
+                    }
+                }
+                let p = self.inference.picker.as_mut().unwrap();
+                p.chooser.initializing = false;
+                p.chooser.accounts_loading = false;
+                p.chooser.requires_default = default.is_none();
                 p.chooser.account_row = choices
                     .iter()
                     .position(|c| Some(&c.binding) == p.chooser.account.as_ref())
                     .unwrap_or(0);
                 p.chooser.accounts = choices;
+                p.notice = if p.chooser.accounts.is_empty() {
+                    "No accounts available. Sign in or add an account."
+                } else {
+                    "Choose an account; no message is sent."
+                }
+                .into();
             }
-            Err(e) => p.notice = safe(&e.to_string()),
+            Err(e) => {
+                let p = self.inference.picker.as_mut().unwrap();
+                p.chooser.accounts_loading = false;
+                p.notice = safe(&e.to_string());
+            }
+        }
+        if start_models && automatic {
+            self.inference.picker = None;
+            return;
+        }
+        if start_models
+            && let Err(e) = self.load_inference_models()
+            && let Some(p) = self.inference.picker.as_mut()
+        {
+            p.loading = false;
+            p.notice = safe(&e.to_string());
         }
     }
     pub(super) fn choose_inline_account(&mut self, mut p: Picker, index: usize) -> Result<()> {
@@ -277,6 +352,12 @@ impl App {
             Paragraph::new("Selection is a draft. Use model applies it."),
             Rect::new(area.x, area.bottom() - 2, area.width, 1),
         );
+        let retry = Rect::new(area.right().saturating_sub(10), area.bottom() - 1, 10, 1);
+        frame.render_widget(
+            Paragraph::new("[Retry]").style(crate::theme::Role::Focus.style()),
+            retry,
+        );
+        controls.borrow_mut().push((retry, Control::Retry));
         let cancel = Rect::new(area.x, area.bottom() - 1, 10, 1);
         frame.render_widget(
             Paragraph::new("[Cancel]").style(crate::theme::Role::Focus.style()),

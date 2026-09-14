@@ -19,7 +19,7 @@ def main():
         f.request({'op':'account_set_default','workspace':str(f.workspace),'command_id':str(uuid.uuid4()),'account':binding,'expected_revision':catalogue['default_revision']})
         order=f.request({'op':'accounts','workspace':str(f.workspace),'transport':None})['accounts'];assert order[0]['id']==first['account_id'] and order[1]['id']==binding['account_id']
         # Start a new unsent local draft; no provider setup detour should remain.
-        ui=j.connect();ui.send(b'\x0e');ui.until(lambda s:'Model:' in s.text() and 'Choose account' not in s.text(),'draft inherits default')
+        ui=j.connect();ui.send(b'\x0e');ui.until(lambda s:'Model: gpt-' in s.text() and '┌ Choose a model' not in s.text() and 'Choose account' not in s.text(),'draft inherits default')
         u.paste(ui,'default draft retained');u.settle(ui)
         def click(label):
             u.settle(ui);lines=ui.screen.text().splitlines();row=next(i for i,l in enumerate(lines) if label in l);col=lines[row].index(label);ui.send(f'\x1b[<0;{col+1};{row+1}M'.encode());u.settle(ui)
