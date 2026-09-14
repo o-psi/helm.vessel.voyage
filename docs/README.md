@@ -39,6 +39,7 @@ are not presented as usable commands.
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [Answer actions and changed files](audits/ux-272-result-actions.md) | Per-answer copy, executing-host file selection, scoped diffs and verification |
 | [UX closure readiness](audits/ux-272-closure-readiness.md) | Main-UI finish-up, actual verification and honest remaining closure blockers |
+| [Model loading recovery](model-loading.md) | Bounded catalogue fetch, explicit Retry and stale-response cancellation |
 | [Direct model chooser](model-chooser.md) | Search models directly, preview choices, expand advanced settings inline and explicitly apply |
 | [Model modal mouse controls](model-mouse.md) | Wheel navigation, clickable Back/Cancel and pointer verification |
 | [Main conversation workspace](main-workspace.md) | Named main navigation, quiet transcript, verification and remaining redesign |

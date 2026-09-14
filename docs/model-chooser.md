@@ -4,6 +4,9 @@ The intermediate **Model options → Model → picker** menu is removed. The com
 Model control, Helm → Model and account, `/preferences`, and `/model` open the
 same centered **Choose a model** dialog directly.
 
+Catalogue loading is bounded; [loading recovery](model-loading.md) describes the
+12-second deadline and explicit Retry without losing your current model/draft.
+
 ## Interaction
 
 - Search filters the model list. Rows identify the current model and the locally

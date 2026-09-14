@@ -128,6 +128,7 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 }
 #[derive(Default)]
 pub(super) struct Controls {
+    catalog_job: Option<(Uuid, std::time::Instant, tokio::task::JoinHandle<()>)>,
     return_to_model: Option<Destination>,
     return_choice: Option<(Settings, chooser::Draft)>,
     options_hit: std::cell::Cell<Option<(ratatui::layout::Rect, Destination)>>,
@@ -330,122 +331,127 @@ impl App {
         self.load_inference_models()?;
         Ok(())
     }
+    pub(super) fn cancel_model_catalog(&mut self) {
+        if let Some((_, _, job)) = self.inference.catalog_job.take() {
+            job.abort();
+            self.retired_observers.push(job);
+        }
+    }
     fn load_inference_models(&mut self) -> Result<()> {
+        self.cancel_model_catalog();
         let picker = self
             .inference
             .picker
             .as_mut()
             .context("picker unavailable")?;
+        picker.id = Uuid::new_v4();
         let id = picker.id;
         let destination = picker.destination;
+        let account = picker.original.account.clone();
         picker.loading = true;
-        let sender = self.sender.clone();
-        if let Some(account) = picker.original.account.clone() {
+        picker.notice =
+            "Fetching models from the executing host… You can cancel or keep the current model."
+                .into();
+        self.inference.choices.borrow_mut().clear();
+        let setup = (|| -> Result<_> {
             let (route, workspace) = self.account_destination(destination)?;
-            let client = self.clients[route].clone();
-            if let Destination::Draft(draft_id) = destination {
-                self.inference.draft_generations.insert(draft_id, id);
-            }
-            tokio::spawn(async move {
-                let result = client
-                    .request(voyage_protocol::vessel::VesselCommand::AccountModels {
-                        workspace,
-                        account: account.clone(),
-                    })
-                    .await
-                    .and_then(|v| {
-                        ensure!(
-                            v["account"] == serde_json::to_value(&account)?,
-                            "account catalog identity changed"
-                        );
-                        Ok(v["models"].clone())
-                    })
-                    .map_err(|_| "Executing-host account catalog unavailable".to_owned());
-                let _ = sender
-                    .send(Update::InferenceModels {
-                        route: Some(route),
-                        id,
-                        context: None,
-                        generation: matches!(destination, Destination::Draft(_)).then_some(id),
-                        result,
-                    })
-                    .await;
-            });
-            return Ok(());
-        }
-        match destination {
-            Destination::Live(target) => {
+            let command = if let Some(account) = account.clone() {
+                voyage_protocol::vessel::VesselCommand::AccountModels { workspace, account }
+            } else {
+                let Destination::Live(target) = destination else {
+                    anyhow::bail!("Choose an account before loading models")
+                };
                 let view = &self.views[&target];
-                let incarnation = view.process.incarnation;
-                let run_id = view
-                    .snapshot
-                    .as_ref()
-                    .and_then(|s| s.run.as_ref())
-                    .filter(|r| r.active())
-                    .map(|r| r.run_id);
-                let client = self.clients[target.route].clone();
-                tokio::spawn(async move {
-                    let result = tokio::time::timeout(
-                        std::time::Duration::from_secs(25),
-                        client.voyage(
-                            target.session,
-                            incarnation,
-                            VoyageCommand::Controls {
-                                run_id,
-                                section: "models".into(),
-                            },
-                        ),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
-                    .and_then(|r| r.map_err(|e| e.to_string()));
-                    let _ = sender
-                        .send(Update::InferenceModels {
-                            route: Some(target.route),
-                            id,
-                            context: None,
-                            generation: None,
-                            result,
-                        })
-                        .await;
-                });
+                voyage_protocol::vessel::VesselCommand::Voyage(
+                    voyage_protocol::vessel::VoyageRequest {
+                        session_id: target.session,
+                        incarnation: Some(view.process.incarnation),
+                        command: VoyageCommand::Controls {
+                            run_id: view
+                                .snapshot
+                                .as_ref()
+                                .and_then(|s| s.run.as_ref())
+                                .filter(|r| r.active())
+                                .map(|r| r.run_id),
+                            section: "models".into(),
+                        },
+                    },
+                )
+            };
+            Ok((route, command))
+        })();
+        let (route, command) = match setup {
+            Ok(v) => v,
+            Err(_) => {
+                self.inference_models(
+                    id,
+                    None,
+                    None,
+                    Err("Choose an account before loading models".into()),
+                );
+                return Ok(());
             }
-            Destination::Draft(draft_id) => {
-                let (route, workspace) = self.account_destination(Destination::Draft(draft_id))?;
-                let account = self
-                    .draft_inference_settings(draft_id)?
-                    .account
-                    .context("Resolve an account with /account before model discovery")?;
-                let client = self.clients[route].clone();
-                self.inference.draft_generations.insert(draft_id, id);
-                tokio::spawn(async move {
-                    let result = client
-                        .request(voyage_protocol::vessel::VesselCommand::AccountModels {
-                            workspace,
-                            account: account.clone(),
-                        })
-                        .await
-                        .and_then(|v| {
-                            ensure!(
-                                v["account"] == serde_json::to_value(&account)?,
-                                "account catalog context changed"
-                            );
+        };
+        if let Destination::Draft(draft) = destination {
+            self.inference.draft_generations.insert(draft, id);
+        }
+        let client = self.clients[route].clone();
+        let sender = self.sender.clone();
+        let job = tokio::spawn(async move {
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(12), client.request(command))
+                    .await
+                    .map_err(|_| "Model loading timed out".to_owned())
+                    .and_then(|v| v.map_err(|_| "Model catalog unavailable".into()))
+                    .and_then(|v| {
+                        if let Some(account) = account {
+                            if v["account"] != serde_json::to_value(&account).unwrap_or_default() {
+                                return Err("Account catalog changed".into());
+                            }
                             Ok(v["models"].clone())
-                        })
-                        .map_err(|_| "Executing-host catalog unavailable".to_owned());
-                    let _ = sender
-                        .send(Update::InferenceModels {
-                            route: Some(route),
-                            id,
-                            context: None,
-                            generation: Some(id),
-                            result,
-                        })
-                        .await;
-                });
+                        } else {
+                            Ok(v)
+                        }
+                    });
+            let _ = sender
+                .send(Update::InferenceModels {
+                    route: Some(route),
+                    id,
+                    context: None,
+                    generation: matches!(destination, Destination::Draft(_)).then_some(id),
+                    result,
+                })
+                .await;
+        });
+        self.inference.catalog_job = Some((
+            id,
+            std::time::Instant::now() + std::time::Duration::from_secs(12),
+            job,
+        ));
+        Ok(())
+    }
+    fn poll_model_catalog(&mut self) {
+        let Some((id, deadline, _)) = self.inference.catalog_job.as_ref() else {
+            return;
+        };
+        let id = *id;
+        if !self
+            .inference
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.id == id && p.loading)
+        {
+            self.cancel_model_catalog();
+            return;
+        }
+        if std::time::Instant::now() >= *deadline {
+            self.cancel_model_catalog();
+            if let Some(p) = self.inference.picker.as_mut().filter(|p| p.id == id) {
+                p.loading = false;
+                p.id = Uuid::new_v4();
+                p.notice="Model loading timed out. Current model is still available. Retry to fetch the catalog again.".into();
             }
         }
-        Ok(())
     }
     pub(super) fn sync_live_inference_picker(&mut self, target: Target) {
         let Some(latest) = self
@@ -491,6 +497,14 @@ impl App {
         generation: Option<Uuid>,
         result: std::result::Result<serde_json::Value, String>,
     ) {
+        if self
+            .inference
+            .catalog_job
+            .as_ref()
+            .is_some_and(|(job_id, _, _)| *job_id == id)
+        {
+            self.cancel_model_catalog();
+        }
         let stale = self
             .inference
             .picker
@@ -517,9 +531,12 @@ impl App {
         if let Destination::Draft(draft_id) = picker.destination
             && self.inference.draft_generations.get(&draft_id).copied() != generation
         {
+            picker.loading = false;
+            picker.notice = "Draft changed. Retry model discovery.".into();
             return;
         }
         self.inference.choices.borrow_mut().clear();
+        let failed = result.is_err();
         let models = result
             .ok()
             .and_then(|value| {
@@ -529,9 +546,13 @@ impl App {
             })
             .filter(|models| crate::provider::validate_models(models, &[]).is_ok());
         picker.install_models(models);
+        if failed {
+            picker.notice="Could not load models. Current model is still available; Retry or check the account/connection.".into();
+        }
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
         self.account_tick();
+        self.poll_model_catalog();
         self.resume_model_after_account();
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {

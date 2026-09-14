@@ -18,6 +18,7 @@ pub(super) enum Control {
     Reset,
     Keep,
     Apply,
+    Retry,
     Cancel,
 }
 #[derive(Clone)]
@@ -50,7 +51,7 @@ impl Draft {
         if self.review {
             v.extend([Control::Reset, Control::Keep]);
         }
-        v.extend([Control::Cancel, Control::Apply]);
+        v.extend([Control::Retry, Control::Cancel, Control::Apply]);
         v
     }
     pub(super) fn select(&mut self, model: String) {
@@ -169,8 +170,16 @@ impl App {
     }
     fn chooser_activate(&mut self, mut p: Picker, c: Control) -> Result<()> {
         match c {
-            Control::Cancel => return Ok(()),
+            Control::Cancel => {
+                self.cancel_model_catalog();
+                return Ok(());
+            }
+            Control::Retry => {
+                self.inference.picker = Some(p);
+                return self.load_inference_models();
+            }
             Control::Account => {
+                self.cancel_model_catalog();
                 self.inference.return_to_model = Some(p.destination);
                 self.inference.return_choice = Some((p.original.clone(), p.chooser.clone()));
                 if let Err(e) = self.open_accounts(p.destination, "") {
@@ -277,6 +286,7 @@ impl App {
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => {
                 if k.code == KeyCode::Esc {
+                    self.cancel_model_catalog();
                     return Ok(true);
                 }
                 if k.modifiers.contains(KeyModifiers::CONTROL)
@@ -564,9 +574,11 @@ impl App {
             ),
         );
         let cancel = Rect::new(inner.x, inner.bottom() - 1, 10, 1);
+        let retry = Rect::new(inner.x + 11, inner.bottom() - 1, 9, 1);
         let apply = Rect::new(inner.right() - 13, inner.bottom() - 1, 13, 1);
         for (r, c, label) in [
             (cancel, Control::Cancel, "[Cancel]"),
+            (retry, Control::Retry, "[Retry]"),
             (apply, Control::Apply, "[Use model]"),
         ] {
             frame.render_widget(
@@ -643,6 +655,73 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+    #[tokio::test]
+    async fn missing_reply_times_out_and_late_reply_cannot_repopulate_picker() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        let id = app.inference.picker.as_ref().unwrap().id;
+        app.inference.picker.as_mut().unwrap().loading = true;
+        let job = tokio::spawn(async { std::future::pending::<()>().await });
+        app.inference.catalog_job = Some((
+            id,
+            std::time::Instant::now() - std::time::Duration::from_secs(1),
+            job,
+        ));
+        app.poll_model_catalog();
+        let p = app.inference.picker.as_ref().unwrap();
+        assert!(!p.loading);
+        assert!(p.notice.contains("timed out"));
+        assert_ne!(p.id, id);
+        app.inference_models(
+            id,
+            None,
+            None,
+            Ok(serde_json::json!([{"id":"late","display_name":"late","description":""}])),
+        );
+        assert!(
+            !app.inference
+                .picker
+                .as_ref()
+                .unwrap()
+                .options
+                .contains(&"late".into())
+        );
+        assert_eq!(app.views[&t].draft.text, "keep my draft");
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
+    }
+    #[tokio::test]
+    async fn retry_replaces_owned_read_and_failure_settles_loading() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        app.load_inference_models().unwrap();
+        let first = app.inference.picker.as_ref().unwrap().id;
+        app.load_inference_models().unwrap();
+        let second = app.inference.picker.as_ref().unwrap().id;
+        assert_ne!(first, second);
+        app.inference_models(first, None, None, Err("old".into()));
+        assert!(app.inference.picker.as_ref().unwrap().loading);
+        app.inference_models(second, None, None, Err("unavailable".into()));
+        assert!(!app.inference.picker.as_ref().unwrap().loading);
+        assert!(app.inference.catalog_job.is_none());
+        assert!(
+            app.inference
+                .picker
+                .as_ref()
+                .unwrap()
+                .notice
+                .contains("Retry")
+        );
+        assert!(app.views[&t].pending.is_none());
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
     }
     #[tokio::test]
     async fn direct_list_centered_mouse_select_is_draft_only_cancel_retains_original() {

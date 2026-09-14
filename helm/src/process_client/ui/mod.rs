@@ -328,6 +328,7 @@ pub async fn run_with_notice(
         Ok(())
     }.await;
     app.close_inspection();
+    app.cancel_model_catalog();
     let browser_cleanup = app.finish_browsers().await;
     let clipboard_cleanup = app.finish_clipboard().await;
     let preview_cleanup = app.previews.finish();
