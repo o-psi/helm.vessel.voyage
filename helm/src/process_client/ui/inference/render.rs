@@ -12,8 +12,7 @@ impl App {
         self.inference.options_hit.set(None);
         self.inference.cancel_hit.set(None);
         self.inference.picker_area.set(None);
-        self.inference.options_back.set(None);
-        self.inference.options_area.set(None);
+        self.inference.chooser_hits.borrow_mut().clear();
         self.inference.access.hit.set(None);
         self.inference.access.visible.set(false);
         self.inference.visible.set(false);
@@ -71,10 +70,14 @@ impl App {
     pub(in crate::process_client::ui) fn draw_inference_picker(&self, frame: &mut Frame<'_>) {
         self.draw_draft_access(frame);
         self.draw_accounts(frame);
-        self.draw_model_options(frame);
+
         let Some(picker) = &self.inference.picker else {
             return;
         };
+        if picker.field == Field::Model {
+            self.draw_model_chooser(frame);
+            return;
+        }
         self.inference.visible.set(true);
         let screen = frame.area();
         let width = screen.width.saturating_sub(4).min(94);

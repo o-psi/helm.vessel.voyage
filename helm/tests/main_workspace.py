@@ -50,8 +50,9 @@ def main():
             u.settle(ui)
             # Preferences is one options surface, not four permanent composer fields.
             ui.send(b'\x10' + b'\x1b[B' * 3 + b'\r')
-            ui.until(lambda screen: 'Model options' in screen.text(), 'combined model/account options')
-            assert all(label in ui.screen.text() for label in ['Account:', 'Thinking:', 'Service:'])
+            ui.until(lambda screen: 'Choose a model' in screen.text(), 'combined model/account options')
+            assert 'Account:' in ui.screen.text() and 'Advanced options' in ui.screen.text()
+            assert 'Thinking:' not in ui.screen.text()
             (output / f'preferences-{width}.txt').write_text(ui.screen.text())
             u.paste(ui, 'must not become settings')
             ui.send(b'\x1b'); u.settle(ui)

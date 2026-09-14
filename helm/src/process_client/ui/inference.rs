@@ -1,7 +1,7 @@
 //! One inference action path for composer controls and slash commands.
 //! Catalog entries are suggestions, never claims of model/account support.
 mod access;
-mod options;
+mod chooser;
 mod render;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result, drafts,
@@ -128,22 +128,25 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 }
 #[derive(Default)]
 pub(super) struct Controls {
-    options: Option<options::OptionsPanel>,
+    return_to_model: Option<Destination>,
+    return_choice: Option<(Settings, chooser::Draft)>,
     options_hit: std::cell::Cell<Option<(ratatui::layout::Rect, Destination)>>,
-    options_rows: std::cell::RefCell<Vec<(ratatui::layout::Rect, Field)>>,
+    chooser_hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, chooser::Control)>>,
     picker: Option<Picker>,
     access: access::AccessControls,
     draft_generations: std::collections::BTreeMap<Uuid, Uuid>,
     visible: std::cell::Cell<bool>,
     cancel_hit: std::cell::Cell<Option<ratatui::layout::Rect>>,
     picker_area: std::cell::Cell<Option<ratatui::layout::Rect>>,
-    options_back: std::cell::Cell<Option<ratatui::layout::Rect>>,
-    options_area: std::cell::Cell<Option<ratatui::layout::Rect>>,
+
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, Destination, Field)>>,
     choices: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
 }
+#[derive(Clone)]
 struct Picker {
     id: Uuid,
+    chooser: chooser::Draft,
+    incarnation: Option<Uuid>,
     destination: Destination,
     original: Settings,
     models: Vec<crate::provider::ModelInfo>,
@@ -289,6 +292,8 @@ impl App {
                 && seen.insert(value.clone())
         });
         let mut picker = Picker {
+            chooser: chooser::Draft::new(&original),
+            incarnation: match destination {Destination::Live(t)=>Some(self.views[&t].process.incarnation),_=>None},
             id: Uuid::new_v4(),
             destination,
             original,
@@ -314,7 +319,12 @@ impl App {
             picker.notice = format!("Priority may increase cost. {}", picker.notice);
         }
         if !value.is_empty() {
-            return self.select_inference(picker, value);
+            if field == Field::Model {
+                picker.chooser.select(value.to_owned());
+                picker.options.push(value.to_owned());
+            } else {
+                return self.select_inference(picker, value);
+            }
         }
         self.inference.picker = Some(picker);
         self.load_inference_models()?;
@@ -522,6 +532,7 @@ impl App {
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
         self.account_tick();
+        self.resume_model_after_account();
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {
         ensure!(
@@ -643,6 +654,14 @@ impl App {
         Ok(())
     }
     pub(super) fn inference_input(&mut self, event: &Event) -> Result<bool> {
+        if self
+            .inference
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.field == Field::Model)
+        {
+            return self.model_chooser_input(event);
+        }
         use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
         if self.account_input(event)? {
             return Ok(true);

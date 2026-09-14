@@ -1,5 +1,9 @@
 # Model modal mouse completion (#275)
 
+> Superseded entry flow: [Direct model chooser](model-chooser.md) removes the
+> intermediate Model options menu. Mouse support and centered placement remain;
+> model row selection now previews, and Use model explicitly applies.
+
 The model and inference option rows were clickable, but the model/options modals
 had no wheel handling and no clickable Back/Cancel. Users still needed keyboard
 navigation to complete part of a mouse-driven workflow. This delivery completes
