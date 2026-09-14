@@ -179,7 +179,7 @@ class Journey:
         ui.resize(120, 40)
         ui.until(lambda s: 'Helm' in s.text() or 'Your voyages' in s.text(), 'connected Helm')
         if self.f.sessions:
-            ui.until(lambda s: 'Account:' in s.text(), 'selected voyage composer')
+            ui.until(lambda s: 'Model:' in s.text(), 'selected voyage composer')
             settle(ui)
         return ui
 
@@ -442,6 +442,16 @@ def historical(j):
     assert j.f.snapshot(source)['messages'] == original
     assert len(j.f.provider.bodies) == 2, 'branch unexpectedly inferred'
     assert files == {p.name:sha(p) for p in j.f.workspace.iterdir() if p.is_file()}
+    # A readable branch snapshot can precede the initialized runtime's settled
+    # lifecycle. Wait for its actual clean idle suspension before fixture teardown;
+    # do not signal during bootstrap and then expect a normal stopped checkpoint.
+    def branch_suspended():
+        path = j.f.directory/'sessions'/branch/'stopped.json'
+        if not path.exists(): return False
+        stopped = json.loads(path.read_text())
+        registration = json.loads((path.parent/'registration.json').read_text())
+        return stopped.get('cleanup_observed') is True and stopped.get('incarnation') == registration['incarnation']
+    recovery.wait_for(branch_suspended)
     j.note('X09/X10 partial: rendered selected historical user boundary creates distinct identity/context, unchanged source/files, no inference')
 
 

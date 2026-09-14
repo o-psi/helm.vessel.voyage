@@ -463,7 +463,7 @@ impl App {
     }
     pub(super) fn attachment_summary(&self) -> String {
         format!(
-            "Alt+P previews {} · Paste: Ctrl+V / Alt+V",
+            "Message · image previews {}",
             if self.previews.enabled { "on" } else { "off" }
         )
     }

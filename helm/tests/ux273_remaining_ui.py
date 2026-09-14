@@ -56,7 +56,7 @@ def select(j, ui, sid):
         u.paste(ui,sid[:8])
     u.settle(ui)
     ui.send(b'\r')
-    contains(ui,'Account:')
+    contains(ui,'Model:')
     u.settle(ui)
     # Escape leaves sidebar focus without changing voyage.
     ui.send(ESC); u.settle(ui)
@@ -238,7 +238,7 @@ def routes(j):
         ui=u.private.OuterPTY([str(j.binaries/'helm'),'connect','--access-file',str(paths[0]),'--access-file',str(paths[1])],
             {**j.f.env,'TERM':'xterm-256color'},j.f.workspace,j.output/'two-routes.pty')
         j.clients.append(ui); ui.resize(140,45)
-        contains(ui,'Account:'); u.settle(ui)
+        contains(ui,'Model:'); u.settle(ui)
         j.picker_order=[b,a]; j.route_case=True
         for s,text in [(a,'route-alpha-canonical'),(b,'route-beta-canonical'),(a,'route-alpha-canonical')]:
             select(j,ui,s); contains(ui,text); capture(j,ui,'selected-'+s[:8])

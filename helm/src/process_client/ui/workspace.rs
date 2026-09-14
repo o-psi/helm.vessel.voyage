@@ -16,6 +16,12 @@ enum Action {
     New,
     Find,
     Changes,
+    Work,
+    Copy,
+    Tasks,
+    Agents,
+    Preferences,
+    Paste,
     More,
     Stop,
     Commands,
@@ -35,6 +41,12 @@ impl Action {
             Self::New => "+ New",
             Self::Find => "Find",
             Self::Changes => "Changes",
+            Self::Work => "This conversation",
+            Self::Copy => "Copy last answer",
+            Self::Tasks => "Tasks",
+            Self::Agents => "Delegated work",
+            Self::Preferences => "Model and account",
+            Self::Paste => "Paste text or image",
             Self::More => "More",
             Self::Stop => "Stop",
             Self::Commands => "Search all actions",
@@ -52,6 +64,10 @@ impl Action {
         matches!(
             self,
             Self::Changes
+                | Self::Work
+                | Self::Copy
+                | Self::Tasks
+                | Self::Agents
                 | Self::More
                 | Self::Stop
                 | Self::Programs
@@ -63,18 +79,26 @@ impl Action {
 const MENU: &[Action] = &[
     Action::New,
     Action::Find,
+    Action::Work,
+    Action::Preferences,
+    Action::Paste,
     Action::Commands,
-    Action::Changes,
-    Action::More,
-    Action::Stop,
-    Action::Programs,
-    Action::Browser,
-    Action::Workflows,
     Action::Archives,
     Action::Settings,
     Action::Connections,
     Action::Help,
     Action::Leave,
+];
+const WORK: &[Action] = &[
+    Action::Changes,
+    Action::Copy,
+    Action::Tasks,
+    Action::Agents,
+    Action::Programs,
+    Action::Browser,
+    Action::Workflows,
+    Action::More,
+    Action::Stop,
 ];
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Identity {
@@ -90,9 +114,16 @@ struct Hit {
 #[derive(Default)]
 pub(super) struct Navigation {
     menu: Option<(Identity, usize)>,
+    work: bool,
     hits: RefCell<Vec<Hit>>,
 }
 impl App {
+    pub(super) fn workspace_menu_open(&self) -> bool {
+        self.workspace.menu.is_some()
+    }
+    fn workspace_entries(&self) -> &'static [Action] {
+        if self.workspace.work { WORK } else { MENU }
+    }
     pub(super) fn clear_workspace_hits(&self) {
         self.workspace.hits.borrow_mut().clear();
     }
@@ -160,6 +191,7 @@ impl App {
         }
         if matches!(event, Event::Key(k) if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('p'))
         {
+            self.workspace.work = false;
             self.workspace.menu = if self.workspace.menu.is_some() {
                 None
             } else {
@@ -169,6 +201,7 @@ impl App {
             return Ok(true);
         }
         if let Some((identity, selected)) = self.workspace.menu {
+            let entries = self.workspace_entries();
             if identity != self.workspace_identity() {
                 self.workspace.menu = None;
                 self.workspace.hits.borrow_mut().clear();
@@ -186,13 +219,13 @@ impl App {
                         KeyCode::Esc => self.workspace.menu = None,
                         KeyCode::Up | KeyCode::BackTab => {
                             self.workspace.menu =
-                                Some((identity, (selected + MENU.len() - 1) % MENU.len()))
+                                Some((identity, (selected + entries.len() - 1) % entries.len()))
                         }
                         KeyCode::Down | KeyCode::Tab => {
-                            self.workspace.menu = Some((identity, (selected + 1) % MENU.len()))
+                            self.workspace.menu = Some((identity, (selected + 1) % entries.len()))
                         }
                         KeyCode::Enter | KeyCode::Char(' ') if k.modifiers.is_empty() => {
-                            self.workspace_activate(MENU[selected])?
+                            self.workspace_activate(entries[selected])?
                         }
                         _ => {}
                     }
@@ -241,7 +274,19 @@ impl App {
         }
         self.workspace.menu = None;
         match action {
-            Action::Menu => self.workspace.menu = Some((self.workspace_identity(), 0)),
+            Action::Menu => {
+                self.workspace.work = false;
+                self.workspace.menu = Some((self.workspace_identity(), 0));
+            }
+            Action::Work => {
+                self.workspace.work = true;
+                self.workspace.menu = Some((self.workspace_identity(), 0));
+            }
+            Action::Copy => self.discovery_open("copy")?,
+            Action::Tasks => self.discovery_open("todos")?,
+            Action::Agents => self.discovery_open("subagents")?,
+            Action::Preferences => self.open_model_options()?,
+            Action::Paste => self.paste_clipboard_action()?,
             Action::New => self.create(None)?,
             Action::Find => self.open_voyage_picker(),
             Action::Changes => {
@@ -281,7 +326,7 @@ impl App {
             if self.workspace_enabled(Action::Stop) {
                 actions.push(Action::Stop);
             }
-            actions.extend([Action::Changes, Action::More]);
+            actions.extend([Action::Changes, Action::Work]);
         }
         for action in actions {
             let text = format!(" {} ", action.label());
@@ -325,21 +370,26 @@ impl App {
         if area.width < 40 || area.height < 18 {
             return;
         }
+        let entries = self.workspace_entries();
         let rect = Rect::new(
             area.x,
             area.y + 1,
             area.width.min(56),
-            (MENU.len() as u16 + 3).min(area.height - 1),
+            (entries.len() as u16 + 3).min(area.height - 1),
         );
         frame.render_widget(Clear, rect);
         frame.render_widget(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Helm ")
+                .title(if self.workspace.work {
+                    " This conversation "
+                } else {
+                    " Helm "
+                })
                 .title_bottom(" ↑↓ Choose · Enter Open · Esc Back "),
             rect,
         );
-        let items: Vec<_> = MENU
+        let items: Vec<_> = entries
             .iter()
             .map(|a| {
                 ListItem::new(if self.workspace_enabled(*a) {
@@ -349,7 +399,7 @@ impl App {
                 })
             })
             .collect();
-        let list = Rect::new(rect.x + 1, rect.y + 1, rect.width - 2, MENU.len() as u16);
+        let list = Rect::new(rect.x + 1, rect.y + 1, rect.width - 2, entries.len() as u16);
         frame.render_stateful_widget(
             List::new(items).highlight_style(crate::theme::Role::Selection.style()),
             list,
@@ -359,7 +409,7 @@ impl App {
             .hits
             .borrow_mut()
             .retain(|h| h.area.y == area.y);
-        for (n, action) in MENU.iter().enumerate() {
+        for (n, action) in entries.iter().enumerate() {
             self.workspace.hits.borrow_mut().push(Hit {
                 area: Rect::new(list.x, list.y + n as u16, list.width, 1),
                 action: *action,
@@ -403,6 +453,35 @@ mod tests {
             .map(|c| c.symbol())
             .collect::<String>()
     }
+    #[tokio::test]
+    async fn conversation_menu_groups_work_without_application_settings() {
+        let f = super::super::account_test_support::Fixture::new();
+        let mut app = super::super::accounts::app_tests::app(f.0.path());
+        select_fixture(&mut app);
+        app.workspace_activate(Action::Work).unwrap();
+        assert!(app.workspace.work);
+        assert!(app.workspace_entries().contains(&Action::Copy));
+        assert!(app.workspace_entries().contains(&Action::Tasks));
+        assert!(!app.workspace_entries().contains(&Action::Connections));
+        let mut terminal = Terminal::new(TestBackend::new(40, 18)).unwrap();
+        terminal
+            .draw(|f| super::super::render::draw(f, &app))
+            .unwrap();
+        for label in [
+            "This conversation",
+            "Copy last answer",
+            "Delegated work",
+            "Open terminal",
+        ] {
+            assert!(text(&terminal).contains(label));
+        }
+        app.workspace_input(&key(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        app.workspace_activate(Action::Menu).unwrap();
+        assert!(!app.workspace.work);
+        assert!(app.workspace_entries().contains(&Action::Connections));
+    }
+
     #[tokio::test]
     async fn named_controls_render_and_menu_preserves_composer_at_both_widths() {
         let fixture = super::super::account_test_support::Fixture::new();

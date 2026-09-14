@@ -9,6 +9,7 @@ use ratatui::{
 
 impl App {
     pub(in crate::process_client::ui) fn clear_inference_hits(&self) {
+        self.inference.options_hit.set(None);
         self.inference.access.hit.set(None);
         self.inference.access.visible.set(false);
         self.inference.visible.set(false);
@@ -24,37 +25,20 @@ impl App {
             return;
         };
         let settings = self.inference_settings(destination).ok();
-        let fields = [
-            Field::Account,
-            Field::Model,
-            Field::Thinking,
-            Field::Service,
-        ];
-        let columns = Layout::horizontal([Constraint::Percentage(20); 5]).split(area);
-        self.draw_access_control(frame, columns[4], destination);
-        for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
-            let value = settings
+        let columns = Layout::horizontal([Constraint::Percentage(72), Constraint::Percentage(28)])
+            .split(area);
+        self.draw_access_control(frame, columns[1], destination);
+        let label = format!(
+            "Model: {} ▾",
+            settings
                 .as_ref()
-                .map(|s| {
-                    if field == Field::Account {
-                        self.account_control_label(destination, s)
-                    } else {
-                        s.label(field)
-                    }
-                })
-                .unwrap_or_else(|| "unavailable".into());
-            self.draw_composer_control(
-                frame,
-                area,
-                format!("{}: {} ▾", field.name(), safe(&value)),
-                settings.is_some(),
-            );
-            // Keep unavailable controls discoverable; activation explains why.
-            self.inference
-                .hits
-                .borrow_mut()
-                .push((area, destination, field));
-        }
+                .map(|s| safe(&s.model))
+                .unwrap_or_else(|| "Set up account".into())
+        );
+        self.draw_composer_control(frame, columns[0], label, true);
+        self.inference
+            .options_hit
+            .set(Some((columns[0], destination)));
     }
     // Style the label, not the Paragraph's entire equal-width section.
     pub(super) fn draw_composer_control(
@@ -83,6 +67,7 @@ impl App {
     pub(in crate::process_client::ui) fn draw_inference_picker(&self, frame: &mut Frame<'_>) {
         self.draw_draft_access(frame);
         self.draw_accounts(frame);
+        self.draw_model_options(frame);
         let Some(picker) = &self.inference.picker else {
             return;
         };

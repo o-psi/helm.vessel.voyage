@@ -91,7 +91,14 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .expires_at_ms
         .saturating_sub(now_ms())
         .div_ceil(1000);
-    let mut lines = wrapped(format!("{remaining}s left to respond\n"), body.width);
+    let mut lines = wrapped(
+        format!(
+            "{} · {}\n{remaining}s left to respond\n",
+            app.route_label(target.route),
+            safe(&view.title())
+        ),
+        body.width,
+    );
     let question = if kind == "question" {
         safe(
             decision.request["question"]["question"]
@@ -225,13 +232,18 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     } else if editing {
         "Type · Enter Send · Esc Back".into()
     } else if kind == "approval" {
-        "Up/Down Choose · Enter Confirm · Esc Deny".into()
+        "↑↓ Choose · Enter Allow · Esc Deny".into()
     } else {
-        "Up/Down Choose · Enter Select · Esc Skip".into()
+        "↑↓ Choose · Enter Answer · Esc Skip".into()
     };
     frame.render_widget(
         Paragraph::new(controls).style(crate::theme::Role::Muted.style()),
         Rect::new(footer.x, footer.y, footer.width, 1),
+    );
+    let scope = format!("{} · Draft saved", app.route_label(target.route));
+    frame.render_widget(
+        Paragraph::new(scope).style(crate::theme::Role::Muted.style()),
+        Rect::new(footer.x, footer.bottom().saturating_sub(1), footer.width, 1),
     );
     // Selecting a choice never submits it, including when using the mouse.
     let mut buttons = vec![

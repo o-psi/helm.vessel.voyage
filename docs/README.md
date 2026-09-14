@@ -37,6 +37,7 @@ are not presented as usable commands.
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
+| [UX closure readiness](audits/ux-272-closure-readiness.md) | Main-UI finish-up, actual verification and honest remaining closure blockers |
 | [Main conversation workspace](main-workspace.md) | Named main navigation, quiet transcript, verification and remaining redesign |
 | [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and objective executable verification |
 | [Action-by-action UX comparison](audits/ux-comparison.md) | Source audit of Helm, Pi, OpenCode and Codex CLI, complete core action inventories and prioritized findings |

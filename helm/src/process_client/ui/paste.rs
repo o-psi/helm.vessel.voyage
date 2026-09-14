@@ -270,6 +270,13 @@ impl App {
         }
     }
 
+    pub(super) fn paste_clipboard_action(&mut self) -> Result<()> {
+        let destination = self
+            .paste_destination()
+            .context("Return to the composer before pasting")?;
+        self.begin_paste(destination, None)
+    }
+
     fn begin_paste(
         &mut self,
         destination: Destination,

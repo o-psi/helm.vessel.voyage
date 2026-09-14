@@ -1,6 +1,7 @@
 //! One inference action path for composer controls and slash commands.
 //! Catalog entries are suggestions, never claims of model/account support.
 mod access;
+mod options;
 mod render;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result, drafts,
@@ -127,6 +128,9 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 }
 #[derive(Default)]
 pub(super) struct Controls {
+    options: Option<options::OptionsPanel>,
+    options_hit: std::cell::Cell<Option<(ratatui::layout::Rect, Destination)>>,
+    options_rows: std::cell::RefCell<Vec<(ratatui::layout::Rect, Field)>>,
     picker: Option<Picker>,
     access: access::AccessControls,
     draft_generations: std::collections::BTreeMap<Uuid, Uuid>,

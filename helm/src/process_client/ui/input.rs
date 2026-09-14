@@ -30,6 +30,9 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.model_options_input(&event)? {
+            return Ok(());
+        }
         if self.workspace_input(&event)? {
             return Ok(());
         }

@@ -203,7 +203,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     {
         app.draw_accounts(frame);
     }
-    if !bar {
+    if !bar && app.accounts.open() {
         app.draw_vessel_control(frame);
     } else {
         app.vessel_button.set(Rect::default());
@@ -291,8 +291,15 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     } else {
         0
     };
-    let panes =
-        Layout::horizontal([Constraint::Min(1), Constraint::Length(right_width)]).split(area);
+    let panes = if reviewing && area.width < 80 {
+        Layout::vertical([
+            Constraint::Min(4),
+            Constraint::Length(area.height.saturating_sub(5)),
+        ])
+        .split(area)
+    } else {
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(right_width)]).split(area)
+    };
     let width = app.sidebar.resize.width(panes[0]);
     app.sidebar
         .resize

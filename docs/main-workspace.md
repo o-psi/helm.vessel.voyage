@@ -6,15 +6,16 @@ main-shell/transcript slice, not completion of the whole redesign.
 ## Current interaction
 
 The main conversation/draft view has a named top row: **Helm**, **New**, **Find**,
-and, for a selected conversation, **Changes** and **More**. **Stop** appears while
+and, for a selected conversation, **Changes** and **This conversation**. **Stop** appears while
 an observed run is eligible for its existing exact-run review. At narrow widths,
 controls that do not fit remain available in the Helm menu. No visible F-key
 launcher strip is required to discover these actions.
 
 Click **Helm** or press **Ctrl+P** to open the menu. Up/Down or Tab/Shift+Tab moves
 selection; Enter/Space opens; Escape or an outside click closes without affecting
-the draft. The menu exposes search-all-actions, conversation actions, terminal,
-browser, workflows, archives, settings, connections and help. Unavailable contextual
+the draft. The Helm menu exposes application settings, connections, Find, model/account options,
+paste and help. This conversation groups changes, answer copy, tasks, delegated
+work, terminal, browser, workflows, lifecycle actions and Stop. Unavailable contextual
 actions explain that a conversation or active run is required. Existing F-key and
 slash paths remain compatible; they are secondary paths, not the main navigation
 presentation.
@@ -64,11 +65,17 @@ Live error/retry handling and canonical history are unchanged.
 No live-provider, native macOS/Windows, shared-browser capture or paid-account
 journey is claimed. No Rust test replaces those separate acceptance obligations.
 
-## Remaining redesign work
+## Finish-up and remaining redesign work
+
+See [closure readiness](audits/ux-272-closure-readiness.md) for the newer combined
+model/account options, scoped work menu, narrow request layout and final evidence.
+The measurement above describes the first main-shell delivery.
+
 
 The main shell now offers named access, but the full contextual result/resource
-integration, single inference/account popover, redesigned decision screens and
-end-to-end onboarding remain open in #272. Menus still open some existing detail
+integration and full end-to-end acceptance remain open in #272. The combined
+inference/account entry and narrow decision layout are now implemented; this does
+not finish every contextual card/message action. Menus still open some existing detail
 surfaces; this is not a claim that all capabilities already feel unified. Existing
 running Helm processes keep their executable until explicitly restarted; building
 or publishing source alone does not change a running screen.

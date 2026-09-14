@@ -6,6 +6,7 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show focus-specific help", ""),
     ("actions", "Search all actions", ""),
     ("settings", "Effective settings, sources and gates", ""),
+    ("preferences", "Model, account and next-turn options", ""),
     (
         "attempts",
         "Read provider retry history",
@@ -213,6 +214,7 @@ fn opens_directly(name: &str) -> bool {
         name,
         "help"
             | "actions"
+            | "preferences"
             | "settings"
             | "new"
             | "vessels"
@@ -348,6 +350,7 @@ impl App {
                 self.discovery.detail_scroll = 0;
                 self.explore = Some(0);
             }
+            "preferences" => self.open_model_options()?,
             "settings" => {
                 self.discovery.settings = true;
                 self.help = true;
@@ -408,7 +411,7 @@ impl App {
     }
     pub(super) fn discovery_command(&mut self, command: &str) -> Result<bool> {
         match command {
-            "/actions" | "/settings" | "/help" => {
+            "/actions" | "/settings" | "/preferences" | "/help" => {
                 self.discovery_open(&command[1..])?;
                 Ok(true)
             }
@@ -574,7 +577,7 @@ mod tests {
             include_str!("controls.rs")
         );
         for (name, _, _) in COMMANDS {
-            if matches!(*name, "actions" | "settings" | "help") {
+            if matches!(*name, "actions" | "settings" | "preferences" | "help") {
                 continue;
             }
             assert!(

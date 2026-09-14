@@ -649,10 +649,8 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 ""
             }
         )
-    } else if area.width < 45 {
-        "^T Activity · ^F Find · PgUp Earlier".into()
     } else {
-        "Ctrl+T Activity · Ctrl+F Find loaded · PgUp Earlier · Ctrl+↑/↓ User".into()
+        String::new()
     };
     frame.render_widget(
         Paragraph::new(hint).style(muted()),

@@ -394,7 +394,7 @@ impl App {
         };
         frame.render_widget(ratatui::widgets::Clear, area);
         frame.render_widget(
-            ratatui::widgets::Paragraph::new("[Actions]").style(super::right_panel::control_style(
+            ratatui::widgets::Paragraph::new("[More]").style(super::right_panel::control_style(
                 self.sidebar.pointer,
                 area,
                 false,

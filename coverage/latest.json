@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T14:38:02.117200+00:00",
+  "measured_at_utc": "2026-09-14T15:29:07.025362+00:00",
   "source": {
-    "commit": "969025ec4c3954fe1be2fee41b9c38350394061a",
+    "commit": "7c8e7f44631f87e91cdf015c220c16b2416de49f",
     "dirty": true,
-    "fingerprint_sha256": "1cc629406339032388d74db8574bf1ecb9b190641987f1229d512ba2cfccd89d",
+    "fingerprint_sha256": "933549c881df35f109351c46d6a9edfd14b12d7b85cd7836966a205ebf103476",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and nonignored untracked workspace files to SHA-256 or null for missing files; excludes inspiration apps and subordinate worktrees. Includes preserved pre-existing render comments and deleted scripts/tests.",
-    "note": "Measured dirty tree includes preserved unrelated rendering comments and deleted scripts/fixtures; unrelated work is not delivered."
+    "note": "Final finish-up source unchanged throughout coverage; includes preserved unrelated rendering comments and deleted scripts/tests, not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/main-ui-delivery/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/finish-ui-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +23,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 473,
+    "passed": 477,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 96608,
-      "covered": 36916,
-      "percent": 38.21215634315999
+      "count": 96990,
+      "covered": 37459,
+      "percent": 38.62150737189401
     },
     "functions": {
-      "count": 9426,
-      "covered": 3432,
-      "percent": 36.40992998090388
+      "count": 9451,
+      "covered": 3477,
+      "percent": 36.789757697598134
     },
     "regions": {
-      "count": 157854,
-      "covered": 58582,
-      "notcovered": 99272,
-      "percent": 37.111508102423755
+      "count": 158523,
+      "covered": 59475,
+      "notcovered": 99048,
+      "percent": 37.518215022425764
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 448,
+    "logical_source_files": 449,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected report selects all 11 current Cargo executable artifacts, excluding stale historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines +1.0345 percentage points, functions +0.8866 percentage points, regions +1.0128 percentage points.",
-    "Main workspace navigation and quiet transcript delivery. Source unchanged throughout measurement. No live-provider or native macOS/Windows claim. Coverage measures execution, not correctness."
+    "Compared with prior measurement: lines +0.4094 percentage points, functions +0.3798 percentage points, regions +0.4067 percentage points.",
+    "Combined model/account options, scoped conversation work menu and narrow decision review. Source unchanged through measurement; no live-provider/native-platform claims. Coverage measures execution, not correctness."
   ]
 }
