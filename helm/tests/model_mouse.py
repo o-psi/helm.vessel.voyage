@@ -20,6 +20,12 @@ def main():
         for width,height in [(120,40),(40,18)]:
             ui.resize(width,height);u.settle(ui)
             click('Model:',last=True);ui.until(lambda s:'Model options' in s.text(),'options open by click')
+            u.settle(ui); lines=ui.screen.text().splitlines()
+            row=next(i for i,line in enumerate(lines) if '┌ Model options' in line)
+            col=lines[row].index('┌'); modal_width=min(width-2,82)
+            assert abs(col-(width-col-modal_width))<=1,(width,col)
+            assert abs(row-(height-row-16))<=1,(height,row)
+            (out/f'options-centered-{width}.txt').write_text(ui.screen.text())
             click('[Back]');assert 'mouse retained' in ui.screen.text()
             click('Model:',last=True);ui.until(lambda s:'Model options' in s.text(),'options reopened')
             click('Model: fixture-model');ui.until(lambda s:'Search / explicit value:' in s.text(),'model picker open by click')

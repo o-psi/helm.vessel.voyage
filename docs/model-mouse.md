@@ -8,6 +8,9 @@ those pointer operations without changing model/account authority.
 - Click Model in the composer, then Model/Account/Thinking/Service in the options.
 - Wheel inside either panel moves the selected row within bounds. It does not
   apply settings. Wheel outside the panel is consumed without changing selection.
+- Model options is centered horizontally and vertically, matching modal placement
+  rather than anchoring it to the bottom-left. The row/Back hit map uses that
+  same centered rectangle; normal and narrow PTY checks assert equal margins.
 - Options has **Back**; the model/effort/service picker has **Cancel**, including
   model-override confirmation. These close without changing settings or draft.
 - Clicking a model/confirmation row retains the existing selection, validation,

@@ -222,11 +222,13 @@ impl App {
         if screen.width < 40 || screen.height < 18 {
             return;
         }
+        let width = screen.width.saturating_sub(2).min(82);
+        let height = 16;
         let area = Rect::new(
-            screen.x + 1,
-            screen.y + screen.height.saturating_sub(17),
-            screen.width.saturating_sub(2).min(82),
-            16,
+            screen.x + screen.width.saturating_sub(width) / 2,
+            screen.y + screen.height.saturating_sub(height) / 2,
+            width,
+            height,
         );
         frame.render_widget(Clear, area);
         let block = Block::default()
@@ -477,6 +479,9 @@ mod tests {
             app.open_model_options().unwrap();
             t.draw(|frame| super::super::super::render::draw(frame, &app))
                 .unwrap();
+            let area = app.inference.options_area.get().unwrap();
+            assert!(area.x.abs_diff(w.saturating_sub(area.right())) <= 1);
+            assert!(area.y.abs_diff(h.saturating_sub(area.bottom())) <= 1);
             let screen = text(&t);
             for label in ["Model options", "Account:", "Thinking:", "Service:"] {
                 assert!(screen.contains(label), "{screen}");

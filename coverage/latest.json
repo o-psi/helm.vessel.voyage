@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T16:47:14.792838+00:00",
+  "measured_at_utc": "2026-09-14T16:58:24.355021+00:00",
   "source": {
-    "commit": "5aaf5fb0e09c6acdf16f4a56bc0f6b8ceec8a891",
+    "commit": "f13554986242e225aa837858e80df91e075719c1",
     "dirty": true,
-    "fingerprint_sha256": "66b2e8d57ba9265c5d0854fd04f4e749a9ac137774b328efac5fb338c4c2f4d4",
+    "fingerprint_sha256": "203e55c5237f56a379228ebe8eb9daa5ed3e7cc719235655d7112b307dac4888",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and nonignored untracked workspace files to SHA-256 or null for missing files; excludes inspiration apps and subordinate worktrees. Includes preserved pre-existing render comments and deleted scripts/tests.",
-    "note": "Model mouse completion dirty source unchanged through measurement; preserved unrelated comments/deletions not delivered."
+    "note": "Centered model-options modal measured dirty source unchanged; unrelated staged comments and deleted files preserved, not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/model-mouse-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/model-center-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -29,9 +29,9 @@
   },
   "coverage": {
     "lines": {
-      "count": 97709,
-      "covered": 38402,
-      "percent": 39.30241840567399
+      "count": 97718,
+      "covered": 38411,
+      "percent": 39.30800875990094
     },
     "functions": {
       "count": 9510,
@@ -39,10 +39,10 @@
       "percent": 37.37118822292324
     },
     "regions": {
-      "count": 159762,
-      "covered": 61064,
+      "count": 159786,
+      "covered": 61088,
       "notcovered": 98698,
-      "percent": 38.22185500932637
+      "percent": 38.231134141914815
     }
   },
   "report_selection": {
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected report selects all 11 current Cargo executable artifacts, excluding stale historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines +0.2863 percentage points, functions +0.2175 percentage points, regions +0.3210 percentage points.",
-    "Model/options pointer wheel and Back/Cancel completion; no native/live-provider claims. Coverage measures execution, not correctness."
+    "Compared with prior measurement: lines +0.0056 percentage points, functions +0.0000 percentage points, regions +0.0093 percentage points.",
+    "Centered model-options layout with margin assertions and pointer journey. No native/live-provider claims."
   ]
 }
