@@ -23,7 +23,6 @@ impl App {
         );
         frame.render_widget(Clear, area);
         let title = match p.mode {
-            Mode::Confirm(_) => " Settings for next run ",
             Mode::Enrollment | Mode::Connections | Mode::Alias(_) => " Sign in to an account ",
             Mode::List => " Choose account ",
             Mode::DefaultConsent(_) => " Review host default ",
@@ -189,91 +188,6 @@ impl App {
             }
             Mode::Alias(_) => {
                 frame.render_widget(Paragraph::new(format!("ChatGPT subscription sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
-            }
-            Mode::Confirm(s) => {
-                let mut resolved = s.clone();
-                resolved.resolve(&p.models);
-                let fields = [
-                    ("Model", safe(&s.model)),
-                    (
-                        "Reasoning",
-                        safe(s.reasoning_effort.as_deref().unwrap_or("")),
-                    ),
-                    (
-                        "Service tier",
-                        safe(s.service_tier.as_deref().unwrap_or("")),
-                    ),
-                ];
-                for (index, (label, value)) in fields.iter().enumerate() {
-                    let rect = Rect::new(body.x, body.y + index as u16 * 2, body.width, 2);
-                    let effective = match index {
-                        1 => resolved.label(super::super::inference::Field::Thinking),
-                        2 => resolved.label(super::super::inference::Field::Service),
-                        _ => {
-                            if p.models.is_empty() {
-                                "Enter a model ID · host validates access".into()
-                            } else {
-                                format!(
-                                    "Catalog (access unverified): {}",
-                                    p.models
-                                        .iter()
-                                        .take(3)
-                                        .map(|m| safe(&m.id))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                )
-                            }
-                        }
-                    };
-                    frame.render_widget(
-                        Paragraph::new(format!(
-                            "{} {label:<13} [ {} ]\n  {}",
-                            if p.edit == index { "›" } else { " " },
-                            if value.is_empty() {
-                                "Use default"
-                            } else {
-                                value
-                            },
-                            safe(&effective)
-                        )),
-                        rect,
-                    );
-                    self.accounts.hits.borrow_mut().push((rect, index));
-                }
-                // Identity, not alias text, determines whether sharing context changes.
-                let changed = p
-                    .original
-                    .account
-                    .as_ref()
-                    .zip(s.account.as_ref())
-                    .is_some_and(|(a, b)| {
-                        a.account_id != b.account_id
-                            || a.connection_id != b.connection_id
-                            || a.identity_generation != b.identity_generation
-                    });
-                let warning = if changed {
-                    "Different account: retained conversation/tool context may be sent to its organization. History stays."
-                } else {
-                    "Current run and conversation history stay unchanged."
-                };
-                frame.render_widget(
-                    Paragraph::new(format!("Account: {}\n{warning}", p.label(s)))
-                        .wrap(Wrap { trim: false }),
-                    Rect::new(body.x, body.y + 6, body.width, 3),
-                );
-                for (index, label, x, width) in
-                    [(3, "Apply", body.x, 16), (4, "Cancel", body.x + 18, 16)]
-                {
-                    let rect = Rect::new(x, body.bottom().saturating_sub(1), width, 1);
-                    frame.render_widget(
-                        Paragraph::new(format!(
-                            "{} [ {label} ]",
-                            if p.edit == index { "›" } else { " " }
-                        )),
-                        rect,
-                    );
-                    self.accounts.hits.borrow_mut().push((rect, index));
-                }
             }
             Mode::Enrollment => {
                 let private = p.private.as_ref().filter(|v| {

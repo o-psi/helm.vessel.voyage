@@ -29,12 +29,13 @@ def main():
             (out/f'advanced-{width}.txt').write_text(ui.screen.text())
             click('[Cancel]');assert 'retained chooser' in ui.screen.text();assert f.snapshot(sid)['revision']==before['revision']
         ui.resize(120,40);u.settle(ui);click('Model:');ui.until(lambda s:'Choose a model' in s.text(),'chooser')
-        click('Account:');ui.until(lambda s:'Choose account' in s.text(),'private account handoff')
+        click('Account:');ui.until(lambda s:'Select account' in s.text(),'inline account list')
+        assert 'Settings for next run' not in ui.screen.text()
         ui.send(b'\x1b');ui.until(lambda s:'Choose a model' in s.text(),'return to chooser')
         click('fixture-model (current)');click('[Use model]')
         ui.until(lambda s:'Model: fixture-model' in s.text() and 'Choose a model' not in s.text(),'explicit application')
         assert 'retained chooser' in ui.screen.text();assert not f.snapshot(sid)['messages'];assert len(f.provider.bodies)==0
-        (out/'result.json').write_text(json.dumps({'status':'passed','dimensions':[[120,40],[40,18]],'checks':['direct list','centered','row selection unapplied','collapsed and inline advanced','cancel preserves settings','private account handoff and return','explicit Use model','draft retained','no prompt/provider inference']},indent=2))
+        (out/'result.json').write_text(json.dumps({'status':'passed','dimensions':[[120,40],[40,18]],'checks':['direct list','centered','row selection unapplied','collapsed and inline advanced','cancel preserves settings','inline account list and return','explicit Use model','draft retained','no prompt/provider inference']},indent=2))
     finally:
         errors=j.close()
         if errors:raise RuntimeError(errors)

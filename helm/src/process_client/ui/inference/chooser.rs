@@ -12,6 +12,8 @@ use ratatui::{
 pub(super) enum Control {
     Search,
     Account,
+    AccountRow(usize),
+    SignIn,
     Advanced,
     Thinking,
     Service,
@@ -23,17 +25,33 @@ pub(super) enum Control {
 }
 #[derive(Clone)]
 pub(super) struct Draft {
-    model: String,
-    thinking: Option<String>,
-    service: Option<String>,
+    pub(super) account: Option<voyage_protocol::accounts::AccountBinding>,
+    pub(super) provider: String,
+    pub(super) account_label: String,
+    pub(super) accounts: Vec<account_choices::Choice>,
+    pub(super) accounts_open: bool,
+    pub(super) accounts_loading: bool,
+    pub(super) account_row: usize,
+    pub(super) requires_default: bool,
+    pub(super) model: String,
+    pub(super) thinking: Option<String>,
+    pub(super) service: Option<String>,
     advanced: bool,
-    review: bool,
-    keep: bool,
-    focus: Control,
+    pub(super) review: bool,
+    pub(super) keep: bool,
+    pub(super) focus: Control,
 }
 impl Draft {
     pub fn new(settings: &Settings) -> Self {
         Self {
+            account: settings.account.clone(),
+            provider: settings.provider.clone(),
+            account_label: String::new(),
+            accounts: vec![],
+            accounts_open: false,
+            accounts_loading: false,
+            account_row: 0,
+            requires_default: false,
             model: settings.model.clone(),
             thinking: settings.reasoning_effort.clone(),
             service: settings.service_tier.clone(),
@@ -44,6 +62,12 @@ impl Draft {
         }
     }
     fn controls(&self) -> Vec<Control> {
+        if self.accounts_open {
+            let mut v = vec![Control::Account];
+            v.extend((0..self.accounts.len()).map(Control::AccountRow));
+            v.extend([Control::SignIn, Control::Cancel]);
+            return v;
+        }
         let mut v = vec![Control::Search, Control::Account, Control::Advanced];
         if self.advanced {
             v.extend([Control::Thinking, Control::Service]);
@@ -72,27 +96,34 @@ fn cycle(current: &mut Option<String>, values: Vec<String>) {
     *current = choices[(i + 1) % choices.len()].clone();
 }
 impl App {
+    pub(in crate::process_client::ui) fn set_chooser_default_requirement(
+        &mut self,
+        required: bool,
+    ) {
+        if let Some(p) = self.inference.picker.as_mut() {
+            p.chooser.requires_default = required;
+        }
+    }
     pub(in crate::process_client::ui) fn open_model_options(&mut self) -> Result<()> {
         let destination = self
             .active_draft
             .map(Destination::Draft)
             .or(self.selected.map(Destination::Live))
             .context("Choose a conversation or start a draft first")?;
-        if self.inference_settings(destination).is_err()
-            || matches!(destination, Destination::Draft(_))
-                && self
-                    .inference_settings(destination)
-                    .is_ok_and(|s| s.account.is_none())
-        {
+        if self.inference_settings(destination).is_err() {
             self.inference.return_to_model = Some(destination);
             self.open_accounts(destination, "")?;
             self.mark_account_initialization(destination);
             return Ok(());
         }
         self.cancel_paste_for_private_panel();
-        self.inference_command(destination, "/model", true)
+        self.inference_command(destination, "/model", true)?;
+        if self.inference_settings(destination)?.account.is_none() {
+            self.load_chooser_accounts()?;
+        }
+        Ok(())
     }
-    pub(super) fn resume_model_after_account(&mut self) {
+    pub(in crate::process_client::ui) fn resume_model_after_account(&mut self) {
         if self.accounts.open() {
             return;
         }
@@ -178,6 +209,7 @@ impl App {
     fn chooser_activate(&mut self, mut p: Picker, c: Control) -> Result<()> {
         match c {
             Control::Cancel => {
+                self.cancel_chooser_accounts();
                 self.cancel_model_catalog();
                 return Ok(());
             }
@@ -186,6 +218,14 @@ impl App {
                 return self.load_inference_models();
             }
             Control::Account => {
+                p.chooser.accounts_open = !p.chooser.accounts_open;
+                if p.chooser.accounts_open {
+                    self.inference.picker = Some(p);
+                    return self.load_chooser_accounts();
+                }
+            }
+            Control::AccountRow(index) => return self.choose_inline_account(p, index),
+            Control::SignIn => {
                 self.cancel_model_catalog();
                 self.inference.return_to_model = Some(p.destination);
                 self.inference.return_choice = Some((p.original.clone(), p.chooser.clone()));
@@ -202,6 +242,8 @@ impl App {
             }
             Control::Thinking | Control::Service => {
                 let mut candidate = p.original.clone();
+                candidate.account = p.chooser.account.clone();
+                candidate.provider = p.chooser.provider.clone();
                 candidate.model = p.chooser.model.clone();
                 candidate.resolve(&p.models);
                 if c == Control::Thinking {
@@ -224,7 +266,11 @@ impl App {
                 p.chooser.review = false;
             }
             Control::Apply => {
-                if p.chooser.model != p.original.model
+                ensure!(
+                    p.chooser.account.is_some() || p.original.account.is_none(),
+                    "Select an account before applying"
+                );
+                if (p.chooser.model != p.original.model || p.chooser.account != p.original.account)
                     && (p.chooser.thinking.is_some() || p.chooser.service.is_some())
                     && !p.chooser.keep
                 {
@@ -248,10 +294,15 @@ impl App {
                         "Select one model ID"
                     );
                     let mut settings = p.original.clone();
+                    settings.account = p.chooser.account.clone();
+                    settings.provider = p.chooser.provider.clone();
                     settings.model = p.chooser.model.clone();
                     settings.reasoning_effort = p.chooser.thinking.clone();
                     settings.service_tier = p.chooser.service.clone();
                     settings.resolve(&p.models);
+                    if p.chooser.requires_default {
+                        return self.review_chooser_default(p, settings);
+                    }
                     return self.apply_inference(p, settings);
                 }
             }
@@ -293,6 +344,13 @@ impl App {
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => {
                 if k.code == KeyCode::Esc {
+                    if p.chooser.accounts_open {
+                        p.chooser.accounts_open = false;
+                        self.cancel_chooser_accounts();
+                        self.inference.picker = Some(p);
+                        return Ok(true);
+                    }
+                    self.cancel_chooser_accounts();
                     self.cancel_model_catalog();
                     return Ok(true);
                 }
@@ -311,6 +369,15 @@ impl App {
                     KeyCode::Tab => p.chooser.focus = controls[(n + 1) % controls.len()],
                     KeyCode::BackTab => {
                         p.chooser.focus = controls[(n + controls.len() - 1) % controls.len()]
+                    }
+                    KeyCode::Up | KeyCode::Down if p.chooser.accounts_open => {
+                        let n = p.chooser.accounts.len();
+                        p.chooser.account_row = if k.code == KeyCode::Up {
+                            p.chooser.account_row.saturating_sub(1)
+                        } else {
+                            (p.chooser.account_row + 1).min(n.saturating_sub(1))
+                        };
+                        p.chooser.focus = Control::AccountRow(p.chooser.account_row);
                     }
                     KeyCode::Up | KeyCode::Down => {
                         let opts = p.options();
@@ -394,11 +461,20 @@ impl App {
                     .get()
                     .is_some_and(|r| r.contains((m.column, m.row).into()))
                 {
-                    p.selected = if m.kind == MouseEventKind::ScrollUp {
-                        p.selected.saturating_sub(1)
+                    if p.chooser.accounts_open {
+                        p.chooser.account_row = if m.kind == MouseEventKind::ScrollUp {
+                            p.chooser.account_row.saturating_sub(1)
+                        } else {
+                            (p.chooser.account_row + 1)
+                                .min(p.chooser.accounts.len().saturating_sub(1))
+                        };
                     } else {
-                        (p.selected + 1).min(p.options().len().saturating_sub(1))
-                    };
+                        p.selected = if m.kind == MouseEventKind::ScrollUp {
+                            p.selected.saturating_sub(1)
+                        } else {
+                            (p.selected + 1).min(p.options().len().saturating_sub(1))
+                        };
+                    }
                 }
             }
             _ => {}
@@ -444,6 +520,10 @@ impl App {
             Destination::Live(t) => t.route,
             Destination::Draft(id) => self.new_drafts[&id].route,
         };
+        if p.chooser.accounts_open {
+            self.draw_inline_accounts(frame, inner, p);
+            return;
+        }
         let mut y = inner.y;
         let mut control = |rect: Rect, c: Control, label: String| {
             frame.render_widget(
@@ -513,7 +593,11 @@ impl App {
             Control::Account,
             format!(
                 "Account: {} ▾",
-                self.account_control_label(p.destination, &p.original)
+                if p.chooser.account_label.is_empty() {
+                    self.account_control_label(p.destination, &p.original)
+                } else {
+                    p.chooser.account_label.clone()
+                }
             ),
         );
         y += 1;
@@ -810,15 +894,55 @@ mod tests {
         let mut p = app.inference.picker.take().unwrap();
         p.chooser.select("other".into());
         app.chooser_activate(p, Control::Account).unwrap();
-        assert!(app.accounts.open());
-        assert!(app.inference.picker.is_none());
-        app.input(key(KeyCode::Esc)).unwrap();
-        app.resume_model_after_account();
+        assert!(!app.accounts.open());
+        assert!(app.inference.picker.as_ref().unwrap().chooser.accounts_open);
         assert_eq!(
             app.inference.picker.as_ref().unwrap().chooser.model,
             "other"
         );
         assert!(app.views[&t].pending.is_none());
+        app.cancel_chooser_accounts();
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
+    }
+    #[tokio::test]
+    async fn inline_account_draft_is_atomic_and_cancel_cannot_change_binding() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        let account = voyage_protocol::accounts::AccountBinding {
+            account_id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            identity_generation: 1,
+            connection_revision: 1,
+            transport: voyage_protocol::accounts::Transport::OpenaiResponses,
+        };
+        let mut p = app.inference.picker.take().unwrap();
+        p.chooser.accounts = vec![account_choices::Choice {
+            label: "Second".into(),
+            binding: account.clone(),
+            provider: "openai-responses".into(),
+            ready: true,
+        }];
+        app.choose_inline_account(p, 0).unwrap();
+        assert!(!app.accounts.open());
+        assert!(app.views[&t].pending.is_none());
+        assert!(
+            app.inference_settings(Destination::Live(t))
+                .unwrap()
+                .account
+                .is_none()
+        );
+        app.cancel_model_catalog();
+        let mut p = app.inference.picker.take().unwrap();
+        p.chooser.model = "other".into();
+        app.cache_account_host(t.route, Uuid::new_v4());
+        app.chooser_activate(p, Control::Apply).unwrap();
+        assert!(
+            matches!(app.views[&t].pending.as_ref().unwrap().original.as_deref(),Some(VoyageCommand::SetAccountInference{account:a,model,..}) if *a==account && model=="other")
+        );
         assert_eq!(app.views[&t].draft.text, "keep my draft");
         for (_, jobs) in app.route_tasks {
             for job in jobs {
@@ -826,7 +950,11 @@ mod tests {
                 let _ = job.await;
             }
         }
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
     }
+
     #[tokio::test]
     async fn use_model_is_only_admission_and_stale_settings_keep_local_choice() {
         let f = super::super::super::account_test_support::Fixture::new();

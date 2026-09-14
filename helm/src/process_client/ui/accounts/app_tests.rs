@@ -6,7 +6,7 @@ use super::super::{
 };
 use super::*;
 use crate::process_client::{duplex::ConnectionState, transport::Client};
-use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::KeyEvent;
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::BTreeMap;
 
@@ -154,7 +154,6 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
         mode: Mode::List,
         query: String::new(),
         selected: 0,
-        edit: 0,
         usage: Default::default(),
         usage_requested: Default::default(),
         default_change_pending: false,
@@ -167,7 +166,6 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
         retry: None,
         restart: false,
         poll: Instant::now(),
-        models: vec![],
         connection: rx,
         loss_generation: socket.loss_generation,
         disconnected: false,
@@ -234,72 +232,25 @@ fn assert_clean(app: &App, t: Target, dir: &std::path::Path) {
 }
 #[tokio::test]
 async fn keyboard_and_mouse_picker_stage_exact_pending_without_touching_current_run_or_composer() {
-    for mouse in [false, true] {
-        let fixture = support::Fixture::new();
-        let mut app = app(fixture.0.path());
-        let t = live(&mut app);
-        let _watch = picker(&mut app, t);
-        let current = app.views[&t]
-            .snapshot
-            .as_ref()
-            .unwrap()
-            .inference_current
-            .clone();
-        if mouse {
-            let rect = app.accounts.hits.borrow()[0].0;
-            app.input(Event::Mouse(MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: rect.x,
-                row: rect.y,
-                modifiers: KeyModifiers::NONE,
-            }))
-            .unwrap();
-        } else {
-            key(&mut app, KeyCode::Enter);
-        }
-        let p = app.accounts.picker.as_ref().unwrap();
-        let Mode::Confirm(s) = &p.mode else {
-            panic!("selection must require confirmation")
-        };
-        assert_eq!(s.reasoning_effort.as_deref(), Some("high"));
-        assert_eq!(s.service_tier.as_deref(), Some("default"));
-        let selected = s.account.clone().unwrap();
-        let id = p.id;
-        app.accounts.reply = None; // replace the host effect with a bounded synthetic reply
-        app.account_reply(id, Ok(Reply::Models(selected.clone(), vec![])))
-            .unwrap();
-        key(&mut app, KeyCode::Enter);
-        assert!(app.accounts.picker.is_none());
-        let view = &app.views[&t];
-        assert!(view.snapshot.as_ref().unwrap().inference_current == current);
-        let pending = view.pending.as_ref().unwrap();
-        assert!(pending.preserve_draft);
-        let VoyageCommand::Resolve {
-            original: Some(original),
-            ..
-        } = pending.resolution()
-        else {
-            panic!("exact recovery required")
-        };
-        let VoyageCommand::SetAccountInference {
-            account,
-            expected_revision,
-            model,
-            reasoning_effort,
-            service_tier,
-            ..
-        } = *original
-        else {
-            panic!("atomic inference envelope required")
-        };
-        assert_eq!(account, selected);
-        assert_eq!(expected_revision, 17);
-        assert_eq!(model, "synthetic-model");
-        assert_eq!(reasoning_effort.as_deref(), Some("high"));
-        assert_eq!(service_tier.as_deref(), Some("default"));
-        assert_clean(&app, t, fixture.0.path());
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    let binding = app.accounts.picker.as_ref().unwrap().choices()[0]
+        .1
+        .clone()
+        .unwrap();
+    app.choose_account(binding).unwrap();
+    assert!(!app.accounts.open());
+    assert!(app.inference_picker_open());
+    assert!(app.views[&t].pending.is_none());
+    assert_eq!(app.views[&t].draft.text, "preserve my composer");
+    app.cancel_model_catalog();
+    for job in app.retired_observers {
+        let _ = job.await;
     }
 }
+
 #[tokio::test]
 async fn private_view_intercepts_paste_and_only_explicit_o_opens_verified_browser() {
     let fixture = support::Fixture::new();
@@ -582,103 +533,19 @@ async fn draft_override_does_not_change_new_voyage_default() {
     let host = Uuid::new_v4();
     app.set_draft_account(draft, host, original.clone())
         .unwrap();
-    app.new_draft_composer_mut(draft).unwrap().text = "draft survives account selection".into();
     let _watch = picker(&mut app, t);
     let p = app.accounts.picker.as_mut().unwrap();
     p.destination = Destination::Draft(draft);
-    p.workspace = fixture.0.path().into();
+    p.original = original.clone();
     p.host = Some(host);
-    p.catalogue.default_account = original.account.clone();
-    p.original = original;
-    key(&mut app, KeyCode::Enter);
-    let p = app.accounts.picker.as_ref().unwrap();
-    let Mode::Confirm(s) = &p.mode else {
-        panic!("confirmation required")
-    };
-    let binding = s.account.clone().unwrap();
-    let id = p.id;
-    app.accounts.reply = None;
-    app.account_reply(id, Ok(Reply::Models(binding.clone(), vec![])))
-        .unwrap();
-    key(&mut app, KeyCode::F(2)); // explicit override reset only
-    key(&mut app, KeyCode::Enter);
-    let saved = &app.new_drafts[&draft].saved;
-    assert_eq!(
-        saved.account_settings.as_ref().unwrap().account,
-        Some(binding.clone())
-    );
-    assert!(
-        saved
-            .account_settings
-            .as_ref()
-            .unwrap()
-            .reasoning_effort
-            .is_none()
-    );
-    assert!(
-        saved
-            .account_settings
-            .as_ref()
-            .unwrap()
-            .service_tier
-            .is_none()
-    );
-    assert_eq!(
-        app.copy_new_draft_images(draft).unwrap().0.text,
-        "draft survives account selection"
-    );
-    let prefs = storage::load(host, fixture.0.path()).unwrap();
-    assert!(prefs.choices.is_empty()); // per-voyage selection never sets a default
-
-    assert!(app.views[&t].pending.is_none());
-    // A subsequent draft receives the host default, not the prior draft override.
-    app.create(Some(fixture.0.path().to_str().unwrap()))
-        .unwrap();
-    let next = app.active_draft.unwrap();
-    assert_ne!(next, draft);
-    app.open_accounts(Destination::Draft(next), "").unwrap();
-    let id = app.accounts.picker.as_ref().unwrap().id;
-    app.accounts.reply = None;
-    let mut fallback = settings();
-    fallback.account.as_mut().unwrap().connection_id = binding.connection_id;
-    app.account_reply(
-        id,
-        Ok(Reply::Loaded(Loaded {
-            host,
-            catalogue: Catalogue {
-                default_account: None,
-                default_revision: 0,
-                can_set_default: true,
-                accounts: vec![],
-                connections: vec![],
-            },
-            defaults: fallback.clone(),
-            enroll: true,
-        })),
-    )
-    .unwrap();
-    assert_eq!(
-        app.new_drafts[&next]
-            .saved
-            .account_settings
-            .as_ref()
-            .unwrap()
-            .account,
-        fallback.account
-    );
-    assert!(
-        app.accounts
-            .picker
-            .as_ref()
-            .unwrap()
-            .choices()
-            .iter()
-            .all(|(_, b)| b.is_none())
-    );
-    assert_eq!(
-        app.copy_new_draft_images(draft).unwrap().0.text,
-        "draft survives account selection"
-    );
+    let binding = p.choices()[0].1.clone().unwrap();
+    app.choose_account(binding).unwrap();
+    assert!(!app.accounts.open());
+    assert!(app.draft_inference_settings(draft).unwrap() == original);
+    app.cancel_model_catalog();
+    for job in app.retired_observers {
+        let _ = job.await;
+    }
 }
 
 #[tokio::test]
@@ -777,43 +644,23 @@ async fn late_success_during_restart_refreshes_choices_without_switching_account
 
 #[tokio::test]
 async fn compact_account_settings_distinguish_current_default_and_real_identity_changes() {
+    assert!(!include_str!("render.rs").contains("Settings for next run"));
     let fixture = support::Fixture::new();
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
-    let _socket = picker(&mut app, t);
+    let _watch = picker(&mut app, t);
     let binding = app.accounts.picker.as_ref().unwrap().choices()[0]
         .1
         .clone()
         .unwrap();
-    let p = app.accounts.picker.as_mut().unwrap();
-    p.original.account = Some(binding.clone());
-    p.catalogue.default_account = Some(binding.clone());
-    let text = draw(&app, 160, 50);
-    assert!(
-        text.contains("Choose account") && text.contains("Current") && text.contains("Default")
-    );
-    assert!(!text.contains("chatgpt-oauth") && !text.contains("Host:"));
     app.choose_account(binding).unwrap();
-    let p = app.accounts.picker.as_mut().unwrap();
-    p.busy = false;
-    app.accounts.reply = None;
-    let text = draw(&app, 80, 24);
-    assert!(
-        text.contains("Settings for next run") && text.contains("Apply") && text.contains("Cancel")
-    );
-    assert!(!text.contains("Different account:") && !text.contains("inherit"));
-    let p = app.accounts.picker.as_mut().unwrap();
-    if let Mode::Confirm(settings) = &mut p.mode {
-        settings.account.as_mut().unwrap().identity_generation += 1;
-    }
-    assert!(draw(&app, 80, 24).contains("Different account:"));
-    key(&mut app, KeyCode::BackTab); // Cancel button
-    key(&mut app, KeyCode::Enter);
-    assert!(matches!(
-        app.accounts.picker.as_ref().unwrap().mode,
-        Mode::List
-    ));
+    assert!(!app.accounts.open());
+    assert!(app.inference_picker_open());
     assert!(app.views[&t].pending.is_none());
+    app.cancel_model_catalog();
+    for job in app.retired_observers {
+        let _ = job.await;
+    }
 }
 
 #[tokio::test]
@@ -986,7 +833,7 @@ async fn missing_default_is_part_of_draft_apply_not_an_f6_prerequisite() {
     let p = app.accounts.picker.as_mut().unwrap();
     p.destination = Destination::Draft(draft);
     p.original = original.clone();
-    p.mode = Mode::Confirm(original.clone());
+    p.mode = Mode::List;
     p.host = Some(host);
     app.apply_account(original).unwrap();
     let p = app.accounts.picker.as_ref().unwrap();
@@ -1073,26 +920,20 @@ async fn new_provider_advertised_default_is_reviewed_not_silently_applied() {
     let fixture = support::Fixture::new();
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
-    let _socket = picker(&mut app, t);
-    let p = app.accounts.picker.as_mut().unwrap();
-    p.destination = Destination::Draft(Uuid::new_v4());
-    let original = p.original.clone();
-    p.mode = Mode::Confirm(original.clone());
-    let id = p.id;
-    let mut model = crate::provider::ModelInfo::minimal("new-provider-default");
-    model.is_default = true;
-    app.account_reply(
-        id,
-        Ok(Reply::Models(original.account.unwrap(), vec![model])),
-    )
-    .unwrap();
-    let p = app.accounts.picker.as_ref().unwrap();
-    let Mode::Confirm(settings) = &p.mode else {
-        panic!("review required")
-    };
-    assert_eq!(settings.model, "new-provider-default");
-    assert!(settings.reasoning_effort.is_none() && settings.service_tier.is_none());
+    let _watch = picker(&mut app, t);
+    let original = app.inference_settings(Destination::Live(t)).unwrap();
+    let binding = app.accounts.picker.as_ref().unwrap().choices()[0]
+        .1
+        .clone()
+        .unwrap();
+    app.choose_account(binding).unwrap();
+    assert!(app.inference_settings(Destination::Live(t)).unwrap() == original);
     assert!(app.views[&t].pending.is_none());
+    assert!(!app.accounts.open());
+    app.cancel_model_catalog();
+    for job in app.retired_observers {
+        let _ = job.await;
+    }
 }
 
 #[tokio::test]
@@ -1100,16 +941,23 @@ async fn confirmed_default_returns_to_review_without_sending_draft() {
     let fixture = support::Fixture::new();
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
-    let _socket = picker(&mut app, t);
+    app.create(Some(fixture.0.path().to_str().unwrap()))
+        .unwrap();
+    let d = app.active_draft.unwrap();
+    let settings = settings();
+    let host = Uuid::new_v4();
+    app.set_draft_account(d, host, settings.clone()).unwrap();
+    let _watch = picker(&mut app, t);
     let p = app.accounts.picker.as_mut().unwrap();
-    let settings = p.original.clone();
-    p.destination = Destination::Draft(Uuid::new_v4());
+    p.destination = Destination::Draft(d);
+    p.original = settings.clone();
+    p.host = Some(host);
     p.mode = Mode::DefaultConsent(settings.clone());
-    p.default_change_pending = true;
     p.busy = true;
+    p.default_change_pending = true;
     let id = p.id;
     let catalogue = Catalogue {
-        default_account: settings.account,
+        default_account: settings.account.clone(),
         default_revision: 1,
         can_set_default: true,
         accounts: p.catalogue.accounts.clone(),
@@ -1117,11 +965,9 @@ async fn confirmed_default_returns_to_review_without_sending_draft() {
     };
     app.account_reply(id, Ok(Reply::DefaultAccount(catalogue)))
         .unwrap();
-    let p = app.accounts.picker.as_ref().unwrap();
-    assert!(!p.default_change_pending && !p.busy);
-    assert!(matches!(p.mode, Mode::Confirm(_)));
-    assert!(app.views[&t].pending.is_none());
-    assert!(p.notice.contains("no message is sent"));
+    assert!(!app.accounts.open());
+    assert!(app.new_drafts[&d].saved.start.is_none());
+    assert!(app.draft_inference_settings(d).unwrap() == settings);
 }
 
 #[tokio::test]

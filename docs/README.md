@@ -42,6 +42,7 @@ are not presented as usable commands.
 | [Catalogue failure diagnosis](model-catalog-diagnosis.md) | Typed safe failure categories, fallback envelope fix and actual live-read evidence |
 | [Model loading recovery](model-loading.md) | Bounded catalogue fetch, explicit Retry and stale-response cancellation |
 | [Default account selection](account-default-selection.md) | Resolve host defaults before model loading and preserve explicit bindings |
+| [Inline account chooser](inline-account-chooser.md) | Account/model candidates share one apply action; legacy settings editor removed |
 | [Direct model chooser](model-chooser.md) | Search models directly, preview choices, expand advanced settings inline and explicitly apply |
 | [Model modal mouse controls](model-mouse.md) | Wheel navigation, clickable Back/Cancel and pointer verification |
 | [Main conversation workspace](main-workspace.md) | Named main navigation, quiet transcript, verification and remaining redesign |

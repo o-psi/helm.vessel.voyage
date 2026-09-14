@@ -24,8 +24,8 @@ def main():
         def click(label):
             u.settle(ui);lines=ui.screen.text().splitlines();row=next(i for i,l in enumerate(lines) if label in l);col=lines[row].index(label);ui.send(f'\x1b[<0;{col+1};{row+1}M'.encode());u.settle(ui)
         click('Model:');ui.until(lambda s:'Choose a model' in s.text() and 'Account: zz-default' in s.text(),'default label before manual account selection')
-        (out/'default-chooser.txt').write_text(ui.screen.text());click('Account:');ui.until(lambda s:'Choose account' in s.text() and 'zz-default' in s.text(),'account picker')
-        text=ui.screen.text();assert any('› zz-default' in l for l in text.splitlines()),text
+        (out/'default-chooser.txt').write_text(ui.screen.text());click('Account:');ui.until(lambda s:'Select account' in s.text() and 'zz-default' in s.text(),'inline account list')
+        text=ui.screen.text();assert any('● zz-default' in l for l in text.splitlines()),text
         (out/'default-selected.txt').write_text(text);ui.send(b'\x1b');ui.until(lambda s:'Choose a model' in s.text(),'return chooser');click('[Cancel]');assert 'default draft retained' in ui.screen.text()
         assert f.request({'op':'account_defaults','workspace':str(f.workspace)})['account']==binding
         assert f.request({'op':'catalogue'})==[],'opening draft created voyage';assert len(f.provider.bodies)==0

@@ -1,6 +1,7 @@
 //! One inference action path for composer controls and slash commands.
 //! Catalog entries are suggestions, never claims of model/account support.
 mod access;
+mod account_choices;
 mod chooser;
 mod render;
 use super::{
@@ -141,8 +142,9 @@ fn catalog_payload(
 }
 #[derive(Default)]
 pub(super) struct Controls {
+    account_load: Option<account_choices::Load>,
     catalog_job: Option<(Uuid, std::time::Instant, tokio::task::JoinHandle<()>)>,
-    return_to_model: Option<Destination>,
+    pub(super) return_to_model: Option<Destination>,
     return_choice: Option<(Settings, chooser::Draft)>,
     options_hit: std::cell::Cell<Option<(ratatui::layout::Rect, Destination)>>,
     chooser_hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, chooser::Control)>>,
@@ -157,11 +159,11 @@ pub(super) struct Controls {
     choices: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
 }
 #[derive(Clone)]
-struct Picker {
+pub(super) struct Picker {
     id: Uuid,
     chooser: chooser::Draft,
     incarnation: Option<Uuid>,
-    destination: Destination,
+    pub(super) destination: Destination,
     original: Settings,
     models: Vec<crate::provider::ModelInfo>,
     field: Field,
@@ -270,7 +272,8 @@ impl App {
         let (field, value) = parse(text).context("invalid inference command")?;
         self.inference.choices.borrow_mut().clear();
         if field == Field::Account {
-            return self.open_accounts(destination, value);
+            self.open_model_options()?;
+            return self.load_chooser_accounts();
         }
         let original = self.inference_settings(destination)?;
         match destination {
@@ -360,7 +363,11 @@ impl App {
         picker.id = Uuid::new_v4();
         let id = picker.id;
         let destination = picker.destination;
-        let account = picker.original.account.clone();
+        let account = if picker.field == Field::Model {
+            picker.chooser.account.clone()
+        } else {
+            picker.original.account.clone()
+        };
         picker.loading = true;
         picker.notice =
             "Fetching models from the executing host… You can cancel or keep the current model."
@@ -542,7 +549,13 @@ impl App {
             .picker
             .as_ref()
             .filter(|p| p.id == id)
-            .map(|p| (p.destination, p.original.clone()))
+            .map(|p| {
+                let mut settings = p.original.clone();
+                if p.field == Field::Model {
+                    settings.account = p.chooser.account.clone();
+                }
+                (p.destination, settings)
+            })
             && let Some(label) = result
                 .as_ref()
                 .ok()
@@ -574,7 +587,23 @@ impl App {
                 serde_json::from_value::<Vec<crate::provider::ModelInfo>>(value.clone()).ok()
             })
             .filter(|models| crate::provider::validate_models(models, &[]).is_ok());
+        let account_changed =
+            picker.field == Field::Model && picker.chooser.account != picker.original.account;
+        let loaded = models.clone();
         picker.install_models(models);
+        if account_changed {
+            picker.options = loaded
+                .as_ref()
+                .map(|v| v.iter().map(|m| m.id.clone()).collect())
+                .unwrap_or_default();
+            if !picker.options.contains(&picker.chooser.model) {
+                picker.chooser.model = loaded
+                    .as_ref()
+                    .and_then(|v| v.iter().find(|m| m.is_default).or(v.first()))
+                    .map(|m| m.id.clone())
+                    .unwrap_or_default();
+            }
+        }
         if failed {
             picker.notice=diagnostic.map(|f|f.message().to_owned()).unwrap_or_else(||"Could not load models. Current model is still available; Retry or check the account/connection.".into());
         }
@@ -582,6 +611,7 @@ impl App {
     pub(super) fn refresh_draft_capabilities(&mut self) {
         self.account_tick();
         self.poll_model_catalog();
+        self.poll_chooser_accounts();
         self.resume_model_after_account();
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {

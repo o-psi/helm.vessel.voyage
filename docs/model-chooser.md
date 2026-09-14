@@ -7,6 +7,10 @@ same centered **Choose a model** dialog directly.
 Catalogue loading is bounded; [loading recovery](model-loading.md) describes the
 12-second deadline and explicit Retry without losing your current model/draft.
 
+> Updated: [inline account selection](inline-account-chooser.md) replaces the
+> private account-settings handoff below. Only sign-in/default-authority consent
+> leaves the unified chooser; the old Settings for next run editor is removed.
+
 ## Interaction
 
 - Search filters the model list. Rows identify the current model and the locally

@@ -59,7 +59,6 @@ struct Loaded {
 }
 enum Reply {
     Loaded(Loaded),
-    Models(AccountBinding, Vec<crate::provider::ModelInfo>),
     Private(PrivateEnrollmentStatus),
     Mutation,
     Catalogue(Catalogue, Option<Uuid>),
@@ -69,7 +68,6 @@ enum Reply {
 enum Mode {
     List,
     Connections,
-    Confirm(Settings),
     DefaultConsent(Settings),
     ApiSetup,
     Alias(Uuid),
@@ -88,7 +86,6 @@ struct Picker {
     mode: Mode,
     query: String,
     selected: usize,
-    edit: usize,
     usage: std::collections::HashMap<Uuid, AccountUsageObservation>,
     usage_requested: std::collections::HashSet<Uuid>,
     default_change_pending: bool,
@@ -104,7 +101,6 @@ struct Picker {
     connection: tokio::sync::watch::Receiver<crate::process_client::duplex::ConnectionState>,
     loss_generation: u64,
     disconnected: bool,
-    models: Vec<crate::provider::ModelInfo>,
 }
 fn now() -> u64 {
     chrono::Utc::now().timestamp().max(0) as u64
@@ -408,6 +404,9 @@ impl App {
                 .insert((route, account.account_id), label.to_owned());
         }
     }
+    pub(super) fn cache_account_host(&mut self, route: Route, host: Uuid) {
+        self.accounts.hosts.insert(route, host);
+    }
     pub(super) fn account_host(&self, route: Route) -> Option<Uuid> {
         self.accounts.hosts.get(&route).copied()
     }
@@ -521,7 +520,6 @@ impl App {
             mode: Mode::List,
             query: query.into(),
             selected: 0,
-            edit: 0,
             usage: Default::default(),
             usage_requested: Default::default(),
             default_change_pending: false,
@@ -537,7 +535,6 @@ impl App {
             connection,
             loss_generation,
             disconnected: false,
-            models: vec![],
         });
         let client = self.clients[route].clone();
         let (tx, rx) = oneshot::channel();
@@ -722,6 +719,7 @@ impl App {
         let mut refresh_account = None;
         let mut refresh = false;
         let mut initialized_default = false;
+        let mut apply_after_default = None;
         let result = (|| -> Result<()> {
             match result? {
                 Reply::Loaded(v) => {
@@ -778,11 +776,14 @@ impl App {
                             });
                     }
                     p.preselect();
+                    let default_review = matches!(p.mode, Mode::DefaultConsent(_));
                     if p.intent.is_some() {
                         p.mode = Mode::Enrollment;
                         p.poll = Instant::now() - Duration::from_secs(4);
                     }
-                    p.notice = if p.original.account.is_some() {
+                    p.notice = if default_review {
+                        "Review the host default; confirming also applies your staged selection. No message is sent.".into()
+                    } else if p.original.account.is_some() {
                         "Current account selected. Host default affects new conversations only."
                             .into()
                     } else {
@@ -822,25 +823,6 @@ impl App {
                     }
                     p.notice=if focus.is_some(){"Signed in. Select the account and review its model to use it. Your current account has not changed."}else{"Select an account to change it. Your current account has not changed."}.into();
                 }
-                Reply::Models(binding, models) => {
-                    if let Mode::Confirm(s) = &mut p.mode {
-                        if s.account.as_ref() == Some(&binding)
-                            && crate::provider::validate_models(&models, &[]).is_ok()
-                        {
-                            if matches!(p.destination, Destination::Draft(_))
-                                && !models.iter().any(|model| model.id == s.model)
-                            {
-                                if let Some(model) = models.iter().find(|model| model.is_default) {
-                                    s.model = model.id.clone();
-                                    s.reasoning_effort = None;
-                                    s.service_tier = None;
-                                    p.notice = "Provider's advertised default model selected for review. Enter applies; Tab edits. Access and billing are not guaranteed by the catalogue.".into();
-                                }
-                            }
-                            p.models = models;
-                        }
-                    }
-                }
                 Reply::Usage(observation) => {
                     let valid = p.catalogue.accounts.iter().any(|a| {
                         a.id == observation.account.account_id
@@ -869,13 +851,11 @@ impl App {
                     p.usage.clear();
                     p.usage_requested.clear();
                     if let Mode::DefaultConsent(settings) = &p.mode {
-                        p.mode = if matches!(p.destination, Destination::Draft(_)) {
-                            Mode::Confirm(settings.clone())
-                        } else {
-                            Mode::List
-                        };
+                        apply_after_default = Some(settings.clone());
                     }
-                    p.notice = "Default saved for future voyages. Existing voyages unchanged. Enter applies the reviewed settings to this draft; no message is sent.".into();
+                    p.notice =
+                        "Default saved. Applying the reviewed selection; no message is sent."
+                            .into();
                 }
                 Reply::Mutation => {
                     p.poll = Instant::now() - Duration::from_secs(4);
@@ -950,6 +930,9 @@ impl App {
             Some(p)
         };
         result?;
+        if let Some(settings) = apply_after_default {
+            return self.apply_account(settings);
+        }
         if refresh {
             self.refresh_enrolled_accounts(refresh_account)?;
         }
@@ -1150,43 +1133,43 @@ impl App {
         self.private_request(command, false)
     }
     fn choose_account(&mut self, binding: AccountBinding) -> Result<()> {
-        let p = self.accounts.picker.as_mut().context("view closed")?;
+        let p = self
+            .accounts
+            .picker
+            .as_ref()
+            .context("Account list closed")?;
         ensure!(
             !p.disconnected,
-            "Socket changed; reopen the account picker before selecting"
+            "Account connection changed; nothing selected"
         );
-        let mut settings = p.original.clone();
-        settings.provider = provider(binding.transport).into();
-        settings.account = Some(binding.clone());
-        p.mode = Mode::Confirm(settings);
-        p.edit = 0;
-        p.models.clear();
-        p.notice = "Tab / Shift+Tab Move · Ctrl+U Clear field · F2 Use defaults\nEnter Apply · Esc Cancel settings (running work continues)".into();
-        let client = self.clients[p.route].clone();
-        let workspace = p.workspace.clone();
-        let (tx, rx) = oneshot::channel();
-        self.accounts.reply = Some((p.id, rx));
-        p.busy = true;
-        tokio::spawn(async move {
-            let result: Result<Reply> = async {
-                let v = client
-                    .request(VesselCommand::AccountModels {
-                        workspace,
-                        account: binding.clone(),
-                    })
-                    .await?;
-                ensure!(
-                    v["account"] == serde_json::to_value(&binding)?,
-                    "Catalog account identity mismatch"
-                );
-                Ok(Reply::Models(
-                    binding,
-                    serde_json::from_value(v["models"].clone())?,
-                ))
-            }
-            .await;
-            let _ = tx.send(result.map_err(|_: anyhow::Error| anyhow::anyhow!("Catalog unavailable. Support remains unknown; explicit settings receive executing-host validation. Review and confirm, or Esc to cancel.")));
-        });
+        let original = p.original.clone();
+        let destination = p.destination;
+        let label = p
+            .catalogue
+            .accounts
+            .iter()
+            .find(|a| a.id == binding.account_id)
+            .map(|a| safe(&a.label))
+            .context("Account changed")?;
+        let requires_default = p.catalogue.default_account.is_none();
+        self.accounts.picker = None;
+        self.inference.return_to_model = None;
+        self.stage_account_from_private_list(binding, label, original, destination)?;
+        self.set_chooser_default_requirement(requires_default);
+        Ok(())
+    }
+    pub(super) fn review_chooser_default(
+        &mut self,
+        picker: super::inference::Picker,
+        settings: Settings,
+    ) -> Result<()> {
+        // A host default is a separate authority surface: keep its dedicated
+        // consent, never bring back the retired model/settings editor.
+        let destination = picker.destination;
+        self.open_accounts(destination, "")?;
+        self.accounts.picker.as_mut().unwrap().mode = Mode::DefaultConsent(settings);
+        self.accounts.picker.as_mut().unwrap().notice =
+            "Review the host default; no message will be sent.".into();
         Ok(())
     }
     fn apply_account(&mut self, settings: Settings) -> Result<()> {
@@ -1378,23 +1361,6 @@ impl App {
         if p.busy {
             return Ok(true);
         }
-        let key = if matches!(p.mode, Mode::Confirm(_)) {
-            if let Some(index) = select.take() {
-                p.edit = index;
-                if index >= 3 {
-                    Some(crossterm::event::KeyEvent::new(
-                        KeyCode::Enter,
-                        KeyModifiers::NONE,
-                    ))
-                } else {
-                    key
-                }
-            } else {
-                key
-            }
-        } else {
-            key
-        };
         if matches!(p.mode, Mode::Connections) {
             if let Some(index) = select {
                 if let Some(c) = p
@@ -1478,63 +1444,6 @@ impl App {
                         let destination = p.destination;
                         self.accounts.picker = None;
                         self.open_accounts(destination, "")?;
-                    }
-                    return Ok(true);
-                }
-                Mode::Confirm(s) => {
-                    match k.code {
-                        KeyCode::Enter if p.edit == 4 => {
-                            p.mode = Mode::List;
-                            p.notice =
-                                "Choose an account for this voyage; default is set separately."
-                                    .into();
-                            return Ok(true);
-                        }
-                        KeyCode::Enter => {
-                            let s = s.clone();
-                            self.apply_account(s)?;
-                            return Ok(true);
-                        }
-                        KeyCode::Tab => p.edit = (p.edit + 1) % 5,
-                        KeyCode::BackTab => p.edit = (p.edit + 4) % 5,
-                        KeyCode::F(2) => {
-                            s.reasoning_effort = None;
-                            s.service_tier = None;
-                        }
-                        _ if p.edit >= 3 => (),
-                        _ => {
-                            let mut text = match p.edit {
-                                0 => s.model.clone(),
-                                1 => s.reasoning_effort.clone().unwrap_or_default(),
-                                _ => s.service_tier.clone().unwrap_or_default(),
-                            };
-                            match k.code {
-                                KeyCode::Char('u')
-                                    if k.modifiers.contains(KeyModifiers::CONTROL) =>
-                                {
-                                    text.clear()
-                                }
-                                KeyCode::Backspace => {
-                                    text.pop();
-                                }
-                                KeyCode::Char(c)
-                                    if !k
-                                        .modifiers
-                                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                                        && !c.is_control()
-                                        && !c.is_whitespace()
-                                        && text.len() + c.len_utf8() <= 256 =>
-                                {
-                                    text.push(c)
-                                }
-                                _ => (),
-                            }
-                            match p.edit {
-                                0 => s.model = text,
-                                1 => s.reasoning_effort = (!text.is_empty()).then_some(text),
-                                _ => s.service_tier = (!text.is_empty()).then_some(text),
-                            }
-                        }
                     }
                     return Ok(true);
                 }
