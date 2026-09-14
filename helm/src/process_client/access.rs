@@ -292,7 +292,11 @@ pub(super) fn public_response(reply: VesselResponse, local: bool) -> Result<serd
                 anyhow::Error::new(reason).context(super::transport::Refusal(reason.to_string()))
             );
         }
-        let message = if local {
+        let message = if let Some(failure) =
+            voyage_protocol::model_discovery::Failure::from_diagnostic(&error)
+        {
+            format!("[model_catalog:{}] {}", failure.code(), failure.message())
+        } else if local {
             format!("Vessel refused: {}", super::safe(&error))
         } else {
             "Vessel refused the request".into()
@@ -300,4 +304,22 @@ pub(super) fn public_response(reply: VesselResponse, local: bool) -> Result<serd
         return Err(super::transport::Refusal(message).into());
     }
     Ok(reply.result)
+}
+
+#[cfg(test)]
+mod catalog_error_tests {
+    use super::*;
+    #[test]
+    fn remote_catalog_failure_exposes_only_allowlisted_category() {
+        let reply = VesselResponse {
+            protocol: VESSEL_API_VERSION,
+            result: serde_json::Value::Null,
+            error: Some("SECRET [model_catalog:authentication] RAW-BODY".into()),
+            outcome_unknown: false,
+        };
+        let error = public_response(reply, false).unwrap_err().to_string();
+        assert!(error.contains("[model_catalog:authentication]"));
+        assert!(!error.contains("SECRET"));
+        assert!(!error.contains("RAW-BODY"));
+    }
 }

@@ -126,6 +126,19 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
         value.trim(),
     ))
 }
+fn catalog_payload(
+    value: serde_json::Value,
+    account: Option<&voyage_protocol::accounts::AccountBinding>,
+) -> std::result::Result<serde_json::Value, String> {
+    if let Some(account) = account {
+        if value["account"] != serde_json::to_value(account).unwrap_or_default() {
+            return Err("Account catalog changed".into());
+        }
+        Ok(value["models"].clone())
+    } else {
+        Ok(value.get("result").cloned().unwrap_or(value))
+    }
+}
 #[derive(Default)]
 pub(super) struct Controls {
     catalog_job: Option<(Uuid, std::time::Instant, tokio::task::JoinHandle<()>)>,
@@ -402,17 +415,16 @@ impl App {
                 tokio::time::timeout(std::time::Duration::from_secs(12), client.request(command))
                     .await
                     .map_err(|_| "Model loading timed out".to_owned())
-                    .and_then(|v| v.map_err(|_| "Model catalog unavailable".into()))
                     .and_then(|v| {
-                        if let Some(account) = account {
-                            if v["account"] != serde_json::to_value(&account).unwrap_or_default() {
-                                return Err("Account catalog changed".into());
-                            }
-                            Ok(v["models"].clone())
-                        } else {
-                            Ok(v)
-                        }
-                    });
+                        v.map_err(|e| {
+                            voyage_protocol::model_discovery::Failure::from_diagnostic(
+                                &e.to_string(),
+                            )
+                            .map(|f| format!("[model_catalog:{}]", f.code()))
+                            .unwrap_or_else(|| "Model catalog unavailable".into())
+                        })
+                    })
+                    .and_then(|v| catalog_payload(v, account.as_ref()));
             let _ = sender
                 .send(Update::InferenceModels {
                     route: Some(route),
@@ -536,6 +548,10 @@ impl App {
             return;
         }
         self.inference.choices.borrow_mut().clear();
+        let diagnostic = result
+            .as_ref()
+            .err()
+            .and_then(|e| voyage_protocol::model_discovery::Failure::from_diagnostic(e));
         let failed = result.is_err();
         let models = result
             .ok()
@@ -547,7 +563,7 @@ impl App {
             .filter(|models| crate::provider::validate_models(models, &[]).is_ok());
         picker.install_models(models);
         if failed {
-            picker.notice="Could not load models. Current model is still available; Retry or check the account/connection.".into();
+            picker.notice=diagnostic.map(|f|f.message().to_owned()).unwrap_or_else(||"Could not load models. Current model is still available; Retry or check the account/connection.".into());
         }
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
@@ -850,5 +866,18 @@ impl App {
         }
         self.inference.picker = Some(picker);
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod catalog_payload_tests {
+    use super::*;
+    #[test]
+    fn unbound_controls_unwrap_voyage_envelope_without_losing_inventory() {
+        let payload = serde_json::json!({"session_id":Uuid::new_v4(),"incarnation":Uuid::new_v4(),"result":{"section":"models","value":[{"id":"test-model","display_name":"Test"}]}});
+        let value = catalog_payload(payload, None).unwrap();
+        assert_eq!(value["value"][0]["id"], "test-model");
+        let direct = serde_json::json!({"section":"models","value":[]});
+        assert_eq!(catalog_payload(direct.clone(), None).unwrap(), direct);
     }
 }

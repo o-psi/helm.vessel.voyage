@@ -50,3 +50,6 @@ pub mod reasoning_preview;
 pub mod tool_preview;
 
 pub mod start_settings;
+
+/// Safe model catalogue diagnostics; no provider bodies or credentials.
+pub mod model_discovery;

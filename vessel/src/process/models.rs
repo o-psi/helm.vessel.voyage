@@ -67,6 +67,16 @@ impl Supervisor {
                         .context("model discovery output unavailable")?,
                 )
                 .await?;
+                if let Ok(error) = serde_json::from_value::<
+                    voyage_protocol::model_discovery::ErrorResponse,
+                >(models.clone())
+                {
+                    anyhow::bail!(
+                        "[model_catalog:{}] {}",
+                        error.model_catalog_error.code(),
+                        error.model_catalog_error.message()
+                    );
+                }
                 ensure!(
                     models.is_array() && serde_json::to_vec(&models)?.len() <= 1024 * 1024,
                     "invalid model discovery response"
@@ -89,6 +99,14 @@ impl Supervisor {
             reservation.release_observed()?;
             match result {
                 Ok(Ok(models)) => Ok(models),
+                Ok(Err(e))
+                    if voyage_protocol::model_discovery::Failure::from_diagnostic(
+                        &e.to_string(),
+                    )
+                    .is_some() =>
+                {
+                    Err(e)
+                }
                 _ => anyhow::bail!("model discovery failed or timed out; no voyage was created"),
             }
         })

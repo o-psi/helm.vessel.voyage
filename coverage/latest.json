@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T17:47:02.668898+00:00",
+  "measured_at_utc": "2026-09-14T18:25:24.303420+00:00",
   "source": {
-    "commit": "b090bfbfddd708e6a4365e7674405b62aa539f16",
+    "commit": "16040fa74707621facbdbe9838a0912c58fc2fb4",
     "dirty": true,
-    "fingerprint_sha256": "d88f19a6065e37352178925a697674c74a68dca3d48990d333ffd3f47c3ac0bb",
+    "fingerprint_sha256": "5e96b8852457d9a372f583d002c25bbdbcd295a5608bfaf2b3ab29b89be001f1",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and nonignored untracked workspace files to SHA-256 or null for missing files; excludes inspiration apps and subordinate worktrees. Includes preserved pre-existing render comments and deleted scripts/tests.",
-    "note": "Bounded owned catalogue load and retry dirty tree unchanged through measurement; unrelated comments/deletions preserved, not delivered."
+    "note": "Typed catalogue error and unbound response unwrap dirty source unchanged through coverage; unrelated staged comments/deletions preserved."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/model-loading-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/catalog-diagnosis-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +23,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 489,
+    "passed": 492,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 98108,
-      "covered": 38786,
-      "percent": 39.53398295755698
+      "count": 98257,
+      "covered": 38879,
+      "percent": 39.56868212951749
     },
     "functions": {
-      "count": 9524,
-      "covered": 3574,
-      "percent": 37.526249475010495
+      "count": 9545,
+      "covered": 3585,
+      "percent": 37.55893137768465
     },
     "regions": {
-      "count": 160412,
-      "covered": 61583,
-      "notcovered": 98829,
-      "percent": 38.39051941251278
+      "count": 160620,
+      "covered": 61720,
+      "notcovered": 98900,
+      "percent": 38.4260988668908
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 450,
+    "logical_source_files": 451,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -64,7 +64,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected report selects all 11 current Cargo executable artifacts, excluding stale historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines +0.1622 percentage points, functions +0.1550 percentage points, regions +0.1398 percentage points.",
-    "Model catalogue deadline/watchdog, fresh read retry, stale result refusal and cleanup. No real-provider diagnosis or native claims."
+    "Compared with prior measurement: lines +0.0347 percentage points, functions +0.0327 percentage points, regions +0.0356 percentage points.",
+    "Safe helper/supervisor/UI catalogue diagnostics and unbound envelope correction; live metadata reads separate from coverage. Original transient failure root cause unknown."
   ]
 }
