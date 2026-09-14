@@ -653,7 +653,9 @@ Changed contexts discard late results; nothing is persisted or applied to infere
 An early open joins the pending preload. Expired successful metadata in the same
 scope remains immediately usable while refreshing; refresh retains search and local
 candidate selection. Requests retain the 12-second bound; sanitized failures stay cached until
-explicit Retry, scope change, or eviction, rather than periodic error retries.
+explicit Retry, scope change, or eviction, rather than periodic error retries. The chooser omits routine technical disclaimers,
+labels successful reloads Refresh and failed reloads Retry, and says changes apply
+to the next message. Remote host context and actionable errors remain visible.
 
 Saved workflows use named executing-host inventory, exact digest trust, typed
 public inputs, isolated masked private inputs and a separate executing-host preview

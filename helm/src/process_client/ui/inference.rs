@@ -141,6 +141,22 @@ fn catalog_payload(
         Ok(value.get("result").cloned().unwrap_or(value))
     }
 }
+fn model_load_error(failure: Option<voyage_protocol::model_discovery::Failure>) -> &'static str {
+    use voyage_protocol::model_discovery::Failure;
+    match failure {
+        Some(Failure::Authentication) => "Couldn’t load models. Check your account’s sign-in.",
+        Some(Failure::RateLimit) => "Too many requests. Try again shortly.",
+        Some(Failure::Network) => "Couldn’t connect. Check the connection and try again.",
+        Some(Failure::InvalidResponse | Failure::DisplayValidation) => {
+            "Couldn’t read the model list. Try again."
+        }
+        Some(Failure::Timeout) => "Loading took too long. Try again.",
+        Some(Failure::Configuration) => "Check your account settings, then try again.",
+        Some(Failure::Workspace) => "This folder is unavailable. Choose another folder.",
+        Some(Failure::Policy) => "Your access settings don’t allow loading models.",
+        _ => "Couldn’t load models. Try again.",
+    }
+}
 #[derive(Default)]
 pub(super) struct Controls {
     account_load: Option<account_choices::Load>,
@@ -173,6 +189,7 @@ pub(super) struct Picker {
     selected: usize,
     options: Vec<String>,
     loading: bool,
+    models_loaded: bool,
     notice: String,
     confirmation: Option<Settings>,
     // Slash commands are retained until their outcome, clicks never touch text.
@@ -183,6 +200,7 @@ impl Picker {
     fn install_models(&mut self, models: Option<Vec<crate::provider::ModelInfo>>) {
         self.loading = false;
         let available = models.is_some();
+        self.models_loaded = available;
         let selected = self.options().get(self.selected).cloned();
         self.models = models.unwrap_or_default();
         self.original.resolve(&self.models);
@@ -208,7 +226,9 @@ impl Picker {
             .and_then(|s| self.options().iter().position(|v| *v == s))
             .unwrap_or(0);
         self.notice = if !available {
-            "Catalog unavailable or context changed. Defaults/support are unknown. Explicit values receive runtime validation; reopen to retry."
+            "Couldn’t load models. Try again."
+        } else if self.field == Field::Model {
+            ""
         } else {
             match self.original.resolution.as_ref().map(|r| if self.field == Field::Service { r.service.support } else { r.thinking.support }) {
                 Some(voyage_protocol::inference::Support::Advertised) => "Model-advertised choices; account acceptance remains provider-authoritative.",
@@ -325,6 +345,7 @@ impl App {
             selected: 0,
             options,
             loading: false,
+            models_loaded: false,
             notice: "Loading model metadata. Inherit uses advertised catalog defaults, otherwise provider-managed. Service default is an explicit adapter-specific choice. Unknown support is not entitlement.".into(),
             confirmation: None,
             command_text: match destination {
@@ -377,9 +398,7 @@ impl App {
             picker.original.account.clone()
         };
         picker.loading = true;
-        picker.notice =
-            "Fetching models from the executing host… You can cancel or keep the current model."
-                .into();
+        picker.notice = "Loading models…".into();
         self.inference.choices.borrow_mut().clear();
         let provider = if picker.field == Field::Model {
             picker.chooser.provider.clone()
@@ -460,8 +479,9 @@ impl App {
             self.cancel_model_catalog();
             if let Some(p) = self.inference.picker.as_mut().filter(|p| p.id == id) {
                 p.loading = false;
+                p.models_loaded = false;
                 p.id = Uuid::new_v4();
-                p.notice="Model loading timed out. Current model is still available. Retry to fetch the catalog again.".into();
+                p.notice = "Loading took too long. Try again.".into();
             }
         }
     }
@@ -512,7 +532,7 @@ impl App {
         if !self.cache_model_response(id, &result) {
             if let Some(p) = self.inference.picker.as_mut().filter(|p| p.id == id) {
                 p.loading = false;
-                p.notice = "Destination changed. Stale catalog discarded; Retry to refresh.".into();
+                p.notice = "Connection changed. Reload the model list.".into();
             }
             return;
         }
@@ -540,7 +560,7 @@ impl App {
         if stale {
             if let Some(picker) = self.inference.picker.as_mut() {
                 picker.loading = false;
-                picker.notice = "Account/model changed while loading; reopen the picker. Stale catalog discarded.".into();
+                picker.notice = "Account or model changed. Reopen the model list.".into();
             }
             return;
         }
@@ -570,7 +590,7 @@ impl App {
             && self.inference.draft_generations.get(&draft_id).copied() != generation
         {
             picker.loading = false;
-            picker.notice = "Draft changed. Retry model discovery.".into();
+            picker.notice = "Settings changed. Reload the model list.".into();
             return;
         }
         self.inference.choices.borrow_mut().clear();
@@ -609,7 +629,7 @@ impl App {
             .and_then(|s| picker.options().iter().position(|v| *v == s))
             .unwrap_or(0);
         if failed {
-            picker.notice=diagnostic.map(|f|f.message().to_owned()).unwrap_or_else(||"Could not load models. Current model is still available; Retry or check the account/connection.".into());
+            picker.notice = model_load_error(diagnostic).into();
         }
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {

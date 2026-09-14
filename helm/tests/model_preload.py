@@ -72,7 +72,12 @@ def main():
             ui.until(lambda s: 'Choose a model' in s.text() and 'preloaded-model' in s.text(),
                      'cached model immediately visible', timeout=.75)
             times.append(time.monotonic() - started)
-            assert 'loading…' not in ui.screen.text()
+            text = ui.screen.text()
+            assert 'loading…' not in text
+            assert '[Refresh]' in text and '[Retry]' not in text
+            assert 'Applies to your next message' in text
+            assert 'provider-authoritative' not in text and 'entitlements' not in text
+            assert 'This computer ·' not in text and 'Next message only' not in text
             (out / f'warm-{len(times)}.txt').write_text(ui.screen.text())
             ui.send(b'\x1b')
             u.settle(ui)

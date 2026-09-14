@@ -155,6 +155,7 @@ impl App {
             selected: 0,
             options: vec![],
             loading: false,
+            models_loaded: false,
             notice: "Resolving accounts on this host…".into(),
             confirmation: None,
             command_text: String::new(),
@@ -311,7 +312,7 @@ impl App {
                     cycle(&mut p.chooser.thinking, candidate.reasoning_efforts);
                 } else {
                     cycle(&mut p.chooser.service, candidate.service_tiers);
-                    p.notice="Service priority can increase cost. This is a draft choice until Use model.".into();
+                    p.notice = "Priority service may cost more.".into();
                 }
                 p.chooser.review = false;
                 p.chooser.keep = false;
@@ -338,7 +339,7 @@ impl App {
                 {
                     p.chooser.review = true;
                     p.chooser.focus = Control::Reset;
-                    p.notice="This model may not support your overrides. Reset or explicitly keep them, then Use model. Nothing applied.".into();
+                    p.notice="This model may not support your advanced settings. Reset them or keep them?".into();
                 } else {
                     let latest = self.inference_settings(p.destination)?;
                     ensure!(
@@ -696,19 +697,23 @@ impl App {
             control(
                 Rect::new(inner.x, y, inner.width, 1),
                 Control::Reset,
-                "Reset overrides (recommended)".into(),
+                "Reset advanced settings".into(),
             );
             y += 1;
             control(
                 Rect::new(inner.x, y, inner.width, 1),
                 Control::Keep,
-                "Keep overrides for validation".into(),
+                "Keep advanced settings".into(),
             );
             y += 1;
         }
 
         frame.render_widget(
-            Paragraph::new(format!("{} · Next message only", self.route_label(route))),
+            Paragraph::new(if self.clients[route].is_local() {
+                "Applies to your next message".to_owned()
+            } else {
+                format!("{} · Applies to your next message", self.route_label(route))
+            }),
             Rect::new(inner.x, y, inner.width, 1),
         );
         if p.chooser.focus == Control::Search {
@@ -731,7 +736,15 @@ impl App {
         let apply = Rect::new(inner.right() - 13, inner.bottom() - 1, 13, 1);
         for (r, c, label) in [
             (cancel, Control::Cancel, "[Cancel]"),
-            (retry, Control::Retry, "[Retry]"),
+            (
+                retry,
+                Control::Retry,
+                if p.models_loaded {
+                    "[Refresh]"
+                } else {
+                    "[Retry]"
+                },
+            ),
             (apply, Control::Apply, "[Use model]"),
         ] {
             frame.render_widget(
@@ -778,6 +791,7 @@ mod tests {
             selected: 0,
             options: vec!["current".into(), "other".into()],
             loading: false,
+            models_loaded: false,
             notice: String::new(),
             confirmation: None,
             command_text: String::new(),
@@ -868,7 +882,7 @@ mod tests {
         app.poll_model_catalog();
         let p = app.inference.picker.as_ref().unwrap();
         assert!(!p.loading);
-        assert!(p.notice.contains("timed out"));
+        assert!(p.notice.contains("took too long"));
         assert_ne!(p.id, id);
         app.inference_models(
             id,
@@ -911,7 +925,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .notice
-                .contains("Retry")
+                .contains("Try again")
         );
         assert!(app.views[&t].pending.is_none());
         for job in app.retired_observers {
@@ -975,7 +989,7 @@ mod tests {
         app.chooser_activate(p, Control::Apply).unwrap();
         assert!(app.inference.picker.as_ref().unwrap().chooser.review);
         assert!(app.views[&t].pending.is_none());
-        assert!(text(&paint(&app, 40, 18)).contains("Reset overrides"));
+        assert!(text(&paint(&app, 40, 18)).contains("Reset advanced settings"));
         let p = app.inference.picker.take().unwrap();
         app.chooser_activate(p, Control::Reset).unwrap();
         assert!(

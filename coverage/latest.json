@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-14T21:54:15.968112+00:00",
+  "measured_at_utc": "2026-09-14T22:29:17.311592+00:00",
   "source": {
-    "base_commit": "b0609c9477607112fd37c205293577d3a2233b16",
+    "base_commit": "7369d20ab4f3f06e06aac1f9b2598a54b25dfbd3",
     "dirty": true,
-    "fingerprint_sha256": "3cb0940c38bcf4d035fe59fa64ac0b873ddd625447f6b6eea8f749fa798d63cb",
-    "fingerprint_scope": "Tracked and nonignored files, excluding inspiration apps/ and worktrees; existing unrelated staged render comments and deleted scripts included. Full per-file hash map retained under ignored target/coverage-report/model-preload-final."
+    "fingerprint_sha256": "fe40971a5bd2291a14735714e2db17832b791f40f0fdfe3ade29b3ffc97583ef",
+    "fingerprint_scope": "Tracked and nonignored files, excluding inspiration apps/ and worktrees; existing unrelated staged render comments and deleted scripts included. Full per-file hash map retained under ignored target/coverage-report/chooser-copy-final."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -13,7 +13,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/model-preload-final/default-report -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/chooser-copy-final/default-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -28,20 +28,20 @@
   },
   "coverage": {
     "lines": {
-      "count": 99237,
-      "covered": 39620,
-      "percent": 39.92462488789464
+      "count": 99255,
+      "covered": 39626,
+      "percent": 39.92342955014861
     },
     "functions": {
-      "count": 9634,
+      "count": 9633,
       "covered": 3652,
-      "percent": 37.907411251816484
+      "percent": 37.91134641337071
     },
     "regions": {
-      "count": 162293,
-      "covered": 63017,
-      "notcovered": 99276,
-      "percent": 38.829154677034744
+      "count": 162310,
+      "covered": 63018,
+      "notcovered": 99292,
+      "percent": 38.82570389994455
     }
   },
   "report_selection": {
@@ -63,7 +63,7 @@
   ],
   "notes": [
     "Default shared-target report retained; corrected export selects every current Cargo executable artifact, excluding historical binaries. No duplicate logical sources or mismatched functions.",
-    "Compared with prior measurement: lines +0.1706 percentage points, functions +0.2288 percentage points, regions +0.2095 percentage points.",
-    "Model preloading and scoped cache verified offline; no native macOS/Windows or live-provider claim."
+    "Compared with prior measurement: lines -0.0012 percentage points, functions +0.0039 percentage points, regions -0.0035 percentage points.",
+    "Plain model chooser copy verified offline; no native macOS/Windows or live-provider claim."
   ]
 }
