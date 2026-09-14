@@ -188,7 +188,7 @@ impl App {
         let context = format!(
             "{} · {} · workspace {}",
             self.route_label(target.route),
-            target.session,
+            crate::process_client::safe(&self.views[&target].title()),
             self.views[&target].process.workspace.display()
         );
         let client = self.clients[target.route].clone();
@@ -198,6 +198,39 @@ impl App {
             load(&client, o, context).await.map(Content::Panel)
         });
         self.status = "Loading executing-host inspection tools · Esc cancels this read".into();
+        Ok(())
+    }
+    pub(super) fn request_answer_copy(
+        &mut self,
+        observation: Observation,
+        index: u64,
+    ) -> Result<()> {
+        ensure!(
+            self.inspection_matches(observation),
+            "Answer changed; select it again"
+        );
+        let view = self
+            .views
+            .get(&observation.target)
+            .context("Conversation unavailable")?;
+        let snapshot = view.snapshot.as_ref().context("Snapshot unavailable")?;
+        let state = view.transcript.borrow();
+        let message = state
+            .messages
+            .iter()
+            .chain(snapshot.messages.iter())
+            .find(|m| m.message_index as u64 == index)
+            .context("Answer is no longer loaded; select it again")?;
+        ensure!(
+            message.role == "assistant"
+                && message.interrupted_attempt.is_none()
+                && message.operator_name.is_none()
+                && message.tool_calls.is_empty()
+                && !message.content.is_empty(),
+            "Select a saved completed answer"
+        );
+        drop(state);
+        self.inspection.confirmation = Some((observation, index));
         Ok(())
     }
     pub(super) fn request_response_copy(&mut self, target: Target) -> Result<()> {
@@ -350,10 +383,9 @@ impl App {
         let Some(snapshot) = self.views.get(&target).and_then(|v| v.snapshot.as_ref()) else {
             return;
         };
-        if self.views[&target].process.incarnation != a.observation.incarnation {
-            self.close_inspection();
-            return;
-        }
+        // Idle operator admission may start a fresh owner incarnation. The
+        // accepted receipt's exact run ID below, not the preflight incarnation,
+        // identifies the result. Read it using a fresh observation; never replay.
         let Some(observed) = snapshot
             .run
             .as_ref()
@@ -400,9 +432,7 @@ impl App {
             let text =
                 export::response_text(&client, target.session, o.incarnation, o.revision, index)
                     .await?;
-            Ok(Content::Result(format!(
-                "Exact admitted operator run {run} · {state}\n{text}"
-            )))
+            Ok(Content::Result(format!("Inspection {state}\n{text}")))
         });
     }
 
@@ -597,6 +627,37 @@ mod app_tests {
         assert!(app.inspection.panel.is_some());
         assert_eq!(app.views[&o.target].draft.text, "preserve composer");
         app.close_inspection();
+    }
+    #[tokio::test]
+    async fn accepted_idle_inspection_follows_exact_run_across_new_owner() {
+        let f = Fixture::new();
+        let mut app = app(f.0.path());
+        let old = live(&mut app);
+        panel(&mut app, old);
+        let run = Uuid::new_v4();
+        let new_owner = Uuid::new_v4();
+        app.inspection.admitted = Some(Admission {
+            observation: old,
+            command: Uuid::new_v4(),
+            run: Some(run),
+            deadline: Instant::now() + Duration::from_secs(120),
+        });
+        let view = app.views.get_mut(&old.target).unwrap();
+        view.process.incarnation = new_owner;
+        view.snapshot=Some(serde_json::from_value(serde_json::json!({"session_id":old.target.session,"revision":20,"model":"fixture","messages":[],"run":{"run_id":run,"state":"completed"},"turns":[{"run_id":run,"phase":"completed","message_start":0,"message_end":2}]})).unwrap());
+        app.poll_inspection();
+        assert!(app.inspection.panel.is_some());
+        let job = app
+            .inspection
+            .job
+            .as_ref()
+            .expect("exact completed run read");
+        assert_eq!(job.observation.incarnation, new_owner);
+        assert_eq!(job.observation.revision, 20);
+        app.close_inspection();
+        for job in app.retired_observers {
+            let _ = job.await;
+        }
     }
     #[tokio::test]
     async fn inspection_app_copy_disclosure_stale_no_external_write() {

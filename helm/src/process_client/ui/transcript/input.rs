@@ -22,6 +22,10 @@ impl App {
         if view.panel.is_some() || view.terminals.open {
             return false;
         }
+        if self.answer_actions_input(event) {
+            return true;
+        }
+        let view = self.selected.and_then(|t| self.views.get(&t)).unwrap();
         let mut state = view.transcript.borrow_mut();
         if matches!(event, Event::Resize(..)) {
             state.hits.clear();

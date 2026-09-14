@@ -299,6 +299,14 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 note(&mut out, key, "", width);
             }
         }
+        if super::answer_actions::eligible(message) {
+            note(
+                &mut out,
+                Key::AnswerActions(message.message_index),
+                "[Copy]  [Workspace changes]",
+                width,
+            );
+        }
         calls.extend(
             message
                 .tool_calls
@@ -595,6 +603,14 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                     line = line.style(crate::theme::Role::Hover.style());
                 }
             }
+            if let Key::AnswerActions(index) = row.key
+                && state
+                    .answer_focus
+                    .and_then(|i| state.answer_hits.get(i))
+                    .is_some_and(|(_, _, selected)| *selected == index)
+            {
+                line = line.style(crate::theme::Role::Selection.style());
+            }
             if !query.is_empty() && line.to_string().to_lowercase().contains(&query) {
                 line.style(crate::theme::Role::SearchMatch.style())
             } else {
@@ -602,6 +618,44 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             }
         })
         .collect::<Vec<_>>();
+    if let Some(snapshot) = &view.snapshot {
+        let observation = super::super::operator::Observation {
+            target: app.selected.unwrap(),
+            incarnation: view.process.incarnation,
+            revision: snapshot.revision,
+            run_id: snapshot
+                .run
+                .as_ref()
+                .filter(|r| r.active())
+                .map(|r| r.run_id),
+        };
+        let hits = state
+            .rows
+            .iter()
+            .skip(top)
+            .take(height)
+            .enumerate()
+            .filter_map(|(y, row)| {
+                if let Key::AnswerActions(index) = row.key {
+                    Some((
+                        Rect::new(area.x, area.y + y as u16, area.width.min(26), 1),
+                        observation,
+                        index,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let hits: Vec<_> = hits;
+        let focused = state
+            .answer_focus
+            .and_then(|i| state.answer_hits.get(i))
+            .map(|(_, o, index)| (*o, *index));
+        state.answer_focus = focused
+            .and_then(|(o, index)| hits.iter().position(|(_, new, i)| *new == o && *i == index));
+        state.answer_hits = hits;
+    }
     state.hits = state
         .rows
         .iter()

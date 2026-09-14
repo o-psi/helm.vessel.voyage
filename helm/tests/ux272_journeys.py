@@ -498,7 +498,7 @@ def inspection(j):
     assert canonical.startswith('Fixture finished. café 中文\n')
     assert 'anchor-line-079' in canonical
     command_text(ui, '/diff')
-    ui.until(lambda screen: 'Inspect coding results' in screen.text(), 'inspection panel')
+    ui.until(lambda screen: 'Changes and files' in screen.text(), 'inspection panel')
     settle(ui)
     ui.send(b'\x1b[B\r')  # Panel defaults to Status; explicitly select Unstaged.
     ui.until(lambda screen: 'unstaged-marker' in screen.text(), 'actual unstaged runtime diff', timeout=40)

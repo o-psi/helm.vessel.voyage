@@ -1,5 +1,6 @@
 //! A readable projection of canonical messages, activity and provisional output.
 mod activity;
+mod answer_actions;
 mod history;
 mod history_ux;
 mod input;
@@ -13,6 +14,7 @@ use ratatui::text::Line;
 pub(super) enum Key {
     Message(usize),
     MessageHeading(usize),
+    AnswerActions(usize),
     Sender(usize),
     Activity(usize),
     ActivityHeader(usize),
@@ -45,6 +47,9 @@ pub(in crate::process_client::ui) struct State {
     pub details: bool,
     expanded: std::collections::BTreeMap<usize, bool>,
     hits: Vec<(ratatui::layout::Rect, Key)>,
+    answer_hits: Vec<(ratatui::layout::Rect, super::operator::Observation, usize)>,
+    answer_focus: Option<usize>,
+    answer_selected: Option<(super::operator::Observation, usize)>,
     tool_expanded: std::collections::BTreeSet<String>,
     preview_calls: std::collections::BTreeMap<String, String>,
     last_click: Option<(Key, u16, u16, std::time::Instant)>,
