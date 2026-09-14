@@ -76,6 +76,7 @@ enum Mode {
     Enrollment,
 }
 struct Picker {
+    auto_initialize: bool,
     id: Uuid,
     destination: Destination,
     route: Route,
@@ -241,6 +242,24 @@ fn open_browser(pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Resu
         )
     }
 }
+// Resolve only genuinely unbound draft preferences. Existing account selection wins.
+fn resolve_draft_default(seed: Option<Settings>, defaults: Settings) -> Settings {
+    match seed {
+        None => defaults,
+        Some(mut seed) => {
+            if seed.account.is_none()
+                && (seed.provider.is_empty() || seed.provider == defaults.provider)
+            {
+                seed.account = defaults.account;
+                seed.provider = defaults.provider;
+                if seed.model.is_empty() {
+                    seed.model = defaults.model;
+                }
+            }
+            seed
+        }
+    }
+}
 impl Picker {
     fn choices(&self) -> Vec<(String, Option<AccountBinding>)> {
         let mut items = Vec::new();
@@ -281,6 +300,13 @@ impl Picker {
                                 .is_some_and(|b| b.account_id == a.id && b.transport == t)
                             {
                                 " · Current"
+                            } else if self
+                                .catalogue
+                                .default_account
+                                .as_ref()
+                                .is_some_and(|b| b.account_id == a.id && b.transport == t)
+                            {
+                                " · Host default"
                             } else {
                                 ""
                             }
@@ -300,6 +326,44 @@ impl Picker {
         items.push(("+ OpenAI / Anthropic — use an API key…".into(), None));
         items
     }
+    fn preselect(&mut self) {
+        let Some(binding) = self
+            .original
+            .account
+            .as_ref()
+            .or(self.catalogue.default_account.as_ref())
+        else {
+            return;
+        };
+        // Unavailable current/default rows still own selection: Enter must not
+        // accidentally switch billing to the first available account.
+        let mut index = 0;
+        for account in &self.catalogue.accounts {
+            if !format!("{} {}", account.alias, account.label)
+                .to_lowercase()
+                .contains(&self.query.to_lowercase())
+            {
+                continue;
+            }
+            if let Some(connection) = self
+                .catalogue
+                .connections
+                .iter()
+                .find(|c| c.id == account.connection_id)
+            {
+                for transport in &connection.transports {
+                    if account.id == binding.account_id
+                        && connection.id == binding.connection_id
+                        && *transport == binding.transport
+                    {
+                        self.selected = index;
+                        return;
+                    }
+                    index += 1;
+                }
+            }
+        }
+    }
     fn label(&self, s: &Settings) -> String {
         s.account
             .as_ref()
@@ -315,6 +379,35 @@ impl Picker {
     }
 }
 impl App {
+    pub(super) fn mark_account_initialization(&mut self, destination: Destination) {
+        if matches!(destination, Destination::Draft(_))
+            && let Some(p) = self
+                .accounts
+                .picker
+                .as_mut()
+                .filter(|p| p.destination == destination)
+        {
+            p.auto_initialize = true;
+        }
+    }
+    pub(super) fn cache_model_account_label(
+        &mut self,
+        destination: Destination,
+        settings: &Settings,
+        label: &str,
+    ) {
+        if label.len() > 256 || safe(label) != label || label.chars().any(char::is_control) {
+            return;
+        }
+        if let (Ok((route, _)), Some(account)) = (
+            self.account_destination(destination),
+            settings.account.as_ref(),
+        ) {
+            self.accounts
+                .labels
+                .insert((route, account.account_id), label.to_owned());
+        }
+    }
     pub(super) fn account_host(&self, route: Route) -> Option<Uuid> {
         self.accounts.hosts.get(&route).copied()
     }
@@ -410,6 +503,7 @@ impl App {
         let connection = self.clients[route].connection_state();
         let loss_generation = connection.borrow().loss_generation;
         self.accounts.picker = Some(Picker {
+            auto_initialize: false,
             id,
             destination,
             route,
@@ -479,8 +573,7 @@ impl App {
                         } else {
                             Ok(serde_json::from_value(v)?)
                         }
-                    })
-                    .unwrap_or_default();
+                    })?;
                 let enroll = caps["features"]
                     .as_array()
                     .is_some_and(|v| v.iter().any(|f| f == "private_account_enrollment"))
@@ -597,11 +690,18 @@ impl App {
         } else if self.accounts.reply.is_none() {
             if let Some(id) = self.active_draft {
                 if self.new_drafts.get(&id).is_some_and(|d| {
-                    d.saved.account_settings.is_none() && d.saved.start.is_none() && !d.busy
+                    d.saved
+                        .account_settings
+                        .as_ref()
+                        .is_none_or(|s| s.account.is_none())
+                        && d.saved.start.is_none()
+                        && !d.busy
                 }) && self.accounts.initializing.insert(id)
                 {
                     // The unresolved draft is visibly reviewed, never silently retargeted later.
-                    let _ = self.open_accounts(Destination::Draft(id), "");
+                    if self.open_accounts(Destination::Draft(id), "").is_ok() {
+                        self.mark_account_initialization(Destination::Draft(id));
+                    }
                 }
             }
         }
@@ -621,6 +721,7 @@ impl App {
         p.busy = false;
         let mut refresh_account = None;
         let mut refresh = false;
+        let mut initialized_default = false;
         let result = (|| -> Result<()> {
             match result? {
                 Reply::Loaded(v) => {
@@ -657,26 +758,37 @@ impl App {
                             saved.account_host.is_none_or(|h| h == v.host),
                             "Vessel identity changed; create a new draft after review"
                         );
-                        if saved.account_settings.is_none() {
-                            let explicit = self.draft_account_seed(d);
-                            p.original = if let Some(mut seed) = explicit {
-                                if seed.account.is_none() && seed.provider == v.defaults.provider {
-                                    seed.account = v.defaults.account.clone();
-                                }
-                                seed
-                            } else {
-                                v.defaults
-                            };
-                            // Legacy per-Helm remembered accounts no longer override the host default.
+                        if saved
+                            .account_settings
+                            .as_ref()
+                            .is_none_or(|s| s.account.is_none())
+                        {
+                            let seed = saved
+                                .account_settings
+                                .clone()
+                                .or_else(|| self.draft_account_seed(d));
+                            p.original = resolve_draft_default(seed, v.defaults);
                             self.set_draft_account(d, v.host, p.original.clone())?;
                         }
+                        initialized_default = p.auto_initialize
+                            && p.original.account.is_some()
+                            && p.original.account == p.catalogue.default_account
+                            && p.choices().iter().any(|(_, b)| {
+                                b.is_some() && b.as_ref() == p.original.account.as_ref()
+                            });
                     }
+                    p.preselect();
                     if p.intent.is_some() {
                         p.mode = Mode::Enrollment;
                         p.poll = Instant::now() - Duration::from_secs(4);
                     }
-                    p.notice =
-                        "Choose an account for this voyage; default is set separately.".into();
+                    p.notice = if p.original.account.is_some() {
+                        "Current account selected. Host default affects new conversations only."
+                            .into()
+                    } else {
+                        "No usable account resolved. Choose an account; no fallback was selected."
+                            .into()
+                    };
                 }
                 Reply::Catalogue(catalogue, focus) => {
                     ensure!(
@@ -705,7 +817,10 @@ impl App {
                                 .is_some_and(|binding| Some(binding.account_id) == focus)
                         })
                         .unwrap_or(0);
-                    p.notice = "Signed in. Select the account and review its model to use it. Your current account has not changed.".into();
+                    if focus.is_none() {
+                        p.preselect();
+                    }
+                    p.notice=if focus.is_some(){"Signed in. Select the account and review its model to use it. Your current account has not changed."}else{"Select an account to change it. Your current account has not changed."}.into();
                 }
                 Reply::Models(binding, models) => {
                     if let Mode::Confirm(s) = &mut p.mode {
@@ -829,7 +944,11 @@ impl App {
             p.private = None;
             p.notice = safe(&e.to_string());
         }
-        self.accounts.picker = Some(p);
+        self.accounts.picker = if result.is_ok() && initialized_default {
+            None
+        } else {
+            Some(p)
+        };
         result?;
         if refresh {
             self.refresh_enrolled_accounts(refresh_account)?;

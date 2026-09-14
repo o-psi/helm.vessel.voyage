@@ -508,8 +508,9 @@ impl Supervisor {
                         && voyage_runtime::provider::inference_context(&config).await == context,
                     "account catalog context changed"
                 );
+                let descriptor = Registry::default_host()?.validate_binding(&account)?;
                 Ok(
-                    json!({"account":account,"capability_revision":Registry::default_host()?.validate_binding(&account)?.capability_revision,"models":models}),
+                    json!({"account":account,"account_label":descriptor.label,"capability_revision":descriptor.capability_revision,"models":models}),
                 )
             }
             VesselCommand::EnrollAccount {

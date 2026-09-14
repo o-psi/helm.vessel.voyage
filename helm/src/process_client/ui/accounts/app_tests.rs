@@ -119,6 +119,7 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
     let original = app.inference_settings(Destination::Live(t)).unwrap();
     let b = super::tests::binding();
     app.accounts.picker = Some(Picker {
+        auto_initialize: false,
         id: Uuid::new_v4(),
         destination: Destination::Live(t),
         route: t.route,
@@ -1242,4 +1243,154 @@ async fn discovery_draft_focus_and_detach_never_edit_or_send_hidden_composer() {
     .unwrap();
     assert!(app.quit);
     assert!(app.command_checks.is_empty());
+}
+
+fn two_account_catalogue(
+    app: &mut App,
+    target: Target,
+) -> (
+    tokio::sync::watch::Sender<ConnectionState>,
+    AccountBinding,
+    AccountBinding,
+) {
+    let watch = picker(app, target);
+    let p = app.accounts.picker.as_mut().unwrap();
+    let first = p.choices()[0].1.clone().unwrap();
+    let mut descriptor = p.catalogue.accounts[0].clone();
+    descriptor.id = Uuid::new_v4();
+    descriptor.alias = "second".into();
+    descriptor.label = "Second default".into();
+    let mut second = first.clone();
+    second.account_id = descriptor.id;
+    p.catalogue.accounts.push(descriptor);
+    p.catalogue.default_account = Some(second.clone());
+    (watch, first, second)
+}
+#[tokio::test]
+async fn default_second_is_preselected_not_first_and_explicit_account_wins() {
+    let f = support::Fixture::new();
+    let mut app = app(f.0.path());
+    let t = live(&mut app);
+    let (_watch, first, second) = two_account_catalogue(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.original.account = None;
+    p.preselect();
+    assert_eq!(p.selected, 1);
+    assert_eq!(p.choices()[p.selected].1, Some(second.clone()));
+    p.original.account = Some(first.clone());
+    p.preselect();
+    assert_eq!(p.selected, 0);
+    p.original.account = Some(second);
+    p.preselect();
+    assert_eq!(p.selected, 1);
+    assert!(app.views[&t].pending.is_none());
+}
+#[tokio::test]
+async fn saved_unbound_draft_resolves_second_default_before_chooser_without_confirmation_loop() {
+    let f = support::Fixture::new();
+    let mut app = app(f.0.path());
+    let t = live(&mut app);
+    app.create(Some(f.0.path().to_str().unwrap())).unwrap();
+    let d = app.active_draft.unwrap();
+    let (_watch, _first, second) = two_account_catalogue(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    let host = p.host.unwrap();
+    p.destination = Destination::Draft(d);
+    p.workspace = f.0.path().into();
+    p.auto_initialize = true;
+    let mut seed = settings();
+    seed.account = None;
+    let mut defaults = seed.clone();
+    defaults.account = Some(second.clone());
+    p.original = seed.clone();
+    let id = p.id;
+    let catalogue = Catalogue {
+        accounts: p.catalogue.accounts.clone(),
+        connections: p.catalogue.connections.clone(),
+        default_account: p.catalogue.default_account.clone(),
+        default_revision: p.catalogue.default_revision,
+        can_set_default: p.catalogue.can_set_default,
+    };
+    app.set_draft_account(d, host, seed).unwrap();
+    app.new_draft_composer_mut(d).unwrap().text = "retained draft".into();
+    app.account_reply(
+        id,
+        Ok(Reply::Loaded(Loaded {
+            host,
+            catalogue,
+            defaults,
+            enroll: true,
+        })),
+    )
+    .unwrap();
+    assert!(!app.accounts.open());
+    assert_eq!(
+        app.draft_inference_settings(d).unwrap().account,
+        Some(second)
+    );
+    assert_eq!(
+        app.copy_new_draft_images(d).unwrap().0.text,
+        "retained draft"
+    );
+    assert!(app.new_drafts[&d].saved.start.is_none());
+}
+#[tokio::test]
+async fn unavailable_default_does_not_select_first_available_account_or_close_setup() {
+    let f = support::Fixture::new();
+    let mut app = app(f.0.path());
+    let t = live(&mut app);
+    app.create(Some(f.0.path().to_str().unwrap())).unwrap();
+    let d = app.active_draft.unwrap();
+    let (_watch, first, second) = two_account_catalogue(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    let host = p.host.unwrap();
+    p.destination = Destination::Draft(d);
+    p.auto_initialize = true;
+    p.catalogue.accounts[1].state = AccountState::SignInRequired;
+    let catalogue = Catalogue {
+        accounts: p.catalogue.accounts.clone(),
+        connections: p.catalogue.connections.clone(),
+        default_account: p.catalogue.default_account.clone(),
+        default_revision: p.catalogue.default_revision,
+        can_set_default: p.catalogue.can_set_default,
+    };
+    let id = p.id;
+    let mut defaults = settings();
+    defaults.account = Some(second.clone());
+    app.account_reply(
+        id,
+        Ok(Reply::Loaded(Loaded {
+            host,
+            catalogue,
+            defaults,
+            enroll: true,
+        })),
+    )
+    .unwrap();
+    assert!(app.accounts.open());
+    assert_ne!(
+        app.draft_inference_settings(d).unwrap().account,
+        Some(first)
+    );
+    assert!(app.new_drafts[&d].saved.start.is_none());
+}
+#[test]
+fn default_resolution_preserves_explicit_binding_and_provider_mismatch() {
+    let mut defaults = settings();
+    let mut explicit = defaults.clone();
+    explicit.account.as_mut().unwrap().account_id = Uuid::new_v4();
+    assert_eq!(
+        resolve_draft_default(Some(explicit.clone()), defaults.clone()).account,
+        explicit.account
+    );
+    let mut wrong = defaults.clone();
+    wrong.account = None;
+    wrong.provider = "anthropic".into();
+    assert!(
+        resolve_draft_default(Some(wrong), defaults.clone())
+            .account
+            .is_none()
+    );
+    defaults.account = None;
+    assert!(resolve_draft_default(None, defaults).account.is_none());
 }

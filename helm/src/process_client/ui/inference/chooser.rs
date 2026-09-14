@@ -78,9 +78,16 @@ impl App {
             .map(Destination::Draft)
             .or(self.selected.map(Destination::Live))
             .context("Choose a conversation or start a draft first")?;
-        if self.inference_settings(destination).is_err() {
+        if self.inference_settings(destination).is_err()
+            || matches!(destination, Destination::Draft(_))
+                && self
+                    .inference_settings(destination)
+                    .is_ok_and(|s| s.account.is_none())
+        {
             self.inference.return_to_model = Some(destination);
-            return self.open_accounts(destination, "");
+            self.open_accounts(destination, "")?;
+            self.mark_account_initialization(destination);
+            return Ok(());
         }
         self.cancel_paste_for_private_panel();
         self.inference_command(destination, "/model", true)

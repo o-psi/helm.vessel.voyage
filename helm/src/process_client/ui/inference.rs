@@ -134,7 +134,7 @@ fn catalog_payload(
         if value["account"] != serde_json::to_value(account).unwrap_or_default() {
             return Err("Account catalog changed".into());
         }
-        Ok(value["models"].clone())
+        Ok(serde_json::json!({"value":value["models"],"account_label":value["account_label"]}))
     } else {
         Ok(value.get("result").cloned().unwrap_or(value))
     }
@@ -536,6 +536,19 @@ impl App {
                 picker.notice = "Account/model changed while loading; reopen the picker. Stale catalog discarded.".into();
             }
             return;
+        }
+        if let Some((destination, settings)) = self
+            .inference
+            .picker
+            .as_ref()
+            .filter(|p| p.id == id)
+            .map(|p| (p.destination, p.original.clone()))
+            && let Some(label) = result
+                .as_ref()
+                .ok()
+                .and_then(|v| v["account_label"].as_str())
+        {
+            self.cache_model_account_label(destination, &settings, label);
         }
         let Some(picker) = self.inference.picker.as_mut().filter(|p| p.id == id) else {
             return;
