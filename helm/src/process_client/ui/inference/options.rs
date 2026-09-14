@@ -64,6 +64,8 @@ impl App {
         event: &Event,
     ) -> Result<bool> {
         if matches!(event, Event::Resize(..)) {
+            self.inference.options_back.set(None);
+            self.inference.options_area.set(None);
             self.inference.options_hit.set(None);
             self.inference.options_rows.borrow_mut().clear();
             return Ok(false);
@@ -119,6 +121,18 @@ impl App {
                 "Conversation changed. Reopen Model options; your draft is retained.".into();
             return Ok(true);
         }
+        if let Event::Mouse(mouse) = event
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && self
+                .inference
+                .options_back
+                .get()
+                .is_some_and(|r| r.contains((mouse.column, mouse.row).into()))
+        {
+            self.inference.options_back.set(None);
+            self.inference.options_rows.borrow_mut().clear();
+            return Ok(true);
+        }
         let mut activate = None;
         match event {
             Event::Key(k) if k.kind == KeyEventKind::Press => {
@@ -144,6 +158,22 @@ impl App {
                     }
                     _ => {}
                 }
+            }
+            Event::Mouse(mouse)
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) && self
+                    .inference
+                    .options_area
+                    .get()
+                    .is_some_and(|r| r.contains((mouse.column, mouse.row).into())) =>
+            {
+                panel.selected = if mouse.kind == MouseEventKind::ScrollUp {
+                    panel.selected.saturating_sub(1)
+                } else {
+                    (panel.selected + 1).min(FIELDS.len() - 1)
+                };
             }
             Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
                 activate = self
@@ -205,6 +235,18 @@ impl App {
             .title_bottom(" ↑↓ Choose · Enter Open · Esc Back ");
         let inner = block.inner(area);
         frame.render_widget(block, area);
+        self.inference.options_area.set(Some(area));
+        let back = Rect::new(
+            area.right().saturating_sub(10),
+            area.y,
+            8.min(area.width),
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new("[Back]").style(crate::theme::Role::Focus.style()),
+            back,
+        );
+        self.inference.options_back.set(Some(back));
         let route = match panel.destination {
             Destination::Draft(id) => self.new_drafts[&id].route,
             Destination::Live(t) => t.route,
@@ -299,6 +341,126 @@ mod tests {
             .map(|c| c.symbol())
             .collect()
     }
+    fn mouse(kind: MouseEventKind, r: Rect) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column: r.x,
+            row: r.y,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+    #[tokio::test]
+    async fn mouse_wheel_and_back_stay_inside_options_without_changing_settings() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let target = setup(&mut app);
+        app.open_model_options().unwrap();
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| super::super::super::render::draw(f, &app))
+            .unwrap();
+        let area = app.inference.options_area.get().unwrap();
+        app.input(mouse(
+            MouseEventKind::ScrollDown,
+            Rect::new(area.x + 2, area.y + 2, 1, 1),
+        ))
+        .unwrap();
+        assert_eq!(app.inference.options.as_ref().unwrap().selected, 1);
+        assert!(app.inference.options_rows.borrow().is_empty());
+        t.draw(|f| super::super::super::render::draw(f, &app))
+            .unwrap();
+        app.input(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            app.inference.options_back.get().unwrap(),
+        ))
+        .unwrap();
+        assert!(app.inference.options.is_none());
+        assert!(!app.accounts.open());
+        assert_eq!(app.views[&target].draft.text, "retained input");
+    }
+    #[tokio::test]
+    async fn model_wheel_requires_redraw_and_cancel_never_applies_override() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let target = setup(&mut app);
+        let original = app.inference_settings(Destination::Live(target)).unwrap();
+        app.inference.picker = Some(Picker {
+            id: Uuid::new_v4(),
+            destination: Destination::Live(target),
+            original,
+            models: vec![],
+            field: Field::Model,
+            query: String::new(),
+            selected: 0,
+            options: (0..30).map(|n| format!("model-{n}")).collect(),
+            loading: false,
+            notice: String::new(),
+            confirmation: None,
+            command_text: String::new(),
+            preserve_draft: true,
+        });
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| super::super::super::render::draw(f, &app))
+            .unwrap();
+        let (row, _) = app.inference.choices.borrow()[0];
+        app.input(mouse(MouseEventKind::ScrollDown, row)).unwrap();
+        assert_eq!(app.inference.picker.as_ref().unwrap().selected, 1);
+        assert!(app.inference.choices.borrow().is_empty());
+        // Old pointer map cannot apply the previous row before the next paint.
+        app.input(mouse(MouseEventKind::Down(MouseButton::Left), row))
+            .unwrap();
+        assert!(app.views[&target].pending.is_none());
+        assert!(app.inference.picker.is_some());
+        t.draw(|f| super::super::super::render::draw(f, &app))
+            .unwrap();
+        app.input(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            app.inference.cancel_hit.get().unwrap(),
+        ))
+        .unwrap();
+        assert!(app.inference.picker.is_none());
+        assert!(app.views[&target].pending.is_none());
+        assert_eq!(app.views[&target].draft.text, "retained input");
+    }
+    #[tokio::test]
+    async fn override_review_can_be_cancelled_by_mouse_without_changing_model() {
+        let f = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(f.0.path());
+        let target = setup(&mut app);
+        let original = app.inference_settings(Destination::Live(target)).unwrap();
+        let mut next = original.clone();
+        next.model = "other-model".into();
+        app.inference.picker = Some(Picker {
+            id: Uuid::new_v4(),
+            destination: Destination::Live(target),
+            original,
+            models: vec![],
+            field: Field::Model,
+            query: String::new(),
+            selected: 0,
+            options: vec![],
+            loading: false,
+            notice: "Review overrides".into(),
+            confirmation: Some(next),
+            command_text: String::new(),
+            preserve_draft: true,
+        });
+        let mut t = Terminal::new(TestBackend::new(40, 18)).unwrap();
+        t.draw(|f| super::super::super::render::draw(f, &app))
+            .unwrap();
+        let hit = app.inference.cancel_hit.get().unwrap();
+        app.input(mouse(MouseEventKind::Down(MouseButton::Left), hit))
+            .unwrap();
+        assert!(app.inference.picker.is_none());
+        assert!(app.views[&target].pending.is_none());
+        assert_eq!(
+            app.inference_settings(Destination::Live(target))
+                .unwrap()
+                .model,
+            "fixture-model"
+        );
+        assert_eq!(app.views[&target].draft.text, "retained input");
+    }
+
     #[tokio::test]
     async fn one_composer_control_and_named_options_preserve_draft_and_effective_model() {
         let f = super::super::super::account_test_support::Fixture::new();

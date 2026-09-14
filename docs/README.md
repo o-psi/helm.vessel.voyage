@@ -39,6 +39,7 @@ are not presented as usable commands.
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [Answer actions and changed files](audits/ux-272-result-actions.md) | Per-answer copy, executing-host file selection, scoped diffs and verification |
 | [UX closure readiness](audits/ux-272-closure-readiness.md) | Main-UI finish-up, actual verification and honest remaining closure blockers |
+| [Model modal mouse controls](model-mouse.md) | Wheel navigation, clickable Back/Cancel and pointer verification |
 | [Main conversation workspace](main-workspace.md) | Named main navigation, quiet transcript, verification and remaining redesign |
 | [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and objective executable verification |
 | [Action-by-action UX comparison](audits/ux-comparison.md) | Source audit of Helm, Pi, OpenCode and Codex CLI, complete core action inventories and prioritized findings |

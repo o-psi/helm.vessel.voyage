@@ -10,6 +10,10 @@ use ratatui::{
 impl App {
     pub(in crate::process_client::ui) fn clear_inference_hits(&self) {
         self.inference.options_hit.set(None);
+        self.inference.cancel_hit.set(None);
+        self.inference.picker_area.set(None);
+        self.inference.options_back.set(None);
+        self.inference.options_area.set(None);
         self.inference.access.hit.set(None);
         self.inference.access.visible.set(false);
         self.inference.visible.set(false);
@@ -82,10 +86,10 @@ impl App {
             height,
         );
         frame.render_widget(Clear, area);
-        let block = Block::default().borders(Borders::ALL).title(format!(
-            " {} · ↑↓ select · Enter apply · Esc cancel ",
-            picker.field.name()
-        ));
+        self.inference.picker_area.set(Some(area));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", picker.field.name()));
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let current = match picker.destination {
@@ -218,6 +222,17 @@ impl App {
             .style(crate::theme::Role::AwaitingInput.style()),
             rows[3],
         );
+        let cancel = Rect::new(
+            area.right().saturating_sub(12),
+            area.y,
+            10.min(area.width),
+            1,
+        );
+        frame.render_widget(
+            Paragraph::new("[Cancel]").style(crate::theme::Role::Focus.style()),
+            cancel,
+        );
+        self.inference.cancel_hit.set(Some(cancel));
         if picker.confirmation.is_none() && rows[1].width > 0 {
             let col = super::super::composer::cursor_position(
                 &format!("Search / explicit value: {}", safe(&picker.query)),

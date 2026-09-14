@@ -135,6 +135,10 @@ pub(super) struct Controls {
     access: access::AccessControls,
     draft_generations: std::collections::BTreeMap<Uuid, Uuid>,
     visible: std::cell::Cell<bool>,
+    cancel_hit: std::cell::Cell<Option<ratatui::layout::Rect>>,
+    picker_area: std::cell::Cell<Option<ratatui::layout::Rect>>,
+    options_back: std::cell::Cell<Option<ratatui::layout::Rect>>,
+    options_area: std::cell::Cell<Option<ratatui::layout::Rect>>,
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, Destination, Field)>>,
     choices: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
 }
@@ -648,6 +652,8 @@ impl App {
         }
         if let Event::Resize(..) = event {
             self.inference.visible.set(false);
+            self.inference.cancel_hit.set(None);
+            self.inference.picker_area.set(None);
             self.inference.hits.borrow_mut().clear();
             self.inference.choices.borrow_mut().clear();
         }
@@ -681,10 +687,27 @@ impl App {
             }
             return Ok(false);
         }
+        if matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Up(_) | MouseEventKind::Moved))
+        {
+            return Ok(true);
+        }
         if !self.inference.visible.get()
             && !matches!(event, Event::Key(key) if key.code == KeyCode::Esc || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))))
         {
             self.status = "Inference selector is not visible yet; enlarge to at least 40 columns × 18 rows, or Esc to cancel. Nothing sent.".into();
+            return Ok(true);
+        }
+        if let Event::Mouse(mouse) = event
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && self
+                .inference
+                .cancel_hit
+                .get()
+                .is_some_and(|r| r.contains((mouse.column, mouse.row).into()))
+        {
+            self.inference.picker = None;
+            self.inference.cancel_hit.set(None);
+            self.inference.choices.borrow_mut().clear();
             return Ok(true);
         }
         let mut picker = self.inference.picker.take().expect("picker");
@@ -733,6 +756,23 @@ impl App {
                     picker.selected = 0;
                 }
             }
+            Event::Mouse(mouse)
+                if matches!(
+                    mouse.kind,
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                ) && self
+                    .inference
+                    .picker_area
+                    .get()
+                    .is_some_and(|r| r.contains((mouse.column, mouse.row).into())) =>
+            {
+                let count = picker.options().len();
+                picker.selected = if mouse.kind == MouseEventKind::ScrollUp {
+                    picker.selected.saturating_sub(1)
+                } else {
+                    (picker.selected + 1).min(count.saturating_sub(1))
+                };
+            }
             Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left) => {
                 choose = self
                     .inference
@@ -744,6 +784,7 @@ impl App {
             }
             _ => {}
         }
+        self.inference.choices.borrow_mut().clear();
         self.inference.choices.borrow_mut().clear();
         if let Some(index) = choose {
             if let Some(mut settings) = picker.confirmation.take() {
