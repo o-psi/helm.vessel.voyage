@@ -142,8 +142,28 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     app.viewport
         .set(Some((frame.area().width, frame.area().height)));
     app.working.begin_frame();
+    app.clear_workspace_hits();
     app.vessel_sidebar_button.set(Rect::default());
-    draw_inner(frame, app);
+    app.sync_interactions();
+    let full = frame.area();
+    let bar = app.draw_workspace_chrome();
+    if bar {
+        app.draw_workspace_bar(frame, Rect::new(full.x, full.y, full.width, 1));
+    }
+    draw_inner(
+        frame,
+        app,
+        if bar {
+            Rect::new(
+                full.x,
+                full.y + 1,
+                full.width,
+                full.height.saturating_sub(1),
+            )
+        } else {
+            full
+        },
+    );
     if !super::layout_guard::supported(frame.area().width, frame.area().height) {
         return;
     }
@@ -183,28 +203,32 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     {
         app.draw_accounts(frame);
     }
-    app.draw_vessel_control(frame);
+    if !bar {
+        app.draw_vessel_control(frame);
+    } else {
+        app.vessel_button.set(Rect::default());
+    }
     app.draw_workspace_picker(frame, frame.area());
     if let Some(manager) = &app.vessels {
         manager.borrow_mut().render(frame, frame.area());
     }
     app.draw_stop(frame, frame.area());
+    app.draw_workspace_menu(frame);
     if app.help {
         frame.render_widget(ratatui::widgets::Clear, frame.area());
         draw_discovery_help(frame, app, frame.area());
     }
 }
 
-fn draw_inner(frame: &mut Frame<'_>, app: &App) {
+fn draw_inner(frame: &mut Frame<'_>, app: &App, area: Rect) {
     app.clear_inference_hits();
     app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
     app.sidebar.action_trigger.set(None);
     app.sidebar.visible.set(None);
     app.draft_hits.borrow_mut().clear();
-    let area = frame.area();
     let view = app.selected.and_then(|key| app.views.get(&key));
-    if area.width < 40 || area.height < 18 {
+    if frame.area().width < 40 || frame.area().height < 18 {
         app.sidebar.resize.clear();
         super::interactions::draw(frame, app, Rect::default());
         if let Some(view) = view {
@@ -334,7 +358,7 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
         String::new()
     };
     let detail = view.map_or_else(
-        || "Ctrl+N  Start a voyage".into(),
+        || "Start a conversation with New".into(),
         |v| {
             if reviewing || rows[0].width < 60 {
                 return format!("{host} · {}", state(v, &app.working));
@@ -427,27 +451,9 @@ fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -
         ""
     } else {
         view.map(presentation::composer_intent)
-            .unwrap_or("Select a voyage · F2")
+            .unwrap_or("Choose a conversation from Find")
     };
-    let mut line = Line::styled(hint.to_owned(), muted());
-    for shortcuts in [
-        "F1 Help · F2 Voyages · F3 Console · F6 Browser · F8 Explore · F9 Actions · Ctrl+C Detach · voyages continue",
-        "/stop Review Stop · Ctrl+C Detach",
-        "F2 Voyages · F8 Explore",
-        "F2 Voyages",
-    ] {
-        let shortcuts = if reviewing {
-            "Ctrl+C Detach · voyages continue"
-        } else {
-            shortcuts
-        };
-        let separator = if hint.is_empty() { "" } else { " · " };
-        let suffix = format!("{separator}{shortcuts}");
-        if line.width() + Line::raw(suffix.clone()).width() <= width as usize {
-            line.spans.push(Span::styled(suffix, muted()));
-            break;
-        }
-    }
+    let line = Line::styled(hint.to_owned(), muted());
     let mut text = presentation::wrap(Text::from(line), width);
     if !status.is_empty() {
         let notice = Line::raw(status.to_owned());
@@ -497,53 +503,28 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         1,
     );
     let rows = Layout::vertical([
-        Constraint::Length(5 + app.new_drafts.len().min(4) as u16),
+        Constraint::Length(2 + app.new_drafts.len().min(4) as u16),
         Constraint::Min(1),
         Constraint::Length(2),
     ])
     .split(area);
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                "Vessels  [Ctrl+G]",
-                accent()
-                    .add_modifier(Modifier::BOLD)
-                    .patch(app.vessel_hover_style(Rect::new(
-                        rows[0].x,
-                        rows[0].y,
-                        rows[0].width,
-                        1,
-                    ))),
-            ),
-            Line::default(),
-            Line::styled("Ctrl+N  New voyage", accent()),
-            Line::default(),
-        ]),
+        Paragraph::new(if app.archives {
+            "Archived conversations"
+        } else {
+            "Conversations"
+        })
+        .style(accent().add_modifier(Modifier::BOLD)),
         rows[0],
     );
-    app.vessel_sidebar_button
-        .set(Rect::new(rows[0].x, rows[0].y, rows[0].width, 1));
+    app.vessel_sidebar_button.set(Rect::default());
     app.draw_draft_links(
         frame,
         Rect::new(
             rows[0].x,
-            rows[0].y + 3,
+            rows[0].y + 1,
             rows[0].width,
             app.new_drafts.len().min(4) as u16,
-        ),
-    );
-    frame.render_widget(
-        Paragraph::new(if app.archives {
-            "Archived voyages"
-        } else {
-            "Your voyages"
-        })
-        .style(muted()),
-        Rect::new(
-            rows[0].x,
-            rows[0].bottom().saturating_sub(1),
-            rows[0].width,
-            1,
         ),
     );
     let targets = app.ordered_targets();
@@ -635,10 +616,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         });
         y = y.saturating_add(height);
     }
-    frame.render_widget(
-        Paragraph::new("↑↓ Voyages · → Actions\nF5 Archives · F9 Actions").style(muted()),
-        rows[2],
-    );
+    frame.render_widget(Paragraph::new("↑↓ Select · → More").style(muted()), rows[2]);
 }
 
 fn composer(frame: &mut Frame<'_>, app: &App, area: Rect, preview_rows: u16) {

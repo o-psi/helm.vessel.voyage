@@ -105,11 +105,17 @@ impl Browser {
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5))
     }
     pub fn summary(&self) -> String {
+        // Do not advertise an inventory the user has never opened. Errors remain
+        // visible in Open terminal, and previously observed programs keep status.
+        if self.inventory.is_none() && self.error.is_none() {
+            return String::new();
+        }
+
         if self.error.is_some() {
-            return "Program status unavailable · F3 Console".into();
+            return "Program status unavailable".into();
         }
         if !self.fresh() {
-            return "Program status not current · F3 Console".into();
+            return "Program status not current".into();
         }
         let entries = self
             .inventory
@@ -119,16 +125,16 @@ impl Browser {
         let running = entries.iter().filter(|e| e.running()).count();
         match entries.iter().find(|e| e.running()) {
             Some(entry) => format!(
-                "{running} {} running · {} · F3 Console",
+                "{running} {} running · {}",
                 if running == 1 { "program" } else { "programs" },
                 safe(&entry.title)
             ),
             None => {
                 if entries.is_empty() {
-                    "F3 Console".into()
+                    "".into()
                 } else {
                     format!(
-                        "{} {} · F3 Console",
+                        "{} {}",
                         entries.len(),
                         if entries.len() == 1 {
                             "finished program"
@@ -385,7 +391,10 @@ mod observation_tests {
     #[test]
     fn absent_stale_and_failed_inventory_never_claim_active_checks() {
         let mut browser = Browser::default();
-        assert!(browser.summary().contains("not current"));
+        assert!(
+            browser.summary().is_empty(),
+            "Unopened inventory must not add idle chrome"
+        );
         browser.update(
             Ok(Inventory {
                 run_id: None,
@@ -393,10 +402,10 @@ mod observation_tests {
             }),
             Instant::now(),
         );
-        assert_eq!(browser.summary(), "F3 Console");
+        assert_eq!(browser.summary(), "");
         browser.observed = Some(Instant::now() - Duration::from_secs(6));
         assert!(browser.summary().contains("not current"));
         browser.update(Err("private transport detail".into()), Instant::now());
-        assert_eq!(browser.summary(), "Program status unavailable · F3 Console");
+        assert_eq!(browser.summary(), "Program status unavailable");
     }
 }

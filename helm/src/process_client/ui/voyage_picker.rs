@@ -80,6 +80,55 @@ impl Picker {
     }
 }
 impl App {
+    pub(super) fn open_voyage_picker(&mut self) {
+        self.cancel_paste_for_private_panel();
+        self.help = false;
+        self.explore = None;
+        let mut entries = Vec::new();
+        for (id, draft) in &self.new_drafts {
+            entries.push(Entry {
+                destination: Destination::Draft(*id),
+                name: format!("Draft: {}", super::safe(draft.navigation_title())),
+                detail: format!(
+                    "{} · {}",
+                    self.route_label(draft.route),
+                    draft.navigation_workspace().display()
+                ),
+            });
+        }
+        for target in self.ordered_targets() {
+            let view = &self.views[&target];
+            let status = if view.archived() {
+                "Archived".to_owned()
+            } else if view.connection_unavailable {
+                "Vessel unavailable · cached conversation".to_owned()
+            } else {
+                view.snapshot
+                    .as_ref()
+                    .map_or("Observation unavailable", super::presentation::voyage_state)
+                    .to_owned()
+            };
+            entries.push(Entry {
+                destination: Destination::Voyage(target),
+                name: view.title(),
+                detail: format!("{} · {}", self.route_label(target.route), status),
+            });
+        }
+        let selected = entries
+            .iter()
+            .position(|e| match e.destination {
+                Destination::Draft(id) => self.active_draft == Some(id),
+                Destination::Voyage(t) => self.active_draft.is_none() && self.selected == Some(t),
+            })
+            .unwrap_or(0);
+        self.voyage_picker = Some(Picker {
+            entries,
+            selected,
+            ..Default::default()
+        });
+        self.sidebar.resize.clear();
+    }
+
     pub(super) fn voyage_picker_input(&mut self, event: &Event) -> bool {
         if let Event::Key(key) = event {
             if key.kind == KeyEventKind::Release {
@@ -98,54 +147,7 @@ impl App {
                 if self.sidebar.menu.is_some() || self.inference_picker_open() {
                     return false;
                 }
-                self.cancel_paste_for_private_panel();
-                self.help = false;
-                self.explore = None;
-                let mut entries = Vec::new();
-                for (id, draft) in &self.new_drafts {
-                    entries.push(Entry {
-                        destination: Destination::Draft(*id),
-                        name: format!("Draft: {}", super::safe(draft.navigation_title())),
-                        detail: format!(
-                            "{} · {}",
-                            self.route_label(draft.route),
-                            draft.navigation_workspace().display()
-                        ),
-                    });
-                }
-                for target in self.ordered_targets() {
-                    let view = &self.views[&target];
-                    let status = if view.archived() {
-                        "Archived".to_owned()
-                    } else if view.connection_unavailable {
-                        "Vessel unavailable · cached conversation".to_owned()
-                    } else {
-                        view.snapshot
-                            .as_ref()
-                            .map_or("Observation unavailable", super::presentation::voyage_state)
-                            .to_owned()
-                    };
-                    entries.push(Entry {
-                        destination: Destination::Voyage(target),
-                        name: view.title(),
-                        detail: format!("{} · {}", self.route_label(target.route), status),
-                    });
-                }
-                let selected = entries
-                    .iter()
-                    .position(|e| match e.destination {
-                        Destination::Draft(id) => self.active_draft == Some(id),
-                        Destination::Voyage(t) => {
-                            self.active_draft.is_none() && self.selected == Some(t)
-                        }
-                    })
-                    .unwrap_or(0);
-                self.voyage_picker = Some(Picker {
-                    entries,
-                    selected,
-                    ..Default::default()
-                });
-                self.sidebar.resize.clear();
+                self.open_voyage_picker();
                 return true;
             }
             if self.voyage_picker.is_some() && key.code == KeyCode::Esc {

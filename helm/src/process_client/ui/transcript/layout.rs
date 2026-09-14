@@ -356,44 +356,8 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
     super::stream::reasoning(&mut out, snapshot, state, width);
     super::activity::previews(&mut out, snapshot, state, width);
-    // Unanchored/older turns still retain retry history; do not silently lose it
-    // just because their canonical message range is outside the loaded window.
-    for turn in &snapshot.turns {
-        let anchored = messages
-            .iter()
-            .any(|message| turn.message_end == Some(message.message_index + 1));
-        let live = snapshot.run.as_ref().is_some_and(|run| {
-            run.run_id == turn.run_id
-                && (run.state != "completed"
-                    || snapshot.pending_cleanup_run.is_some()
-                    || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
-        });
-        if !anchored && !live && !turn.provider_attempts.is_empty() {
-            note(
-                &mut out,
-                Key::Turn(turn.run_id),
-                format!(
-                    "Provider history · run {} · messages outside loaded range",
-                    turn.run_id
-                ),
-                width,
-            );
-            for attempt in turn.provider_attempts.iter().filter(|a| {
-                a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed
-            }) {
-                note(&mut out, Key::Turn(turn.run_id), attempt.summary(), width);
-                note(
-                    &mut out,
-                    Key::Turn(turn.run_id),
-                    format!(
-                        "{} recorded attempts · /attempts {}",
-                        turn.provider_attempt_count, turn.run_id
-                    ),
-                    width,
-                );
-            }
-        }
-    }
+    // Historical diagnostics belong at their loaded turn boundary or in
+    // /attempts, never appended beside current work as unanchored bookkeeping.
     if let Some(delivery) = &state.delivery {
         let saved = messages.iter().any(|m| delivery.matches(m));
         if !saved {
@@ -814,6 +778,58 @@ mod provider_attempt_tests {
         let invalid =
             json!({"role":"assistant","content":"unchanged","interrupted_attempt":"\u{1b}[31m"});
         assert!(serde_json::from_value::<Message>(invalid).is_err());
+    }
+
+    #[test]
+    fn off_window_provider_history_is_not_appended_to_current_conversation() {
+        use serde_json::json;
+        let session_id = uuid::Uuid::new_v4();
+        let old_run = uuid::Uuid::new_v4();
+        let mut view = View::new(voyage_protocol::vessel::ProcessInfo {
+            catalogue: None,
+            archive: None,
+            deletion: None,
+            session_id,
+            incarnation: uuid::Uuid::new_v4(),
+            workspace: "/tmp".into(),
+            state: voyage_protocol::process::ProcessState::Live,
+            name: None,
+        });
+        for decision in ["completed", "partial_response"] {
+            let attempt = json!({
+                "request_id": uuid::Uuid::new_v4(), "attempt_id": uuid::Uuid::new_v4(),
+                "provider":"fixture", "model":"fixture", "category":"fixture",
+                "attempt":1,"limit":8,"started_at_ms":10,"duration_ms":500,
+                "phase":"stream","text_observed":true,"tool_fragment_observed":false,
+                "decision":decision
+            });
+            view.snapshot = Some(serde_json::from_value(json!({
+                "session_id":session_id,"revision":1,"model":"fixture","total_messages":11,
+                "messages":[{"message_index":10,"role":"assistant","content":"Current answer"}],
+                "run":null,"turns":[{"run_id":old_run,"phase":"failed","message_start":0,"message_end":1,
+                    "provider_attempts":[attempt],"provider_attempt_count":1}]
+            })).unwrap());
+            let text = build(&view, &State::default(), 100)
+                .iter()
+                .map(|r| r.line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(text.contains("Current answer"));
+            assert!(!text.contains("Provider history"));
+            assert!(!text.contains(&old_run.to_string()));
+            assert!(!text.contains("1/8"));
+            // Once history is loaded, its failure remains at the actual boundary.
+            view.snapshot.as_mut().unwrap().turns[0].message_end = Some(11);
+            let anchored = build(&view, &State::default(), 100)
+                .iter()
+                .map(|r| r.line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(anchored.contains("Failed"));
+            if decision == "partial_response" {
+                assert!(anchored.contains("1/8"));
+            }
+        }
     }
 
     #[test]

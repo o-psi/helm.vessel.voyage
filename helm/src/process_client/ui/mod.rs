@@ -32,6 +32,7 @@ mod updates;
 mod vessels;
 mod voyage_picker;
 mod workflows;
+mod workspace;
 use crate::composer;
 mod drafts;
 mod effects;
@@ -65,6 +66,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    workspace: workspace::Navigation,
     stop_review: Option<run_controls::StopReview>,
     viewport: std::cell::Cell<Option<(u16, u16)>>,
     observation_target: tokio::sync::watch::Sender<Option<Target>>,
@@ -198,6 +200,7 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        workspace: Default::default(),
         stop_review: None,
         viewport: Default::default(),
         observation_target: tokio::sync::watch::channel(selected).0,

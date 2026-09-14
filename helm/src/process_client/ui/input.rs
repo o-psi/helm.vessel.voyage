@@ -30,6 +30,9 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.workspace_input(&event)? {
+            return Ok(());
+        }
         if self.inspection_input(&event) {
             return Ok(());
         }

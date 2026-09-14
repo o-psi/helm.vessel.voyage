@@ -51,9 +51,9 @@ impl App {
             rows[0],
         );
         let guidance = if self.clients[draft.route].is_local() {
-            "Describe what you want to do.\n\nYour edits are saved on this computer.\n/account · /model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft."
+            "What would you like to work on?\n\nYour draft is saved here. Choose a model below, then send your first message.\nUse the Helm menu for settings and connections."
         } else {
-            "Describe what you want the remote host to do.\n\nOnly the draft is saved here. Workspace authority, model settings, policy and provider credentials remain on the executing host.\n/workspace PATH must name an authorized workspace. Ctrl+N opens the workspace picker; Esc cancels without sending."
+            "Describe what you want to do in the selected remote workspace.\n\nYour draft is saved here; execution and credentials stay on that machine.\nUse the Helm menu for settings and connections."
         };
         frame.render_widget(
             Paragraph::new(guidance).wrap(ratatui::widgets::Wrap { trim: false }),
@@ -122,9 +122,9 @@ impl App {
         if footer.height > 0 {
             frame.render_widget(
                 Paragraph::new(if footer.width >= 64 {
-                    "Enter Send · Alt+Enter New line · F2 Voyages · Ctrl+C Leave"
+                    "Enter Send · Alt+Enter New line"
                 } else {
-                    "Enter Send · F2 Voyages · Ctrl+C Leave"
+                    "Enter Send"
                 })
                 .style(crate::theme::Role::Focus.style()),
                 Rect::new(footer.x, footer.bottom() - 1, footer.width, 1),

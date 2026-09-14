@@ -161,7 +161,7 @@ impl App {
         Ok(())
     }
 
-    fn open_actions(&mut self, target: Target) {
+    pub(super) fn open_actions(&mut self, target: Target) {
         self.sidebar.visible.set(None);
         self.sidebar.menu_hits.borrow_mut().clear();
         let Some(view) = self.views.get(&target) else {
