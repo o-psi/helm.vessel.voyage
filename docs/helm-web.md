@@ -190,6 +190,7 @@ uncertain-command recovery. Commands:
 ```sh
 cd web
 npm test
+php tests/oauth.php
 (cd gateway && npm test)
 npm run build
 find app config routes database/migrations -name '*.php' -exec php -l {} \;
@@ -197,6 +198,11 @@ php artisan route:list --except-vendor
 php artisan view:cache
 composer validate --no-check-publish
 ```
+
+Delivery checks passed: 10 web tests, 80 offline OAuth assertions, 19 gateway
+tests, production build, PHP lint/view/route checks, Composer validation,
+Composer/npm audits (zero advisories), and documentation/diff checks. PHP iconv
+must be enabled for the locked Composer dependencies.
 
 Mock OAuth and DNS/socket fixtures do not establish live Google/X consent,
 third-party Vessel compatibility, real-browser IME/accessibility or native
