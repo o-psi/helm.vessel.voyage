@@ -40,7 +40,7 @@ test('personal tenants: HTTP session, connection isolation, one-use tickets, del
   assert.equal((await call('/')).status,302);assert.equal((await call('/console')).status,404);
   const login=await call('/console/login');assert.equal(login.status,200);assert.match(await login.text(),/being configured/);
   assert.equal((await call('/console/login',{method:'POST'})).status,405);
-  assert.equal((await call('/console/auth/google')).status,404);
+  assert.equal((await call('/auth/google')).status,404);
   const a=await call('/',{},'alice');const html=await a.text();assert.equal(a.status,200);assert.match(html,/alice vessel/);assert.ok(!html.includes('bob vessel'));assert.ok(!html.includes('a'.repeat(64)));
   const csrf=html.match(/name="csrf-token" content="([^"]+)"/)[1];
   const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token},body:JSON.stringify(body)},who);

@@ -21,7 +21,7 @@ checks, not a live provider or full HTTP routing journey.
 
 Main integration owns:
 
-- GET `/console/auth/{provider}` and GET `/console/auth/{provider}/callback` to
+- GET `/auth/{provider}` and GET `/auth/{provider}/callback` to
   `OAuthController::redirect` / `callback`, with web session and existing console
   enablement/HTTPS/security headers. Apply login rate limiting.
 - Login links from static `OAuthController::providers()` (`id => label`), displaying
@@ -36,8 +36,8 @@ Main integration owns:
 Provider applications require `GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET`,
 `X_CLIENT_ID/X_CLIENT_SECRET`, or `GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET`.
 Each provider enables independently only when both values are nonblank.
-Register exactly `${APP_URL}/console/auth/google/callback`, `/x/callback`, or
-`/github/callback` under the same `/console/auth/` prefix. X must be configured
+Register exactly `${APP_URL}/auth/google/callback`, `/x/callback`, or
+`/github/callback` under the same `/auth/` prefix. X must be configured
 as a confidential Web App OAuth2 client, not OAuth1. Socialite 5.31's native X
 provider uses X endpoints, state, S256 PKCE and HTTP Basic token-client auth.
 All three drivers enable S256 PKCE. No offline/refresh-token scope is requested;

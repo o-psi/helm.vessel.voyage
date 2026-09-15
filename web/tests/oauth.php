@@ -100,10 +100,10 @@ catch (Illuminate\Database\UniqueConstraintViolationException) { check(true, 'un
 
 foreach (['google', 'x', 'github'] as $provider) {
     $providers->history = [];
-    $request = requestFor('/console/auth/'.$provider);
+    $request = requestFor('/auth/'.$provider);
     $response = $controller->redirect($request, $provider, $providers);
     parse_str(parse_url($response->getTargetUrl(), PHP_URL_QUERY), $query);
-    check(($query['redirect_uri'] ?? '') === 'https://helm.example/console/auth/'.$provider.'/callback', $provider.' exact trusted callback');
+    check(($query['redirect_uri'] ?? '') === 'https://helm.example/auth/'.$provider.'/callback', $provider.' exact trusted callback');
     check(strlen($query['state'] ?? '') >= 32, $provider.' random state');
     check(($query['code_challenge_method'] ?? '') === 'S256', $provider.' S256 PKCE');
     $verifier = $session->get('code_verifier');
@@ -120,7 +120,7 @@ foreach (['google', 'x', 'github'] as $provider) {
         $providers->responses[] = new Response(200, [], '[{"email":"same@example.test","primary":true,"verified":true}]');
     }
     $before = $session->getId();
-    $request = requestFor('/console/auth/'.$provider.'/callback', ['code' => 'synthetic-code', 'state' => $query['state']]);
+    $request = requestFor('/auth/'.$provider.'/callback', ['code' => 'synthetic-code', 'state' => $query['state']]);
     $response = $controller->callback($request, $provider, $providers, $accounts);
     check($response->getTargetUrl() === 'https://helm.example' || $response->getTargetUrl() === 'http://localhost' || str_ends_with($response->getTargetUrl(), '/'), $provider.' callback redirects root: '.$response->getTargetUrl());
     check(Auth::check() && Auth::user()->tenant_id !== null, $provider.' authenticated tenant');
@@ -138,7 +138,7 @@ foreach (['google', 'x', 'github'] as $provider) {
 
 foreach (['state', 'provider', 'expired', 'denied', 'exchange'] as $failure) {
     $providers->history = [];
-    $controller->redirect(requestFor('/console/auth/google'), 'google', $providers);
+    $controller->redirect(requestFor('/auth/google'), 'google', $providers);
     $state = $session->get('state');
     if ($failure === 'expired') { $session->put('helm_oauth_attempt.expires', time() - 1); }
     $params = ['code' => 'synthetic-code', 'state' => $failure === 'state' ? 'invalid' : $state];

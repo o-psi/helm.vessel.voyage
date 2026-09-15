@@ -25,7 +25,7 @@ not an OS execution sandbox.
 - `/`: signed-in console; signed-out requests redirect to `/landing`.
 - `/landing`: public product page with Sign in / Open console navigation.
 - `/console/login`: configured OAuth provider choices; no operator password login.
-- `/console/auth/{provider}` and `/console/auth/{provider}/callback`: OAuth flow.
+- `/auth/{provider}` and `/auth/{provider}/callback`: OAuth flow.
 - `/connections`: list, pair, import, replace and remove this tenant's Vessels.
 - `/console/ticket`, `/console/socket`: tenant-authorized gateway transport.
 - `/console/gateway/authorize`: loopback-only, authenticated internal redemption;
@@ -146,7 +146,7 @@ GITHUB_CLIENT_SECRET=
 ```
 
 Register each OAuth application with the exact callback URL, for example
-`https://helm.vessel.voyage/console/auth/google/callback` (substitute `x` or
+`https://helm.vessel.voyage/auth/google/callback` (substitute `x` or
 `github`). Use web/confidential app credentials and provider console consent/test
 user settings as appropriate. Do not paste secrets into chat. Only fully
 configured providers are enabled; missing credentials show a setup-pending page,

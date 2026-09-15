@@ -4,7 +4,7 @@
 $oauth = static fn (string $provider, string $prefix): array => [
     'client_id' => env($prefix.'_CLIENT_ID', ''),
     'client_secret' => env($prefix.'_CLIENT_SECRET', ''),
-    'redirect' => rtrim(env('APP_URL', 'http://localhost'), '/').'/console/auth/'.$provider.'/callback',
+    'redirect' => rtrim(env('APP_URL', 'http://localhost'), '/').'/auth/'.$provider.'/callback',
 ];
 
 return [

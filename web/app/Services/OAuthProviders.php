@@ -27,7 +27,7 @@ class OAuthProviders
         // A fresh driver avoids cached user/request state in long-lived workers.
         Socialite::forgetDrivers();
         $driver = Socialite::driver($provider);
-        $driver->redirectUrl(rtrim(config('app.url'), '/').'/console/auth/'.$provider.'/callback');
+        $driver->redirectUrl(rtrim(config('app.url'), '/').'/auth/'.$provider.'/callback');
         $driver->setScopes(config('oauth.providers.'.$provider.'.scopes'));
         $driver->enablePKCE();
         $driver->setHttpClient(new Client(['connect_timeout' => 5, 'timeout' => 15]));

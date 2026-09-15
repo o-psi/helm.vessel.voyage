@@ -14,8 +14,8 @@ Route::post('/console/gateway/authorize',[GatewayController::class,'authorizeTic
 ]);
 Route::middleware(ConsoleHeaders::class)->group(function () {
     Route::view('/console/login','console.login')->name('console.login');
-    Route::get('/console/auth/{provider}',[OAuthController::class,'redirect'])->name('oauth.redirect')->middleware('throttle:20,1');
-    Route::get('/console/auth/{provider}/callback',[OAuthController::class,'callback'])->name('oauth.callback')->middleware('throttle:20,1');
+    Route::get('/auth/{provider}',[OAuthController::class,'redirect'])->name('oauth.redirect')->middleware('throttle:20,1');
+    Route::get('/auth/{provider}/callback',[OAuthController::class,'callback'])->name('oauth.callback')->middleware('throttle:20,1');
     Route::post('/console/logout',[ConsoleAuthController::class,'logout'])->name('console.logout');
 });
 Route::middleware([ConsoleOperator::class,ConsoleHeaders::class])->group(function () {
