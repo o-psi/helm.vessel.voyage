@@ -186,3 +186,7 @@ observation and guardian recovery. Live progress presentation remains unfinished
 progress currently reaches the checked final output. Protocol 1 has no invented
 previous-version compatibility claim. Repository SDK source is separate from the
 legacy runtime release archives.
+
+Filesystem `SKILL.md` discovery and reviewed import are documented in
+[Filesystem skills](filesystem-skills.md); imported snapshots use the existing
+exact-byte activation mechanism.

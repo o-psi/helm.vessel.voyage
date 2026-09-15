@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-15T16:53:29.123864+00:00",
+  "measured_at_utc": "2026-09-15T17:52:13.360504+00:00",
   "source": {
-    "base_commit": "39ad0c694d22f2817e606800f136d929d31e0c77",
+    "base_commit": "5dc8bb5434407b1403d7f764bcf130179e294da7",
     "dirty": true,
-    "fingerprint_sha256": "e2cf5f017234cb1817c04abeca094fd1809df9b53eb3325d50f0d6e0b1df22bd",
-    "fingerprint_scope": "Tracked workspace files plus new participant tests; includes existing unrelated staged render comments and deleted scripts. Per-file map retained under ignored target/coverage-report/issue77-final."
+    "fingerprint_sha256": "0b5acb2a687f0ce238f0872096bbfa6ee3e1897005832261c1db3e43621d5420",
+    "fingerprint_scope": "Tracked workspace files plus new filesystem-skills module and documentation; includes existing unrelated staged render comments and deleted scripts. Per-file map retained under ignored target/coverage-report/issue231-final."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -13,7 +13,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue77-final/default-report -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue231-final/default-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -22,33 +22,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 507,
+    "passed": 512,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 99320,
-      "covered": 40042,
-      "percent": 40.31614981876762
+      "count": 99761,
+      "covered": 40441,
+      "percent": 40.53788554645603
     },
     "functions": {
-      "count": 9634,
-      "covered": 3693,
-      "percent": 38.3329873365165
+      "count": 9657,
+      "covered": 3717,
+      "percent": 38.49021435228332
     },
     "regions": {
-      "count": 162452,
-      "covered": 63710,
-      "notcovered": 98742,
-      "percent": 39.21773816265728
+      "count": 163337,
+      "covered": 64488,
+      "notcovered": 98849,
+      "percent": 39.48156265879745
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 453,
+    "logical_source_files": 454,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -63,7 +63,7 @@
   ],
   "notes": [
     "Default mixed shared-target report retained; corrected export selects every current Cargo executable artifact. No duplicate logical sources or reused-source mismatches.",
-    "Compared with prior measurement: lines +0.3927 percentage points, functions +0.4216 percentage points, regions +0.3920 percentage points.",
-    "Four focused participant regressions pass. Initial parent test fixture missed active-run setup; corrected before final workspace measurement. No live-provider or native-platform verification."
+    "Compared with prior measurement: lines +0.2217 percentage points, functions +0.1572 percentage points, regions +0.2638 percentage points.",
+    "Five focused filesystem-skill tests pass; offline CLI discovery/inspect/import/enable/update journey separately passed. No live-provider or native-platform verification."
   ]
 }

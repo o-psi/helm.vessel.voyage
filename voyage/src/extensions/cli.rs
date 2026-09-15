@@ -15,6 +15,26 @@ pub struct ExtensionArgs {
 }
 #[derive(Subcommand)]
 pub enum ExtensionCommand {
+    /// Discover filesystem skills; does not install or activate instructions.
+    DiscoverSkills {
+        #[arg(long = "root")]
+        roots: Vec<PathBuf>,
+        #[arg(long)]
+        legacy_codex: bool,
+    },
+    /// Review a bounded SKILL.md snapshot, resources, provenance and exact digest.
+    InspectSkill {
+        directory: PathBuf,
+    },
+    /// Import reviewed skill bytes inactive; enable remains a separate exact review.
+    ImportSkill {
+        directory: PathBuf,
+        #[arg(long)]
+        expected: String,
+        /// Exact current installed digest when replacing an existing skill.
+        #[arg(long)]
+        replace: Option<String>,
+    },
     /// Validate a directory and write a new bounded .helmpkg archive.
     Pack {
         directory: PathBuf,
@@ -105,6 +125,45 @@ pub async fn run(args: ExtensionArgs, workspace: Option<PathBuf>) -> Result<()> 
     let root = workspace.unwrap_or(std::env::current_dir()?);
     let catalog = Catalog::new(&root, &crate::config::default_data_dir())?;
     match args.command {
+        ExtensionCommand::DiscoverSkills {
+            roots,
+            legacy_codex,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&super::skills::discover(
+                    &root,
+                    dirs::home_dir().as_deref(),
+                    &roots,
+                    legacy_codex
+                )?)?
+            );
+        }
+        ExtensionCommand::InspectSkill { directory } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&super::skills::inspect(&directory)?)?
+            );
+        }
+        ExtensionCommand::ImportSkill {
+            directory,
+            expected,
+            replace,
+        } => {
+            let snapshot = super::skills::inspect(&directory)?;
+            anyhow::ensure!(
+                snapshot.digest == expected,
+                "skill source changed or digest was not reviewed; inspect again"
+            );
+            catalog.mutate(
+                args.scope,
+                &snapshot.name,
+                replace.as_deref(),
+                Some(&snapshot.bytes()?),
+                None,
+            )?;
+            println!("{}", snapshot.digest);
+        }
         ExtensionCommand::Pack { directory, output } => {
             let bytes = store::pack(&directory)?;
             let mut f = std::fs::OpenOptions::new()
