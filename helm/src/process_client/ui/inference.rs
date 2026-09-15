@@ -949,3 +949,11 @@ mod catalog_payload_tests {
         assert_eq!(catalog_payload(direct.clone(), None).unwrap(), direct);
     }
 }
+
+#[cfg(test)]
+#[path = "inference_coverage_tests.rs"]
+mod coverage_tests;
+
+#[cfg(test)]
+#[path = "inference_picker_coverage_tests.rs"]
+mod picker_coverage_tests;

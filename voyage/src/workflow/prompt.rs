@@ -372,3 +372,7 @@ impl Interrupt {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "prompt_coverage_tests.rs"]
+mod coverage_tests;

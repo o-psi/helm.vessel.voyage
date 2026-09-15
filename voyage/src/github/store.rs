@@ -782,3 +782,7 @@ fn state_name(state: &State) -> &'static str {
         State::Disposed => "disposed",
     }
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod coverage_tests;

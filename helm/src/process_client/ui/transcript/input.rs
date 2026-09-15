@@ -357,3 +357,7 @@ mod keyboard_disclosure_tests {
         assert_eq!(state.top, 2);
     }
 }
+
+#[cfg(test)]
+#[path = "input_coverage_tests.rs"]
+mod coverage_tests;

@@ -330,3 +330,6 @@ pub(super) fn account_authority(
     }));
     Ok(())
 }
+
+#[cfg(all(test, unix))]
+mod tests;

@@ -279,3 +279,6 @@ impl HttpTransport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

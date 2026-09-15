@@ -1241,3 +1241,54 @@ fn default_resolution_preserves_explicit_binding_and_provider_mismatch() {
     defaults.account = None;
     assert!(resolve_draft_default(None, defaults).account.is_none());
 }
+
+#[tokio::test]
+async fn coverage_accounts_render_empty_search_busy_and_disconnected_states() {
+    let fixture = tempfile::tempdir().unwrap();
+    let mut app = app(fixture.path());
+    let target = live(&mut app);
+    let _connection = picker(&mut app, target);
+    assert!(draw(&app, 110, 32).contains("Choose account"));
+    app.accounts.picker.as_mut().unwrap().query = "no-such-synthetic-account".into();
+    let empty = draw(&app, 110, 32);
+    assert!(!empty.is_empty());
+    app.accounts.picker.as_mut().unwrap().busy = true;
+    assert!(draw(&app, 110, 32).contains("Choose account"));
+    app.accounts.picker.as_mut().unwrap().disconnected = true;
+    app.accounts.picker.as_mut().unwrap().notice = "synthetic connection lost".into();
+    assert!(draw(&app, 110, 32).contains("synthetic connection lost"));
+    assert_eq!(app.views[&target].draft.text, "preserve my composer");
+}
+
+#[tokio::test]
+async fn coverage_accounts_small_render_hides_interactive_hits() {
+    let fixture = tempfile::tempdir().unwrap();
+    let mut app = app(fixture.path());
+    let target = live(&mut app);
+    let _connection = picker(&mut app, target);
+    assert!(app.accounts.visible.get());
+    let small = draw(&app, 40, 20);
+    assert!(small.contains("Enlarge"));
+    assert!(!app.accounts.visible.get());
+    assert!(app.accounts.hits.borrow().is_empty());
+    for (width, height) in [(1, 1), (10, 5), (44, 22)] {
+        let _ = draw(&app, width, height);
+    }
+    app.accounts.picker = None;
+    let _ = draw(&app, 110, 32);
+    assert!(!app.accounts.visible.get());
+    assert!(app.accounts.hits.borrow().is_empty());
+}
+
+#[tokio::test]
+async fn coverage_accounts_render_connection_and_api_setup_modes() {
+    let fixture = tempfile::tempdir().unwrap();
+    let mut app = app(fixture.path());
+    let target = live(&mut app);
+    let _connection = picker(&mut app, target);
+    app.accounts.picker.as_mut().unwrap().mode = Mode::Connections;
+    assert!(draw(&app, 110, 32).contains("Sign in to an account"));
+    app.accounts.picker.as_mut().unwrap().mode = Mode::ApiSetup;
+    assert!(draw(&app, 110, 32).contains("Private API setup"));
+    assert!(app.views[&target].pending.is_none());
+}

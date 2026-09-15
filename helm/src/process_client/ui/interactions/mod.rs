@@ -154,3 +154,6 @@ impl super::App {
         ))
     }
 }
+
+#[cfg(test)]
+mod coverage_tests;

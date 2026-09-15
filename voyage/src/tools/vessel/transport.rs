@@ -251,3 +251,6 @@ impl Transport {
         Ok(self.redact_complete(reply.result))
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

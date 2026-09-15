@@ -562,3 +562,7 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "paste_coverage_tests.rs"]
+mod coverage_tests;

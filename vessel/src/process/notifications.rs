@@ -1090,3 +1090,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "notifications_authority_regression_tests.rs"]
+mod authority_regressions;
+
+#[cfg(test)]
+mod delivery_tests;

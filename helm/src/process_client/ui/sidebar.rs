@@ -452,3 +452,6 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod coverage_tests;

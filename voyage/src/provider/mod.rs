@@ -855,3 +855,6 @@ fn check_provider_authority(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod offline_stream_tests;

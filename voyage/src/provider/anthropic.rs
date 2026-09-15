@@ -681,3 +681,7 @@ mod context_rejection_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "anthropic_offline_decode_tests.rs"]
+mod offline_decode_tests;

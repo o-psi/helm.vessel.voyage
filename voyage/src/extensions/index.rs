@@ -142,3 +142,7 @@ pub(super) async fn acquire(config: &Path, id: &str) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
+
+#[cfg(test)]
+#[path = "index_coverage_tests.rs"]
+mod coverage_tests;

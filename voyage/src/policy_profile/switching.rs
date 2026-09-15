@@ -205,3 +205,6 @@ impl SwitchContext {
         Ok((candidate, preview.proposed.digest().to_owned()))
     }
 }
+
+#[cfg(test)]
+mod tests;

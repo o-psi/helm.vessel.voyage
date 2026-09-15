@@ -674,3 +674,7 @@ fn validate_receipt(operation: &Operation, value: &Value) -> Result<Receipt> {
         evidence: super::store::ReceiptEvidence::ApiResponse,
     })
 }
+
+#[cfg(test)]
+#[path = "service_coverage_tests.rs"]
+mod coverage_tests;

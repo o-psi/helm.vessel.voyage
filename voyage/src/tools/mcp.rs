@@ -742,3 +742,6 @@ impl Drop for McpLease {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -114,3 +114,7 @@ pub(crate) fn ingest(
         .and_then(|mut store| store.ingest_mcp(&value))
         .map_err(|_| ToolError::Failed("invalid MCP result or artifact storage unavailable".into()))
 }
+
+#[cfg(test)]
+#[path = "output_tests.rs"]
+mod tests;

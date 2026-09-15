@@ -394,3 +394,6 @@ async fn config(
 async fn observe(_: &std::path::Path, _: &RuntimeRequest) -> Result<Value> {
     anyhow::bail!("private suspended observation unsupported on this platform")
 }
+
+#[cfg(all(test, unix))]
+mod tests;

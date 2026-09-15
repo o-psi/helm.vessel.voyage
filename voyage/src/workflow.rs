@@ -770,3 +770,7 @@ pub fn print_value(value: &Value, json: bool) -> Result<()> {
 }
 
 pub mod secrets;
+
+#[cfg(test)]
+#[path = "workflow_coverage_tests.rs"]
+mod coverage_tests;

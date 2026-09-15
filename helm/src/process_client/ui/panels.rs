@@ -252,3 +252,7 @@ pub(super) fn display(content: &str, width: u16) -> ratatui::text::Text<'static>
     }
     Text::from(lines)
 }
+
+#[cfg(test)]
+#[path = "panels_coverage_tests.rs"]
+mod coverage_tests;

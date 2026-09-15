@@ -136,3 +136,7 @@ impl Tool for Questions {
         serde_json::to_string(&answer).map_err(|e| ToolError::Failed(e.to_string()))
     }
 }
+
+#[cfg(test)]
+#[path = "questions_tests.rs"]
+mod tests;

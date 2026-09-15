@@ -391,3 +391,6 @@ pub fn run(
         action,
     })?)
 }
+
+#[cfg(test)]
+mod tests;

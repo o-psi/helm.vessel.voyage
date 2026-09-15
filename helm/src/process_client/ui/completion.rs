@@ -471,3 +471,7 @@ fn path_options(argument: &str, directories_only: bool, absolute: bool) -> Vec<(
     options.truncate(256);
     options
 }
+
+#[cfg(test)]
+#[path = "completion_coverage_tests.rs"]
+mod coverage_tests;

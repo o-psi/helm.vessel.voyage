@@ -269,3 +269,7 @@ impl App {
         self.status = "Opened the sending tool call".into();
     }
 }
+
+#[cfg(test)]
+#[path = "navigation_coverage_tests.rs"]
+mod coverage_tests;

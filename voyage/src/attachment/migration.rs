@@ -386,3 +386,6 @@ mod unix {
         })
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

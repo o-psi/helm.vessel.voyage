@@ -129,3 +129,7 @@ impl super::App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "right_panel_coverage_tests.rs"]
+mod coverage_tests;

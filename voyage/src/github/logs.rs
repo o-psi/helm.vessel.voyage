@@ -243,3 +243,7 @@ async fn receive(
         }) => result.map_err(|_|anyhow::anyhow!("GitHub log download deadline elapsed"))?,
     }
 }
+
+#[cfg(test)]
+#[path = "logs_tests.rs"]
+mod tests;

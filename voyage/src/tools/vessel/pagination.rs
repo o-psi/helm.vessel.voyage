@@ -284,3 +284,6 @@ impl Pages {
         Ok(report)
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

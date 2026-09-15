@@ -116,6 +116,9 @@ mod linux {
         }
         CeilingDocument::decode(&bytes).map(Some)
     }
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    mod tests;
     pub(super) fn load() -> Result<Option<CeilingDocument>> {
         use std::os::unix::fs::OpenOptionsExt;
         let root = std::fs::OpenOptions::new()

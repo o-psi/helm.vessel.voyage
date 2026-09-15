@@ -465,3 +465,7 @@ async fn accounts(command: &AccountCommand) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "auth_tests.rs"]
+mod tests;

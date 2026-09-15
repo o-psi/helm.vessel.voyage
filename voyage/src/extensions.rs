@@ -6,8 +6,8 @@ mod index;
 mod private_files;
 pub(crate) mod runtime;
 pub use private_files::PrivateFile;
-mod store;
 mod skills;
+mod store;
 
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};

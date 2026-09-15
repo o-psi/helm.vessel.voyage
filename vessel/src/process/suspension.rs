@@ -494,3 +494,7 @@ pub(super) async fn observe(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "suspension_tests.rs"]
+mod tests;

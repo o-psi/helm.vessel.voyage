@@ -186,3 +186,7 @@ mod tests {
         assert!(app.request_answer_copy(o, 0).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "answer_actions_coverage_tests.rs"]
+mod coverage_tests;

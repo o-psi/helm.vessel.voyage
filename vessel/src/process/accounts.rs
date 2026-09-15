@@ -887,3 +887,6 @@ impl Supervisor {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests;

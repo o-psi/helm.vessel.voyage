@@ -404,3 +404,7 @@ mod composer_tests {
         assert!(steering_status("future_wire_state").contains("unknown"));
     }
 }
+
+#[cfg(test)]
+#[path = "presentation_coverage_tests.rs"]
+mod coverage_tests;

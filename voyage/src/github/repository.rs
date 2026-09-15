@@ -277,3 +277,7 @@ impl Object {
         Ok(object)
     }
 }
+
+#[cfg(test)]
+#[path = "repository_coverage_tests.rs"]
+mod coverage_tests;

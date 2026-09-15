@@ -437,3 +437,7 @@ fn wrap(value: &str, width: usize) -> Vec<String> {
     result.push(line);
     result
 }
+
+#[cfg(test)]
+#[path = "render_coverage_tests.rs"]
+mod coverage_tests;

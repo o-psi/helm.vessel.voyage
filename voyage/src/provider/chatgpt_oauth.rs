@@ -1343,3 +1343,11 @@ mod failure_classification_tests {
         assert_eq!(error.http_status(), Some(200));
     }
 }
+
+#[cfg(test)]
+#[path = "chatgpt_oauth_offline_tests.rs"]
+mod offline_tests;
+
+#[cfg(test)]
+#[path = "chatgpt_oauth_offline_error_tests.rs"]
+mod offline_error_tests;

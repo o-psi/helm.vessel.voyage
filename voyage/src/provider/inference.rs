@@ -286,3 +286,7 @@ pub(crate) fn validate_resolution(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "inference_offline_resolution_tests.rs"]
+mod offline_resolution_tests;

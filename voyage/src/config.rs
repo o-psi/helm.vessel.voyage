@@ -944,3 +944,7 @@ pub fn default_data_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("helm")
 }
+
+#[cfg(test)]
+#[path = "config_coverage_tests.rs"]
+mod coverage_tests;

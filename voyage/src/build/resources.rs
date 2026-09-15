@@ -161,3 +161,7 @@ impl ManagedResources {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "resources_coverage_tests.rs"]
+mod coverage_tests;

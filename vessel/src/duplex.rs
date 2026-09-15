@@ -414,3 +414,7 @@ async fn observe(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
+
+#[cfg(test)]
+#[path = "duplex_tests.rs"]
+mod tests;

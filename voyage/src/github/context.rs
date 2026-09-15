@@ -772,3 +772,11 @@ fn next_page(
     }
     Ok(next)
 }
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod coverage_tests;
+
+#[cfg(test)]
+#[path = "context_http_tests.rs"]
+mod http_tests;

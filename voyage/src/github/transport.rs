@@ -174,3 +174,11 @@ pub(super) fn check_status(response: &Response) -> Result<()> {
         ),
     }
 }
+
+#[cfg(test)]
+#[path = "transport_coverage_tests.rs"]
+mod coverage_tests;
+
+#[cfg(test)]
+#[path = "transport_http_tests.rs"]
+mod http_tests;

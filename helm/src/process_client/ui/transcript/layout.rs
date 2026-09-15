@@ -934,3 +934,7 @@ mod provider_attempt_tests {
         assert!(!text.contains('\u{1b}'));
     }
 }
+
+#[cfg(test)]
+#[path = "layout_coverage_tests.rs"]
+mod coverage_tests;

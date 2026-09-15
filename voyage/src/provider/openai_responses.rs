@@ -910,3 +910,11 @@ mod context_rejection_tests {
         assert!(decode_stream_error(&unknown).is_retryable());
     }
 }
+
+#[cfg(test)]
+#[path = "openai_responses_offline_replay_tests.rs"]
+mod offline_replay_tests;
+
+#[cfg(test)]
+#[path = "openai_responses_offline_continuation_tests.rs"]
+mod offline_continuation_tests;

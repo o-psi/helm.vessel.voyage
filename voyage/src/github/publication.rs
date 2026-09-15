@@ -284,3 +284,7 @@ pub(super) fn parse_patch(patch: &str) -> Result<ParsedPatch> {
     );
     Ok(parsed)
 }
+
+#[cfg(test)]
+#[path = "publication_tests.rs"]
+mod coverage_tests;

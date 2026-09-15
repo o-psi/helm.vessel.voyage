@@ -977,3 +977,6 @@ mod operator;
 mod session_resources;
 
 mod cleanup;
+
+#[cfg(test)]
+mod process_coverage_tests;

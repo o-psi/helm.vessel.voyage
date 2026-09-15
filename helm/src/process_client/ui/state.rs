@@ -481,3 +481,7 @@ mod ordering_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "state_coverage_tests.rs"]
+mod coverage_tests;

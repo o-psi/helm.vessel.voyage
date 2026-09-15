@@ -164,3 +164,7 @@ pub(crate) fn commit_refresh(
     // never repeats the exchange and never uses a stale token.
     directory.publish(&fence_name(name), b"null")
 }
+
+#[cfg(test)]
+#[path = "storage_offline_tests.rs"]
+mod offline_tests;

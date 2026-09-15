@@ -1789,3 +1789,9 @@ impl Journal {
 
 #[cfg(test)]
 mod preview_tests;
+
+#[cfg(test)]
+mod authority_tests;
+
+#[cfg(test)]
+mod coverage_tests;

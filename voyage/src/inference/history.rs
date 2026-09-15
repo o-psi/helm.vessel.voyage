@@ -372,3 +372,7 @@ pub fn ensure_display_safe(history: &History, redactor: &crate::tools::Redactor)
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod coverage_tests;

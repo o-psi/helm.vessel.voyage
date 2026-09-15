@@ -1096,3 +1096,6 @@ mod screen_tests {
         assert_eq!(safe_cell_text("\u{2066}"), " ");
     }
 }
+
+#[cfg(all(test, unix))]
+mod lifecycle_tests;

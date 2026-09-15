@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-15T20:43:39.131361+00:00",
-  "source_commit": "05ffed433b39d635a17d3f32f07d5ad5d432f00b",
+  "measured_at_utc": "2026-09-15T21:24:25.920245+00:00",
+  "source_commit": "da8d44dac01c48838db284f9847b3b5616f6a0c1",
   "dirty": true,
-  "source_fingerprint_sha256": "32554dfac8595d44185afa97d2da0c46b9e391286b1a6cf348aefc16635ade22",
+  "source_fingerprint_sha256": "7b3e2d34d77f0b9b578f49f7c6749e7261d28350cd499dfe25b0b17a3ad151e2",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths (plus new profile tests), each path + NUL + file bytes; missing files marked MISSING",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 549,
+    "passed": 863,
     "failed": 0,
     "ignored": 1
   },
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 9735,
-      "covered": 3948,
-      "percent": 40.55469953775038
+      "covered": 5104,
+      "percent": 52.429378531073446
     },
     "instantiations": {
-      "count": 18227,
-      "covered": 4581,
-      "percent": 25.13304438470401
+      "count": 18306,
+      "covered": 5844,
+      "percent": 31.923959357587677
     },
     "lines": {
       "count": 100715,
-      "covered": 43013,
-      "percent": 42.70764037134489
+      "covered": 55416,
+      "percent": 55.0225884922802
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 165047,
-      "covered": 68928,
-      "notcovered": 96119,
-      "percent": 41.76264942713288
+      "covered": 87931,
+      "notcovered": 77116,
+      "percent": 53.27633946693972
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/installer-defaults-release -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/campaign-release -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -90,6 +90,8 @@
   ],
   "notes": [
     "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
-    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint."
+    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint.",
+    "Campaign #287: 314 additional tests, workspace lines 43013/100715 -> 55416/100715 (+12403 covered lines, +12.31495 percentage points). Exact production file and line-count map matches pre-campaign baseline; new tests and test-only fixture seams live in tool-default excluded test source files.",
+    "Earlier campaign-wave7 export included inline new tests and is superseded; campaign-release is the final corrected measurement. Existing unrelated staged Helm render changes and intentionally deleted scripts were preserved."
   ]
 }

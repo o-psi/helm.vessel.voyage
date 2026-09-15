@@ -274,3 +274,6 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
 pub mod recovery;
 
 pub mod legacy_recovery;
+
+#[cfg(all(test, unix))]
+mod tests;

@@ -378,3 +378,7 @@ impl App {
 }
 
 mod provider_attempts;
+
+#[cfg(test)]
+#[path = "coverage_support_tests.rs"]
+mod coverage_support;

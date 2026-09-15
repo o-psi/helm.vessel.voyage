@@ -667,3 +667,7 @@ mod created_target_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "updates_coverage_tests.rs"]
+mod coverage_tests;

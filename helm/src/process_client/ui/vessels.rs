@@ -389,3 +389,6 @@ impl Manager {
 fn text(value: &str) -> String {
     value.chars().filter(|c| !c.is_control() && !matches!(c, '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')).collect()
 }
+
+#[cfg(test)]
+mod coverage_tests;

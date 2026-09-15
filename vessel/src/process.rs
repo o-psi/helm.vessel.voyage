@@ -37,3 +37,7 @@ mod notifications;
 
 mod catalogue;
 mod database;
+
+#[cfg(test)]
+#[path = "process/test_support_tests.rs"]
+mod test_support;
