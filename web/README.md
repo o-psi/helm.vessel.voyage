@@ -6,8 +6,10 @@ as a product suite for running coding agents across machines the user controls.
 Product copy leads with customer outcomes while accurately distinguishing current
 Linux behavior from planned web, mobile, and cross-voyage collaboration. The
 homepage is intentionally compact and links to focused `/helm`, `/vessel`, and
-`/voyage` product pages. This app does not connect to Vessels, execute agents,
-enroll users or collect email addresses.
+`/voyage` product pages. The public pages do not execute agents, enroll users or collect email addresses.
+An opt-in authenticated **Helm Web console** at `/console` connects to configured
+Vessels through a scoped gateway. See [console setup and limits](../docs/helm-web.md).
+The console never executes agents on the web host.
 
 ## Development
 
@@ -28,7 +30,8 @@ php artisan serve
 Keep `.env`, SQLite databases, logs, `vendor`, `node_modules` and compiled assets
 out of Git. The lockfiles preserve deployed dependency versions. Source uses the
 Laravel application skeleton, with its original framework configuration and
-migrations. No authentication routes are enabled.
+migrations. Console authentication routes fail closed (404) until explicitly
+configured; there is no public registration.
 
 ## Deployment
 

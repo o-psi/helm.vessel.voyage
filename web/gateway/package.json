@@ -1,0 +1,9 @@
+{
+  "name": "helm-web-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node server.js", "test": "node --test" },
+  "dependencies": { "ws": "^8.18.3" }
+}

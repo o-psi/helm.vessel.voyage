@@ -19,6 +19,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        \Livewire\Livewire::addPersistentMiddleware([
+            \App\Http\Middleware\ConsoleHeaders::class,
+            \App\Http\Middleware\ConsoleOperator::class,
+        ]);
     }
 }

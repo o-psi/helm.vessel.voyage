@@ -1,0 +1,26 @@
+[Unit]
+Description=Helm Web scoped Vessel connection gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helm-gateway
+Group=helm-gateway
+WorkingDirectory=/srv/helm/app/gateway
+EnvironmentFile=/etc/helm-web/gateway.env
+ExecStart=/usr/bin/node /srv/helm/app/gateway/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

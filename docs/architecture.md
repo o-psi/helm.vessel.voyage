@@ -14,6 +14,13 @@ local browser adapter and independently enforces local consent while the Voyage
 owns tool admission, task execution and canonical results. This does not expose a
 general tool executor in Helm. See [local browser](local-browser.md).
 
+**Helm Web is a separate, browser-native client.** Its Laravel/Livewire shell
+and JavaScript conversation pane connect through a narrowly scoped authenticated
+WebSocket gateway. The web host is trusted with explicitly provisioned Vessel
+grants, not provider credentials. It does not own voyages or execute agents.
+This opt-in client is distinct from the `helm` TUI executable; see
+[its current scope and deployment boundaries](helm-web.md).
+
 **Vessel is the supervisor and access service.** It authenticates clients,
 discovers and starts voyage processes, exposes their authorized state, routes
 commands and observations, and reports process health and resource capacity.
