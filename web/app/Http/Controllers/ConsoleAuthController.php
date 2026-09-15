@@ -28,7 +28,7 @@ class ConsoleAuthController extends Controller
     {
         $request->session()->invalidate();
         $request->session()->regenerateToken();
-        return redirect()->route('console.login');
+        return redirect()->route('home');
     }
 
     public function ticket(Request $request)

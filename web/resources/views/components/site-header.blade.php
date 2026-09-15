@@ -4,6 +4,10 @@
         <a href="{{ route('products.helm') }}">Helm</a>
         <a href="{{ route('products.vessel') }}">Vessel</a>
         <a href="{{ route('products.voyage') }}">Voyage</a>
-        <a href="{{ route('products.helm') }}" class="nav-cta">Explore the suite <span aria-hidden="true">↗</span></a>
+        @if (\App\Services\ConsoleAccess::enabled())
+            <a href="{{ \App\Services\ConsoleAccess::authenticated(request()) ? route('console') : route('console.login') }}" class="nav-cta">{{ \App\Services\ConsoleAccess::authenticated(request()) ? 'Open console' : 'Sign in' }} <span aria-hidden="true">↗</span></a>
+        @else
+            <a href="{{ route('products.helm') }}" class="nav-cta">Explore the suite <span aria-hidden="true">↗</span></a>
+        @endif
     </nav>
 </header>

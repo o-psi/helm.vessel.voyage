@@ -25,13 +25,15 @@ test('Laravel console: fail closed, CSRF, login, ticket scope, logout and thrott
     try {
         for(let i=0;i<60;i++){try{await call('/up');break;}catch{await new Promise(r=>setTimeout(r,100));}}
         assert.equal((await call('/console')).status,302);
+        const anonymous=await call('/'); assert.equal(anonymous.status,302); assert.match(anonymous.headers.get('location'),/\/landing$/);
+        const landing=await call('/landing'); assert.equal(landing.status,200); assert.match(await landing.text(),/Sign in/);
         let response=await call('/console/ticket',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({vessel:'local'})}); assert.equal(response.status,419);
         const login=await call('/console/login'), html=await login.text(); assert.equal(login.status,200); assert.match(login.headers.get('cache-control'),/no-store/); assert.equal(login.headers.get('x-frame-options'),'DENY');
         const csrf=html.match(/name="csrf-token" content="([^"]+)"/)[1];
         const post=(path,values,token=csrf)=>call(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':token},body:new URLSearchParams(values)});
         response=await post('/console/login',{password:'wrong'}); assert.equal(response.status,302);
-        response=await post('/console/login',{password}); assert.equal(response.status,302); assert.match(response.headers.get('location'),/\/console$/);
-        const consolePage=await call('/console'); const consoleHtml=await consolePage.text(); assert.equal(consolePage.status,200); assert.match(consoleHtml,/id="helm-client"/); assert.ok(!consoleHtml.includes(secret)); assert.ok(!consoleHtml.includes(hash));
+        response=await post('/console/login',{password}); assert.equal(response.status,302); assert.equal(new URL(response.headers.get('location')).pathname,'/');
+        const consolePage=await call('/'); const consoleHtml=await consolePage.text(); assert.equal(consolePage.status,200); assert.match(consoleHtml,/id="helm-client"/); assert.ok(!consoleHtml.includes(secret)); assert.ok(!consoleHtml.includes(hash));
         const token=consoleHtml.match(/name="csrf-token" content="([^"]+)"/)[1];
         const getTicket=vessel=>call('/console/ticket',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token},body:JSON.stringify({vessel})});
         assert.equal((await getTicket('unconfigured')).status,422);
@@ -56,12 +58,12 @@ test('Laravel console: fail closed, CSRF, login, ticket scope, logout and thrott
             next=once(socket,'message');socket.send(JSON.stringify({type:'command',request_id:'10000000-0000-4000-8000-000000000004',request:{protocol:1,command:{op:'catalogue'}}}));
             assert.deepEqual(JSON.parse((await next)[0]).response.result,[]);socket.close();await once(socket,'close');
         } finally {await gateway.close();for(const ws of upstream.clients)ws.terminate();await new Promise(r=>upstream.close(r));}
-        response=await post('/console/logout',{},token); assert.equal(response.status,302);
+        response=await post('/console/logout',{},token); assert.equal(response.status,302); assert.match(response.headers.get('location'),/\/landing$/);
         const again=await call('/console/login'), againHtml=await again.text(), loggedOutToken=againHtml.match(/name="csrf-token" content="([^"]+)"/)[1];
         response=await call('/console/ticket',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':loggedOutToken},body:'{"vessel":"local"}'}); assert.equal(response.status,401);
         for(let i=0;i<5;i++) assert.equal((await post('/console/login',{password:'wrong'},loggedOutToken)).status,302);
         assert.equal((await post('/console/login',{password:'wrong'},loggedOutToken)).status,429);
-        assert.equal((await call('/')).status,200);
+        assert.equal((await call('/')).status,302); assert.equal((await call('/landing')).status,200);
     } finally {server.kill('SIGTERM');await new Promise(r=>server.once('exit',r));rmSync(dir,{recursive:true,force:true});}
     // Test disabled deployment via a separate process; never enable a real deployment.
     const disabled=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $kernel=$app->make(Illuminate\\Contracts\\Http\\Kernel::class); $r=$kernel->handle(Illuminate\\Http\\Request::create('http://localhost/console/login')); echo $r->getStatusCode();`],{cwd,env:{...env,HELM_WEB_ENABLED:'false',SESSION_DRIVER:'array'},encoding:'utf8'});

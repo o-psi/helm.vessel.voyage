@@ -3,6 +3,11 @@
 Issue [#289](https://github.com/o-psi/voyage/issues/289). This is a browser-native
 client, **not Ratzilla** and not another execution runtime.
 
+The console lives at `/`. Signed-out visitors are redirected to `/landing`, the
+public product page with a Sign in link. Successful login returns to `/`; logout
+returns to `/landing`. Legacy `/console` bookmarks redirect to `/`. Authentication,
+ticket and socket endpoints retain their `/console/` paths.
+
 ## Implemented scope
 
 - Laravel 13 / Livewire 4 / Flux shell, password login, configured Vessel selector,
@@ -75,7 +80,7 @@ remote receipts before repeating any uncertain work.
 ## Provisioning (not performed automatically)
 
 The existing product site uses `/srv/helm/app` as the deployed **web/** directory.
-Keep `/console` unavailable until private configuration and gateway service are
+Keep console access disabled until private configuration and gateway service are
 ready. The checked-in default is `HELM_WEB_ENABLED=false`.
 
 1. Install the locked PHP/frontend dependencies and Node >=22 gateway dependencies:
