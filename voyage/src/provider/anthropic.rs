@@ -199,14 +199,16 @@ impl Provider for AnthropicProvider {
                     body["temperature"] = json!(value);
                 }
                 super::multimodal::check_body(&body)?;
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/messages", self.base_url))
-                    .header("x-api-key", self.api_key.resolve()?)
-                    .header("anthropic-version", "2023-06-01")
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/messages", self.base_url))
+                        .header("x-api-key", self.api_key.resolve()?)
+                        .header("anthropic-version", "2023-06-01"),
+                    &body,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 decode_response(checked_json(response).await?)
             })
             .await;
@@ -246,14 +248,16 @@ impl Provider for AnthropicProvider {
                     body["temperature"] = json!(value);
                 }
                 super::multimodal::check_body(&body)?;
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/messages", self.base_url))
-                    .header("x-api-key", self.api_key.resolve()?)
-                    .header("anthropic-version", "2023-06-01")
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/messages", self.base_url))
+                        .header("x-api-key", self.api_key.resolve()?)
+                        .header("anthropic-version", "2023-06-01"),
+                    &body,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 Ok(super::observed_stream(
                     checked_stream_response(response).await?,
                     |response| Box::pin(anthropic_stream(response.bytes_stream())),

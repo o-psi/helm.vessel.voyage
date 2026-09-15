@@ -146,17 +146,68 @@ impl WorkingContext {
         Ok(changed)
     }
 
+    /// Project only saved, integrity-checked evidence, leaving canonical results untouched.
+    fn reduce_saved_results(&mut self, canonical: &[Message]) -> Result<usize> {
+        self.validate(canonical)?;
+        let mut changed = 0;
+        for (index, message) in canonical
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .enumerate()
+        {
+            if message.role != Role::Tool
+                || message.content.len() <= 8192
+                || self
+                    .entries
+                    .iter()
+                    .any(|e| index >= e.start && index < e.start + e.fingerprints.len())
+            {
+                continue;
+            }
+            let Some(artifact) = message.tool_output.as_ref().and_then(|o| {
+                o.artifacts()
+                    .find(|a| a.mime_type == crate::tools::evidence::MIME)
+            }) else {
+                continue;
+            };
+            let mut replacement = message.clone();
+            replacement.content = format!(
+                "[Saved redacted tool evidence; omitted content is unknown, not success. Never rerun the tool to recover it. Use result action=read id={} offset=0 limit=4096, or action=search with a literal query. Canonical message SHA-256 {}.]\n{}{}",
+                artifact.id,
+                fingerprint(message),
+                excerpt(&message.content, 2048),
+                references(message)?
+            );
+            replacement.tool_output = None;
+            replacement.provider_state = None;
+            self.entries.push(Reduction {
+                start: index,
+                fingerprints: vec![fingerprint(message)],
+                replacement,
+            });
+            changed += 1;
+        }
+        if changed > 0 {
+            self.entries.sort_by_key(|e| e.start);
+            self.generation = self.generation.saturating_add(1);
+            self.reason = Some(CompactionReason::Preparation);
+        }
+        self.validate(canonical)?;
+        Ok(changed)
+    }
+
     /// Proactive preparation is advisory: inability to shrink never vetoes initial dispatch.
     pub fn prepare(&mut self, canonical: &[Message]) -> Result<usize> {
+        let saved = self.reduce_saved_results(canonical)?;
         if size(&self.project(canonical)?) <= PREPARE_BYTES {
-            return Ok(0);
+            return Ok(saved);
         }
         let count = canonical.iter().filter(|m| m.role != Role::System).count();
         let changed = self.reduce(canonical, count, EXCERPT_LIMITS[0], false)?;
         if changed > 0 {
             self.reason = Some(CompactionReason::Preparation);
         }
-        Ok(changed)
+        Ok(changed + saved)
     }
 
     /// At most four distinct reductions follow an actual provider rejection. Each caller
@@ -345,7 +396,7 @@ fn references(message: &Message) -> Result<String> {
     if let Some(output) = &message.tool_output {
         for artifact in output.artifacts() {
             text.push_str(&format!(
-                "\nRetained artifact reference: {}",
+                "\nRetained artifact reference (tool-evidence MIME supports result read/search by id): {}",
                 serde_json::to_string(artifact)?
             ));
         }

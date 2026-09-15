@@ -82,13 +82,15 @@ impl Provider for OpenAiProvider {
             super::multimodal::guard(images, async {
                 let body = self.body(request, false)?;
 
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/chat/completions", self.base_url))
-                    .apply_key(&self.api_key.resolve()?)
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/chat/completions", self.base_url))
+                        .apply_key(&self.api_key.resolve()?),
+                    &body,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 let value = checked_json(response).await?;
                 decode_response(value)
             })
@@ -103,13 +105,15 @@ impl Provider for OpenAiProvider {
             .await?;
         let result: Result<ProviderStream, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/chat/completions", self.base_url))
-                    .apply_key(&self.api_key.resolve()?)
-                    .json(&self.body(request, true)?)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/chat/completions", self.base_url))
+                        .apply_key(&self.api_key.resolve()?),
+                    &self.body(request, true)?,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 let response = checked_stream_response(response).await?;
                 Ok(super::observed_stream(response, |response| {
                     Box::pin(openai_stream(response.bytes_stream()))

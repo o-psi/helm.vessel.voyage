@@ -1,6 +1,7 @@
 mod browser;
 pub use browser::BrowserTool;
 pub(crate) mod action_schema;
+pub(crate) mod evidence;
 mod filesystem;
 pub mod mcp;
 pub(crate) mod output;
@@ -543,6 +544,7 @@ impl ToolRegistry {
     pub fn standard_with_terminal_limits(max_count: usize, max_unread_bytes: usize) -> Self {
         let mut registry = Self::default();
         registry.register(ReadFile);
+        registry.register(evidence::ResultTool);
         registry.register(Questions);
         registry.register(WriteFile);
         registry.register(ListDirectory);
@@ -848,6 +850,7 @@ impl ToolRegistry {
             report.output = voyage_protocol::tool_result::ToolOutput::text("");
         }
         report.synchronize();
+        evidence::retain(name, &mut report, context);
         Ok(report)
     }
 }
@@ -859,7 +862,7 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
             serde_json::from_value::<voyage_protocol::browser::BrowserAction>(arguments.clone())
                 .is_ok_and(|a| a.observation_only())
         }
-        "questions" | "read_file" | "list_directory" | "search_files" => true,
+        "questions" | "read_file" | "list_directory" | "search_files" | "result" => true,
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
         "completion" => matches!(action, Some("snapshot" | "read")),

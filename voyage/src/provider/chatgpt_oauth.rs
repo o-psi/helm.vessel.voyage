@@ -905,13 +905,15 @@ impl ChatGptOAuth {
     ) -> Result<(reqwest::RequestBuilder, OAuthTokens), ProviderError> {
         super::validate_native_endpoint(&self.endpoints.responses)?;
         let tokens = self.valid_tokens().await?;
-        let request = super::endpoint_http_client(&self.client, &self.endpoints.responses)
-            .post(&self.endpoints.responses)
-            .bearer_auth(&tokens.access_token)
-            .header("ChatGPT-Account-Id", &tokens.account_id)
-            .header("originator", "helm")
-            .header("OpenAI-Beta", "responses=experimental")
-            .json(body);
+        let request = super::request_accounting::body(
+            super::endpoint_http_client(&self.client, &self.endpoints.responses)
+                .post(&self.endpoints.responses)
+                .bearer_auth(&tokens.access_token)
+                .header("ChatGPT-Account-Id", &tokens.account_id)
+                .header("originator", "helm")
+                .header("OpenAI-Beta", "responses=experimental"),
+            body,
+        )?;
         Ok((request, tokens))
     }
 

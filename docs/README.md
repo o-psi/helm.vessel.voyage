@@ -16,6 +16,7 @@ are not presented as usable commands.
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Evidence-backed context proposal](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/evidence-backed-context.md) | Issue #282: saved-result retrieval, evidence-linked state, accounting and staged evaluation (design, not enabled behavior) |
+| [Saved tool evidence runtime](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/evidence-backed-context-runtime.md) | Implemented result read/search, reference-preserving projection, request-byte instrumentation and remaining scope |
 | [Executable packages](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/executable-packages.md) | Repository guide for format-2 Linux packaging, exact review, required isolation and recovery |
 | [Executable SDK](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/extension-sdk.md) | Repository protocol-1 SDK, standalone examples and verification limits |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |

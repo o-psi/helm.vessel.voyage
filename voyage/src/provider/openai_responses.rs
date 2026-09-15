@@ -67,13 +67,15 @@ impl Provider for OpenAiResponsesProvider {
         .await?;
         let result: Result<ModelResponse, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/responses", self.base_url))
-                    .apply_key(&self.api_key.resolve()?)
-                    .json(&request_body(request, false)?)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/responses", self.base_url))
+                        .apply_key(&self.api_key.resolve()?),
+                    &request_body(request, false)?,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 decode_response(checked_json(response).await?)
             })
             .await;
@@ -91,13 +93,15 @@ impl Provider for OpenAiResponsesProvider {
         .await?;
         let result: Result<ProviderStream, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = super::endpoint_http_client(&self.client, &self.base_url)
-                    .post(format!("{}/responses", self.base_url))
-                    .apply_key(&self.api_key.resolve()?)
-                    .json(&request_body(request, true)?)
-                    .send()
-                    .await
-                    .map_err(map_transport)?;
+                let response = super::request_accounting::body(
+                    super::endpoint_http_client(&self.client, &self.base_url)
+                        .post(format!("{}/responses", self.base_url))
+                        .apply_key(&self.api_key.resolve()?),
+                    &request_body(request, true)?,
+                )?
+                .send()
+                .await
+                .map_err(map_transport)?;
                 let response = checked_stream_response(response).await?;
                 Ok(super::observed_stream(response, |response| {
                     Box::pin(responses_stream(response.bytes_stream()))
