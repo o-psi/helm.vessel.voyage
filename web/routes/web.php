@@ -1,23 +1,29 @@
 <?php
-
 use App\Livewire\Landing;
+use App\Http\Controllers\{ConsoleAuthController,OAuthController,VesselConnectionController,GatewayController};
+use App\Http\Middleware\{ConsoleHeaders,ConsoleOperator};
 use Illuminate\Support\Facades\Route;
-
 Route::get('/landing', Landing::class)->name('home');
-Route::get('/', \App\Livewire\Console::class)
-    ->middleware([\App\Http\Middleware\ConsoleOperator::class, \App\Http\Middleware\ConsoleHeaders::class])
-    ->name('console');
-Route::redirect('/console', '/');
-Route::view('/helm', 'products.helm')->name('products.helm');
-Route::view('/vessel', 'products.vessel')->name('products.vessel');
-Route::view('/voyage', 'products.voyage')->name('products.voyage');
-
-// The public product site remains available when the private console is disabled.
-Route::prefix('console')->middleware(\App\Http\Middleware\ConsoleHeaders::class)->group(function () {
-    Route::view('/login', 'console.login')->name('console.login');
-    Route::post('/login', [\App\Http\Controllers\ConsoleAuthController::class, 'login']);
-    Route::post('/logout', [\App\Http\Controllers\ConsoleAuthController::class, 'logout'])->name('console.logout');
-    Route::middleware(\App\Http\Middleware\ConsoleOperator::class)->group(function () {
-        Route::post('/ticket', [\App\Http\Controllers\ConsoleAuthController::class, 'ticket'])->middleware('throttle:12,1')->name('console.ticket');
-    });
+Route::view('/helm','products.helm')->name('products.helm');
+Route::view('/vessel','products.vessel')->name('products.vessel');
+Route::view('/voyage','products.voyage')->name('products.voyage');
+Route::post('/console/gateway/authorize',[GatewayController::class,'authorizeTicket'])->withoutMiddleware([
+    \Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class,
+    \Illuminate\Session\Middleware\StartSession::class,
+    \Illuminate\View\Middleware\ShareErrorsFromSession::class,
+]);
+Route::middleware(ConsoleHeaders::class)->group(function () {
+    Route::view('/console/login','console.login')->name('console.login');
+    Route::get('/console/auth/{provider}',[OAuthController::class,'redirect'])->name('oauth.redirect')->middleware('throttle:20,1');
+    Route::get('/console/auth/{provider}/callback',[OAuthController::class,'callback'])->name('oauth.callback')->middleware('throttle:20,1');
+    Route::post('/console/logout',[ConsoleAuthController::class,'logout'])->name('console.logout');
+});
+Route::middleware([ConsoleOperator::class,ConsoleHeaders::class])->group(function () {
+    Route::get('/',\App\Livewire\Console::class)->name('console');
+    Route::post('/console/ticket',[ConsoleAuthController::class,'ticket'])->name('console.ticket')->middleware('throttle:30,1');
+    Route::get('/connections',[VesselConnectionController::class,'index'])->name('connections');
+    Route::post('/connections',[VesselConnectionController::class,'store'])->name('connections.store')->middleware('throttle:10,1');
+    Route::post('/connections/pair',[VesselConnectionController::class,'pair'])->name('connections.pair')->middleware('throttle:10,1');
+    Route::post('/connections/pair/{id}/retry',[VesselConnectionController::class,'retry'])->name('connections.retry')->middleware('throttle:10,1');
+    Route::delete('/connections/{id}',[VesselConnectionController::class,'destroy'])->name('connections.destroy');
 });

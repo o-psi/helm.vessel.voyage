@@ -1,181 +1,129 @@
-# Scoped Helm web gateway (#289)
+# Helm Web tenant gateway
 
-A standalone Node >=22 service. It is **not** a Voyage executor and never calls
-private runtime IPC. See [Helm Web deployment](../../docs/helm-web.md) for the
-Laravel integration. Install/run:
+Node >=22; `npm ci --ignore-scripts`, then `npm test` / `npm start` in this
+folder. Tests additionally use OpenSSL for an ephemeral TLS fixture certificate.
+This service forwards a restricted browser protocol to publicly reachable Vessels;
+it is not a general executor, HTTP proxy, or provider credential service.
 
-```sh
-cd web/gateway
-npm ci --ignore-scripts
-npm test
-npm start
-```
+## Configuration and deployment
 
-## Configuration
+- `HELM_WEB_GATEWAY_SECRET`: printable ASCII secret, at least 32 bytes; shared
+  privately with Laravel. Never put it in a browser, URL, or log.
+- `HELM_WEB_AUTH_URL`: fixed canonical loopback **HTTP** URL, e.g.
+  `http://127.0.0.1/console/gateway/authorize`. Literal `127.0.0.1` or `[::1]`
+  only, no credentials, query, fragment, redirects or browser override.
+- `HELM_WEB_ORIGIN`: exact browser origin, normally `https://console.example`.
+  Loopback HTTP origins are permitted for the browser shell during development.
+- `HELM_WEB_GATEWAY_HOST`: `127.0.0.1` (default) or `::1`, never a public bind.
+- `HELM_WEB_GATEWAY_PORT`: defaults to `8787`.
 
-| Variable | Meaning |
-| --- | --- |
-| `HELM_WEB_GATEWAY_SECRET` | Required shared Laravel/Node HMAC secret, raw UTF-8 string of at least 32 bytes; not base64-decoded |
-| `HELM_WEB_ORIGIN` | Required exact browser origin, e.g. `https://helm.example.com`; no slash/path |
-| `HELM_WEB_VESSELS_FILE` | Required absolute path to private JSON configuration, owned by gateway UID, regular file, no symlink, mode 0600 or stricter |
-| `HELM_WEB_ALLOW_LOOPBACK_WS` | Set exactly `1` to allow plaintext **literal** `127.0.0.1` or `[::1]` upstreams; otherwise only `wss:` |
-| `HELM_WEB_GATEWAY_HOST` | Default `127.0.0.1` |
-| `HELM_WEB_GATEWAY_PORT` | Default `8787` |
+The old `HELM_WEB_VESSELS_FILE` and `HELM_WEB_ALLOW_LOOPBACK_WS` are refused.
+There are no global aliases, cached credentials, or production private-upstream
+switches. TLS terminates at a trusted reverse proxy for the browser. Forward only
+`/socket` upgrades (preserving exactly one Origin) to this listener; **never proxy
+`/pair` or `/probe` publicly**. These endpoints require a direct loopback peer,
+no Origin header, and the server secret. A reverse proxy is itself a loopback
+peer, so the proxy path restriction is an essential deployment boundary.
+Disable request-body/Authorization logging in both proxy and Laravel. This
+service emits only fixed startup/listener diagnostics, not request diagnostics.
 
-The private JSON object maps aliases to exactly these fields (replace placeholders):
+## One-time authorization
+
+The browser sends `{ "type": "authenticate", "ticket": "..." }` as its first
+WebSocket text frame, not in the upgrade URL. Tickets are opaque canonical
+base64url encoding of at least 32 random bytes (maximum encoded length 512).
+The gateway POSTs `{ "ticket": "..." }` to the configured authorization URL,
+with `Authorization: Bearer <HELM_WEB_GATEWAY_SECRET>`. Only a 200 JSON response
+of at most 64 KiB is accepted, within five seconds. Laravel must atomically
+consume the ticket and verify the current database session, tenant ownership,
+connection and revocation; no gateway cache, retry, signed-ticket fallback, or
+restart blackout substitutes for server-side one-time redemption.
+
+Response, with exactly these keys:
 
 ```json
 {
-  "local": {
-    "url": "wss://vessel.example.com/v1/vessel/socket",
-    "token": "PRIVATE_SCOPED_GRANT_TOKEN",
-    "grant_id": "00000000-0000-4000-8000-000000000001",
-    "vessel_id": "00000000-0000-4000-8000-000000000002"
+  "sub": "64-hex-character-session-hash",
+  "tenant": "tenant-uuid",
+  "vessel": "tenant-connection-uuid",
+  "exp": 1700000060,
+  "connection": {
+    "url": "wss://vessel.example/v1/vessel/socket",
+    "token": "private-vessel-token",
+    "grant_id": "grant-uuid",
+    "vessel_id": "vessel-uuid"
   }
 }
 ```
 
-Use a least-privilege Vessel grant. Each upstream connection sends
-`Authorization: Bearer <token>`, `x-voyage-grant`, `x-voyage-vessel`, and WebSocket
-subprotocol `voyage.vessel.v1`. TLS verification remains enabled; no redirects,
-URL credentials, query, fragment or alternative upstream path are permitted.
-Configuration is loaded once at startup. Never put this file under public web
-storage or commit real credentials. Linux file permissions were tested; native
-Windows ACL security is not established.
+`exp` is integer Unix seconds, in the future and no later than now +60 seconds.
+The lease closes both transports at expiry. Fresh single-use tickets renew the
+same socket only when `sub`, `tenant`, `vessel`, URL, token, grant ID and Vessel
+ID are unchanged. Overlapping authentication attempts fail closed. Identity or
+credential changes require a new socket. Outage/refusal does not retain an old
+lease by silently skipping redemption. Successful upstream hello retains
+`{ "type": "ready", "vessel_id": "..." }`; credentials never reach the browser.
 
-Terminate public browser TLS at the same-origin reverse proxy and route its
-`/socket` upgrades to this service, preserving Origin. No forwarded-origin headers
-are trusted. There is no HTTP API or health payload; ordinary HTTP gets 404.
-Keep this listener private. Reverse-proxy handshake limits and network access
-controls supplement (not replace) gateway limits. Do not log frames, tickets,
-query strings or authorization headers at the proxy. The service logs only fixed
-startup/failure messages, never payloads, upstream errors or configuration values.
+## Public upstream boundary
 
-## Browser contract
+Only canonical WSS `/v1/vessel/socket`, port 443, is accepted. Pairing accepts
+an HTTPS origin (with optional trailing `/`), also port 443. No userinfo, query,
+fragment, redirects, noncanonical paths, or alternate ports. All DNS answers
+must be global unicast: private, loopback, link-local, shared address space,
+documentation, benchmark, multicast/reserved IPv4 and non-global/special IPv6
+(including mapped IPv4, NAT64, Teredo and 6to4) are refused. IPv6 admission is
+conservatively limited to `2000::/3` excluding special ranges; some special
+otherwise routable addresses are intentionally refused. DNS has a five-second
+bound. One validated address is pinned via the actual socket's `lookup`, with
+no pooled agent or subsequent DNS fallback. TLS certificate/hostname checking
+and SNI remain enabled for the original hostname. Address literals undergo the
+same address policy and native TLS IP certificate verification.
 
-Open `wss://<web-host>/socket` without a query string or browser subprotocol.
-Origin must exactly equal `HELM_WEB_ORIGIN`, with exactly one Origin header.
-The first text frame, within 5 seconds, must be:
+Module tests inject fixture transports; `server.js` never reads an environment
+option or file to replace production validation or TLS verification.
 
-```json
-{"type":"authenticate","ticket":"BASE64URL_PAYLOAD.BASE64URL_SIGNATURE"}
-```
+## Local Laravel service contract
 
-The signature is HMAC-SHA256 over the **encoded payload string**, signed with the
-shared secret, both segments unpadded canonical base64url. Exact payload fields:
+Both endpoints require exact `POST` paths, JSON, and
+`Authorization: Bearer <HELM_WEB_GATEWAY_SECRET>`. Input is limited to 16 KiB,
+responses to 64 KiB, and at most eight concurrent local requests. Unknown paths,
+methods, query variants, browser Origin, missing/wrong secret, extra input keys
+and arbitrary command fields are refused. Errors contain only
+`{"error":"gateway refused"}` (404/403/503/502 as applicable); transport timeout
+may instead close the connection. Do not treat a lost pairing response as proof
+that the invitation was not redeemed.
 
-```json
-{"aud":"helm-web-gateway","sub":"64-character-hex-session-hash","jti":"fresh-UUID","exp":1234567890,"vessel":"local"}
-```
+- `POST /pair` accepts exactly `{endpoint,principal_id,invitation_id,command_id,
+  code,vessel_id}`. Validates and pins the public HTTPS origin, then POSTs
+  `/v1/vessel/pair` with `{protocol:1,principal_id,invitation_id,command_id,code}`
+  and `x-voyage-vessel: <vessel_id>`. Successful Vessel envelopes
+  `{protocol:1,result:credential,error:null,outcome_unknown:false}` are returned
+  intact and privately to Laravel. Refusals/unknown outcomes become fixed
+  errors. No automatic retry: retain the original command and invitation IDs
+  for reconciliation. Laravel must validate and encrypt the returned credential.
+- `POST /probe` accepts exactly `{connection:{url,token,grant_id,vessel_id}}`.
+  Opens the public pinned WSS socket with protocol `voyage.vessel.v1`, verifies
+  the hello's Vessel identity, sends only the `capabilities` command, verifies
+  reply correlation, returns filtered capabilities **at the top level** including
+  `vessel_id`, and closes the socket. It cannot issue arbitrary commands.
 
-`sub` is the stable SHA-256 operator session hash, not a cookie or raw session ID.
-`exp` is integer Unix seconds, strictly future and at most `floor(now/1000)+60`.
-Laravel must cap it at the session's fixed eight-hour expiry, issue fresh random
-UUID `jti`s, and only issue tickets for authenticated/authorized aliases. The gateway
-cannot observe Laravel logout directly: stop refresh on logout; the remaining
-lease ends within 60 seconds. Synchronize the two machines' clocks.
+Browser operation allowlisting, strict hello/reply validation, request-ID
+non-reuse, 4 MiB frame/backpressure limits, 64 connections, four per session
+subject, 32 inflight requests, 60 frames/second, five-second hello/heartbeat,
+15-second request timeout and 10,000 seen IDs remain enforced. No automatic
+replay after disconnect; mutation outcomes may be unknown.
 
-After validating the upstream hello's `protocol:1`, UUID socket ID and configured
-Vessel UUID, the gateway emits exactly:
+Protocol sources: `crates/voyage-protocol/src/duplex.rs`,
+`crates/voyage-protocol/src/vessel.rs`, `vessel/src/process_http.rs`, and
+`vessel/src/process/pairing.rs` (all paths relative to repository root).
 
-```json
-{"type":"ready","vessel_id":"00000000-0000-4000-8000-000000000002"}
-```
+## Verification scope
 
-Journal keys must use this actual Vessel UUID, not the alias. Refresh the ticket
-through Laravel every 30 seconds and send another authenticate frame on the same
-socket. Renewal requires the same `sub` and alias, consumes a new `jti`, updates
-the lease to the ticket expiry and emits the same ready frame (once upstream is
-ready). Renewal does not reconnect or resend commands. Expiry closes both sockets,
-including pending requests; transport loss **never** proves mutation refusal.
-Inspect a durable receipt with the original command ID after reconnecting.
-
-Tickets are single-use across all connections in this process until their expiry.
-Run **one gateway process**, not clustered/replicated instances with independent
-replay stores. The production entrypoint enforces a 60-second admission blackout on every
-startup (upgrades receive 403) to outlive tickets consumed by the old process.
-Stop the old process before starting its replacement; overlapping replicas are
-not supported. Durable/shared ticket storage and rolling multi-worker deployment are
-not implemented. Keep the secret stable between Laravel and this process.
-
-Commands/replies use the actual public Rust envelope, not REST or tool arguments:
-
-```json
-{"type":"command","request_id":"00000000-0000-4000-8000-000000000003","request":{"protocol":1,"command":{"op":"snapshot","session_id":"00000000-0000-4000-8000-000000000004"}}}
-```
-
-```json
-{"type":"reply","request_id":"00000000-0000-4000-8000-000000000003","response":{"protocol":1,"result":{},"error":null,"outcome_unknown":false}}
-```
-
-Allowed operations and fields beyond `op`:
-
-| Operation | Required fields |
-| --- | --- |
-| `capabilities`, `catalogue` | none |
-| `inspect` | `session_id` |
-| `snapshot`, `decisions` | `session_id` |
-| `history` | `session_id`, `offset`, `limit`; optional nullable `expected_revision` |
-| `message_chunk` | `session_id`, `index`, `offset`, `limit`, `expected_revision` |
-| `run_output` | `session_id`, `run_id`, `offset`, `limit` |
-| `receipt` | `session_id`, `command_id` |
-| `events` | `session_id`, `after`, `limit`, `wait_ms` |
-| `submit` | `session_id`, `command_id`, `expected_revision`, `expires_at_ms`, `prompt` |
-| `steer` | submit fields plus `incarnation`, `run_id` |
-| `cancel` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision`, `expires_at_ms` |
-| `respond` | cancel fields plus `decision_id`, `response` |
-
-Voyage operations also accept optional nullable `incarnation`, except live
-`steer/cancel/respond` where a non-null UUID is required. `inspect` is a Vessel
-operation and does not accept incarnation. `response` is the Rust JSON value;
-Voyage validates its decision-specific contents and retains authority. Numeric
-fields must be nonnegative safe JS integers. Unknown fields and operations are
-refused (including coordination injection, execution, browser, terminal, accounts,
-start, grant and subscriptions). Prompt is a nonempty string.
-
-`limit` is 1..128, except `message_chunk/run_output` allow 1..65536 bytes;
-`events.wait_ms` is 0..10000. Use bounded request polling: snapshot every second,
-decisions as needed, catalogue every ten seconds. No subscribe/unsubscribe,
-unsolicited event or reverse frames are accepted. A reverse request closes both
-sockets without executing or acknowledging it. Preserve exact revision/incarnation
-from fresh snapshot/decision observations in client mutations.
-
-Reply envelopes are strictly validated and correlated with pending UUID requests.
-Ordinary public `result` and refusal `error` values remain unchanged; they are Rust
-`serde_json::Value` results, not private IPC envelopes. Capabilities are the sole
-projection: require protocol/Vessel identity and filter `features` to the
-non-execution gateway subset; retain only protocol, vessel_id, version, scope,
-expiry, grant revision and session ID. No rights, credentials, future arbitrary
-metadata, broad voyage_operations, SSE/subscription, start/account/browser
-capability advertising is forwarded. UI availability must still respect actual
-runtime refusals. Do not log reply data: it may contain operator conversation.
-
-## Bounds and failure semantics
-
-- 4 MiB/message in either direction, compression disabled; buffered sends also
-  limited to 4 MiB. Binary and malformed frames close the connection.
-- 64 WebSockets globally, 4 per session hash; HTTP server additionally caps TCP
-  connections at 80, with 5-second request/header deadlines.
-- 32 pending requests/connection; 60 inbound frames/second token bucket with burst
-  60 (including authentication); 10,000 correlation IDs/connection (no reuse),
-  10,000 unexpired consumed ticket IDs/process. Capacity exhaustion fails closed.
-- Initial authentication and upstream handshake/hello deadlines: 5 seconds each.
-  Request deadline: 15 seconds. Gateway does not retry timed-out commands.
-- Ping/pong both sockets every 5 seconds; missing pong by next tick closes both.
-  Close handshake gets one second before termination. Browser pong is automatic.
-- Fixed close reasons only: policy 1008, capacity 1013, transport/deadline 1011;
-  ws uses 1009 for oversized messages. Do not treat close as a durable receipt.
-
-## Verification and source anchors
-
-Reviewed `crates/voyage-protocol/src/duplex.rs` (`ClientFrame`, `ServerFrame`),
-`crates/voyage-protocol/src/vessel.rs` (`VesselRequest`, `VoyageCommand`,
-`VesselCommand`, `VesselResponse`), `vessel/src/duplex.rs`,
-`vessel/src/process_http.rs`, and `vessel/src/process/access/{connection,routing}.rs`.
-
-`npm test` uses Node's test runner with real local WebSockets and a fake upstream:
-headers/subprotocol, pinned hello, command/refusal correlation, renewal/replay,
-lease expiry, Origin/path/auth failures, forbidden frames and commands, capability
-projection, limits, timeouts, heartbeat and private-file restrictions. This is not
-a live deployed Vessel/provider test, native Windows test, or Laravel UI test.
-No Rust edits or Rust coverage refresh are part of this scope.
+`npm test` exercises a real local HTTP single-use issuer and WebSocket upstream
+via module dependency injection, tenant/connection renewal fences, redemption
+replay and outage, framing/operation/connection/rate/time limits, capability
+projection, local endpoint auth, exact pairing wire request, resolver all-address
+validation, pinned lookup, bounded HTTP failures, and a real TLS WebSocket
+fixture with valid and mismatched hostnames. These are not live Laravel OAuth,
+public network DNS/Vessel, provider, or native-platform tests. No Rust changes
+or coverage refresh are part of this gateway-only delivery (#290).

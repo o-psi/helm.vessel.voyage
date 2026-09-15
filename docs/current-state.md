@@ -7,8 +7,10 @@ records delivery evidence and its limits.
 
 ## Helm Web
 
-[Helm Web](helm-web.md) is an opt-in single-operator Laravel/Livewire/Flux client
-alongside the product site. A JavaScript-owned conversation pane uses a scoped
+[Helm Web](helm-web.md) is an opt-in personal-tenant Laravel/Livewire/Flux client
+alongside the product site. OAuth provider identities own separate tenants and
+multiple public HTTPS/WSS Vessel connections, with no shared default Vessel.
+A JavaScript-owned conversation pane uses a scoped
 WebSocket gateway to read snapshots/history and submit, steer, respond or cancel
 existing voyages. Live text is refreshed through bounded socket reads, not a PHP
 update per token. The gateway holds explicitly provisioned Vessel grants; it is
@@ -16,8 +18,8 @@ not an executor and never holds provider credentials. Browser intent identities
 are saved before dispatch and uncertain admissions use receipt reads only.
 
 The console is disabled by default. Offline HTTP, DOM and local WebSocket fixture
-checks are recorded in the guide; a production console deployment, real-provider
-journey and native browser/mobile interaction certification are not established.
+checks are recorded in the guide; live OAuth-provider journeys, real-provider voyage execution and native
+browser/mobile interaction certification require separate evidence.
 New voyage creation, uploads, terminal/browser execution and account settings
 remain native-client capabilities. The web client is not Ratzilla.
 

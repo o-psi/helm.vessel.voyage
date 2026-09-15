@@ -39,6 +39,7 @@ export function mount(root) {
         clearTimeout(reconnectTimer); clearInterval(renewal); generation++; const mine = generation;
         client?.close(); client = null; stale = true; refreshing = false; state('Connecting…'); controls();
         const alias = $('vessel').value;
+        if (!alias) { state('No Vessels connected'); notice('Add your first Vessel using Manage Vessels.'); return; }
         try {
             const auth = await ticket(alias); if (mine !== generation) return;
             const url = new URL(root.dataset.socketPath, location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -53,7 +54,7 @@ export function mount(root) {
                 socket.addEventListener('error', () => { socket.close(); });
             });
             if (mine !== generation || stopped) { socket.close(); return; }
-            try { if (typeof ready.vessel_id !== 'string') throw new Error('Gateway identity missing.'); journal = new IntentJournal(localStorage, ready.vessel_id); journal.entries(); } catch (error) { socket.close(); stopped = true; throw error; }
+            try { if (typeof ready.vessel_id !== 'string') throw new Error('Gateway identity missing.'); journal = new IntentJournal(localStorage, `${root.dataset.tenantId}:${alias}:${ready.vessel_id}`); journal.entries(); } catch (error) { socket.close(); stopped = true; throw error; }
             client = new VesselSocket(socket, () => {
                 if (mine !== generation) return;
                 client = null; stale = true; clearInterval(renewal); state('Disconnected · stale view'); controls(); schedule();

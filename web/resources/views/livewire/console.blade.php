@@ -1,12 +1,13 @@
 <div class="console-shell">
     <header class="console-header">
-        <strong>Helm</strong><span>Private console</span>
+        <strong>Helm</strong><span>Your workspace</span><a href="{{ route('connections') }}">Manage Vessels</a>
         <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" size="sm">Sign out</flux:button></form>
     </header>
-    <main id="helm-client" wire:ignore data-ticket-url="{{ route('console.ticket', absolute: false) }}" data-socket-path="{{ config('helm.gateway_path') }}">
+    <main id="helm-client" wire:ignore data-tenant-id="{{ $tenantId }}" data-ticket-url="{{ route('console.ticket', absolute: false) }}" data-socket-path="{{ config('helm.gateway_path') }}">
         <aside aria-label="Voyages">
             <label for="vessel">Vessel</label>
-            <select id="vessel">@foreach($vessels as $vessel)<option value="{{ $vessel }}">{{ $vessel }}</option>@endforeach</select>
+            <select id="vessel">@foreach($vessels as $vessel)<option value="{{ $vessel->id }}">{{ $vessel->name }}</option>@endforeach</select>
+            @if($vessels->isEmpty())<p>No Vessels connected. <a href="{{ route('connections') }}">Add your first Vessel</a>.</p>@endif
             <label for="voyage-search">Find a voyage</label><input id="voyage-search" type="search" placeholder="Search voyages">
             <button id="reconnect" type="button">Reconnect / refresh</button>
             <nav id="voyages" aria-label="Choose a voyage"></nav>

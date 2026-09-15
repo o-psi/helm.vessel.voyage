@@ -1,6 +1,16 @@
 <?php
 
+// Callback URLs are derived from the trusted deployment URL, never the request Host.
+$oauth = static fn (string $provider, string $prefix): array => [
+    'client_id' => env($prefix.'_CLIENT_ID', ''),
+    'client_secret' => env($prefix.'_CLIENT_SECRET', ''),
+    'redirect' => rtrim(env('APP_URL', 'http://localhost'), '/').'/console/auth/'.$provider.'/callback',
+];
+
 return [
+    'google' => $oauth('google', 'GOOGLE'),
+    'x' => $oauth('x', 'X'),
+    'github' => $oauth('github', 'GITHUB'),
 
     /*
     |--------------------------------------------------------------------------

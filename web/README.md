@@ -7,9 +7,11 @@ Product copy leads with customer outcomes while accurately distinguishing curren
 Linux behavior from planned web, mobile, and cross-voyage collaboration. The
 homepage is intentionally compact and links to focused `/helm`, `/vessel`, and
 `/voyage` product pages. The public pages do not execute agents, enroll users or collect email addresses.
-An opt-in authenticated **Helm Web console** at `/` connects to configured
-Vessels through a scoped gateway. See [console setup and limits](../docs/helm-web.md).
-Signed-out visitors go to `/landing`; `/console` redirects to `/`.
+An opt-in authenticated **Helm Web console** at `/` gives each OAuth identity a
+personal tenant with its own publicly reachable Vessel connections through a
+scoped gateway. See [console setup and limits](../docs/helm-web.md).
+Signed-out visitors go to `/landing`. Google, X and GitHub sign-in are shown only
+when their application credentials are configured.
 The console never executes agents on the web host.
 
 ## Development
@@ -32,7 +34,7 @@ Keep `.env`, SQLite databases, logs, `vendor`, `node_modules` and compiled asset
 out of Git. The lockfiles preserve deployed dependency versions. Source uses the
 Laravel application skeleton, with its original framework configuration and
 migrations. Console authentication routes fail closed (404) until explicitly
-configured; there is no public registration.
+configured. OAuth sign-in creates a personal tenant with no inherited connections.
 
 ## Deployment
 

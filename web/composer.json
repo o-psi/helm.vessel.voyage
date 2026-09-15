@@ -11,9 +11,10 @@
     "require": {
         "php": "^8.3",
         "laravel/framework": "^13.17",
+        "laravel/socialite": "^5.31",
         "laravel/tinker": "^3.0",
-        "livewire/livewire": "^4.1",
-        "livewire/flux": "^2.13"
+        "livewire/flux": "^2.13",
+        "livewire/livewire": "^4.1"
     },
     "autoload": {
         "psr-4": {

@@ -1,12 +1,14 @@
 <x-layouts.console>
     <main class="login-panel">
-        <h1>Helm</h1><p>Sign in to your private voyage console.</p>
-        @error('login') <p role="alert">{{ $message }}</p> @enderror
-        <form method="post" action="{{ route('console.login') }}">
-            @csrf
-            <flux:input name="password" type="password" label="Operator password" autocomplete="current-password" required />
-            <flux:button type="submit" variant="primary">Sign in</flux:button>
-        </form>
-        <p>Credentials belong in this form, never in a conversation.</p>
+        <h1>Sign in to Helm</h1>
+        <p>Your own workspace. Connect your Vessels and continue your voyages.</p>
+        @error('oauth') <p role="alert">{{ $message }}</p> @enderror
+        @forelse (\App\Http\Controllers\OAuthController::providers() as $provider => $label)
+            <p><flux:button href="{{ route('oauth.redirect', $provider) }}" variant="primary">Continue with {{ $label }}</flux:button></p>
+        @empty
+            <p role="status">Sign-in providers are being configured. Please check back shortly.</p>
+        @endforelse
+        <p>Each provider identity has its own personal tenant. Accounts are not merged by email.</p>
+        <a href="{{ route('home') }}">Back to landing</a>
     </main>
 </x-layouts.console>

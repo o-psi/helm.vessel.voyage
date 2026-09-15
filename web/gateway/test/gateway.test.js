@@ -1,27 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { randomUUID, createHmac } from 'node:crypto';
-import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { randomUUID, randomBytes } from 'node:crypto';
+import http from 'node:http';
+import { transport } from '../transport.js';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createGateway, verifyTicket, LIMITS } from '../gateway.js';
+import { createGateway, verifyTicket, validateClaims, LIMITS } from '../gateway.js';
 import { validateConfig, loadConfig } from '../config.js';
 import { validCommand, validReply } from '../protocol.js';
 const secret = 'test-only-secret-that-is-at-least-32-bytes';
 const origin = 'https://helm.example.test';
 const sub = 'a'.repeat(64), vesselId = randomUUID(), grantId = randomUUID();
-function ticket(extra = {}, key = secret) {
-  const p = Buffer.from(JSON.stringify({ aud: 'helm-web-gateway', sub, jti: randomUUID(), exp: Math.floor(Date.now()/1000)+60, vessel: 'test', ...extra })).toString('base64url');
-  return `${p}.${createHmac('sha256', key).update(p).digest('base64url')}`;
+const tenant = randomUUID(), connectionId = randomUUID(), issued = new Map();
+const connection = { url:'wss://vessel.example/v1/vessel/socket', token:'private-test-token',grant_id:grantId,vessel_id:vesselId };
+function ticket(extra = {}) {
+  const value = randomBytes(32).toString('base64url');
+  issued.set(value, { sub,tenant,vessel:connectionId,exp:Math.floor(Date.now()/1000)+60,connection,...extra }); return value;
 }
 function inbox(ws) {
   const queue = [], waiters = [];
   ws.on('message', data => { const f = JSON.parse(data.toString()); if (waiters.length) waiters.shift()(f); else queue.push(f); });
   return () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiters.push(resolve));
 }
-async function fixture(t, { limits = {}, hello = {}, onCommand, noHello = false } = {}) {
+async function fixture(t, { limits = {}, hello = {}, onCommand, noHello = false, authOutage = false } = {}) {
   const upstream = new WebSocketServer({ port: 0, host: '127.0.0.1', handleProtocols: protocols => protocols.has('voyage.vessel.v1') && 'voyage.vessel.v1' });
   await once(upstream, 'listening');
   const requests = [], sockets = [];
@@ -34,8 +35,20 @@ async function fixture(t, { limits = {}, hello = {}, onCommand, noHello = false 
       else ws.send(JSON.stringify({ type: 'reply', request_id: f.request_id, response: { protocol: 1, result: { op: f.request.command.op }, error: null, outcome_unknown: false } }));
     });
   });
-  const config = { secret, origin, allowLoopback: true, vessels: { test: { url: `ws://127.0.0.1:${upstream.address().port}/v1/vessel/socket`, token: 'private-test-token', grant_id: grantId, vessel_id: vesselId } } };
-  const gateway = createGateway(config, { ...LIMITS, ...limits });
+  const auth = http.createServer(async (req,res) => {
+    if (authOutage) {res.writeHead(503);res.end('private service diagnostic');return;}
+    let body = ''; for await (const chunk of req) body += chunk;
+    assert.equal(req.url, '/authorize'); assert.equal(req.method,'POST');
+    assert.equal(req.headers.authorization, `Bearer ${secret}`);
+    const {ticket} = JSON.parse(body), claims = issued.get(ticket); issued.delete(ticket);
+    res.writeHead(claims ? 200 : 403, {'content-type':'application/json'}); res.end(JSON.stringify(claims ?? {}));
+  });
+  auth.listen(0,'127.0.0.1'); await once(auth,'listening');
+  t.after(() => new Promise(resolve => auth.close(resolve)));
+  const config = { secret, origin, authUrl:`http://127.0.0.1:${auth.address().port}/authorize` };
+  // Only module tests inject the fixture transport; production has no private bypass.
+  const io = { ...transport, publicTarget: async () => ({url:new URL(`ws://127.0.0.1:${upstream.address().port}/v1/vessel/socket`), options:{}}) };
+  const gateway = createGateway(config, { ...LIMITS, ...limits }, io);
   gateway.server.listen(0, '127.0.0.1'); await once(gateway.server, 'listening');
   const url = `ws://127.0.0.1:${gateway.server.address().port}/socket`;
   t.after(async () => { await gateway.close(); for (const ws of upstream.clients) ws.terminate(); await new Promise(resolve => upstream.close(resolve)); });
@@ -49,9 +62,11 @@ async function fixture(t, { limits = {}, hello = {}, onCommand, noHello = false 
 }
 const command = c => ({ type: 'command', request_id: randomUUID(), request: { protocol: 1, command: c } });
 
-test('ticket canonical signature, exact claims, identity and lifetime', () => {
-  assert.equal(verifyTicket(ticket(), secret).sub, sub);
-  for (const value of [ticket({}, 'wrong'), ticket({ exp: Math.floor(Date.now()/1000)-1 }), ticket({ exp: Math.floor(Date.now()/1000)+61 }), ticket({ aud: 'other' }), ticket({ jti: 'no' }), ticket({ sub: 'session' }), ticket({ extra: true }), 'bad', `${ticket()}=`]) assert.throws(() => verifyTicket(value, secret));
+test('opaque ticket and exact redeemed identity/lifetime', () => {
+  const value = ticket(); assert.equal(verifyTicket(value),value);
+  for (const v of ['bad', `${value}=`, 'x'.repeat(513)]) assert.throws(() => verifyTicket(v));
+  const now = Date.now(), claims = {...issued.get(value),exp:Math.floor(now/1000)+60}; assert.equal(validateClaims(claims,now).sub,sub);
+  for (const extra of [{exp:Math.floor(now/1000)-1},{exp:Math.floor(now/1000)+61},{tenant:'bad'},{sub:'bad'},{extra:true}]) assert.throws(() => validateClaims({...claims,...extra},now));
 });
 
 test('strict public operation shapes and forbidden execution surfaces', () => {
@@ -142,16 +157,11 @@ test('heartbeat closes a browser that does not pong', async t => {
   const ws = new WebSocket(f.url,{origin,autoPong:false}); const next = inbox(ws); await once(ws,'open'); ws.send(JSON.stringify({type:'authenticate',ticket:ticket()})); await next(); assert.equal((await once(ws,'close'))[0],1011);
 });
 
-test('private config file and secure upstream URL restrictions', async t => {
-  const f = await fixture(t);
-  for (const url of ['ws://example.test/v1/vessel/socket','ws://localhost/v1/vessel/socket','wss://example.test/other','wss://user:pass@example.test/v1/vessel/socket','wss://example.test/v1/vessel/socket?q=x']) assert.throws(()=>validateConfig({...f.config,vessels:{test:{...f.config.vessels.test,url}}}));
-  assert.throws(()=>validateConfig({...f.config,allowLoopback:false}));
-  assert.throws(()=>validateConfig({...f.config,secret:'short'}));
-  const dir = await mkdtemp(join(tmpdir(),'helm-gateway-test-')); t.after(()=>rm(dir,{recursive:true,force:true}));
-  const path = join(dir,'vessels.json'); await writeFile(path,JSON.stringify(f.config.vessels),{mode:0o600});
-  const env = {HELM_WEB_GATEWAY_SECRET:secret,HELM_WEB_ORIGIN:origin,HELM_WEB_VESSELS_FILE:path,HELM_WEB_ALLOW_LOOPBACK_WS:'1'};
-  assert.equal((await loadConfig(env)).port,8787);
-  await chmod(path,0o644); await assert.rejects(loadConfig(env));
+test('production config only supports fixed loopback authorization and local listener', async () => {
+  const c = {secret,origin,authUrl:'http://127.0.0.1/authorize'};
+  validateConfig(c);
+  for (const extra of [{authUrl:'http://localhost/authorize'},{authUrl:'https://127.0.0.1/authorize'}, {authUrl:'http://example.org/authorize'}, {host:'0.0.0.0'}, {allowLoopback:true},{vessels:{}},{secret:'short'}]) assert.throws(() => validateConfig({...c,...extra}));
+  await assert.rejects(loadConfig({HELM_WEB_ALLOW_LOOPBACK_WS:'1'}));
 });
 
 test('capabilities projection strips unallowlisted features and metadata', async t => {
@@ -163,9 +173,45 @@ test('capabilities projection strips unallowlisted features and metadata', async
   for (const key of ['rights','token','future']) assert.equal(Object.hasOwn(response.result,key),false);
 });
 
-test('startup replay blackout refuses admission before ticket horizon', async t => {
-  const f = await fixture(t); f.config.admissionNotBefore = Date.now()+60000;
-  const ws = new WebSocket(f.url,{origin}); ws.on('error',()=>{});
-  const [req,res] = await once(ws,'unexpected-response'); assert.equal(res.statusCode,403); res.resume(); req.destroy();
-  assert.equal(f.requests.length,0);
+test('renewal refuses tenant, connection and credential changes', async t => {
+  const f = await fixture(t);
+  for (const change of [{tenant:randomUUID()},{vessel:randomUUID()},{connection:{...connection,token:'changed'}},{connection:{...connection,grant_id:randomUUID()}},{connection:{...connection,url:'wss://other.example/v1/vessel/socket'}},{connection:{...connection,vessel_id:randomUUID()}}]) {
+    const b = await f.connect(); await b.next(); const closed = once(b.ws,'close');
+    b.ws.send(JSON.stringify({type:'authenticate',ticket:ticket(change)})); assert.equal((await closed)[0],1008);
+  }
+});
+
+test('local secret endpoints pair exact protocol and probe only filtered capabilities', async t => {
+  const f = await fixture(t,{onCommand(ws,frame) {
+    assert.equal(frame.request.command.op,'capabilities');
+    ws.send(JSON.stringify({type:'reply',request_id:frame.request_id,response:{protocol:1,error:null,outcome_unknown:false,result:{protocol:1,vessel_id:vesselId,features:['duplex_socket','browser'],token:'do-not-return'}}}));
+  }});
+  const url = f.url.replace('ws:','http:').replace('/socket','/probe');
+  const response = await fetch(url,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({connection})});
+  assert.equal(response.status,200);assert.deepEqual(await response.json(),{protocol:1,vessel_id:vesselId,features:['duplex_socket']});
+  for (const [path,headers,body,status] of [['/probe',{}, {connection},403],['/probe',{origin}, {connection},403],['/probe?x=1',{}, {},404],['/probe',{}, {connection,command:'catalogue'},502]]) {
+    const res = await fetch(url.replace('/probe',path),{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json',...headers,...(status===403&&!headers.origin?{authorization:'Bearer wrong'}:{})},body:JSON.stringify(body)});
+    assert.equal(res.status,status);await res.text();
+  }
+});
+
+test('pair forwards exact HTTP request and never retries uncertain result', async t => {
+  const calls = [];
+  const io = {...transport, publicTarget:async (url,pair) => {assert.equal(pair,true);assert.equal(url,'https://vessel.example');return {url:new URL(url),options:{}};},jsonPost:async (...args) => {calls.push(args);return {protocol:1,result:{token:'fixture'},error:null,outcome_unknown:false};}};
+  const gateway = createGateway({secret,origin,authUrl:'http://127.0.0.1/authorize'},LIMITS,io);
+  gateway.server.listen(0,'127.0.0.1');await once(gateway.server,'listening');t.after(()=>gateway.close());
+  const value = {endpoint:'https://vessel.example',principal_id:randomUUID(),invitation_id:randomUUID(),command_id:randomUUID(),code:'private-code',vessel_id:vesselId};
+  const res = await fetch(`http://127.0.0.1:${gateway.server.address().port}/pair`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify(value)});
+  assert.equal(res.status,200);assert.equal((await res.json()).result.token,'fixture');assert.equal(calls.length,1);
+  assert.equal(calls[0][0].href,'https://vessel.example/v1/vessel/pair');
+  assert.deepEqual(calls[0][1],{protocol:1,principal_id:value.principal_id,invitation_id:value.invitation_id,command_id:value.command_id,code:value.code});
+  assert.equal(calls[0][2].headers['x-voyage-vessel'],vesselId);
+  io.jsonPost = async () => ({protocol:1,result:null,error:'private upstream diagnostic',outcome_unknown:true});
+  const refused = await fetch(`http://127.0.0.1:${gateway.server.address().port}/pair`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify(value)});
+  assert.equal(refused.status,502);assert.deepEqual(await refused.json(),{error:'gateway refused'});
+});
+
+test('redemption outage fails closed without opening upstream', async t => {
+  const f = await fixture(t,{authOutage:true}); const {ws} = await f.connect();
+  const [code,reason] = await once(ws,'close');assert.equal(code,1008);assert.equal(reason.toString(),'gateway refused');assert.equal(f.requests.length,0);
 });
