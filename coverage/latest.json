@@ -1,65 +1,83 @@
 {
-  "measured_at_utc": "2026-09-15T20:06:00.139417+00:00",
-  "source_commit": "26d4c8e7d181baeb4d64b819b035e560538324ee",
+  "measured_at_utc": "2026-09-15T20:27:34.188966+00:00",
+  "source_commit": "8140681deda06eb5e04035760f55cf0c65a9564c",
   "dirty": true,
-  "source_fingerprint_sha256": "6147f00dc9ce3c44bba9fc455f138da4eac72cec1b909385a9e9bc034eab1185",
+  "source_fingerprint_sha256": "bf7f6a614de23d5c2fa34f6f30cc29f1863e21f622d13a9be06c72e4b1204e5c",
+  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths (plus new profile tests), each path + NUL + file bytes; missing files marked MISSING",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
-  "llvm": "22.1.8",
-  "cargo_llvm_cov": "0.9.1",
+  "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
+  "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 529,
+    "passed": 536,
     "failed": 0,
     "ignored": 1
   },
   "totals": {
-    "lines": {
-      "count": 100715,
-      "covered": 41798,
-      "percent": 41.50126594846845
+    "branches": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
     },
     "functions": {
       "count": 9735,
-      "covered": 3841,
-      "percent": 39.45557267591166
+      "covered": 3877,
+      "percent": 39.825372367745246
+    },
+    "instantiations": {
+      "count": 18225,
+      "covered": 4505,
+      "percent": 24.718792866941016
+    },
+    "lines": {
+      "count": 100715,
+      "covered": 42199,
+      "percent": 41.89941915305565
+    },
+    "mcdc": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
     },
     "regions": {
       "count": 165047,
-      "covered": 66903,
-      "notcovered": 98144,
-      "percent": 40.535726187086105
+      "covered": 67561,
+      "notcovered": 97486,
+      "percent": 40.93440050409883
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/policy-profile-release -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=/home/psi/voyage/target/voyage.profdata",
+    "-instr-profile=$WORKSPACE/target/voyage.profdata",
     "-object",
-    "/home/psi/voyage/target/debug/deps/chatgpt_conversation-510f26700af57366",
+    "$WORKSPACE/target/debug/deps/chatgpt_conversation-510f26700af57366",
     "-object",
-    "/home/psi/voyage/target/debug/deps/helm-bd0d73b89d82cb63",
+    "$WORKSPACE/target/debug/deps/helm-bd0d73b89d82cb63",
     "-object",
-    "/home/psi/voyage/target/debug/deps/helm-dfb5737733ce418b",
+    "$WORKSPACE/target/debug/deps/helm-dfb5737733ce418b",
     "-object",
-    "/home/psi/voyage/target/debug/deps/vessel-039942951e1867b6",
+    "$WORKSPACE/target/debug/deps/vessel-039942951e1867b6",
     "-object",
-    "/home/psi/voyage/target/debug/deps/vessel-3a4d7b51155730f3",
+    "$WORKSPACE/target/debug/deps/vessel-3a4d7b51155730f3",
     "-object",
-    "/home/psi/voyage/target/debug/deps/voyage-e775d9c5a0730146",
+    "$WORKSPACE/target/debug/deps/voyage-e775d9c5a0730146",
     "-object",
-    "/home/psi/voyage/target/debug/deps/voyage-f88b1dd8ee2a3a15",
+    "$WORKSPACE/target/debug/deps/voyage-f88b1dd8ee2a3a15",
     "-object",
-    "/home/psi/voyage/target/debug/deps/voyage_installer-6aff51ec451d3a11",
+    "$WORKSPACE/target/debug/deps/voyage_installer-6aff51ec451d3a11",
     "-object",
-    "/home/psi/voyage/target/debug/deps/voyage_protocol-f609f3347f10b305",
+    "$WORKSPACE/target/debug/deps/voyage_protocol-f609f3347f10b305",
     "-object",
-    "/home/psi/voyage/target/debug/deps/voyage_storage-dc5f9f5a94045436",
+    "$WORKSPACE/target/debug/deps/voyage_storage-dc5f9f5a94045436",
     "-object",
-    "/home/psi/voyage/target/debug/voyage",
+    "$WORKSPACE/target/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^/home/psi/voyage(/.*)?/(tests|examples|benches)/|^/home/psi/voyage(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^/home/psi/voyage/target($|/)|^/home/psi/\\.cargo/(registry|git)/|^/home/psi/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
+    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
     "-summary-only"
   ],
   "exclusions": [
@@ -71,6 +89,7 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "529 workspace tests passed; one live-provider test ignored. Exact current test executables verified against run log; prior current-artifact export selection reused, not mixed stale target objects. Default report retained in target/coverage-report/status-summary.json. No live TUI visual verification."
+    "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
+    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint."
   ]
 }

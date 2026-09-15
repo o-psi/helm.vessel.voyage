@@ -534,3 +534,6 @@ impl ProfileStore {
             .map_err(|_| StoreError::Invalid)
     }
 }
+
+#[cfg(test)]
+mod tests;
