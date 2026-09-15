@@ -17,7 +17,7 @@ mod openai;
 mod openai_responses;
 mod redaction;
 mod rejection;
-mod request_accounting;
+pub(crate) mod request_accounting;
 pub(crate) use redaction::definition as redact_tool_definition;
 pub(crate) use redaction::message as redact_message;
 

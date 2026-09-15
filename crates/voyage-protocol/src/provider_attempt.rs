@@ -51,10 +51,22 @@ pub struct ProviderAttempt {
     pub decision: RetryDecision,
 }
 
+/// Disjoint final JSON byte buckets; not tokens, charge, or proof of dispatch.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RequestBytes {
+    pub total: u64,
+    pub instructions: u64,
+    pub schemas: u64,
+    pub history: u64,
+    pub envelope: u64,
+}
+
 /// Numeric/allowlisted facts only; absent legacy observations remain unknown.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RetryObservation {
+    /// Exact encoded model-request bytes. None means not observed, not zero.
+    pub request_bytes: Option<RequestBytes>,
     /// Previous interrupted attempt retained in history before a new request.
     pub recovery_of: Option<Uuid>,
     /// Absolute deadline for admitting further attempts; not a live-process lease.

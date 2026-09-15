@@ -30,6 +30,36 @@ fn measure(body: &Value, bytes: &[u8]) -> Components {
     c.envelope_bytes = c.total_bytes - c.instructions_bytes - c.schemas_bytes - c.history_bytes;
     c
 }
+tokio::task_local! {
+    static OBSERVED: std::sync::Arc<std::sync::Mutex<Option<voyage_protocol::provider_attempt::RequestBytes>>>;
+}
+
+/// Scope observations to one logical provider attempt, including dispatch failures.
+/// More than one encoded body is accumulated (e.g. authentication refresh retry).
+pub(crate) async fn observe<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, Option<voyage_protocol::provider_attempt::RequestBytes>) {
+    let observations = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let result = OBSERVED.scope(observations.clone(), future).await;
+    let bytes = observations.lock().ok().and_then(|v| v.clone());
+    (result, bytes)
+}
+
+fn retain(c: &Components) {
+    let _ = OBSERVED.try_with(|slot| {
+        if let Ok(mut value) = slot.lock() {
+            let value = value.get_or_insert_with(Default::default);
+            value.total = value.total.saturating_add(c.total_bytes as u64);
+            value.instructions = value
+                .instructions
+                .saturating_add(c.instructions_bytes as u64);
+            value.schemas = value.schemas.saturating_add(c.schemas_bytes as u64);
+            value.history = value.history.saturating_add(c.history_bytes as u64);
+            value.envelope = value.envelope.saturating_add(c.envelope_bytes as u64);
+        }
+    });
+}
+
 /// Encode once and send these same bytes. Logs contain counts only, never payloads.
 /// Events describe construction, not successful dispatch; retries produce new events.
 pub(super) fn body(
@@ -39,6 +69,7 @@ pub(super) fn body(
     let bytes = serde_json::to_vec(value)
         .map_err(|_| ProviderError::InvalidResponse("cannot encode provider request".into()))?;
     let c = measure(value, &bytes);
+    retain(&c);
     tracing::info!(target: "voyage::request_accounting", total_bytes=c.total_bytes,
         instructions_bytes=c.instructions_bytes, schemas_bytes=c.schemas_bytes,
         history_bytes=c.history_bytes, envelope_bytes=c.envelope_bytes,
@@ -86,5 +117,27 @@ mod tests {
             req.body().unwrap().as_bytes().unwrap(),
             serde_json::to_vec(&value).unwrap()
         );
+    }
+    #[tokio::test]
+    async fn scoped_observations_preserve_missing_and_failures() {
+        let (_, missing) = observe(async { 1 }).await;
+        assert!(missing.is_none());
+        let (result, observed) = observe(async {
+            let _request = body(
+                reqwest::Client::new().post("http://localhost/unused"),
+                &json!({"input":"é"}),
+            )
+            .unwrap();
+            Err::<(), _>("simulated dispatch failure")
+        })
+        .await;
+        assert!(result.is_err());
+        let measured = observed.unwrap();
+        assert_eq!(
+            measured.total,
+            measured.instructions + measured.schemas + measured.history + measured.envelope
+        );
+        let (_, again) = observe(async {}).await;
+        assert!(again.is_none());
     }
 }

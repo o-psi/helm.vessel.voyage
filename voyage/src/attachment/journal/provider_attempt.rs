@@ -109,6 +109,13 @@ mod tests {
                 || Ok(2),
             )
             .unwrap();
+        attempt.retry.request_bytes = Some(voyage_protocol::provider_attempt::RequestBytes {
+            total: 100,
+            instructions: 10,
+            schemas: 20,
+            history: 50,
+            envelope: 20,
+        });
         attempt.category = Some("transport_timeout".into());
         attempt.decision = RetryDecision::Cancelled;
         attempt.duration_ms = 2;

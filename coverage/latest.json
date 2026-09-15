@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-15T18:51:15.516732+00:00",
+  "measured_at_utc": "2026-09-15T18:59:31.285678+00:00",
   "source": {
-    "base_commit": "b7def289f624f2858140edf8642c49968702c3de",
+    "base_commit": "9382a7515cd22fa6a44935ebfd73310d29fce549",
     "dirty": true,
-    "fingerprint_sha256": "980b0ba605687c357fc6f56df96176b4c5e9fcb4fcb11a3d0b97fe1c2b153a8d",
-    "fingerprint_scope": "Tracked workspace files and new Rust modules before coverage; includes unrelated staged render edits/deleted scripts. Per-file map: target/coverage-report/issue282/source-before.json. Rust/manifests unchanged throughout measurement; documentation subsequently updated."
+    "fingerprint_sha256": "7eb7f93ca6953dde17bd39f336d9442f2b2851c12051d2e4ef432e4a1baaa79e",
+    "fingerprint_scope": "Tracked workspace files before final coverage; includes unrelated staged UI and deleted scripts. Per-file map: target/coverage-report/issue282-durable/source-before.json. Rust/manifests unchanged during final measurement."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -13,7 +13,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue282/default-report -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue282-durable/default-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -21,30 +21,30 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 519,
+    "passed": 520,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 100185,
-      "covered": 40858,
-      "percent": 40.78255227828517
+      "count": 100241,
+      "covered": 40914,
+      "percent": 40.81563432128571
     },
     "functions": {
-      "count": 9694,
-      "covered": 3751,
-      "percent": 38.69403754899938
+      "count": 9704,
+      "covered": 3761,
+      "percent": 38.75721352019786
     },
     "regions": {
-      "count": 164103,
-      "covered": 65255,
-      "notcovered": 98848,
-      "percent": 39.76466000012188
+      "count": 164192,
+      "covered": 65343,
+      "notcovered": 98849,
+      "percent": 39.79670142272462
     }
   },
   "report_selection": {
-    "method": "Complete current instrumented Cargo compiler-artifact executable set; same exclusions as prior measurement; exact export command retained in target/coverage-report/issue282/report-command.json",
+    "method": "Complete current instrumented Cargo executable set; same exclusions as prior measurement; exact command target/coverage-report/issue282-durable/report-command.json",
     "workspace_executables": 11,
     "logical_source_files": 456,
     "duplicate_logical_source_paths": 0,
@@ -59,8 +59,8 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Current-artifact export has no diagnostics. Default mixed shared-target report retained; not used for published totals.",
-    "Offline evidence retrieval/projection and encoded-byte regressions pass. No live-provider/native-platform or task token-savings claim.",
-    "Coverage percentage-point changes: lines +0.2447, functions +0.2038, regions +0.2831"
+    "Current-artifact export has no diagnostics; mixed default report retained but not published as totals.",
+    "Final workspace coverage rerun after fixing unused RequestBuilder warning; durable byte observation and journal reopen tests pass.",
+    "Percentage-point changes versus prior: lines +0.0331, functions +0.0632, regions +0.0320"
   ]
 }

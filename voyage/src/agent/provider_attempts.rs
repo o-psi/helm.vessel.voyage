@@ -231,16 +231,17 @@ impl Agent {
                 )
                 .into());
             }
-            let outcome = self
-                .provider_attempt_stream(
+            let (outcome, request_bytes) =
+                crate::provider::request_accounting::observe(self.provider_attempt_stream(
                     &request,
                     permit.as_ref(),
                     cancel,
                     checkpoint,
                     partial_output,
                     &mut record,
-                )
+                ))
                 .await;
+            record.retry.request_bytes = request_bytes;
             record.duration_ms = millis(started.elapsed());
             match outcome {
                 Ok(response) => {
