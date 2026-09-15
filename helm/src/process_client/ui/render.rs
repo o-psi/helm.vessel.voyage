@@ -17,7 +17,11 @@ fn accent() -> Style {
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     area.inner(ratatui::layout::Margin::new(horizontal, vertical))
 }
-fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) -> &'a str {
+// Conversation status; first matching condition wins.
+pub(super) fn state<'a>(
+    view: &super::state::View,
+    working: &'a super::effects::Working,
+) -> &'a str {
     if view.process.archive.is_some() {
         return "Archived · stopped";
     }
@@ -332,7 +336,8 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     let preview_rows = app.preview_rows(main.width.saturating_sub(2), main.height);
     let footer = footer(app, main.width, reviewing, overlay, &status);
     let rows = Layout::vertical([
-        Constraint::Length(3),
+        // rows[0]: title and bottom divider.
+        Constraint::Length(2),
         Constraint::Min(4),
         Constraint::Length(if reviewing {
             0
@@ -359,64 +364,18 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     } else {
         Line::styled(title, Style::default().add_modifier(Modifier::BOLD))
     };
-    let status_prefix = if reviewing || rows[0].width < 70 {
-        format!("{host} · ")
-    } else {
-        String::new()
-    };
-    let detail = view.map_or_else(
-        || "Start a conversation with New".into(),
-        |v| {
-            if reviewing || rows[0].width < 60 {
-                return format!("{host} · {}", state(v, &app.working));
-            }
-            format!(
-                "{}{}   {}",
-                if rows[0].width < 70 {
-                    format!("{host} · ")
-                } else {
-                    String::new()
-                },
-                state(v, &app.working),
-                if v.archived() {
-                    "History preserved".into()
-                } else {
-                    v.terminals.summary()
-                }
-            )
-        },
-    );
     frame.render_widget(
-        Paragraph::new(vec![heading, Line::styled(detail, muted())]).block(
+        Paragraph::new(heading).block(
             Block::default()
                 .borders(Borders::BOTTOM)
                 .border_style(muted()),
         ),
         rows[0],
     );
-    // Bound the shimmer to the visible name, after its two-column spinner.
-    let prefix_width =
-        unicode_width::UnicodeWidthStr::width(status_prefix.as_str()).min(u16::MAX as usize) as u16;
-    let word_x = rows[0].x.saturating_add(prefix_width).saturating_add(2);
-    let right = rows[0].right().saturating_sub(
-        if columns[0].width == 0 && !sidebar_open && view.is_some() {
-            9
-        } else {
-            0
-        },
-    );
-    if rows[0].height >= 2 && word_x < right {
-        app.working.record(Rect::new(
-            word_x,
-            rows[0].y + 1,
-            (right - word_x).min(app.working.width()),
-            1,
-        ));
-    }
     if columns[0].width == 0 && !sidebar_open && view.is_some() {
         app.draw_action_trigger(
             frame,
-            Rect::new(rows[0].right().saturating_sub(9), rows[0].y + 1, 9, 1),
+            Rect::new(rows[0].right().saturating_sub(9), rows[0].y, 9, 1),
         );
     }
     if terminals_open {

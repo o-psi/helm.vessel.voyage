@@ -1,55 +1,67 @@
 {
-  "schema_version": 1,
-  "measured_at_utc": "2026-09-15T19:57:48.831655+00:00",
-  "source": {
-    "base_commit": "a278f211a053d541e813b87d8bbfd46889de0042",
-    "dirty": true,
-    "fingerprint_sha256": "8fba362351c640f78dd6b22c238367d1b44563e44fd13962d78d7b24ae2fc46f",
-    "fingerprint_scope": "Tracked workspace files plus untracked voyage/src and docs before final coverage; includes unrelated staged UI and deleted scripts. Per-file map target/coverage-report/issue283-final/source-before.json. Sources unchanged during measurement."
-  },
-  "platform": "x86_64-unknown-linux-gnu",
-  "tools": {
-    "rustc": "1.98.1 (48a229cea 2026-09-01)",
-    "llvm": "22.1.8",
-    "cargo_llvm_cov": "0.9.1"
-  },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue283-final/default-report -j 8",
-  "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
-    "LLVM_COV": "llvm-cov",
-    "LLVM_PROFDATA": "llvm-profdata"
-  },
-  "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
+  "measured_at_utc": "2026-09-15T20:06:00.139417+00:00",
+  "source_commit": "26d4c8e7d181baeb4d64b819b035e560538324ee",
+  "dirty": true,
+  "source_fingerprint_sha256": "6147f00dc9ce3c44bba9fc455f138da4eac72cec1b909385a9e9bc034eab1185",
+  "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
+  "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
+  "llvm": "22.1.8",
+  "cargo_llvm_cov": "0.9.1",
   "tests": {
     "passed": 529,
     "failed": 0,
     "ignored": 1
   },
-  "coverage": {
+  "totals": {
     "lines": {
-      "count": 100743,
-      "covered": 41861,
-      "percent": 41.55226665872567
+      "count": 100715,
+      "covered": 41798,
+      "percent": 41.50126594846845
     },
     "functions": {
-      "count": 9738,
-      "covered": 3847,
-      "percent": 39.50503183405217
+      "count": 9735,
+      "covered": 3841,
+      "percent": 39.45557267591166
     },
     "regions": {
-      "count": 165105,
-      "covered": 66999,
-      "notcovered": 98106,
-      "percent": 40.579631143817565
+      "count": 165047,
+      "covered": 66903,
+      "notcovered": 98144,
+      "percent": 40.535726187086105
     }
   },
-  "report_selection": {
-    "method": "All current Cargo workspace executables; historical stale binaries excluded; default tool report retained separately. Same source exclusions as previous measurement. Exact commands in target/coverage-report/issue283-final/result.json.",
-    "workspace_executables": 11,
-    "logical_source_files": 456,
-    "duplicate_logical_sources": 0,
-    "mismatched_profile_warnings": 0
-  },
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
+  "report_command": [
+    "/usr/bin/llvm-cov",
+    "export",
+    "-format=text",
+    "-instr-profile=/home/psi/voyage/target/voyage.profdata",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/chatgpt_conversation-510f26700af57366",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/helm-bd0d73b89d82cb63",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/helm-dfb5737733ce418b",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/vessel-039942951e1867b6",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/vessel-3a4d7b51155730f3",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/voyage-e775d9c5a0730146",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/voyage-f88b1dd8ee2a3a15",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/voyage_installer-6aff51ec451d3a11",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/voyage_protocol-f609f3347f10b305",
+    "-object",
+    "/home/psi/voyage/target/debug/deps/voyage_storage-dc5f9f5a94045436",
+    "-object",
+    "/home/psi/voyage/target/debug/voyage",
+    "-ignore-filename-regex",
+    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^/home/psi/voyage(/.*)?/(tests|examples|benches)/|^/home/psi/voyage(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^/home/psi/voyage/target($|/)|^/home/psi/\\.cargo/(registry|git)/|^/home/psi/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
+    "-summary-only"
+  ],
   "exclusions": [
     "Ignored live-provider test",
     "Doctests",
@@ -59,8 +71,6 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Current-artifact export has no diagnostics; mixed default report retained but not published as totals.",
-    "Five new startup contention and safe-label tests pass, together with existing workspace tests. No historical-cause certainty or live-provider claim.",
-    "Percentage-point changes versus prior: lines +0.1263, functions +0.1646, regions +0.1138"
+    "529 workspace tests passed; one live-provider test ignored. Exact current test executables verified against run log; prior current-artifact export selection reused, not mixed stale target objects. Default report retained in target/coverage-report/status-summary.json. No live TUI visual verification."
   ]
 }

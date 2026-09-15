@@ -405,21 +405,6 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
     {
         let key = Key::Live(run.run_id);
-        entry_gap(&mut out, key.clone());
-        note(
-            &mut out,
-            key.clone(),
-            if snapshot.recovery_pending {
-                "Previous run interrupted · saved output"
-            } else if run.state == "completed" {
-                "Finishing response…"
-            } else if run.active() && !snapshot.decisions.is_empty() {
-                "Waiting for you"
-            } else {
-                presentation::run_state(&run.state)
-            },
-            width,
-        );
         let loaded = state
             .live
             .as_ref()
@@ -443,25 +428,27 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         if run.live_text_truncated && loaded.is_none() {
             note(
                 &mut out,
-                key.clone(),
+                Key::Notice,
                 "Loading the rest of the live response…",
                 width,
             );
         }
-        let history_rendered = !run.active()
-            && snapshot.turns.iter().any(|turn| {
-                turn.run_id == run.run_id
-                    && messages
-                        .iter()
-                        .any(|message| turn.message_end == Some(message.message_index + 1))
-            });
-        if !history_rendered {
-            for attempt in run.provider_attempts.iter().filter(|a| {
-                a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed
-            }) {
-                note(&mut out, key.clone(), attempt.summary(), width);
-            }
-        }
+        entry_gap(&mut out, key.clone());
+        note(
+            &mut out,
+            key.clone(),
+            if snapshot.recovery_pending {
+                "Previous run interrupted · saved output"
+            } else if run.state == "completed" {
+                "Finishing response…"
+            } else if run.active() && !snapshot.decisions.is_empty() {
+                "Waiting for you"
+            } else {
+                presentation::run_state(&run.state)
+            },
+            width,
+        );
+        // Provider attempt bookkeeping remains available in the diagnostics panel.
         if let Some(reason) = &run.failure_summary {
             note(&mut out, key.clone(), safe(reason), width);
         }
@@ -594,6 +581,26 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .enumerate()
         .map(|(y, row)| {
             let mut line = row.line.clone();
+            // Resolve animation on every frame, not when cached transcript rows rebuild.
+            if matches!(row.key, Key::Live(_))
+                && view
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.run.as_ref())
+                    .is_some_and(|r| r.active())
+                && row.offset == 0
+                && !row.line.to_string().trim().is_empty()
+            {
+                let label = super::super::render::state(view, &app.working);
+                line = Line::styled(label.to_owned(), muted());
+                app.working.record(Rect::new(
+                    area.x.saturating_add(2),
+                    area.y.saturating_add(y as u16),
+                    area.width.saturating_sub(2).min(app.working.width()),
+                    1,
+                ));
+            }
+
             if matches!(
                 row.key,
                 Key::ActivityHeader(_) | Key::Tool(_) | Key::Sender(_)
