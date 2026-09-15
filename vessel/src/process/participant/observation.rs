@@ -24,7 +24,22 @@ impl Supervisor {
         if assignment.observation.cleanup_observed {
             return Ok(serde_json::to_value(assignment.observation)?);
         }
+        // Recover legacy intent from either retained cancellation command or the
+        // durable revoked grant, even if older polling overwrote the public state.
+        let child_path = store::grant_path(&self.directory, assignment.child_grant_id);
+        let revoked = if child_path.exists() {
+            store::load::<ProcessGrant>(&child_path)?.revoked
+        } else {
+            false
+        };
+        let cancel = cancel
+            || assignment.cancellation_requested
+            || assignment.cancel.is_some()
+            || assignment.observation.state == "cancellation_requested"
+            || revoked;
         if cancel {
+            assignment.cancellation_requested = true;
+            store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
             // Fence future admission before asking a running child to stop. The
             // assignment mutex serializes this with every retry of Assign.
             let child_path = store::grant_path(&self.directory, assignment.child_grant_id);
@@ -42,11 +57,11 @@ impl Supervisor {
         {
             Ok(registration) => registration,
             Err(_) => {
-                if cancel {
-                    assignment.observation.state = "cancelled".into();
-                    assignment.observation.cleanup_observed = true;
-                    store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
-                }
+                // An unavailable registration is not positive evidence of absence
+                // or cleanup, even when cancellation was requested.
+                assignment.observation.state = "cleanup_unknown".into();
+                assignment.observation.cleanup_observed = false;
+                store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
                 return Ok(serde_json::to_value(assignment.observation)?);
             }
         };

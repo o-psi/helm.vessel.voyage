@@ -919,7 +919,7 @@ Participant execution requires an explicit locally accepted binding, bounded
 context disclosure and a current parent grant. The receiver creates a distinct
 subordinate voyage session under its own local policy. The parent remains canonical
 owner and records immutable assignment admission, attributed result and cleanup.
-Unknown admission blocks reassignment. Revocation or membership removal drains or
+Unknown admission blocks reassignment. Exact retries of retained participant assignments only reconcile the original child; they do not repeat startup or submission. Cancellation intent is durable independently of changing observations (including legacy revoked-grant recovery). Registration lookup failure retains unknown cleanup, and the parent journal validates the immutable child UUID on its first and subsequent observations. Revocation or membership removal drains or
 cancels explicitly; late cleanup can be reconciled from an idle parent without
 launching another run.
 

@@ -19,6 +19,9 @@ struct Assignment {
     observation: AssignmentObservation,
     #[serde(default)]
     cancel: Option<RuntimeCommand>,
+    /// Monotonic intent; public observations may change while cleanup is pending.
+    #[serde(default)]
+    cancellation_requested: bool,
 }
 fn root(directory: &Path) -> PathBuf {
     directory.join("participants")
@@ -150,3 +153,6 @@ impl Supervisor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

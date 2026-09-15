@@ -101,7 +101,7 @@ impl Journal {
         ensure!(
             run == observation.parent_run_id.to_string()
                 && participant == observation.participant_vessel_id.to_string()
-                && !observation.child_session_id.is_nil(),
+                && observation.child_session_id == observation.assignment_id,
             "assignment observation attribution mismatch"
         );
         let terminal = matches!(
@@ -241,4 +241,61 @@ pub(super) fn pending(db: &Connection, run: Uuid) -> Result<i64> {
         [run.to_string()],
         |r| r.get(0),
     )?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn first_assignment_observation_requires_canonical_child_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal = Journal::open(root.path().join("journal")).unwrap();
+        let session = Session::new(root.path().into(), "fixture".into());
+        journal.create_session(&session).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        let admission = TurnAdmission {
+            coordination: None,
+            operator_name: None,
+            command_id: Uuid::new_v4(),
+            machine_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            session_id: session.id,
+            expected_revision: 0,
+            expires_at_ms: now + 60000,
+            prompt: "fixture".into(),
+            parts: vec![],
+        };
+        let run = journal.admit_turn(&guard, &admission, now).unwrap().run;
+        journal.mark_running(&guard, run.id).unwrap();
+        journal.initialize_assignments(&guard).unwrap();
+        let participant = Uuid::new_v4();
+        let id = Uuid::new_v4();
+        let request: AssignmentRequest=serde_json::from_value(json!({
+            "assignment_id":id,"binding_id":Uuid::new_v4(),"binding_revision":1,
+            "parent_vessel_id":Uuid::new_v4(),"parent_session_id":session.id,"parent_run_id":run.id,
+            "expires_at_ms":u64::MAX,"task":"fixture","context":[],
+            "policy":{"access":"read_only","inherit_env":[],"github_enabled":false,"timeout_secs":10,"max_output_bytes":1024,"max_subagents":1}
+        })).unwrap();
+        journal
+            .record_assignment(&guard, admission.principal_id, participant, &request)
+            .unwrap();
+        let mut observation = AssignmentObservation {
+            assignment_id: id,
+            participant_vessel_id: participant,
+            parent_session_id: session.id,
+            parent_run_id: run.id,
+            child_session_id: Uuid::new_v4(),
+            child_incarnation: None,
+            run_id: None,
+            state: "accepted".into(),
+            cleanup_observed: false,
+            result: None,
+        };
+        assert!(journal.update_assignment(&guard, &observation).is_err());
+        observation.child_session_id = id;
+        journal.update_assignment(&guard, &observation).unwrap();
+        observation.child_session_id = Uuid::new_v4();
+        assert!(journal.update_assignment(&guard, &observation).is_err());
+    }
 }

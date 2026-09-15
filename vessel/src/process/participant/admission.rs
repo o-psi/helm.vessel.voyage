@@ -30,7 +30,13 @@ impl Supervisor {
                     && prior.source_grant.grant_id == grant.grant_id,
                 "assignment ID payload or authority conflict"
             );
-            prior
+            // A retained reservation may have crossed an uncertain external effect.
+            // Observe its original child; never restart or resubmit on an exact retry.
+            drop(_serial);
+            drop(_assignment);
+            return self
+                .observe_assignment(grant, request.assignment_id, false)
+                .await;
         } else {
             let binding: ParticipantBinding =
                 store::load(&binding_path(&self.directory, request.binding_id))?;
@@ -97,6 +103,7 @@ impl Supervisor {
             let child_grant_id = Uuid::new_v4();
             let assignment = Assignment {
                 cancel: None,
+                cancellation_requested: false,
                 request: request.clone(),
                 principal_id: grant.principal_id,
                 source_grant: GrantBinding {

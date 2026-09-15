@@ -72,6 +72,7 @@ impl Supervisor {
             start_command_id: Uuid::new_v4(),
             observation: observation.clone(),
             cancel: None,
+            cancellation_requested: true,
         };
         // This immutable terminal record excludes every late exact Assign retry.
         store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
