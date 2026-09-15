@@ -1,9 +1,52 @@
 # Filesystem skills (`SKILL.md`)
 
-Helm can discover and import ordinary filesystem skills into Voyage's existing
-format-1 declarative packages. You do not need to write a manifest or file hashes.
-Discovery and import **do not activate instructions**. Activation is a separate
-review of exact installed bytes and is applied on the next run.
+## Automatic executing-host discovery
+
+At the beginning of each run, **Voyage** discovers ordinary filesystem skills on
+its executing host. This works independently of Helm's extension CLI and applies
+to Vessel-supervised local and remote voyages. Vessel supervises the runtime;
+it does not load skill instructions into its own process or copy client files.
+
+Discovery scans immediate child directories of these roots, in order:
+
+1. The Voyage workspace's `.agents/skills`.
+2. The executing user's `~/.agents/skills`.
+
+Canonical roots and identical `SKILL.md` targets are deduplicated. Directory and
+entrypoint symlinks are supported **only when their resolved targets are within
+current policy read roots**. Discovery never grants additional roots; an Omarchy
+link into `/usr/share/omarchy` requires that target to be readable under the
+Voyage's policy. Missing default roots are normal; denied, broken, malformed,
+missing-entrypoint and oversized candidates produce model-visible diagnostics.
+No ancestor traversal, legacy `.codex` scan, recursive grouping-folder search,
+remote URL download, hooks, or script execution is implicit.
+
+The provider gets an ephemeral, JSON-escaped catalog of names, descriptions and
+canonical paths, not full instruction bodies. When relevant, it uses the ordinary
+`read_file` tool to load `SKILL.md` and referenced resources. Each tool read is
+independently subject to current runtime policy. Catalogs are not injected into
+saved conversation history; requested file reads remain normal tool evidence.
+Registries without `read_file` do not receive a catalog. Resource references are
+relative to the canonical entrypoint's directory. Files are live, not pinned:
+changes are observed by later reads and the catalog refreshes on the next run.
+
+Metadata uses the supported frontmatter subset below. Discovery is bounded to
+128 child entries across roots, 64 KiB per entrypoint, 256 KiB aggregate source
+bytes and 32 KiB of catalog JSON. Entry overflow refuses that root rather than
+selecting a nondeterministic prefix. Byte/output exhaustion is explicitly marked;
+it is not evidence of a complete scan. Different files declaring the same name
+are both listed with a duplicate diagnostic, without an automatic winner.
+Skill metadata and loaded instructions cannot override runtime tool inventory,
+permissions, or other higher-priority instructions.
+
+## Optional reviewed, pinned imports
+
+Helm can also import ordinary filesystem skills into Voyage's existing format-1
+declarative packages. This remains separate from automatic filesystem discovery.
+You do not need to write a manifest or file hashes. Discovery and import through
+the CLI **do not activate package instructions**. Package activation is a separate
+review of exact installed bytes and is applied on the next run. Unlike live
+filesystem discovery, the immutable import adapter rejects symlinks.
 
 ## Use
 
@@ -25,7 +68,7 @@ content before passing its digest to `import-skill`. Output strings are JSON
 escaped, not raw terminal instructions. The name in frontmatter is the package ID.
 Scope defaults to `user`; use `--scope project` consistently when wanted.
 
-Discovery searches **only immediate child directories** of these roots, in order:
+CLI discovery searches **only immediate child directories** of these roots, in order:
 
 1. Workspace `.agents/skills` (the workspace selected with Helm's global workspace
    option, otherwise the current directory).
@@ -118,5 +161,6 @@ installed package; use the existing extension disable/remove commands.
 The CLI operates on the machine where it runs. Connecting Helm to a remote Vessel
 does not make these commands import local files into that remote host. Run them
 on the executing host explicitly. No filesystem replication or credential transfer
-is implied. This feature does not implement selective invocation/progressive
-loading (#232) or a separate runtime executor.
+is implied. The import adapter does not provide selective invocation or a separate runtime
+executor. Automatic runtime discovery above provides on-demand reading of live
+filesystem skills; it does not change installed package activation semantics.

@@ -74,7 +74,7 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 
 /// A deliberately strict YAML mapping subset: string scalars and literal/folded
 /// multiline strings. Reject unsupported YAML rather than misinterpret authority.
-fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
+pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
     let mut lines = text.lines();
     ensure!(
         lines.next() == Some("---"),

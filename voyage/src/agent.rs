@@ -1270,13 +1270,18 @@ impl Agent {
             }
         };
         let extension_policy = context.policy.clone();
+        let can_read_skills = self.tools.definitions().iter().any(|tool| tool.name == "read_file");
         let extension_guidance = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
                 self.sink.emit(AgentEvent::Cancelled).await;
                 return Err(AgentError::Cancelled);
             }
-            result = tokio::task::spawn_blocking(move || crate::extensions::guidance(extension_policy.workspace())) => result.unwrap_or_default(),
+            result = tokio::task::spawn_blocking(move || {
+                let mut guidance = crate::extensions::guidance(extension_policy.workspace());
+                guidance.push_str(&crate::filesystem_skills::guidance(&extension_policy, can_read_skills));
+                guidance
+            }) => result.unwrap_or_default(),
         };
         // Initial input is canonical before admitting optional package hooks.
         gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;

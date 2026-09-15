@@ -6,7 +6,7 @@ mod index;
 mod private_files;
 pub(crate) mod runtime;
 pub use private_files::PrivateFile;
-mod skills;
+pub(crate) mod skills;
 mod store;
 
 use anyhow::{Result, ensure};

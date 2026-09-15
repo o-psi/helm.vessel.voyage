@@ -8,6 +8,7 @@ pub mod context;
 pub(crate) mod extension_sdk;
 pub mod extensions;
 pub mod file_publication;
+mod filesystem_skills;
 pub mod github;
 pub mod host_resources;
 pub mod images;
