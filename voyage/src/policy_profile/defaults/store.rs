@@ -651,3 +651,6 @@ impl DefaultsStore {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

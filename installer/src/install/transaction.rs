@@ -126,3 +126,6 @@ fn recover(l: &Layout, j: &mut Journal) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
