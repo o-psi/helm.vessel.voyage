@@ -807,11 +807,17 @@ impl ToolRegistry {
             };
             return Ok(ToolReport::command(text, code, false));
         }
+        // Separate safe bounded evidence capture from model preview budgets.
+        // Secret-bound shell execution returns above and never enters this path.
+        let mut capture_context = dispatch.clone();
+        if name == "shell" && capture_context.artifact_scope.is_some() {
+            capture_context.max_output_bytes = capture_context.max_output_bytes.max(1024 * 1024);
+        }
         let result = self
             .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
-            .execute_report(arguments, &dispatch)
+            .execute_report(arguments, &capture_context)
             .await;
         let mut report = result.map_err(|error| error.redacted(&context.redactor))?;
         if !report.output.is_error
@@ -838,6 +844,19 @@ impl ToolRegistry {
                 voyage_protocol::tool_result::IncompleteReason::Withheld,
                 "Tool output withheld by confidentiality checks; effects were not replayed.",
             );
+        }
+        if name == "shell" && report.output.text_fallback().len() > context.max_output_bytes {
+            evidence::retain(name, &mut report, &capture_context);
+            if report
+                .output
+                .artifacts()
+                .any(|a| a.mime_type == evidence::MIME)
+            {
+                // Canonical evidence is bounded by capture limits; only its request
+                // projection is small. Do not label retained capture as lost output.
+                report.synchronize();
+                return Ok(report);
+            }
         }
         if report.output.text_fallback().len() > context.max_output_bytes {
             report.limit(

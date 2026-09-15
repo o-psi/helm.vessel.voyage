@@ -1,0 +1,55 @@
+{
+  "measurement": "offline model-visible text bytes; not provider tokens or cache savings",
+  "rows": [
+    {
+      "baseline_text_bytes": 241,
+      "exact_recovery": true,
+      "retrieval_calls": 0,
+      "stratum": "short",
+      "treatment_text_bytes": 241
+    },
+    {
+      "baseline_text_bytes": 384328,
+      "exact_recovery": true,
+      "retrieval_calls": 7,
+      "stratum": "coding",
+      "treatment_text_bytes": 47784
+    },
+    {
+      "baseline_text_bytes": 216246,
+      "exact_recovery": true,
+      "retrieval_calls": 6,
+      "stratum": "prose",
+      "treatment_text_bytes": 33120
+    },
+    {
+      "baseline_text_bytes": 320205,
+      "exact_recovery": true,
+      "retrieval_calls": 9,
+      "stratum": "structured",
+      "treatment_text_bytes": 34395
+    },
+    {
+      "baseline_text_bytes": 280287,
+      "exact_recovery": true,
+      "retrieval_calls": 6,
+      "stratum": "recovery",
+      "treatment_text_bytes": 38640
+    },
+    {
+      "baseline_text_bytes": 960410,
+      "exact_recovery": true,
+      "retrieval_calls": 13,
+      "stratum": "long_branch",
+      "treatment_text_bytes": 86910
+    }
+  ],
+  "version": 1,
+  "command": "cargo test -p voyage --locked --lib representative_retrieval_benchmark -- --nocapture",
+  "limitations": [
+    "Deterministic retrieval workflow, not autonomous model behavior",
+    "Identical marker workload at six sizes/replay counts, not a representative statistical task sample",
+    "Counts model-visible text only, excluding tool schemas, tool-call arguments, serialization and cache effects",
+    "Exact recovery and no short-case text regression are tested; provider tokens, latency, cost and quality non-inferiority gates remain unmeasured"
+  ]
+}

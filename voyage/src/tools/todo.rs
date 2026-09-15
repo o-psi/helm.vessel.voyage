@@ -89,6 +89,8 @@ enum Args {
         text: String,
         #[serde(default)]
         author: Option<String>,
+        #[serde(default)]
+        sources: Vec<Source>,
     },
     Reorder {
         id: Uuid,
@@ -101,6 +103,13 @@ enum Args {
         id: Uuid,
     },
     ClearCompleted {},
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Source {
+    id: Uuid,
+    start: usize,
+    end: usize,
 }
 #[derive(Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -258,12 +267,28 @@ impl Tool for TodoTool {
                     .await
                     .map_err(failed)?,
             ),
-            Args::Evidence { id, text, author } => serde_json::to_value(
-                self.store
-                    .append_note(TodoId(id), EntryKind::Evidence, text, author)
-                    .await
-                    .map_err(failed)?,
-            ),
+            Args::Evidence {
+                id,
+                text,
+                author,
+                sources,
+            } => {
+                if sources.len() > 8 {
+                    return Err(ToolError::InvalidArguments(
+                        "at most eight evidence sources".into(),
+                    ));
+                }
+                let links = sources
+                    .into_iter()
+                    .map(|s| super::evidence::link(context, s.id, s.start, s.end))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::to_value(
+                    self.store
+                        .append_linked_note(TodoId(id), EntryKind::Evidence, text, author, links)
+                        .await
+                        .map_err(failed)?,
+                )
+            }
             Args::Reorder { id, order } => serde_json::to_value(
                 self.store
                     .reorder(TodoId(id), order)

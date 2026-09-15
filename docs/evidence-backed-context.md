@@ -2,7 +2,7 @@
 
 Implementation update: [runtime slice and remaining scope](evidence-backed-context-runtime.md). The user subsequently authorized code changes; the implemented subset is documented there. The broader interfaces and evaluation gates below remain a design, not a claim of current support.
 
-Status: research/design deliverable for [issue #282](https://github.com/o-psi/helm.vessel.voyage/issues/282), incorporating its [research review](https://github.com/o-psi/helm.vessel.voyage/issues/282#issuecomment-5685740013). **Proposed interfaces below are not available tools.** This document does not enable result offload, change storage limits, or authorize broad runtime rollout. Agreement on the stages and gates below is required before that work. Source inspection is not an end-to-end runtime test.
+Status: research/design deliverable for [issue #282](https://github.com/o-psi/helm.vessel.voyage/issues/282), incorporating its [research review](https://github.com/o-psi/helm.vessel.voyage/issues/282#issuecomment-5685740013). **The broad proposed interfaces below are not all available tools; consult the runtime document for the implemented `result` and todo evidence-source contracts.** The initial planning document did not authorize implementation. The operator subsequently explicitly requested the runtime work; the linked implementation record describes what shipped. Broad learned-compression and schema-loading rollout remains gated on measured behavioral results. Source inspection is not an end-to-end runtime test.
 
 ## Decision
 

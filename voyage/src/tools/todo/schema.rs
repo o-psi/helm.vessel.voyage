@@ -17,6 +17,7 @@ pub(super) fn input_schema() -> Value {
         "remove":{"type":"array","items":{"type":"string","format":"uuid"},"description":"Dependencies to remove; defaults to []."},
         "text":{"type":"string","pattern":"\\S","description":"Required nonempty entry for note/progress/evidence; not accepted by status."},
         "author":{"type":["string","null"],"description":"Optional attribution for note/progress/evidence; defaults to null."},
+        "sources":{"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"properties":{"id":{"type":"string","format":"uuid"},"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":1}},"required":["id","start","end"]},"description":"Evidence only: verified saved-result ranges. Provenance does not prove a claim true; omitted sources remain operator/model assertions."},
         "include_archived":{"type":"boolean","description":"List archived records too; defaults to false."}
     });
     type ActionFields = (
@@ -94,7 +95,7 @@ pub(super) fn input_schema() -> Value {
             "evidence",
             "Append concrete verification evidence.",
             &["id", "text"],
-            &["author"],
+            &["author", "sources"],
             &["author"],
         ),
         (

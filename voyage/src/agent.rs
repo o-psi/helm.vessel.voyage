@@ -983,7 +983,12 @@ impl Agent {
             if cancel.is_cancelled() {
                 return None;
             }
-            let mut stream = match self.provider.stream(request).await {
+            let (result, bytes) =
+                crate::provider::request_accounting::observe(self.provider.stream(request)).await;
+            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref()) {
+                accounting.request_bytes(permit, bytes).await.ok()?;
+            }
+            let mut stream = match result {
                 Ok(stream) => stream,
                 Err(_) => {
                     self.inference_finish(

@@ -103,6 +103,8 @@ impl Tokens {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Totals {
+    #[serde(default)]
+    pub encoded_request_bytes: Tokens,
     pub retained_attempts: u64,
     pub completed: u64,
     pub failed: u64,
@@ -118,6 +120,8 @@ impl Totals {
             AttemptOutcome::Failed => self.failed += 1,
             AttemptOutcome::Unknown => self.unknown += 1,
         }
+        self.encoded_request_bytes
+            .add(attempt.request_bytes.as_ref().map(|b| b.total))?;
         self.input.add(attempt.input_tokens)?;
         self.output.add(attempt.output_tokens)
     }

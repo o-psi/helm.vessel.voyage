@@ -146,6 +146,18 @@ impl Accounting {
         })
         .await
     }
+    pub async fn request_bytes(
+        &self,
+        permit: &Permit,
+        bytes: Option<voyage_protocol::provider_attempt::RequestBytes>,
+    ) -> Result<()> {
+        if let Some(bytes) = bytes.filter(|_| permit.retained) {
+            let id = permit.id;
+            self.database(move |store| store.request_bytes(id, bytes))
+                .await?;
+        }
+        Ok(())
+    }
     pub async fn report(
         &self,
         permit: &Permit,

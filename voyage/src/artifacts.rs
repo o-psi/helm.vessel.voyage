@@ -122,6 +122,7 @@ impl Store {
             count <= MAX_ARTIFACTS && size <= MAX_DATABASE_BYTES,
             "artifact store capacity exceeded"
         );
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS runtime_evidence(id TEXT PRIMARY KEY REFERENCES artifacts(id));")?;
         tx.commit()?;
         store.check_files()?;
         store.directory.sync_all()?;
@@ -161,7 +162,48 @@ impl Store {
         bail!("private artifact storage unsupported on this platform")
     }
 
+    /// Marker is runtime-owned; tool-supplied MIME metadata cannot create it.
+    pub(crate) fn put_evidence(
+        &mut self,
+        id: Uuid,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<ArtifactReference> {
+        let reference = self.put_runtime(id, name, crate::tools::evidence::MIME, bytes)?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO runtime_evidence(id) VALUES(?1)",
+            [id.to_string()],
+        )?;
+        Ok(reference)
+    }
+    pub(crate) fn get_evidence(&self, id: Uuid) -> Result<(ArtifactReference, Vec<u8>)> {
+        let value = self.get(id)?;
+        ensure!(
+            self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM runtime_evidence WHERE id=?1)",
+                [id.to_string()],
+                |r| r.get::<_, bool>(0)
+            )?,
+            "not runtime evidence"
+        );
+        Ok(value)
+    }
+
     pub fn put(
+        &mut self,
+        id: Uuid,
+        name: &str,
+        mime_type: &str,
+        bytes: &[u8],
+    ) -> Result<ArtifactReference> {
+        ensure!(
+            mime_type != crate::tools::evidence::MIME,
+            "reserved runtime evidence MIME"
+        );
+        self.put_runtime(id, name, mime_type, bytes)
+    }
+
+    pub(crate) fn put_runtime(
         &mut self,
         id: Uuid,
         name: &str,
@@ -262,7 +304,12 @@ impl Store {
         metadata: &ArtifactReference,
     ) -> Result<ArtifactReference> {
         let (_, bytes) = self.load(metadata)?;
-        dest.put(metadata.id, &metadata.name, &metadata.mime_type, &bytes)
+        if metadata.mime_type == crate::tools::evidence::MIME {
+            self.get_evidence(metadata.id)?;
+            dest.put_evidence(metadata.id, &metadata.name, &bytes)
+        } else {
+            dest.put_runtime(metadata.id, &metadata.name, &metadata.mime_type, &bytes)
+        }
     }
 }
 

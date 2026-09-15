@@ -59,8 +59,20 @@ pub enum Priority {
     High,
     Critical,
 }
+/// Provenance for an observation, not proof that the author's claim is true.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvidenceLink {
+    pub session: Uuid,
+    pub artifact: voyage_protocol::tool_result::ArtifactReference,
+    pub start: usize,
+    pub end: usize,
+    pub text_sha256: String,
+    pub capture: String,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TimelineEntry {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<EvidenceLink>,
     pub at: DateTime<Utc>,
     pub author: Option<String>,
     pub text: String,
@@ -207,6 +219,7 @@ impl TodoStore {
                 blockers: Vec::new(),
                 assignees: BTreeSet::new(),
                 notes: vec![TimelineEntry {
+                    sources: Vec::new(),
                     at: now,
                     author: Some("helm.github".into()),
                     text: feedback.source,
@@ -433,11 +446,23 @@ impl TodoStore {
         text: String,
         author: Option<String>,
     ) -> Result<TodoItem> {
+        self.append_linked_note(id, kind, text, author, Vec::new())
+            .await
+    }
+    pub async fn append_linked_note(
+        &self,
+        id: TodoId,
+        kind: EntryKind,
+        text: String,
+        author: Option<String>,
+        sources: Vec<EvidenceLink>,
+    ) -> Result<TodoItem> {
         self.mutate(move |list| {
             anyhow::ensure!(!text.trim().is_empty(), "entry cannot be empty");
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
             let entry = TimelineEntry {
+                sources,
                 at: Utc::now(),
                 author,
                 text,

@@ -241,7 +241,19 @@ impl Agent {
                     &mut record,
                 ))
                 .await;
-            record.retry.request_bytes = request_bytes;
+            record.retry.request_bytes = request_bytes.clone();
+            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref()) {
+                if accounting
+                    .request_bytes(permit, request_bytes)
+                    .await
+                    .is_err()
+                {
+                    record.decision = RetryDecision::LocalFailure;
+                    record.duration_ms = millis(started.elapsed());
+                    self.record_provider_attempt(checkpoint, &record).await?;
+                    return Err(AgentError::Policy("request accounting persistence failed; recorded provider observation retained".into()));
+                }
+            }
             record.duration_ms = millis(started.elapsed());
             match outcome {
                 Ok(response) => {
@@ -339,17 +351,17 @@ impl Agent {
                     }
                 }
                 Err(error) => {
-                    self.inference_finish(
-                        permit.as_ref(),
-                        crate::inference::AttemptOutcome::Failed,
-                    )
-                    .await?;
                     record.decision = match &error {
                         AgentError::Cancelled => RetryDecision::Cancelled,
                         AgentError::Policy(_) => RetryDecision::PolicyRevoked,
                         _ => RetryDecision::LocalFailure,
                     };
-                    self.record_provider_attempt(checkpoint, &record).await?;
+                    let saved = self.record_provider_attempt(checkpoint, &record).await;
+                    let finished = self
+                        .inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
+                        .await;
+                    saved?;
+                    finished?;
                     return Err(error);
                 }
             }

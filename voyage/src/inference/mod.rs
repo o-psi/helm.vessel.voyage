@@ -143,6 +143,8 @@ pub enum AttemptOutcome {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Attempt {
+    #[serde(default)]
+    pub request_bytes: Option<voyage_protocol::provider_attempt::RequestBytes>,
     pub sequence: u64,
     pub id: Uuid,
     pub project: Uuid,
@@ -238,7 +240,7 @@ fn schema(connection: &Connection) -> Result<()> {
         [],
         |row| row.get(0),
     )?;
-    ensure!(version == 1, Failure::Unavailable);
+    ensure!(version == 2, Failure::Unavailable);
     Ok(())
 }
 fn ordinary_capacity(connection: &Connection) -> Result<bool> {
@@ -319,7 +321,7 @@ impl Store {
                 [],
                 |r| r.get(0),
             )?;
-            ensure!(version == 1, "unsupported inference schema");
+            ensure!((1..=2).contains(&version), "unsupported inference schema");
         } else {
             let tables: i64 = connection.query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type='table'",
@@ -337,7 +339,7 @@ impl Store {
                 })
                 .optional()?;
             if let Some(version) = version {
-                ensure!(version == 1, "unsupported inference schema");
+                ensure!((1..=2).contains(&version), "unsupported inference schema");
             } else {
                 let others: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT IN ('inference_schema','sqlite_sequence')", [], |r| r.get(0))?;
                 ensure!(others == 0, "refusing unrelated inference database");
@@ -354,6 +356,13 @@ impl Store {
             }
             tx.commit()?;
         }
+        // Fence older writers before additive accounting records can be rewritten.
+        let migration = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        migration.execute(
+            "UPDATE inference_schema SET version=2 WHERE id=1 AND version=1",
+            [],
+        )?;
+        migration.commit()?;
         let page_size: i64 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
         let pages: i64 = connection.pragma_query_value(None, "page_count", |r| r.get(0))?;
         ensure!(
@@ -587,6 +596,7 @@ impl Store {
             }
         }
         let attempt = Attempt {
+            request_bytes: None,
             sequence: 0,
             id: Uuid::new_v4(),
             project,
@@ -614,6 +624,45 @@ impl Store {
             retained,
             warnings,
         })
+    }
+    pub fn request_bytes(
+        &mut self,
+        id: Uuid,
+        bytes: voyage_protocol::provider_attempt::RequestBytes,
+    ) -> Result<()> {
+        ensure!(
+            bytes
+                .instructions
+                .checked_add(bytes.schemas)
+                .and_then(|v| v.checked_add(bytes.history))
+                .and_then(|v| v.checked_add(bytes.envelope))
+                == Some(bytes.total),
+            "request byte components do not reconcile"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        schema(&tx)?;
+        let raw: Option<String> = tx.query_row("SELECT CASE WHEN length(CAST(record AS BLOB))<=16384 THEN record END FROM attempts WHERE id=?1",[id.to_string()],|r|r.get(0))?;
+        let mut record: Attempt = decode(raw)?;
+        ensure!(
+            record.id == id && record.outcome == AttemptOutcome::Unknown,
+            "attempt is not current"
+        );
+        ensure!(
+            record
+                .request_bytes
+                .as_ref()
+                .is_none_or(|old| old == &bytes),
+            "conflicting request accounting"
+        );
+        record.request_bytes = Some(bytes);
+        tx.execute(
+            "UPDATE attempts SET record=?2 WHERE id=?1",
+            params![id.to_string(), bounded_json(&record)?],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
     pub fn report(&mut self, id: Uuid, input: Option<u64>, output: Option<u64>) -> Result<()> {
         let tx = self
@@ -739,5 +788,57 @@ impl Store {
             Ok(record)
         })
         .collect()
+    }
+}
+
+#[cfg(test)]
+mod request_accounting_tests {
+    use super::*;
+    #[test]
+    fn legacy_migration_and_request_bytes_survive_usage_updates() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("inference.sqlite");
+        let mut store = Store::open(path.clone()).unwrap();
+        let project = store.project(root.path()).unwrap();
+        let session = Uuid::new_v4();
+        store.bind_session(project, session).unwrap();
+        let permit = store
+            .admit(&Attribution {
+                session,
+                run: Uuid::new_v4(),
+                agent: None,
+                provider: "fixture".into(),
+                model: "fixture".into(),
+                purpose: Purpose::Title,
+            })
+            .unwrap();
+        store
+            .connection
+            .execute("UPDATE inference_schema SET version=1", [])
+            .unwrap();
+        assert!(schema(&store.connection).is_err());
+        drop(store);
+        let mut store = Store::open(path.clone()).unwrap();
+        let bytes = voyage_protocol::provider_attempt::RequestBytes {
+            total: 100,
+            instructions: 10,
+            schemas: 20,
+            history: 50,
+            envelope: 20,
+        };
+        store.request_bytes(permit.id, bytes.clone()).unwrap();
+        store.request_bytes(permit.id, bytes.clone()).unwrap();
+        let mut conflicting = bytes.clone();
+        conflicting.total += 1;
+        assert!(store.request_bytes(permit.id, conflicting).is_err());
+        store.report(permit.id, Some(20), Some(3)).unwrap();
+        store
+            .finish_reported(permit.id, AttemptOutcome::Completed)
+            .unwrap();
+        drop(store);
+        let store = Store::open(path).unwrap();
+        let attempts = store.attempts(Scope::Session(session), 0, 10).unwrap();
+        assert_eq!(attempts[0].request_bytes, Some(bytes));
+        assert_eq!(attempts[0].input_tokens, Some(20));
     }
 }
