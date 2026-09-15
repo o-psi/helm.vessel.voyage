@@ -7,7 +7,7 @@ async fn fixture() -> (tempfile::TempDir, ManagedSessionOwner, RunOwner) {
     fixture_authorized(None).await
 }
 
-async fn fixture_authorized(
+pub(super) async fn fixture_authorized(
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
 ) -> (tempfile::TempDir, ManagedSessionOwner, RunOwner) {
     let root = tempfile::tempdir().unwrap();

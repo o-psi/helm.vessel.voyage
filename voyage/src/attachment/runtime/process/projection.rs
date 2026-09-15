@@ -78,6 +78,10 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Host resource cleanup tracking could not be initialized. Check host resource accounting on the executing machine."
             | "Host resource accounting is busy. Retry this turn."
             | "Host execution capacity could not be reserved. Check host resource accounting on the executing machine."
+            | "Runtime startup failed during preparation record read."
+            | "Runtime startup failed during participant configuration."
+            | "Runtime startup failed during terminal registration: database busy."
+            | "Runtime startup failed during terminal registration."
             | "Runtime startup failed during runtime policy."
             | "Runtime startup failed during inference accounting."
             | "Runtime startup failed during subagent initialization."
@@ -338,4 +342,23 @@ pub(super) fn attempt_page(
         "next_offset":next,"has_more":next<total,"attempts":attempts,
         "legacy_runs_without_diagnostics":selected().filter(|s| s.provider_attempts.is_empty()).count()}),
     )
+}
+
+#[cfg(test)]
+#[test]
+fn startup_preparation_labels_are_allowlisted() {
+    for reason in [
+        "Runtime startup failed during preparation record read.",
+        "Runtime startup failed during participant configuration.",
+        "Runtime startup failed during terminal registration: database busy.",
+        "Runtime startup failed during terminal registration.",
+    ] {
+        assert_eq!(failure_summary(Some(reason)), Some(reason));
+    }
+    assert_eq!(
+        failure_summary(Some(
+            "Runtime startup failed during terminal registration: private path."
+        )),
+        None
+    );
 }

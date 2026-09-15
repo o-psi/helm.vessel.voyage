@@ -129,7 +129,7 @@ pub async fn execute_admitted_with_controls(
         }
     };
     let prepared = async {
-        let record = run.record().await?;
+        let record = run.record().await.map_err(|_| preparation::RECORD_READ)?;
         crate::participant::ParticipantTool::configured(
             owner.clone(),
             run_id,
@@ -137,12 +137,13 @@ pub async fn execute_admitted_with_controls(
             config,
         )
         .await
+        .map_err(|_| preparation::PARTICIPANT_CONFIG)
     }
     .await;
     let participant_tool = match prepared {
         Ok(tool) => tool,
-        Err(_) => {
-            let actual = run.fail_before_execution().await?;
+        Err(reason) => {
+            let actual = run.fail_before_execution_reason(reason).await?;
             host_reservation.release_observed()?;
             run.confirm_local_cleanup_observed().await?;
             return Ok(ManagedExecution {
@@ -191,17 +192,14 @@ pub async fn execute_admitted_with_controls(
         }
     };
     if let Some(controls) = &controls {
-        if controls
-            .retain_root(owner, run_id, &resources.agent)
-            .await
-            .is_err()
-        {
+        if let Err(error) = controls.retain_root(owner, run_id, &resources.agent).await {
             return preparation::reject_constructed(
                 owner,
                 run,
                 &resources,
                 controls,
                 &host_reservation,
+                preparation::terminal_registration_failure(&error),
             )
             .await;
         }

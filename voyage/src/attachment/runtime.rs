@@ -25,6 +25,8 @@ mod checkpoint_failure;
 use checkpoint_failure::Operation;
 #[cfg(test)]
 mod checkpoint_tests;
+#[cfg(test)]
+mod session_resource_tests;
 mod steering;
 mod titles;
 pub use steering::{ManagedSteeringHandle, SteeringAuthorization};

@@ -62,7 +62,16 @@ impl ManagedSessionOwner {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
-            journal.session_resource_adopt(guard, id, run, &kind)
+            // These are bookkeeping for already-created resources / observed cleanup.
+            // Cancellation or revoked execution authority must not erase obligations
+            // or prevent recording cleanup. Only SQLite statements wait; no replay.
+            let _wait = super::super::journal::checkpoint_wait::Wait::new(None, None);
+            let result = (|| {
+                journal.begin_checkpoint_wait()?;
+                journal.session_resource_adopt(guard, id, run, &kind)
+            })();
+            let reset = journal.end_checkpoint_wait();
+            result.and(reset)
         })
         .await?
     }
@@ -73,7 +82,16 @@ impl ManagedSessionOwner {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
-            journal.session_resource_closed(guard, id)
+            // These are bookkeeping for already-created resources / observed cleanup.
+            // Cancellation or revoked execution authority must not erase obligations
+            // or prevent recording cleanup. Only SQLite statements wait; no replay.
+            let _wait = super::super::journal::checkpoint_wait::Wait::new(None, None);
+            let result = (|| {
+                journal.begin_checkpoint_wait()?;
+                journal.session_resource_closed(guard, id)
+            })();
+            let reset = journal.end_checkpoint_wait();
+            result.and(reset)
         })
         .await?
     }

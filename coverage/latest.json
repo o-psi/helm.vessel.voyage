@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-15T19:16:50.884217+00:00",
+  "measured_at_utc": "2026-09-15T19:57:48.831655+00:00",
   "source": {
-    "base_commit": "3b11f425dc1c50d747e01ac229bfb1e255673d50",
+    "base_commit": "a278f211a053d541e813b87d8bbfd46889de0042",
     "dirty": true,
-    "fingerprint_sha256": "266a3e6ff5675d03cac485039ec8b647f56d16f9f4809b9f5c9ebc35fd3cd8bc",
-    "fingerprint_scope": "Tracked workspace files before final coverage; includes unrelated staged UI and deleted scripts. Per-file map target/coverage-report/issue282-finish/source-before.json. Rust/manifests unchanged during measurement."
+    "fingerprint_sha256": "8fba362351c640f78dd6b22c238367d1b44563e44fd13962d78d7b24ae2fc46f",
+    "fingerprint_scope": "Tracked workspace files plus untracked voyage/src and docs before final coverage; includes unrelated staged UI and deleted scripts. Per-file map target/coverage-report/issue283-final/source-before.json. Sources unchanged during measurement."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -13,7 +13,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue282-finish/default-report -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=\"$PWD/target\" LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue283-final/default-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -21,34 +21,34 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 524,
+    "passed": 529,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 100693,
-      "covered": 41713,
-      "percent": 41.42591838558788
+      "count": 100743,
+      "covered": 41861,
+      "percent": 41.55226665872567
     },
     "functions": {
-      "count": 9733,
-      "covered": 3829,
-      "percent": 39.340388369464705
+      "count": 9738,
+      "covered": 3847,
+      "percent": 39.50503183405217
     },
     "regions": {
-      "count": 165028,
-      "covered": 66780,
-      "notcovered": 98248,
-      "percent": 40.46586033885159
+      "count": 165105,
+      "covered": 66999,
+      "notcovered": 98106,
+      "percent": 40.579631143817565
     }
   },
   "report_selection": {
-    "method": "Complete current instrumented Cargo executable set; same exclusions as prior measurement; command target/coverage-report/issue282-finish/report-command.json",
+    "method": "All current Cargo workspace executables; historical stale binaries excluded; default tool report retained separately. Same source exclusions as previous measurement. Exact commands in target/coverage-report/issue283-final/result.json.",
     "workspace_executables": 11,
     "logical_source_files": 456,
-    "duplicate_logical_source_paths": 0,
-    "mismatched_functions": 0
+    "duplicate_logical_sources": 0,
+    "mismatched_profile_warnings": 0
   },
   "exclusions": [
     "Ignored live-provider test",
@@ -60,7 +60,7 @@
   ],
   "notes": [
     "Current-artifact export has no diagnostics; mixed default report retained but not published as totals.",
-    "Evidence links/restart, reserved MIME/marker, quota preflight, branch copy, shell tail capture, ledger migration and six fixed-workflow sizing regressions pass. No live-provider savings claim.",
-    "Percentage-point changes versus prior: lines +0.6103, functions +0.5832, regions +0.6692"
+    "Five new startup contention and safe-label tests pass, together with existing workspace tests. No historical-cause certainty or live-provider claim.",
+    "Percentage-point changes versus prior: lines +0.1263, functions +0.1646, regions +0.1138"
   ]
 }
