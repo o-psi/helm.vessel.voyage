@@ -25,7 +25,7 @@ cat "$INVITE_DIR/invitation.json"</flux:text></pre></flux:card>
                 </div>
                 <div class="space-y-3">
                     <flux:heading>4. Paste and connect</flux:heading>
-                    <flux:text>Choose a name like “My computer”, and paste the complete invitation printed in your terminal into “Invitation JSON”. Click <strong>Pair Vessel</strong>, then close this dialog to start or open a voyage.</flux:text>
+                    <flux:text>Choose a name like “My computer”, and paste the complete invitation printed in your terminal into “Invitation”. Click <strong>Connect Vessel</strong>, then close this dialog to start or open a voyage.</flux:text>
                     <flux:text>Use the invitation within 10 minutes. Keep it private—never paste it into a chat.</flux:text>
                 </div>
                 <flux:text>This connection can use all workspaces, voyages and provider accounts on your Vessel, including ones added later. Provider credentials stay on that computer. Only connect a web console you trust.</flux:text>

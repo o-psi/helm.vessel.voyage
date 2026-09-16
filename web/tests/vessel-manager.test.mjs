@@ -28,6 +28,11 @@ for (const populated of [false,true]) test(`actual management Blade renders ${po
     assert.equal(r.status,0,r.stderr+r.stdout);
     const d=new JSDOM(r.stdout).window.document;
     assert.ok(d.querySelector('dialog'));
+    assert.ok(d.querySelector('[data-vessel-list][x-show="!adding"]'));
+    assert.ok(d.querySelector('[data-vessel-add][x-show="adding"][x-cloak]'));
+    assert.equal(d.querySelector('[data-vessel-list] textarea'),null);
+    assert.match(d.querySelector('[data-vessel-add] form').textContent,/Connect Vessel/);
+    assert.doesNotMatch(d.querySelector('[data-vessel-list]').textContent,/64|Saved does not mean online|Pair a Vessel/);
     assert.match(d.querySelector('[x-init]').getAttribute('x-init'),/manage-vessels.*show/);
     assert.match(d.querySelector('[role="status"]').textContent,/Vessel connected/);
     assert.equal(d.querySelectorAll('script').length,0);
@@ -43,5 +48,5 @@ for (const populated of [false,true]) test(`actual management Blade renders ${po
         assert.equal(removal.querySelector('[name="_method"]').value,'DELETE');
         assert.ok(removal.querySelector('[name="confirm_disconnect"][required]'));
         assert.ok(d.querySelector('form[action$="/pending-id/retry"]'));
-    } else assert.match(d.body.textContent,/No Vessels connected yet/);
+    } else assert.match(d.body.textContent,/No Vessels yet/);
 });

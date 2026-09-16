@@ -1,89 +1,88 @@
-<div x-data x-init="@if(request()->boolean('manage-vessels') || session('manage_vessels')) $nextTick(() => $flux.modal('manage-vessels').show()) @endif">
-    <flux:modal name="manage-vessels" class="w-full md:max-w-3xl" aria-labelledby="manage-vessels-title" data-connections-url="{{ route('connections') }}">
-        <div class="space-y-6">
+<div x-data="{ adding: {{ $errors->any() && !$errors->has('confirm_disconnect') && $pairings->isEmpty() ? 'true' : 'false' }} }" x-init="@if(request()->boolean('manage-vessels') || session('manage_vessels')) $nextTick(() => $flux.modal('manage-vessels').show()) @endif">
+    <flux:modal name="manage-vessels" class="w-full md:max-w-xl" aria-labelledby="manage-vessels-title" data-connections-url="{{ route('connections') }}">
+        <div class="space-y-5">
             <div class="pr-8">
-                <flux:heading id="manage-vessels-title" size="xl">Manage Vessels</flux:heading>
-                <flux:text class="mt-2">Connect the computers and servers where your voyages run. Provider credentials stay on each Vessel.</flux:text>
+                <flux:heading id="manage-vessels-title" size="xl"><span x-show="!adding">Your Vessels</span><span x-show="adding" x-cloak>Add a Vessel</span></flux:heading>
+                <flux:text class="mt-1"><span x-show="!adding">The computers you’ve connected to Helm.</span><span x-show="adding" x-cloak>Connect a computer where your voyages will run.</span></flux:text>
             </div>
             @if(session('status')) <flux:callout role="status">{{ session('status') }}</flux:callout> @endif
             @error('connection') <flux:callout variant="danger" role="alert">{{ $message }}</flux:callout> @enderror
-            @if($errors->any()) <flux:callout variant="danger" role="alert">Check the supplied fields. For your security, paste the invitation or credential again; secrets are never echoed back.</flux:callout> @endif
+            @if($errors->any() && !$errors->has('connection')) <flux:callout variant="danger" role="alert">Check the supplied fields and try again. You’ll need to paste your invitation or credential again.</flux:callout> @endif
 
-            <section class="space-y-3" aria-labelledby="connected-vessels-title">
-                <div class="flex items-center justify-between gap-3">
-                    <flux:heading id="connected-vessels-title" size="lg">Saved connections</flux:heading>
-                    <flux:badge>{{ $vessels->count() }} / 64</flux:badge>
+            <div x-show="!adding" class="space-y-5" data-vessel-list>
+                <div class="divide-y divide-zinc-200 dark:divide-zinc-700">
+                    @forelse($vessels as $connection)
+                        <div x-data="{ details: false }" class="py-3 first:pt-0">
+                            <div class="flex items-center gap-3">
+                                <div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-700"><flux:icon.server-stack class="size-5 text-zinc-500" /></div>
+                                <div class="min-w-0 flex-1">
+                                    <flux:heading class="truncate">{{ $connection->name }}</flux:heading>
+                                    <flux:text size="sm" class="truncate">{{ parse_url($connection->endpoint, PHP_URL_HOST) ?: $connection->endpoint }}</flux:text>
+                                </div>
+                                <flux:button variant="ghost" size="sm" icon="ellipsis-horizontal" x-on:click="details = !details" x-bind:aria-expanded="details" aria-label="Options for {{ $connection->name }}" />
+                            </div>
+                            <div x-show="details" x-cloak class="mt-3 space-y-3 rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
+                                <dl class="space-y-2 text-sm">
+                                    <div><dt class="font-medium">Address</dt><dd class="break-all text-zinc-500">{{ $connection->endpoint }}</dd></div>
+                                    <div><dt class="font-medium">Vessel ID</dt><dd class="break-all font-mono text-zinc-500">{{ $connection->vessel_id }}</dd></div>
+                                </dl>
+                                <flux:separator />
+                                <flux:text size="sm">Removing this connection won’t stop your voyages or disconnect other clients.</flux:text>
+                                <form class="space-y-3" method="post" action="{{ route('connections.destroy', $connection->id) }}">
+                                    @csrf @method('DELETE')
+                                    <flux:checkbox name="confirm_disconnect" value="1" required label="Remove from my Vessels" />
+                                    <flux:button type="submit" variant="danger" size="sm">Remove Vessel</flux:button>
+                                </form>
+                            </div>
+                        </div>
+                    @empty
+                        <div class="space-y-2 py-8 text-center">
+                            <flux:icon.server-stack class="mx-auto mb-3 size-8 text-zinc-400" />
+                            <flux:heading>No Vessels yet</flux:heading>
+                            <flux:text>Add your first computer to start a voyage.</flux:text>
+                        </div>
+                    @endforelse
                 </div>
-                <flux:text size="sm">Saved does not mean online. Select a Vessel in the console to connect and check its availability.</flux:text>
-                @forelse($vessels as $connection)
-                    <flux:card class="space-y-3">
-                        <flux:heading>{{ $connection->name }}</flux:heading>
-                        <flux:text class="break-all">{{ $connection->endpoint }}</flux:text>
-                        <details class="space-y-3">
-                            <summary class="cursor-pointer text-sm font-medium">Connection details &amp; disconnect</summary>
-                            <dl class="space-y-2 text-sm">
-                                <div><dt class="font-medium">Vessel ID</dt><dd class="break-all font-mono">{{ $connection->vessel_id }}</dd></div>
-                                <div><dt class="font-medium">Last saved (UTC)</dt><dd>{{ $connection->updated_at?->utc()->format('Y-m-d H:i') ?? 'Unknown' }}</dd></div>
-                            </dl>
-                            <flux:text size="sm">Disconnect removes this web account’s saved connection, not the Vessel or its voyages. Already admitted work continues. Other clients retain access; revoke the grant on the Vessel to remove that access.</flux:text>
-                            <form class="space-y-3" method="post" action="{{ route('connections.destroy', $connection->id) }}">
-                                @csrf @method('DELETE')
-                                <flux:checkbox name="confirm_disconnect" value="1" required label="Remove this saved connection" />
-                                <flux:button type="submit" variant="danger" size="sm">Disconnect {{ $connection->name }}</flux:button>
-                            </form>
-                        </details>
-                    </flux:card>
-                @empty
-                    <flux:callout icon="server-stack">
-                        <flux:callout.heading>No Vessels connected yet</flux:callout.heading>
-                        <flux:callout.text>Pair your first computer below. Need an invitation? Expand the setup guide to get started.</flux:callout.text>
+                @foreach($pairings as $pairing)
+                    <flux:callout icon="clock">
+                        <flux:callout.heading>{{ $pairing->name }} · not confirmed</flux:callout.heading>
+                        <flux:callout.text>We haven’t heard back yet. Check this attempt before adding it again.</flux:callout.text>
+                        <form class="mt-3" method="post" action="{{ route('connections.retry', $pairing->id) }}">
+                            @csrf
+                            <flux:button type="submit" size="sm">Check connection</flux:button>
+                        </form>
                     </flux:callout>
-                @endforelse
-            </section>
+                @endforeach
+                <div class="flex items-center justify-between border-t border-zinc-200 pt-4 dark:border-zinc-700">
+                    <flux:button variant="primary" icon="plus" x-on:click="adding = true; $nextTick(() => $refs.vesselName.focus())">Add Vessel</flux:button>
+                    <flux:modal.close><flux:button variant="ghost">Done</flux:button></flux:modal.close>
+                </div>
+            </div>
 
-            @if($pairings->isNotEmpty())
-                <section class="space-y-3" aria-labelledby="pending-pairings-title">
-                    <flux:heading id="pending-pairings-title" size="lg">Unconfirmed pairings</flux:heading>
-                    @foreach($pairings as $pairing)
-                        <flux:card class="space-y-3">
-                            <flux:heading>{{ $pairing->name }}</flux:heading>
-                            <flux:text>The result is not yet confirmed. Check this original attempt instead of creating a new one; its command identity is retained.</flux:text>
-                            <form method="post" action="{{ route('connections.retry', $pairing->id) }}">
-                                @csrf
-                                <flux:button type="submit" variant="primary" size="sm">Check / retry original pairing</flux:button>
-                            </form>
-                        </flux:card>
-                    @endforeach
-                </section>
-            @endif
-
-            <flux:separator />
-            <section class="space-y-4" aria-labelledby="pair-vessel-title">
-                <flux:heading id="pair-vessel-title" size="lg">Pair a Vessel</flux:heading>
-                <flux:text>Paste a private, unexpired invitation from your Vessel. Pairing an existing Vessel updates its saved name and credential.</flux:text>
-                <details class="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-700">
-                    <summary class="cursor-pointer font-medium">Set up your first Vessel</summary>
-                    @include('connections.setup')
-                </details>
+            <div x-show="adding" x-cloak class="space-y-4" data-vessel-add>
                 <form class="space-y-4" method="post" action="{{ route('connections.pair') }}">
                     @csrf
-                    <flux:input name="name" label="Connection name" placeholder="My computer" maxlength="100" required />
-                    <flux:textarea name="invitation" label="Invitation JSON" rows="4" maxlength="16384" autocomplete="off" spellcheck="false" required />
-                    <flux:text size="sm">Invitations expire after 10 minutes. Keep them private—never paste them into a voyage.</flux:text>
-                    <flux:button type="submit" variant="primary">Pair Vessel</flux:button>
+                    <flux:input x-ref="vesselName" name="name" label="Name" placeholder="e.g. My laptop" maxlength="100" required />
+                    <flux:textarea name="invitation" label="Invitation" placeholder="Paste the invitation from your Vessel" rows="3" maxlength="16384" autocomplete="off" spellcheck="false" required />
+                    <details class="space-y-4 text-sm">
+                        <summary class="cursor-pointer font-medium">Where do I get an invitation?</summary>
+                        @include('connections.setup')
+                    </details>
+                    <div class="flex items-center justify-between pt-2">
+                        <flux:button variant="ghost" icon="arrow-left" x-on:click="adding = false">Back</flux:button>
+                        <flux:button type="submit" variant="primary">Connect Vessel</flux:button>
+                    </div>
                 </form>
-            </section>
-            <details class="space-y-4 rounded-lg border border-zinc-200 p-4 dark:border-zinc-700">
-                <summary class="cursor-pointer font-medium">Advanced: import an existing credential</summary>
-                <flux:text>Already have connection credential JSON? Verify the Vessel identity and save it here. Only import credentials from a computer you trust.</flux:text>
-                <form class="space-y-4" method="post" action="{{ route('connections.store') }}">
-                    @csrf
-                    <flux:input name="name" label="Connection name" maxlength="100" required />
-                    <flux:textarea name="credential" label="Credential JSON" rows="4" maxlength="16384" autocomplete="off" spellcheck="false" required />
-                    <flux:button type="submit" variant="primary">Verify and connect</flux:button>
-                </form>
-            </details>
-            <div class="flex justify-end"><flux:modal.close><flux:button variant="ghost">Done</flux:button></flux:modal.close></div>
+                <details @if($errors->any() && session('vessel_form') === 'import') open @endif class="space-y-4 border-t border-zinc-200 pt-4 text-sm dark:border-zinc-700">
+                    <summary class="cursor-pointer text-zinc-500">Use an existing credential instead</summary>
+                    <form class="space-y-4" method="post" action="{{ route('connections.store') }}">
+                        @csrf
+                        <flux:input name="name" label="Name" maxlength="100" required />
+                        <flux:textarea name="credential" label="Connection credential" rows="3" maxlength="16384" autocomplete="off" spellcheck="false" required />
+                        <flux:button type="submit" variant="primary">Connect Vessel</flux:button>
+                    </form>
+                </details>
+            </div>
         </div>
     </flux:modal>
 </div>

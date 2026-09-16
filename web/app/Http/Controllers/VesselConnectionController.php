@@ -10,6 +10,7 @@ class VesselConnectionController extends Controller {
         return redirect()->route('console', ['manage-vessels' => 1]);
     }
     public function store(Request $request, VesselGateway $gateway) {
+        $request->session()->flash('vessel_form', 'import');
         $request->session()->flash('manage_vessels', true);
         $data = $request->validate(['name' => ['required','string','max:100'], 'credential' => ['required','string','max:16384']]);
         try {
@@ -47,14 +48,14 @@ class VesselConnectionController extends Controller {
             abort_if(VesselPairing::where('tenant_id',$request->user()->tenant_id)->where('status','pending')->count() >= 16,422);
             $pairing = VesselPairing::create(['tenant_id'=>$request->user()->tenant_id,'name'=>$data['name'],'request'=>$payload]);
             return $this->completePair($request,$gateway,$pairing);
-        } catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'Pairing not confirmed. Any saved attempt remains available below; retry that same attempt rather than submit a new invitation.']); }
+        } catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'We couldn’t confirm this connection. If it appears in your list, use “Check connection” before trying a new invitation.']); }
     }
     public function retry(Request $request, VesselGateway $gateway, string $id) {
         $request->session()->flash('manage_vessels', true);
         $pairing = VesselPairing::where('tenant_id',$request->user()->tenant_id)->findOrFail($id);
         abort_unless($pairing->status === 'pending',409);
         try { return $this->completePair($request,$gateway,$pairing); }
-        catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'Pairing is still unconfirmed. Original command identity retained.']); }
+        catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'Still waiting for confirmation. You can check this connection again later.']); }
     }
     private function completePair(Request $request,VesselGateway $gateway,VesselPairing $pairing) {
         $response = $gateway->call('pair',$pairing->request);
