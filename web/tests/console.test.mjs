@@ -36,7 +36,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
@@ -61,9 +61,15 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#composer-service').textContent,'Default tier');
         assert.equal($('#composer-reasoning').textContent,'medium');
         assert.equal(root.querySelector('[data-flux-header]'),null,'no top bar');
-        const tools=$('#messages details');assert.ok(tools);assert.equal(tools.open,false);
-        assert.match(tools.textContent,/2 tool entries.*read_file/);
-        assert.doesNotMatch($('#messages').textContent,/Synthetic tool output/,'collapsed tool bodies render on demand');
+        const group=$('#messages [data-tool-group]');
+        const entries=group.querySelectorAll('[data-tool-entry]');assert.equal(entries.length,2);
+        const tools=entries[1];assert.equal(tools.open,false);
+        assert.match(group.textContent,/2 tool entries/);
+        assert.match(tools.textContent,/read_file · Completed/);
+        assert.equal(tools.querySelector('time').dateTime,'2026-09-16T12:34:00.000Z');
+        group.querySelector('[data-expand-tools]').click();assert.ok([...entries].every(e=>e.open));
+        group.querySelector('[data-expand-tools]').click();assert.ok([...entries].every(e=>!e.open));
+        assert.equal(tools.open,false,'tool details close without discarding content');
         tools.open=true;tools.dispatchEvent(new Event('toggle'));
         assert.match(tools.textContent,/Synthetic tool output/);
         assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);

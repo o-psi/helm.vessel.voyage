@@ -215,10 +215,17 @@ export function mount(root) {
     function renderMessages() {
         const fingerprint = JSON.stringify(messages); if (fingerprint === messageFingerprint) return; messageFingerprint = fingerprint;
         const scroll = $('conversation'), atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
-        const opened = new Set([...$('messages').querySelectorAll('[data-tool-group][open]')].map(node => node.dataset.key));
-        const focused = document.activeElement?.closest('[data-tool-group]')?.dataset.key;
+        const opened = new Set([...$('messages').querySelectorAll('[data-tool-entry][open]')].map(node => node.dataset.key));
+        const focused = document.activeElement?.closest('[data-tool-entry]')?.dataset.key;
         $('messages').replaceChildren();
         let group = null, groupMessages = [];
+        const calls = new Map(messages.flatMap(m => (m.tool_calls || []).map(call => [call.id,call])));
+        const stamp = (element, message) => {
+            const date = message.created_at ? new Date(message.created_at) : null;
+            if (!date || !Number.isFinite(date.getTime())) { element.textContent = 'Time unavailable'; return; }
+            element.dateTime = date.toISOString(); element.title = date.toLocaleString();
+            element.textContent = date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+        };
         const renderOne = (message, container, tool = false) => {
             const node = fluxTemplate(tool ? 'flux-card' : message.role === 'user' ? 'thread-user' : 'thread-assistant');
             if (tool) node.append(fluxTemplate('flux-text', message.role === 'tool' ? 'Tool result' : 'Tool request'));
@@ -233,6 +240,7 @@ export function mount(root) {
                 node.append(details);
             }
             if (message.projection_truncated) node.append(button('Read complete message', () => expand(message.message_index)));
+            if (!tool) { const time = document.createElement('time'); time.className = 'block text-end text-[11px] text-zinc-400'; stamp(time,message); node.append(time); }
             container.append(node);
         };
         for (const message of messages) {
@@ -241,20 +249,40 @@ export function mount(root) {
             if (!tool) { group = null; renderOne(message,$('messages')); continue; }
             if (!group) {
                 group = fluxTemplate('thread-tools'); group.dataset.key = String(message.message_index);
-                groupMessages = []; const members = groupMessages, current = group;
-                let rendered = false;
-                const show = () => { if (!rendered && current.open) { rendered = true; for (const member of members) renderOne(member,current.querySelector('[data-tool-body]'),true); } };
-                current.addEventListener('toggle',show);
-                current.renderTools = show;
+                groupMessages = []; const current = group;
+                current.querySelector('[data-expand-tools]').addEventListener('click', event => {
+                    const entries = [...current.querySelectorAll('[data-tool-entry]')];
+                    const expand = entries.some(entry => !entry.open);
+                    for (const entry of entries) { entry.open = expand; entry.renderTool(); }
+                    event.currentTarget.textContent = expand ? 'Collapse all' : 'Expand all';
+                });
                 $('messages').append(current);
             }
             groupMessages.push(message);
-            const names = [...new Set(groupMessages.flatMap(m => (m.tool_calls || []).map(call => clean(call.function?.name || call.name || 'Tool'))))];
-            group.querySelector('[data-tool-label]').textContent = `${groupMessages.length} tool ${groupMessages.length === 1 ? 'entry' : 'entries'}${names.length ? ` · ${names.join(', ')}` : ''}`;
-        }
-        for (const node of $('messages').querySelectorAll('[data-tool-group]')) {
-            node.open = opened.has(node.dataset.key); node.renderTools();
-            if (focused === node.dataset.key) node.querySelector('summary').focus({preventScroll:true});
+            const entries = message.tool_calls?.length ? message.tool_calls.map(call => ({call, request:true})) : [{call:calls.get(message.tool_call_id),request:false}];
+            for (const [index,item] of entries.entries()) {
+                const entry = fluxTemplate('thread-tool-entry'); entry.dataset.key = `${message.message_index}:${index}`;
+                const name = clean(item.call?.function?.name || item.call?.name || message.name || 'Tool');
+                const status = item.request ? 'Request' : message.tool_success === false ? 'Failed' : message.tool_success === true ? 'Completed' : 'Result';
+                entry.querySelector('[data-entry-label]').textContent = `${name} · ${status}${message.interrupted_attempt ? ' · interrupted' : ''}`;
+                stamp(entry.querySelector('[data-entry-time]'),message);
+                let rendered = false;
+                entry.renderTool = () => {
+                    if (rendered || !entry.open) return; rendered = true;
+                    const body = entry.querySelector('[data-entry-body]');
+                    if (item.request) {
+                        const code = fluxTemplate('flux-code');
+                        code.querySelector('[data-code]').textContent = clean(JSON.stringify(item.call.function?.arguments ?? item.call.arguments ?? {},null,2)); body.append(code);
+                        if (message.projection_truncated) body.append(button('Read complete message',() => expand(message.message_index)));
+                    } else renderOne(message,body,true);
+                };
+                entry.addEventListener('toggle',entry.renderTool);
+                entry.open = opened.has(entry.dataset.key); entry.renderTool();
+                group.querySelector('[data-tool-body]').append(entry);
+                if (focused === entry.dataset.key) entry.querySelector('summary').focus({preventScroll:true});
+            }
+            const count = group.querySelectorAll('[data-tool-entry]').length;
+            group.querySelector('[data-tool-label]').textContent = `${count} tool ${count === 1 ? 'entry' : 'entries'}`;
         }
         $('earlier').hidden = earliest <= 0;
         if (atBottom) scroll.scrollTop = scroll.scrollHeight;
