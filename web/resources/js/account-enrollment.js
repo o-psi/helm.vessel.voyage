@@ -118,19 +118,27 @@ export function accountEnrollment(root, {context, refreshed}) {
             const c=context(), n=generation;
             if(!c?.connection?.client || !c.workspace){render('unavailable');message('Choose a connected Vessel and workspace first.');return;}
             const a=active={context:c,client:c.connection.client};
+            let phase = 'catalogue';
             try {
                 const catalogue=await exchange(a,'accounts',{workspace:c.workspace,transport:'chatgpt_oauth'});
                 if(!current(a,n))return;
+                phase = 'picker';
                 for(const p of catalogue.connections || []) if(p.transports?.includes('chatgpt_oauth')) {
                     const option=root.ownerDocument.createElement('option');option.value=p.id;option.textContent=p.label;$('provider').append(option);
                 }
                 $('provider-field').hidden = $('provider').options.length < 2;
+                phase = 'storage';
                 const retained = saved(c);
+                phase = 'picker';
                 render(retained ? 'recovery' : $('provider').options.length ? 'setup' : 'unavailable');
                 if (!retained && !$('provider').options.length) { message('No ChatGPT connection is available on this Vessel. Ask its owner to enable ChatGPT sign-in.'); return; }
                 if (!retained) $('label').focus();
                 message(retained ? 'A prior sign-in is retained. Use Check sign-in; starting again is blocked.' : 'Next, you’ll sign in securely on ChatGPT. No password is entered here.');
-            } catch {render('unavailable');message('Connections unavailable. Reconnect and reopen account sign-in.');}
+            } catch {
+                if (!current(a,n)) return;
+                render('unavailable');
+                message(phase === 'catalogue' ? 'The Vessel could not confirm the provider-account list. Check that this connection permits account enrollment for the selected workspace.' : phase === 'storage' ? 'The browser could not read the saved sign-in record. Do not clear site storage or start again: a previous sign-in may still be pending.' : 'The account list loaded, but the sign-in picker could not display it. Reload Helm to load the latest interface.');
+            }
         },
     };
 }

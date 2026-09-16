@@ -1,11 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
+import {spawnSync} from 'node:child_process';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {accountEnrollment} from '../resources/js/account-enrollment.js';
 
 const tick = () => new Promise(resolve=>setTimeout(resolve,0));
 function fixture() {
-    const dom=new JSDOM(`<main data-tenant-id="t"><section id="enrollment-panel" hidden><h2 id="enrollment-title"></h2><div id="enrollment-setup"><div id="enrollment-provider-field"></div></div><select id="enrollment-provider"></select><input id="enrollment-alias" value="personal"><input id="enrollment-label" value="Personal"><div id="enrollment-private"><a id="enrollment-link"></a><p id="enrollment-code"></p></div><p id="enrollment-status"></p>${['start','check','cancel','close'].map(id=>`<button id="enrollment-${id}"></button>`).join('')}</section></main>`,{url:'https://helm.test'});
+    const compiled=mkdtempSync(join(tmpdir(),'helm-enrollment-views-'));
+    let rendered;
+    try {
+        rendered=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); if(realpath(config('view.compiled')) !== realpath(getenv('VIEW_COMPILED_PATH'))) exit(1); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('console.account-enrollment')->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
+    } finally {rmSync(compiled,{recursive:true,force:true});}
+    assert.equal(rendered.status,0,rendered.stderr);
+    const dom=new JSDOM(`<main data-tenant-id="t">${rendered.stdout}</main>`,{url:'https://helm.test'});
+    dom.window.document.querySelector('#enrollment-label').value='Personal';
     globalThis.localStorage=dom.window.localStorage;
     Object.defineProperty(dom.window.navigator,'locks',{value:{request:async (_key,_options,fn)=>fn({})}});
     const root=dom.window.document.querySelector('main'), calls=[], refreshed=[];
@@ -81,4 +92,10 @@ test('closing the sign-in popover hides its private contents',async()=>{
     let closed=0;host.hidePopover=()=>closed++;
     await x.ui.open();x.$('start').click();await tick();x.$('close').click();
     assert.equal(closed,1);assert.equal(x.$('code').textContent,'');assert.equal(x.$('panel').hidden,true);
+});
+test('catalogue refusal is distinguished from browser storage failure',async()=>{
+    const x=fixture();x.connection.client.exchange=async()=>({protocol:1,outcome_unknown:false,error:'private diagnostic'});
+    await x.ui.open();assert.match(x.$('status').textContent,/Vessel could not confirm/);assert.doesNotMatch(x.$('status').textContent,/private diagnostic/);
+    const y=fixture();localStorage.setItem('helm-web:enrollment:t:c:v:/work','not-json');
+    await y.ui.open();assert.match(y.$('status').textContent,/saved sign-in record/);
 });
