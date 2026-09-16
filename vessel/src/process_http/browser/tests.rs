@@ -839,3 +839,82 @@ mod transport {
         assert_eq!(status, 400, "native headers are not browser authentication");
     }
 }
+
+#[test]
+fn sidebar_allowlist_admits_only_public_lifecycle_operations() {
+    let id = Uuid::new_v4();
+    for command in [
+        VoyageCommand::Rename {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            name: "renamed".into(),
+        },
+        VoyageCommand::Archive {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            archived: true,
+        },
+        VoyageCommand::Archive {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            archived: false,
+        },
+        VoyageCommand::Delete {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            confirm_session_id: id,
+        },
+        VoyageCommand::Clear {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            confirm_session_id: id,
+        },
+        VoyageCommand::Compact {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            retain: 8,
+            preserve_canonical: true,
+        },
+    ] {
+        assert!(allowed(&VesselCommand::Voyage(VoyageRequest {
+            session_id: id,
+            incarnation: Some(id),
+            command
+        })));
+    }
+    assert!(allowed(&VesselCommand::Branch {
+        command_id: id,
+        session_id: id,
+        incarnation: id,
+        expected_revision: 7,
+        expires_at_ms: 99,
+        branch_id: Uuid::new_v4(),
+        name: None,
+        through_message: None,
+    }));
+    assert!(allowed(&VesselCommand::Restart {
+        command_id: id,
+        session_id: id,
+        incarnation: id
+    }));
+    assert!(!allowed(&VesselCommand::Stop {
+        session_id: id,
+        incarnation: id
+    }));
+    // Runtime resolution can reserve an ID. It is deliberately not a read-only
+    // receipt and must not be introduced accidentally with sidebar mutations.
+    assert!(!allowed(&VesselCommand::Voyage(VoyageRequest {
+        session_id: id,
+        incarnation: Some(id),
+        command: VoyageCommand::Resolve {
+            command_id: id,
+            original: None
+        },
+    })));
+}

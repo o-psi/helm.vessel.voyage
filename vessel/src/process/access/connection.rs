@@ -199,6 +199,38 @@ impl Supervisor {
                     self.connection_session(&grant, session_id, &registration.workspace)?;
                 crate::process::api::reply(self.stop(session_id, incarnation, Some(binding)).await?)
             }
+            command @ VesselCommand::Branch { .. } => {
+                // Branch creates a new owner from private saved provenance. Do not
+                // expose it to workspace/session grants or broaden their rights.
+                ensure!(
+                    grant.full_access,
+                    "branch requires local account-owner authority"
+                );
+                has(ProcessRight::Create)?;
+                has(ProcessRight::History)?;
+                has(ProcessRight::Lifecycle)?;
+                let VesselCommand::Branch {
+                    command_id,
+                    session_id,
+                    branch_id,
+                    ..
+                } = &command
+                else {
+                    unreachable!()
+                };
+                ensure!(
+                    !branch_id.is_nil() && branch_id != session_id,
+                    "invalid branch identity"
+                );
+                let registration = self.registration(*session_id).await?;
+                ordinary(&registration)?;
+                self.connection_session(&grant, *session_id, &registration.workspace)?;
+                self.connection_session(&grant, *branch_id, &registration.workspace)?;
+                self.bind_connection_operation(&grant, *command_id, &operation)
+                    .await?;
+                store::current_connection(&self.directory, &grant)?;
+                self.branch(command).await
+            }
             VesselCommand::Restart {
                 command_id,
                 session_id,

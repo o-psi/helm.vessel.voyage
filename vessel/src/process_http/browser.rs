@@ -209,6 +209,8 @@ fn allowed(command: &VesselCommand) -> bool {
         VesselCommand::Capabilities
         | VesselCommand::Catalogue
         | VesselCommand::Inspect { .. }
+        | VesselCommand::Branch { .. }
+        | VesselCommand::Restart { .. }
         | VesselCommand::Accounts {
             transport: None, ..
         }
@@ -232,6 +234,11 @@ fn allowed(command: &VesselCommand) -> bool {
             | VoyageCommand::Cancel { .. }
             | VoyageCommand::Respond { .. }
             | VoyageCommand::SetAccess { .. }
+            | VoyageCommand::Rename { .. }
+            | VoyageCommand::Archive { .. }
+            | VoyageCommand::Delete { .. }
+            | VoyageCommand::Clear { .. }
+            | VoyageCommand::Compact { .. }
             | VoyageCommand::SetAccountInference { .. } => true,
             VoyageCommand::History { limit, .. } => (1..=128).contains(limit),
             VoyageCommand::MessageChunk { limit, .. }

@@ -406,3 +406,153 @@ async fn owner_connection_discovers_dynamic_workspaces_and_never_upgrades_scoped
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn sidebar_branch_requires_full_owner_and_each_existing_right() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut g = f.connection();
+    g.token_hash = store::hash(TOKEN);
+    g.rights = vec![
+        ProcessRight::Create,
+        ProcessRight::History,
+        ProcessRight::Lifecycle,
+    ];
+    let command = VesselCommand::Branch {
+        command_id: Uuid::new_v4(),
+        session_id: Uuid::new_v4(),
+        incarnation: Uuid::new_v4(),
+        expected_revision: 0,
+        expires_at_ms: store::now().unwrap() + 60_000,
+        branch_id: Uuid::new_v4(),
+        name: None,
+        through_message: None,
+    };
+    f.save_connection(&g);
+    assert!(
+        s.connected(g.grant_id, TOKEN, command.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("branch requires local account-owner authority")
+    );
+    g.full_access = true;
+    for missing in [
+        ProcessRight::Create,
+        ProcessRight::History,
+        ProcessRight::Lifecycle,
+    ] {
+        g.rights = vec![
+            ProcessRight::Create,
+            ProcessRight::History,
+            ProcessRight::Lifecycle,
+        ];
+        g.rights.retain(|right| *right != missing);
+        f.save_connection(&g);
+        assert!(
+            s.connected(g.grant_id, TOKEN, command.clone())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("workspace permission denied")
+        );
+    }
+    g.rights = vec![
+        ProcessRight::Create,
+        ProcessRight::History,
+        ProcessRight::Lifecycle,
+    ];
+    f.save_connection(&g);
+    let r = f.registration();
+    database::save(&f.0, &r).await.unwrap();
+    let mut stale = command;
+    if let VesselCommand::Branch { session_id, .. } = &mut stale {
+        *session_id = r.session_id;
+    }
+    // Full-owner routing reaches the existing exact-incarnation branch guard.
+    assert!(
+        s.connected(g.grant_id, TOKEN, stale)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("stale source incarnation")
+    );
+}
+
+#[tokio::test]
+async fn sidebar_restart_preserves_lifecycle_right_and_workspace_boundary() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut g = f.connection();
+    g.token_hash = store::hash(TOKEN);
+    g.rights = vec![ProcessRight::Observe];
+    f.save_connection(&g);
+    let mut r = f.registration();
+    r.workspace = f.0.join("outside");
+    registry::private_directory(&r.workspace).unwrap();
+    database::save(&f.0, &r).await.unwrap();
+    let command = VesselCommand::Restart {
+        command_id: Uuid::new_v4(),
+        session_id: r.session_id,
+        incarnation: r.incarnation,
+    };
+    assert!(
+        s.connected(g.grant_id, TOKEN, command.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("workspace permission denied")
+    );
+    g.rights.push(ProcessRight::Lifecycle);
+    f.save_connection(&g);
+    assert!(
+        s.connected(g.grant_id, TOKEN, command)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("workspace scope denied")
+    );
+}
+
+#[test]
+fn sidebar_voyage_mutations_keep_existing_lifecycle_authorization() {
+    let id = Uuid::new_v4();
+    for command in [
+        VoyageCommand::Rename {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            name: "name".into(),
+        },
+        VoyageCommand::Archive {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            archived: false,
+        },
+        VoyageCommand::Delete {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            confirm_session_id: id,
+        },
+        VoyageCommand::Clear {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            confirm_session_id: id,
+        },
+        VoyageCommand::Compact {
+            command_id: id,
+            expected_revision: 7,
+            expires_at_ms: 99,
+            retain: 8,
+            preserve_canonical: true,
+        },
+    ] {
+        assert_eq!(
+            crate::process::api::required_right(&command),
+            Some(ProcessRight::Lifecycle)
+        );
+    }
+}
