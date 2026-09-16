@@ -33,3 +33,18 @@ not prove the new child was started. Pending outcomes remain explicit.
 This UI does not add terminal execution, arbitrary tools, provider credential
 access or a general browser executor. The direct-browser allowlist exposes only
 the existing typed operations. Server-side grant checks remain authoritative.
+
+## Verification
+
+Focused rendered Flux DOM checks cover all actions, clicked-voyage identity,
+revision/selection races, typed confirmations, stopped/live archived restore,
+branch boundaries and lost-reply reconciliation without replay. Integrated Web
+checks: 49 passed; gateway compatibility: 23 passed. Focused backend sidebar tests:
+four passed. Cargo check, Clippy (warnings denied), formatting and Vite build pass.
+Workspace coverage after the final Rust edits: 1,677 passed, zero failed, one
+ignored; lines 77,098/101,783 (75.7474%), up from 75.4670%. This measurement also
+completes verification of the pending #313 draft-persistence removal; scope was
+not narrowed to improve coverage. Current 16 executable objects include all
+workspace packages, with source identity checked. See `coverage/latest.json`.
+Browser screenshot/mobile interaction and installed-backend rollout need separate
+evidence; fixture tests do not establish deployed authorization behavior.
