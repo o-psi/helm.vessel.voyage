@@ -1,9 +1,9 @@
 {
-  "source_commit": "5a772b17eeee43fc867923530071523bfafeb062",
+  "source_commit": "e8ab835f0fdd55f187ac149fa9b1b8662ff6d883",
   "dirty": false,
   "source_fingerprint_sha256": "e84a32c8709d237b10451a1c070c6426760efddf551a4b52bfaa7b6bf44f09bd",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes",
-  "measured_at_utc": "2026-09-16T05:00:44.239903+00:00",
+  "measured_at_utc": "2026-09-16T05:06:37.010582+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
@@ -32,8 +32,8 @@
     },
     "lines": {
       "count": 101369,
-      "covered": 76123,
-      "percent": 75.09495013268356
+      "covered": 76121,
+      "percent": 75.09297714291351
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 165959,
-      "covered": 118950,
-      "notcovered": 47009,
-      "percent": 71.6743292017908
+      "covered": 118947,
+      "notcovered": 47012,
+      "percent": 71.6725215264011
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/release-v1-publish -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/release-v1-hosted -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
