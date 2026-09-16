@@ -10,7 +10,7 @@
     @livewireStyles
     @fluxAppearance
 </head>
-<body class="helm-console">
+<body class="min-h-dvh bg-white font-sans text-zinc-800 antialiased dark:bg-zinc-800 dark:text-zinc-100">
     {{ $slot }}
     @fluxScripts
 </body>

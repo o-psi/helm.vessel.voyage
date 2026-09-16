@@ -31,8 +31,8 @@
     @livewireStyles
     @fluxAppearance
 </head>
-<body>
-    <a href="#main" class="skip-link">Skip to content</a>
+<body class="min-h-screen antialiased bg-white dark:bg-zinc-800">
+    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-white focus:p-3 focus:text-zinc-900 focus:shadow-lg">Skip to content</a>
     {{ $slot }}
     @fluxScripts
 </body>

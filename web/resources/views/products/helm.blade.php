@@ -4,34 +4,73 @@
     :share-image="false"
 >
     <x-site-header />
-
-    <main id="main">
-        <section class="product-hero shell">
-            <div class="product-breadcrumb"><a href="{{ route('home') }}">Product suite</a><span>/</span> Helm</div>
-            <div class="product-hero-grid">
-                <div><div class="eyebrow"><span class="status-dot"></span> Helm / Command center</div><h1>Stay in control<br>without standing still.</h1></div>
-                <div class="product-intro"><p>Helm gives you one place to start work, watch it move, and step in when an agent needs you. Close the interface and the job keeps going.</p><div class="hero-actions"><flux:button href="#benefits" variant="primary" class="primary-button">Why Helm <span aria-hidden="true">↓</span></flux:button><a href="{{ route('products.vessel') }}" class="text-link">Next: Vessel <span aria-hidden="true">↗</span></a></div></div>
+    <main id="main" tabindex="-1" class="mx-auto max-w-7xl px-6 lg:px-8">
+        <section class="space-y-8 py-12 sm:py-20">
+            <div class="flex items-center gap-3 text-sm text-zinc-500 dark:text-zinc-400">
+                <flux:link href="{{ route('home') }}">Product suite</flux:link>
+                <span>/</span> Helm
+            </div>
+            <div class="grid gap-8 lg:grid-cols-2 lg:items-end">
+                <div class="space-y-4">
+                    <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">Helm / Command center</flux:text>
+                    <flux:heading level="1" size="xl" class="text-4xl! leading-tight! tracking-tight sm:text-5xl!">Stay in control without standing still.</flux:heading>
+                </div>
+                <div class="space-y-6">
+                    <flux:text class="text-base leading-relaxed">Helm gives you one place to start work, watch it move, and step in when an agent needs you. Close the interface and the job keeps going.</flux:text>
+                    <div class="flex flex-wrap gap-3">
+                        <flux:button href="#benefits" variant="primary">Why Helm <span aria-hidden="true">↓</span></flux:button>
+                        <flux:link href="{{ route('products.vessel') }}">Next: Vessel <span aria-hidden="true">↗</span></flux:link>
+                    </div>
+                </div>
             </div>
         </section>
-
-        <div class="product-band"><div class="shell"><strong>One view.</strong><span>Every voyage.</span><span>Every machine.</span><span>No artificial connection cap.</span></div></div>
-
-        <section id="benefits" class="shell product-section">
-            <div class="section-heading"><div class="eyebrow">WHY HELM</div><h2>See the work.<br>Steer the work.</h2><p>Give every agent room to run without losing the ability to jump in at the right moment.</p></div>
-            <div class="benefit-grid">
-                <article><span>01</span><h3>Run more at once</h3><p>Move between independent voyages instead of waiting for one terminal session to finish.</p></article>
-                <article><span>02</span><h3>Come back anytime</h3><p>Disconnect without cancelling accepted work. Reopen Helm and return to the same session.</p></article>
-                <article><span>03</span><h3>Stay close to decisions</h3><p>See progress, answer approvals, and redirect work from one focused interface.</p></article>
+        <flux:card variant="soft">
+            <div class="flex flex-wrap gap-x-8 gap-y-3 text-sm text-zinc-700 dark:text-zinc-300"><strong>One view.</strong>
+                <span>Every voyage.</span>
+                <span>Every machine.</span>
+                <span>No artificial connection cap.</span>
+            </div>
+        </flux:card>
+        <section id="benefits" class="space-y-8 py-12 sm:py-16">
+            <div class="max-w-2xl space-y-4">
+                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">WHY HELM</flux:text>
+                <flux:heading level="2" size="xl">See the work. Steer the work.</flux:heading>
+                <flux:text class="text-base leading-relaxed">Give every agent room to run without losing the ability to jump in at the right moment.</flux:text>
+            </div>
+            <div class="grid gap-8 md:grid-cols-3">
+                <article class="space-y-3">
+                    <span class="text-sm text-emerald-700 dark:text-emerald-400">01</span>
+                    <flux:heading level="3" size="xl">Run more at once</flux:heading>
+                    <flux:text class="text-base leading-relaxed">Move between independent voyages instead of waiting for one terminal session to finish.</flux:text>
+                </article>
+                <article class="space-y-3">
+                    <span class="text-sm text-emerald-700 dark:text-emerald-400">02</span>
+                    <flux:heading level="3" size="xl">Come back anytime</flux:heading>
+                    <flux:text class="text-base leading-relaxed">Disconnect without cancelling accepted work. Reopen Helm and return to the same session.</flux:text>
+                </article>
+                <article class="space-y-3">
+                    <span class="text-sm text-emerald-700 dark:text-emerald-400">03</span>
+                    <flux:heading level="3" size="xl">Stay close to decisions</flux:heading>
+                    <flux:text class="text-base leading-relaxed">See progress, answer approvals, and redirect work from one focused interface.</flux:text>
+                </article>
             </div>
         </section>
-
-        <section class="product-proof shell">
-            <div><div class="eyebrow">AVAILABLE FIRST</div><h2>Fast by keyboard.</h2><p>The Linux CLI and TUI are the first Helm experience, built for people who live in the terminal.</p></div>
-            <div><div class="eyebrow">COMING NEXT / PLANNED</div><h2>Ready when you leave it.</h2><p>Planned web and mobile interfaces will let you check progress and steer the same voyages away from your desk.</p></div>
+        <section class="grid gap-8 border-t border-zinc-200 py-12 md:grid-cols-2 dark:border-zinc-700">
+            <div class="space-y-4">
+                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">AVAILABLE FIRST</flux:text>
+                <flux:heading level="2" size="xl">Fast by keyboard.</flux:heading>
+                <flux:text class="text-base leading-relaxed">The Linux CLI and TUI are the first Helm experience, built for people who live in the terminal.</flux:text>
+            </div>
+            <div class="space-y-4">
+                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">COMING NEXT / PLANNED</flux:text>
+                <flux:heading level="2" size="xl">Ready when you leave it.</flux:heading>
+                <flux:text class="text-base leading-relaxed">Planned web and mobile interfaces will let you check progress and steer the same voyages away from your desk.</flux:text>
+            </div>
         </section>
-
-        <section class="next-product shell"><span>Give Helm more machines to command.</span><a href="{{ route('products.vessel') }}">Meet Vessel <span aria-hidden="true">↗</span></a></section>
+        <section class="flex flex-wrap items-center justify-between gap-4 border-t border-zinc-200 py-8 dark:border-zinc-700">
+            <span>Give Helm more machines to command.</span>
+            <flux:link href="{{ route('products.vessel') }}">Meet Vessel <span aria-hidden="true">↗</span></flux:link>
+        </section>
     </main>
-
     <x-site-footer />
 </x-layouts.public>

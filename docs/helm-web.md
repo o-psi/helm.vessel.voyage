@@ -20,6 +20,23 @@ is trusted to exercise those grants on behalf of their tenant. It does not run
 Voyage agents or provision compute. Database tenant IDs are authorization scope,
 not an OS execution sandbox.
 
+## Flux presentation
+
+All pages use the installed free Flux v2 components: public header/navigation,
+product headings/cards/actions, login, connection forms and console controls.
+`resources/css/app.css` contains Tailwind/Flux imports, the documented class-based
+dark variant and shared accent variables—not global element overrides or a
+parallel component stylesheet. Layout spacing uses Tailwind utilities. System,
+light and dark appearance follow Flux's appearance state.
+
+The socket-driven conversation remains JavaScript-owned so Livewire does not
+replace streaming content. Its interactive buttons, navigation items, question
+inputs, cards and callouts are cloned from server-rendered Flux Blade templates;
+JavaScript does not hand-build a second button/input system. Semantic Markdown,
+code, tool JSON and disclosure content remain ordinary sanitized content, not
+new UI components. The DOM journey test renders the actual Flux console view
+before exercising the socket controls.
+
 ## Routes and interaction
 
 - `/`: signed-in console; signed-out requests redirect to `/landing`.

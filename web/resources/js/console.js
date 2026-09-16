@@ -7,8 +7,15 @@ export function markdown(text) {
     // No remote images, raw HTML controls, embedded content or executable links.
     return DOMPurify.sanitize(marked.parse(clean(text)), {ALLOWED_TAGS: ['p','br','strong','em','del','code','pre','blockquote','ul','ol','li','h1','h2','h3','h4','hr','a','table','thead','tbody','tr','th','td'], ALLOWED_ATTR: ['href','title'], ALLOW_DATA_ATTR: false});
 }
-function element(tag, text, className) { const node = document.createElement(tag); if (text != null) node.textContent = clean(text); if (className) node.className = className; return node; }
-function button(label, action) { const node = element('button', label); node.type = 'button'; node.addEventListener('click', action); return node; }
+function element(tag, text, className) { const node = document.createElement(tag); if (tag === 'pre') node.className = 'whitespace-pre-wrap break-words text-xs leading-6'; if (text != null) node.textContent = clean(text); if (className) node.className = className; return node; }
+function fluxTemplate(id, label) {
+    const template = document.getElementById(id);
+    if (!template) throw new Error(`Missing Flux template: ${id}`);
+    const node = template.content.firstElementChild.cloneNode(true);
+    if (label != null) node.querySelector('[data-label]').textContent = clean(label);
+    return node;
+}
+function button(label, action) { const node = fluxTemplate('flux-action', label); node.type = 'button'; node.addEventListener('click', action); return node; }
 
 export function mount(root) {
     const $ = id => root.querySelector(`#${id}`);
@@ -26,7 +33,7 @@ export function mount(root) {
             $('vessel').disabled = busy; $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
             $('send').textContent = running() ? 'Steer run' : 'Send';
             $('pending').replaceChildren();
-            for (const entry of pending()) $('pending').append(element('p', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));
+            for (const entry of pending()) $('pending').append(fluxTemplate('flux-text', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));
             for (const node of $('decisions').querySelectorAll('button,input')) node.disabled = !enabled || Number(node.closest('.decision').dataset.expires) <= Date.now();
         } catch { stale = true; $('send').disabled = true; $('cancel').disabled = true; notice('Browser command journal unavailable. Sending is disabled to prevent uncertain duplicate work.'); }
     }
@@ -68,7 +75,7 @@ export function mount(root) {
     function renderVoyages() {
         const query = $('voyage-search').value.toLowerCase(); $('voyages').replaceChildren();
         for (const item of voyages.filter(v => `${v.name || ''} ${v.session_id}`.toLowerCase().includes(query))) {
-            const node = button(`${item.name || item.session_id} · ${item.state}`, () => select(item.session_id)); node.setAttribute('aria-current', String(item.session_id === selected)); $('voyages').append(node);
+            const node = fluxTemplate('flux-voyage', `${item.name || item.session_id} · ${item.state}`); node.addEventListener('click', () => select(item.session_id)); node.toggleAttribute('data-current', item.session_id === selected); node.setAttribute('aria-current', String(item.session_id === selected)); $('voyages').append(node);
         }
     }
     function select(id) {
@@ -111,9 +118,9 @@ export function mount(root) {
         $('messages').replaceChildren();
         for (const message of messages) {
             if (message.role === 'system') continue;
-            const node = element('article', null, `message ${message.role === 'user' ? 'user' : ''}`);
-            node.append(element('h2', `${message.role || 'message'}${message.interrupted_attempt ? ' · interrupted attempt' : ''}`));
-            const body = element('div'); body.innerHTML = markdown(message.content || '');
+            const node = fluxTemplate('flux-card');
+            node.append(fluxTemplate('flux-heading', `${message.role || 'message'}${message.interrupted_attempt ? ' · interrupted attempt' : ''}`));
+            const body = element('div', null, 'text-sm leading-7 text-zinc-700 dark:text-zinc-200 [&_p]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-100 [&_pre]:p-4 dark:[&_pre]:bg-zinc-900 [&_code]:font-mono [&_a]:underline [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_blockquote]:border-l-2 [&_blockquote]:pl-4'); body.innerHTML = markdown(message.content || '');
             for (const link of body.querySelectorAll('a')) { link.rel = 'noopener noreferrer'; link.target = '_blank'; }
             node.append(body);
             if (message.tool_calls?.length || message.tool_output || message.parts?.length) {
@@ -186,15 +193,15 @@ export function mount(root) {
         const fingerprint = JSON.stringify(decisions); if (fingerprint === decisionFingerprint) return; decisionFingerprint = fingerprint; $('decisions').replaceChildren();
         for (const decision of decisions) {
             if (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot?.run?.run_id) continue;
-            const card = element('article', null, 'decision'); card.dataset.expires = decision.expires_at_ms; const value = decision.request;
+            const card = fluxTemplate('flux-decision'); card.dataset.expires = decision.expires_at_ms; const content = card.querySelector('[data-slot=content]'); const value = decision.request;
             if (value?.kind === 'approval') {
-                card.append(element('h2','Approval requested'),element('pre',JSON.stringify(value.approval,null,2)));
-                card.append(button('Approve',() => act('respond',decision,'approved')),button('Deny',() => act('respond',decision,'denied')));
+                content.append(fluxTemplate('flux-heading','Approval requested'),element('pre',JSON.stringify(value.approval,null,2)));
+                content.append(button('Approve',() => act('respond',decision,'approved')),button('Deny',() => act('respond',decision,'denied')));
             } else if (value?.kind === 'question') {
-                card.append(element('h2',value.question.question),element('p','Your answer becomes conversation history. Never enter a password or secret.'));
-                value.question.options.forEach((answer,index) => card.append(button(answer,() => act('respond',decision,{status:'selected',index,answer}))));
-                const input = element('input'); input.maxLength = 4096; input.setAttribute('aria-label','Custom answer'); card.append(input,button('Send custom answer',() => { if (input.value.trim()) act('respond',decision,{status:'custom',answer:input.value}); }),button('Skip question',() => act('respond',decision,{status:'cancelled'})));
-            } else { card.append(element('p','This decision needs a native Helm client. No approval sent.')); }
+                content.append(fluxTemplate('flux-heading',value.question.question),fluxTemplate('flux-text','Your answer becomes conversation history. Never enter a password or secret.'));
+                value.question.options.forEach((answer,index) => content.append(button(answer,() => act('respond',decision,{status:'selected',index,answer}))));
+                const field = fluxTemplate('flux-answer'); const input = field.matches('input') ? field : field.querySelector('input'); content.append(field,button('Send custom answer',() => { if (input.value.trim()) act('respond',decision,{status:'custom',answer:input.value}); }),button('Skip question',() => act('respond',decision,{status:'cancelled'})));
+            } else { content.append(fluxTemplate('flux-text','This decision needs a native Helm client. No approval sent.')); }
             $('decisions').append(card);
         }
     }
