@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {readFileSync} from 'node:fs';
 import {JSDOM} from 'jsdom';
-test('Flux login rendering uses framework typography, provider button, and only one script bundle',()=>{
+test('Flux login rendering uses framework typography, provider button, and only one script bundle',(t)=>{
+ const compiled=mkdtempSync(join(tmpdir(),'helm-flux-views-'));
+ t.after(()=>rmSync(compiled,{recursive:true,force:true}));
  const code=`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); config(['services.google.client_id'=>'fixture','services.google.client_secret'=>'fixture','services.x.client_id'=>'','services.github.client_id'=>'']); echo view('console.login')->render();`;
- const r=spawnSync('php',['-r',code],{cwd:new URL('..',import.meta.url),encoding:'utf8'});assert.equal(r.status,0,r.stderr);
+ const r=spawnSync('php',['-r',code],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});assert.equal(r.status,0,r.stderr);
  const d=new JSDOM(r.stdout).window.document;
  assert.ok(d.querySelector('[data-flux-heading]'));const a=d.querySelector('a[data-flux-button]');assert.ok(a);assert.match(a.href,/\/auth\/google$/);assert.ok(a.querySelector('img[alt=""]'));assert.match(a.textContent,/Continue with Google/);
  assert.ok(d.body.classList.contains('dark:bg-zinc-800'));
