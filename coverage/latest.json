@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-16T00:53:43.449186+00:00",
-  "source_commit": "3f0a39bcc50d19402c362a024e6047a272864680",
+  "source_commit": "9b00aef322bc8a186c653e5d690b48f0f9966154",
+  "source_fingerprint_sha256": "f2b85351daf864632275203ac580b5d97d73dd8dcea6230da02f26c172853202",
   "dirty": true,
-  "source_fingerprint_sha256": "d27308bef6fc03ab74250ea949ffaa2d06c09abbd9b5449d00f352665315a4d6",
-  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths (plus new profile tests), each path + NUL + file bytes; missing files marked MISSING",
+  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes; missing files marked MISSING",
+  "measured_at_utc": "2026-09-16T02:27:56.886768+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1631,
+    "passed": 1633,
     "failed": 0,
     "ignored": 1
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9747,
-      "covered": 6975,
-      "percent": 71.56048014773776
+      "count": 9745,
+      "covered": 6973,
+      "percent": 71.55464340687531
     },
     "instantiations": {
-      "count": 22242,
-      "covered": 8851,
-      "percent": 39.794083265893356
+      "count": 22238,
+      "covered": 8849,
+      "percent": 39.79224750427196
     },
     "lines": {
-      "count": 100908,
-      "covered": 75689,
-      "percent": 75.00792801363619
+      "count": 100904,
+      "covered": 75684,
+      "percent": 75.00594624593673
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 165360,
-      "covered": 118396,
-      "notcovered": 46964,
-      "percent": 71.59893565553944
+      "count": 165358,
+      "covered": 118392,
+      "notcovered": 46966,
+      "percent": 71.59738264855646
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/coverage75-final -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/provider-connect -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -99,10 +99,7 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
-    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint.",
-    "Campaign #288 target reached: baseline 55416/100715 (55.022588%) ->75689/100908 (75.007928%). Full default-feature workspace remains measured; no new coverage exclusion patterns. Includes concurrent published filesystem-skills implementation (#291).",
-    "Test bodies reside in normally excluded test files. Denominator changed by +193 lines: +150 concurrent discovery/agent implementation and net +43 instrumented cfg-test seams/existing inline-test reachability; no production modules excluded. Installer/system/browser seams use controlled fixtures, not actual system service/browser activation.",
-    "Final run 1631 passed,0 failed,1 ignored; prior baseline863 passed. New actual CLI binaries included in complete current executable artifact selection. Source fingerprint stable during measurement; rustfmt and diff checks passed."
+    "Issue #295: workspace default-feature Linux offline tests; no live-provider or native macOS/Windows claims. Includes existing unrelated staged Helm source in dirty source fingerprint.",
+    "Preserved default report; corrected artifact selection from complete current Cargo workspace executable inventory (#251), with all executed test binaries included and no export diagnostics. No changed exclusion patterns."
   ]
 }

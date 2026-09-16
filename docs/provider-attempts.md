@@ -45,12 +45,18 @@ provider progress or backoff. Cancellation stops waiting and enters normal clean
 it is not proof the provider stopped computing or that no usage was billed.
 
 Timeouts, transient rate limits and service unavailability are eligible for bounded
-recovery. Native connection refusal/network-unreachable errors identified through
-the transport's connection and I/O error chain are also eligible. After a response
+recovery. Typed native connection-establishment failures (including DNS, TCP, proxy
+negotiation and TLS handshake failures) are also eligible: the provider HTTP request
+has not been sent through that failed connector. Permanent DNS/certificate/proxy
+errors may still exhaust the bounded budget; TLS verification is never weakened.
+OAuth token exchange retains its stricter uncertain-rotation handling. After a response
 stream starts, typed connection reset/abort, broken pipe, unexpected EOF, incomplete
 HTTP messages and premature clean EOF are recoverable stream interruptions. Generic
 transport errors remain uncertain and nonretryable; dispatch failures are not made
-retryable merely because they contain an arbitrary I/O error. Request construction
+retryable merely because they contain an arbitrary I/O error. A quick failure or
+absence of response text/tool fragments does not prove the POST was unsent. An
+uncertain transport stop advises reviewing saved tool outcomes before continuing,
+not changing provider configuration blindly. Request construction
 errors, authentication, account quota and malformed responses do not authorize
 retry. Explicit context rejections use bounded working-context recovery without
 replaying completed tools; a rejection after partial output cannot use that path

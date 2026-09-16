@@ -669,29 +669,13 @@ pub(crate) fn reject_redirect(response: &reqwest::Response) -> Result<(), Provid
 }
 
 /// Never retain reqwest diagnostics (which can contain URLs or credentials).
-/// Builder errors are local; other non-timeout transport outcomes are uncertain.
-fn connection_refused(error: &(dyn std::error::Error + 'static)) -> bool {
-    let mut source = Some(error);
-    while let Some(error) = source {
-        if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
-            matches!(
-                e.kind(),
-                std::io::ErrorKind::ConnectionRefused
-                    | std::io::ErrorKind::NetworkUnreachable
-                    | std::io::ErrorKind::HostUnreachable
-            )
-        }) {
-            return true;
-        }
-        source = error.source();
-    }
-    false
-}
-
+/// A typed connector failure precedes sending the provider HTTP request, even
+/// when DNS, proxy negotiation or TLS has already exchanged network traffic.
+/// Other non-timeout dispatch errors do not establish an unsent request.
 pub(crate) fn map_transport(error: reqwest::Error) -> ProviderError {
     if error.is_timeout() {
         ProviderError::TransportTimeout
-    } else if error.is_connect() && connection_refused(&error) {
+    } else if error.is_connect() {
         ProviderError::Connection
     } else if error.is_builder() {
         ProviderError::Request("invalid local HTTP request".into())

@@ -363,6 +363,71 @@ async fn connection_refusal_is_retryable_and_never_contains_the_endpoint() {
 }
 
 #[tokio::test]
+async fn dns_establishment_failure_is_retryable_without_leaking_diagnostics() {
+    struct FailingDns;
+    impl reqwest::dns::Resolve for FailingDns {
+        fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            Box::pin(async { Err(std::io::Error::other("PRIVATE resolver diagnostic").into()) })
+        }
+    }
+    let error = reqwest::Client::builder()
+        .no_proxy()
+        .dns_resolver(std::sync::Arc::new(FailingDns))
+        .build()
+        .unwrap()
+        .post("http://private.invalid/PRIVATE")
+        .body("PRIVATE body")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(error.is_connect());
+    let error = map_transport(error);
+    assert_eq!(error.category(), "connection");
+    assert!(error.is_retryable());
+    assert!(!format!("{error:?}").contains("PRIVATE"));
+    assert!(!format!("{error:?}").contains("private.invalid"));
+}
+
+#[tokio::test]
+async fn received_post_without_response_is_uncertain_not_replayed() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/PRIVATE", listener.local_addr().unwrap());
+    let peer = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut received = Vec::new();
+        let mut byte = [0; 1];
+        while !received.ends_with(b"\r\n\r\n") {
+            socket.read_exact(&mut byte).await.unwrap();
+            received.push(byte[0]);
+        }
+        assert!(
+            String::from_utf8(received)
+                .unwrap()
+                .starts_with("POST /PRIVATE ")
+        );
+        let mut body = [0; 12];
+        socket.read_exact(&mut body).await.unwrap();
+        assert_eq!(&body, b"PRIVATE body");
+        // The full effect-bearing request arrived, but no headers were returned.
+        drop(socket);
+    });
+    let error = endpoint_http_client(&native_http_client(), &endpoint)
+        .post(endpoint)
+        .body("PRIVATE body")
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap_err();
+    peer.await.unwrap();
+    assert!(!error.is_connect());
+    let error = map_transport(error);
+    assert_eq!(error.category(), "transport");
+    assert!(!error.is_retryable());
+    assert!(!format!("{error:?}").contains("PRIVATE"));
+}
+
+#[tokio::test]
 async fn actual_reqwest_timeout_keeps_existing_retry_policy() {
     // A listening socket that never sends headers, without a hanging server task.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

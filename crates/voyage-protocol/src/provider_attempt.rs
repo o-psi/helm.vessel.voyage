@@ -105,6 +105,9 @@ impl ProviderAttempt {
             RetryDecision::AttemptsExhausted => "attempt limit reached; try again later",
             RetryDecision::ElapsedBudget => "retry time budget reached; try again later",
             RetryDecision::ServerDelayLimit => "server wait exceeds retry limit; try again later",
+            RetryDecision::NonRetryable if self.category.as_deref() == Some("transport") => {
+                "request not replayed automatically; review saved tool outcomes before continuing"
+            }
             RetryDecision::NonRetryable => {
                 "request cannot be retried automatically; check provider configuration"
             }
@@ -227,6 +230,13 @@ mod tests {
         assert!(summary.contains("wait 500 ms"));
         assert!(summary.contains("recovery budget at observation 115000 ms"));
         assert!(summary.contains("response stream interrupted"));
+        attempt.decision = RetryDecision::NonRetryable;
+        attempt.category = Some("transport".into());
+        let summary = attempt.summary();
+        assert!(summary.contains("review saved tool outcomes"));
+        assert!(!summary.contains("check provider configuration"));
+        attempt.category = Some("authentication".into());
+        assert!(attempt.summary().contains("check provider configuration"));
         attempt.decision = RetryDecision::RecoveryInterrupted;
         assert!(attempt.summary().contains("previous request is not active"));
     }
