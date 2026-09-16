@@ -11,7 +11,7 @@ test('owner connection can choose a new folder; scoped connections retain their 
     const dom = new JSDOM(rendered.stdout,{url:'https://console.example'});
     for (const key of ['window','document','localStorage','Event']) globalThis[key]=dom.window[key];
     const root=document.querySelector('#helm-client'), field=id=>root.querySelector(`#${id}`);
-    let scope='owner'; const seen=[]; let selected;
+    let scope='owner'; const seen=[]; let selected, origin;
     const account={account_id:'10000000-0000-4000-8000-000000000001',connection_id:'10000000-0000-4000-8000-000000000002',identity_generation:1,connection_revision:1,transport:'openai_responses'};
     const client={exchange:async envelope=>{
         const c=envelope.command; seen.push(c);
@@ -23,7 +23,7 @@ test('owner connection can choose a new folder; scoped connections retain their 
         else throw Error(`Unexpected ${c.op}`);
         return {protocol:1,error:null,outcome_unknown:false,result};
     }};
-    voyageSettings(root,{connections:new Map([['v',{id:'v',vessel_id:'vessel',name:'Computer',client,voyages:[]}]])},{current:()=>({vessel:'v'}),select:(...args)=>{selected=args;},apply:()=>{}});
+    const settings=voyageSettings(root,{connections:new Map([['v',{id:'v',vessel_id:'vessel',name:'Computer',client,voyages:[]}]])},{current:()=>({vessel:'v'}),select:(...args)=>{selected=args;},apply:()=>{},draft:async(vessel,workspace)=>{origin={key:'draft-key',vessel,workspace,target:{type:'new_chat',workspace}};},captureDraft:()=>origin});
     field('new-voyage').click();
     await until(()=>!field('settings-save').disabled);
     assert.ok([...field('settings-workspace').options].some(o=>o.value==='__custom__'));
@@ -37,6 +37,9 @@ test('owner connection can choose a new folder; scoped connections retain their 
     await until(()=>!field('settings-save').disabled);
     assert.ok(seen.some(c=>c.op==='accounts'&&c.workspace==='/new-folder'));
     field('voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
+    await until(()=>settings.configuration());
+    assert.equal(seen.some(c=>c.op==='start_account'),false);
+    await settings.startDraft();
     await until(()=>selected);
     const start=seen.find(c=>c.op==='start_account');
     assert.equal(start.workspace,'/new-folder'); assert.deepEqual(start.account,account);

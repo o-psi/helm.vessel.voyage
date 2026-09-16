@@ -68,7 +68,7 @@ export function mount(root) {
     const $ = id => root.querySelector(`#${id}`);
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
-    let shared;
+    let shared, newChatSending = false;
     const admittedDrafts = new Map();
     const sentKey = command_id => `helm-web:sent-draft:${root.dataset.tenantId}:${selectedVessel}:${command_id}`;
     function sentDraft(command_id) { try { return admittedDrafts.get(command_id) || JSON.parse(localStorage.getItem(sentKey(command_id))); } catch { return null; } }
@@ -103,7 +103,7 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('reconnect').disabled = busy; $('prompt').disabled = busy || !selectedVessel; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
+            $('reconnect').disabled = busy; $('prompt').disabled = busy || newChatSending || !selectedVessel; $('send').disabled = newChatSending || (!enabled && !(!selected && shared?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
@@ -115,7 +115,7 @@ export function mount(root) {
             $('composer-access').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[snapshot?.access] || 'Access unknown';
             $('access-mode').disabled = !enabled;
             $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
-            $('new-voyage').disabled = busy;
+            $('new-voyage').disabled = busy || newChatSending;
             $('composer-model').textContent = clean(snapshot?.inference?.model || snapshot?.model || 'Account & model');
             $('composer-reasoning').textContent = clean(snapshot?.inference?.reasoning_effort || 'Default');
             $('composer-service').textContent = clean(snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
@@ -421,6 +421,30 @@ export function mount(root) {
             $('decisions').append(card);
         }
     }
+    function captureDraft() {
+        const origin = shared.capture();
+        return origin?.key && shared.active ? {...origin,workspace:shared.active.document.target.workspace,target:structuredClone(shared.active.document.target)} : null;
+    }
+    async function send() {
+        if (newChatSending) return;
+        if (selected || shared?.active?.document?.target?.type !== 'new_chat') return act(running() ? 'steer' : 'submit');
+        if (!$('prompt').value.trim() && !shared.active.document.parts.some(p=>p.type==='image')) return notice('Write a message before sending.');
+        if (!settings.configuration()) { settings.review(); return notice('Review the account and model on this device before sending this new chat.'); }
+        newChatSending = true; controls();
+        try {
+            const sent = await shared.beforeSend();
+            const origin = captureDraft();
+            const process = await settings.startDraft(origin);
+            // Creation and submission have separate immutable receipts. Do not submit
+            // until the exact created process has a fresh, actionable owner snapshot.
+            const deadline = Date.now()+35000;
+            while (selected === process.session_id && selectedVessel === origin.vessel && !actionable() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
+            if (selected !== process.session_id || selectedVessel !== origin.vessel || incarnation !== process.incarnation || !actionable()) throw new Error('Chat created; message retained. Wait for its connected snapshot before sending.');
+            if (shared.active !== sent.draft) throw new Error('Draft changed; review the composer before sending.');
+            await act('submit');
+        } catch (error) { notice(error.message); }
+        finally { newChatSending=false; controls(); }
+    }
     async function act(op, decision = null, answer = null, extra = {}) {
         if (!actionable()) {
             log('action_blocked',{op,connected:Boolean(client),stale,busy,refreshing,fresh_age_ms:Date.now()-lastFresh,journal_pending:pending().length});
@@ -457,7 +481,7 @@ export function mount(root) {
         } catch (error) { notice(`${error.message || 'Action not confirmed.'} Draft retained. Any recorded command remains pending; reconnect checks receipts without resending.`); }
         finally { busy = false; stale = true; controls(); refresh(); }
     }
-    $('composer').addEventListener('submit', event => { event.preventDefault(); act(running() ? 'steer' : 'submit'); });
+    $('composer').addEventListener('submit', event => { event.preventDefault(); send(); });
     // Flux handles Enter; suppress its handler while an IME is committing text.
     $('prompt').addEventListener('keydown', event => {
         if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) event.stopImmediatePropagation();
@@ -507,7 +531,8 @@ export function mount(root) {
         select,
         draft: (vessel,workspace)=>shared.newChat(vessel,workspace),
         created: (...args)=>shared.created(...args),
-        captureDraft: ()=>shared.capture(),
+        captureDraft,
+        prepared: ()=>{ notice(''); controls(); $('prompt').focus(); },
         apply:async (target,fields) => {
             if (target.vessel !== selectedVessel || target.session_id !== selected || target.incarnation !== incarnation || target.revision !== snapshot?.revision || !actionable() || running()) return false;
             return act('set_account_inference',null,null,fields);

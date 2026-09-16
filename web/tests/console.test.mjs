@@ -15,6 +15,7 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
     assert.doesNotMatch(html,/<script|<img|javascript:|<iframe/);
 });
 test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:15000}, async () => {
+    let id='10000000-0000-4000-8000-000000000001', rejectCreate=false, loseCreate=false, createdProcess;
     const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
     const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8'});
     assert.equal(rendered.status,0,rendered.stderr);
@@ -46,7 +47,15 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             }
             else if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
-            else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account'}],connections:[{id,revision:1,transports:['openai_responses']}]};
+            else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',workspaces:[{name:'Fixture',path:'/fixture'}]};
+            else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true}]};
+            else if(command.op==='start_account'){
+                if(rejectCreate){rejectCreate=false;setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'rejected create',outcome_unknown:false}}),0);return;}
+                id=command.session_id;running=false;createdProcess={session_id:id,incarnation,workspace:command.workspace};result=createdProcess;
+                if(loseCreate){loseCreate=false;this.close();return;}
+            }
+            else if(command.op==='resolve_start_account')result={command_id:command.command_id,session_id:command.session_id,status:'created',process:createdProcess};
+            else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account',state:'ready',availability:'available'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
                 if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
@@ -116,7 +125,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
-        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,5);
+        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 6 : 5);
         $('#change-account').click();
         assert.equal($('#edit-form').parentElement.id,'account-popover');
         assert.equal($('#edit-account-section').hidden,false);
@@ -173,5 +182,53 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal(requests.filter(c=>c.op==='submit').length,3,'reconnect must not replay the uncertain submit');
         assert.equal($('#pending').textContent,'');assert.equal($('#prompt').value,'','accepted receipt safely clears the sent revision');
         assert.ok(sockets.length>=2);assert.match($('#notice').textContent,/Receipt/);
+
+        async function prepareChat(text) {
+            $('#new-voyage').click();
+            await until(()=>!$('#settings-save').disabled);
+            const count=requests.filter(c=>c.op==='start_account').length;
+            $('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
+            await until(()=>!$('#send').disabled && $('#settings-status').textContent.includes('New chat ready'));
+            assert.equal(requests.filter(c=>c.op==='start_account').length,count,'Continue prepares a draft without starting a Voyage');
+            $('#prompt').value=text;$('#prompt').dispatchEvent(new Event('input'));
+        }
+        await prepareChat('First-send message');
+        const submissions=requests.filter(c=>c.op==='submit').length;
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>requests.filter(c=>c.op==='submit').length===submissions+1 && !$('#send').disabled);
+        assert.equal(requests.filter(c=>c.op==='start_account').length,1);
+        assert.equal(requests.filter(c=>c.op==='submit').at(-1).session_id,createdProcess.session_id);
+        assert.equal(requests.filter(c=>c.op==='submit').at(-1).prompt,'First-send message');
+        await prepareChat('Keep rejected creation text');rejectCreate=true;
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>!rejectCreate && !$('#send').disabled);
+        assert.equal($('#prompt').value,'Keep rejected creation text');
+        assert.match($('#notice').textContent,/Creation was rejected/);
+        assert.equal(requests.filter(c=>c.op==='submit').length,submissions+1);
+        loseCreate=true;$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>!loseCreate && $('#pending-creations button'));
+        const starts=requests.filter(c=>c.op==='start_account').length;
+        assert.equal($('#prompt').value,'Keep rejected creation text');
+        await until(()=>!$('#send').disabled);
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>$('#notice').textContent.includes('unconfirmed'));
+        assert.equal(requests.filter(c=>c.op==='start_account').length,starts,'lost create response is never replayed');
+        $('#pending-creations button').click();
+        await until(()=>!$('#pending-creations button') && !$('#send').disabled);
+        assert.equal($('#prompt').value,'Keep rejected creation text','creation reconciliation retains draft linkage');
+        assert.equal(requests.filter(c=>c.op==='submit').length,submissions+1,'reconciliation does not auto-send');
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>requests.filter(c=>c.op==='submit').length===submissions+2 && !$('#send').disabled);
+        assert.equal(requests.filter(c=>c.op==='start_account').length,starts);
+        await prepareChat('Retry submission, not creation');rejectNext=true;
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>!rejectNext && !$('#send').disabled);
+        assert.equal($('#prompt').value,'Retry submission, not creation');
+        const acceptedStarts=requests.filter(c=>c.op==='start_account').length;
+        const rejectedSubmits=requests.filter(c=>c.op==='submit').length;
+        $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>requests.filter(c=>c.op==='submit').length===rejectedSubmits+1 && !$('#send').disabled);
+        assert.equal(requests.filter(c=>c.op==='start_account').length,acceptedStarts,'retry after rejected submission reuses the created chat');
     } finally {window.dispatchEvent(new Event('pagehide'));root.remove();}
 });

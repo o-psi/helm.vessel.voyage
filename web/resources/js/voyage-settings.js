@@ -9,10 +9,12 @@ async function read(client, op, fields = {}) {
     return response.result;
 }
 
-export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft}) {
+export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft, prepared = () => {}}) {
     const raw = id => root.querySelector(`#${id}`);
     const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
     let editSection = 'model', usageVersion = 0;
+    const configurations = new Map();
+    let starting = false;
     let mode = 'create', target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
     const status = message => { $('settings-status').textContent = clean(message); };
@@ -140,7 +142,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             options(id,items,preserve ? original || '' : '');
         }
         $('settings-save').disabled = !selected;
-        status(selected ? mode === 'create' ? 'Create opens an empty voyage. Send your first message from its composer.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
+        status(selected ? mode === 'create' ? 'Continue prepares your shared draft. Your first Send creates the chat and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
     }
     function open(edit) {
         if (saving) return;
@@ -150,7 +152,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         $('settings-retry').disabled = false;
         $('settings-close').disabled = false;
         $('settings-title').textContent = edit ? ({model:'Model',account:'Account',service:'Service tier'})[editSection] : 'New voyage';
-        $('settings-save').textContent = edit ? 'Apply settings' : 'Create voyage';
+        $('settings-save').textContent = edit ? 'Apply settings' : 'Continue';
         $('settings-description').textContent = edit ? (editSection === 'account' ? 'Changing account selects its default model. Review the composer after applying.' : 'Choose settings for the next run.') : 'Choose where your voyage runs and which provider account it uses.';
         options('settings-vessel',[...fleet.connections.values()].map(c => ({value:c.id,label:`${c.name}${c.client ? '' : ' · offline'}`})),target.vessel);
         $('settings-vessel').disabled = edit;
@@ -158,11 +160,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     async function accept(c, command, process, storageKey, origin) {
         if (process?.session_id !== command.session_id || process.workspace !== command.workspace || typeof process.incarnation !== 'string') throw new Error('Creation identity could not be confirmed. Use Check creation.');
-        localStorage.removeItem(storageKey);
         if (!c.voyages.some(v => v.session_id === process.session_id)) c.voyages.unshift(process);
         c.lastCatalogue = 0;
         const retained = await created?.(c.id,process.session_id,command.workspace,origin);
         if (!retained) select(c.id,process.session_id,process.name || 'New voyage');
+        localStorage.removeItem(storageKey);
         raw('settings-close').click();
         renderPending();
     }
@@ -173,7 +175,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!client || !selected?.ready || !selectedModel) return status('Reload choices before continuing.');
         const settings = {account:selected.binding,model:selectedModel.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null};
         saving = true; ++version;
-        status(mode === 'edit' ? 'Applying account and model settings…' : 'Creating voyage on this Vessel…');
+        status(mode === 'edit' ? 'Applying account and model settings…' : 'Preparing new chat…');
         for (const field of $('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio-group,button')) field.disabled = true;
         let recorded = false;
         try {
@@ -181,15 +183,19 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                 if (!await apply(target,settings)) throw new Error('Settings were not confirmed. Close this form to review the voyage status before trying again.');
                 $('settings-close').disabled = false; $('settings-close').click();
             } else {
-                const command = request('start_account',{command_id:uuid(),session_id:uuid(),workspace:workspace(),...settings}).command;
-                const storageKey = key(c,command), origin = captureDraft?.();
-                // Store only immutable routing/account metadata, never credentials or message text.
-                localStorage.setItem(storageKey,JSON.stringify({vessel:c.id,vessel_id:c.vessel_id,command,origin})); recorded = true;
-                const result = await client.exchange({protocol:1,command});
-                if (result.protocol !== 1 || result.outcome_unknown !== false) throw new Error('Creation is unconfirmed. Close this form and use Check creation in the sidebar.');
-                if (result.error != null) throw new Error('The Vessel did not confirm creation. Use Check creation to resolve this exact request before creating another voyage.');
-                $('settings-close').disabled = false;
-                await accept(c,command,result.result,storageKey,origin);
+                const path = workspace();
+                let origin = captureDraft?.();
+                if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) {
+                    await draft?.(c.id,path);
+                    origin = captureDraft?.();
+                }
+                if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The shared new-chat draft could not be prepared.');
+                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,settings:structuredClone(settings)});
+                raw('settings-close').disabled = false;
+                raw('settings-close').click();
+                status('New chat ready. Write your message, then Send.');
+                prepared();
+
             }
         } catch (error) { status(error.message); }
         finally {
@@ -200,6 +206,37 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             renderPending();
             if (!recorded) { $('settings-retry').disabled = false; }
         }
+    }
+    // Configuration is device-local and explicitly reviewed. A remotely discovered draft
+    // has no account selection until this device completes the normal settings dialog.
+    function configuration(origin = captureDraft?.()) {
+        const value = origin && configurations.get(origin.key), c = value && fleet.connections.get(value.vessel);
+        return value && c?.client && c.vessel_id === value.vessel_id && origin.vessel === value.vessel && origin.workspace === value.workspace && !origin.target?.session_id ? value : null;
+    }
+    async function startDraft(origin = captureDraft?.()) {
+        if (starting) throw new Error('New chat creation is already in progress.');
+        const config = configuration(origin);
+        if (!config) throw new Error('Review this new chat’s account and model using New chat before sending.');
+        const c = fleet.connections.get(config.vessel);
+        // An unresolved creation must never be replaced, even after a reload or review.
+        for (let i=0;i<localStorage.length;i++) {
+            const storageKey=localStorage.key(i);
+            if (!storageKey?.startsWith(prefix)) continue;
+            const record=JSON.parse(localStorage.getItem(storageKey));
+            if (record.origin?.key === origin.key) throw new Error('Creation is unconfirmed. Use Check creation before sending.');
+        }
+        const command=request('start_account',{command_id:uuid(),session_id:uuid(),workspace:config.workspace,...config.settings}).command;
+        const storageKey=key(c,command);
+        starting=true;
+        try {
+            localStorage.setItem(storageKey,JSON.stringify({vessel:c.id,vessel_id:c.vessel_id,command,origin}));
+            const result=await c.client.exchange({protocol:1,command});
+            if (result.protocol !== 1 || result.outcome_unknown !== false) throw new Error('Creation is unconfirmed. Use Check creation before sending.');
+            if (result.error != null) { localStorage.removeItem(storageKey); throw new Error('Creation was rejected. Your draft is retained; review settings before retrying.'); }
+            await accept(c,command,result.result,storageKey,origin);
+            configurations.delete(origin.key);
+            return result.result;
+        } finally { starting=false; renderPending(); }
     }
     function renderPending() {
         $('pending-creations').replaceChildren();
@@ -216,7 +253,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                     try {
                         const result = await read(c.client,'resolve_start_account',{...record.command,op:'resolve_start_account'});
                         if (result.command_id !== record.command.command_id || result.session_id !== record.command.session_id) throw new Error('Creation identity changed.');
-                        if (result.status === 'created') await accept(c,record.command,result.process,storageKey);
+                        if (result.status === 'created') await accept(c,record.command,result.process,storageKey,record.origin);
                         else if (result.status === 'not_admitted') { localStorage.removeItem(storageKey); renderPending(); }
                         else throw new Error('Creation remains unconfirmed. Check again after reconnecting.');
                     } catch (error) { node.querySelector('[data-label]').textContent = clean(`${c.name} · ${error.message}`); node.disabled = !c.client; }
@@ -273,5 +310,5 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
     window.addEventListener('storage',renderPending);
-    return {renderPending};
+    return {renderPending, configuration, startDraft, review: () => open(false)};
 }
