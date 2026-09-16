@@ -111,7 +111,7 @@
         <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span></flux:select.option></template>
         <template id="flux-voyage"><flux:sidebar.item as="button"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item></template>
         <template id="flux-draft-panel"><div class="space-y-2 p-2">
-            <div class="flex flex-wrap items-end gap-2"><flux:select label="Shared draft" aria-label="Shared draft" /><flux:button type="button" size="sm" variant="ghost" data-new>New draft</flux:button></div>
+            <div class="flex flex-wrap items-end gap-2"><flux:select label="Shared draft" aria-label="Shared draft" /><flux:button type="button" size="sm" variant="ghost" data-new>New draft</flux:button><flux:button type="button" size="sm" variant="ghost" data-discard>Discard draft</flux:button></div>
             <flux:text role="status" aria-live="polite" />
             <div class="flex flex-wrap gap-2"><flux:button type="button" size="sm" data-shared hidden>Use shared version</flux:button><flux:button type="button" size="sm" data-fork hidden>Keep mine separately</flux:button></div>
             <div class="flex flex-wrap gap-2" data-images></div>

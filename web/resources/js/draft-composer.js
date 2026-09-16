@@ -43,7 +43,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
         if(!c()?.client) return;
         const vessel=current().vessel, mine=opening;
         const result=await draftRequest(c().client,{op:'list'});if(!Array.isArray(result?.drafts))throw new Error('This Vessel does not support shared drafts. Update it before sending.'); if(current().vessel!==vessel || mine!==opening)return;
-        listing=result.drafts.filter(r=>r.document.parts.some(p=>p.type==='image' || p.text?.length));
+        listing=result.drafts;
         const prefix=`helm-web:draft:${root.dataset.tenantId}:${c()?.vessel_id}:`;
         for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(!key?.startsWith(prefix))continue;try{const recovery=JSON.parse(localStorage.getItem(key));if(recovery?.record && (recovery.dirty || recovery.pending || recovery.deletion) && !listing.some(r=>r.draft_id===recovery.record.draft_id))listing.push({...recovery.record,document:recovery.document});}catch{}}
 
@@ -60,6 +60,22 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     prompt.addEventListener('input',async()=>{const value=prompt.value, mine=opening;try{const pending=ensure(), draft=active;if(draft)draft.edit(updateText(draft.document.parts,value));await pending;if(mine===opening && active===draft)schedule(draft);}catch(e){notice(e.message);}});
     picker.onchange=async()=>{const record=listing.find(r=>r.draft_id===picker.value);if(!record)return;const target=record.document.target;if(target.type==='new_chat')select(current().vessel,null,'New-chat draft',true);else if(target.session_id!==current().session_id)select(current().vessel,target.session_id,'Draft voyage',true);++opening;await open(record);};
     panel.querySelector('[data-new]').onclick=async()=>{clearTimeout(timer);const previous=active;if(previous?.dirty)previous.save().catch(e=>notice(e.message));++opening;active=null;prompt.value='';try{await ensure();render();}catch(e){notice(e.message);}};
+    panel.querySelector('[data-discard]').onclick=async()=>{
+        const draft=active;if(!draft?.record || uploading)return;
+        if(!window.confirm('Discard this shared draft on all devices?'))return;
+        clearTimeout(timer);
+        const key=`${draft.key}:discard`;
+        try{
+            if(draft.saving)await draft.saving;
+            let operation=JSON.parse(localStorage.getItem(key));
+            if(!operation){operation={op:'delete',command_id:uuid(),draft_id:draft.record.draft_id,expected_revision:draft.record.revision};localStorage.setItem(key,JSON.stringify(operation));}
+            uploading=true;render();
+            await draftRequest(draft.client(),operation);
+            draft.storage.removeItem(draft.key);localStorage.removeItem(key);sessions.delete(draft.key);
+            if(active===draft){active=null;prompt.value='';}await discover();
+        }catch(error){notice(`Draft retained until discard is confirmed: ${error.message}`);}
+        finally{uploading=false;render();}
+    };
     panel.querySelector('[data-shared]').onclick=async()=>{const draft=active, mine=++opening, remote=draft.conflict;draft.storage.removeItem(draft.key);await draft.open(remote);if(mine===opening && draft===active){prompt.value=text();render();}};
     panel.querySelector('[data-fork]').onclick=async()=>{const draft=active, mine=opening, original=JSON.stringify(draft.document);try{const fork=await draft.fork();sessions.set(fork.key,fork);if(mine===opening && active===draft && JSON.stringify(draft.document)===original){active=fork;prompt.value=text();render();}await discover();}catch(e){notice(e.message);}};
     const input=panel.querySelector('input[type=file]');

@@ -498,7 +498,7 @@ export function mount(root) {
     $('voyage-search').addEventListener('input',renderVoyages);
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
-    const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
+    const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (pending().length || Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
     window.addEventListener('pagehide',() => { stopStream(); generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
     shared = draftComposer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});

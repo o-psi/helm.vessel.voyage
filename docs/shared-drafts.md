@@ -42,6 +42,25 @@ the response is in flight; explicit discard alone tombstones the draft. Rejected
 draft. Pictures currently use multimodal **submission**, not text-only steering;
 clients must refuse picture steering without discarding its text or attachments.
 
+## Client workflow
+
+In Helm TUI, new-chat drafts appear in the draft navigation and existing voyages
+restore their shared composer. **Ctrl+Alt+L** explicitly keeps a separate local
+copy when resolving a conflict; **Ctrl+Alt+R** restores the Vessel version. These
+shortcuts do not run inside private input panels. `/discard` on a new-chat draft
+requests revision-checked shared deletion; local recovery remains until it is
+confirmed. A conflict requires review rather than discarding the other device's
+newer text.
+
+In Helm Web, the composer draft picker discovers drafts on the selected Vessel.
+**Compose shared draft** creates only composition in the chosen workspace. To
+send a new-chat draft, create the empty voyage in that same workspace using the
+normal account/model dialog, then send from its composer. Selecting the shared
+draft on another device restores its text and pictures; provider/account selection
+is deliberately not copied as a credential-bearing client configuration. Existing
+message/steering drafts retain their target and require an explicit new draft when
+the run changes.
+
 ## Pictures
 
 Draft images use a private Vessel staging namespace, including before a new voyage
