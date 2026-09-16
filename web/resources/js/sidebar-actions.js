@@ -111,20 +111,31 @@ export function sidebarActions(root, {changed = () => {}, modal = name => window
             if (action==='compact') $('retain-field').hidden=false;
             if (action==='branch' && !reason) {
                 $('branch-field').hidden=false; $('branch').replaceChildren(new Option('Full conversation',''));
-                // Obtain the complete canonical index list at the reviewed revision.
-                let offset=0;
-                while (true) {
-                    const page=voyageResult(await view.client.exchange(request('history',{session_id:item.session_id,incarnation:view.process.incarnation,expected_revision:view.snapshot.revision,offset,limit:128})),item.session_id,view.process.incarnation).result;
-                    if (mine!==epoch) return;
-                    for (const [n,message] of (page.messages || []).entries()) if (message.role==='user') $('branch').append(new Option(`Through user message ${offset+n+1}`,String(message.message_index ?? offset+n)));
-                    if (page.revision !== view.snapshot.revision || page.message_offset !== offset) throw new Error('History changed during branch review.');
-                    if (!page.has_more) break;
-                    const next=page.next_offset ?? offset+(page.messages?.length || 0); if (next<=offset) throw new Error('History paging did not advance.'); offset=next;
-                }
+                current.branchOffset=0; current.branchIndices=new Set();
+                await loadBranchPoints();
             }
             if (['clear','delete','compact'].includes(action)) { $('confirm-field').hidden=false; $('confirm-label').textContent=`Type ${action==='compact' ? 'COMPACT' : action.toUpperCase()} to confirm`; }
             $('submit').disabled=Boolean(reason);
         } catch(error) { if(mine===epoch) {status(error.message); $('submit').disabled=true;} }
+    }
+    async function loadBranchPoints() {
+        const target=current;
+        if(!target || target.action!=='branch' || target.branchLoading) return;
+        const {view,item,mine}=target, offset=target.branchOffset;
+        target.branchLoading=true; $('branch-more').disabled=true;
+        try {
+            const page=voyageResult(await view.client.exchange(request('history',{session_id:item.session_id,incarnation:view.process.incarnation,expected_revision:view.snapshot.revision,offset,limit:128})),item.session_id,view.process.incarnation).result;
+            if(mine!==epoch || current!==target) return;
+            if(page.revision!==view.snapshot.revision || page.message_offset!==offset) throw new Error('History changed during branch review.');
+            for(const [n,message] of (page.messages || []).entries()) if(message.role==='user') {
+                const index=message.message_index ?? offset+n;
+                if(!Number.isSafeInteger(index)||index<offset) throw new Error('Invalid canonical index.');
+                target.branchIndices.add(index); $('branch').append(new Option(`Through user message ${index+1}`,String(index)));
+            }
+            $('branch-more').hidden=!page.has_more;
+            if(page.has_more && (!Number.isSafeInteger(page.next_offset)||page.next_offset<=offset)) throw new Error('History paging did not advance.');
+            target.branchOffset=page.next_offset;
+        } finally {target.branchLoading=false; if(mine===epoch) $('branch-more').disabled=false;}
     }
     async function send(connection, command) {
         connection.journal.prepare({...command,sidebar_action:true});
@@ -142,7 +153,7 @@ export function sidebarActions(root, {changed = () => {}, modal = name => window
             const fields={};
             if (['rename','branch'].includes(action)) { fields.name=$('name').value.trim() || null; if(fields.name && new TextEncoder().encode(fields.name).length>256) throw new Error('Name exceeds 256 UTF-8 bytes.'); if(action==='rename' && !fields.name) throw new Error('Enter a name.'); }
             if (action==='compact') { fields.retain=Number($('retain').value); fields.preserve_canonical=true; if(!Number.isInteger(fields.retain)||fields.retain<0||fields.retain>4294967295||!$('retain').value) throw new Error('Enter a valid message count.'); }
-            if (action==='branch') { fields.branch_id=uuid(); fields.through_message=$('branch').value===''?null:Number($('branch').value); if(fields.through_message!==null && (!Number.isSafeInteger(fields.through_message)||fields.through_message<0)) throw new Error('Invalid branch boundary.'); }
+            if (action==='branch') { fields.branch_id=uuid(); fields.through_message=$('branch').value===''?null:Number($('branch').value); if(fields.through_message!==null && (!Number.isSafeInteger(fields.through_message)||fields.through_message<0||!target.branchIndices?.has(fields.through_message))) throw new Error('Invalid branch boundary.'); }
             if (action==='access') fields.access=$('access').value;
             if (['clear','delete'].includes(action)) fields.confirm_session_id=item.session_id;
             const fresh=await inspect(connection,item.session_id);
@@ -204,6 +215,7 @@ export function sidebarActions(root, {changed = () => {}, modal = name => window
         } catch(error) { if(mine===epoch) status(`Outcome still uncertain: ${error.message}`); }
         finally {sending=false;}
     }
+    $('branch-more').addEventListener('click',()=>loadBranchPoints().catch(error=>{status(error.message); $('submit').disabled=true;}));
     $('action-form').addEventListener('submit',execute);
     $('reconcile').addEventListener('click',reconcile);
     $('dismiss').addEventListener('click',()=>{invalidate();modal('sidebar-action').close();});
