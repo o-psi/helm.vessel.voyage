@@ -11,7 +11,7 @@
             <flux:sidebar.nav id="voyages" aria-label="Choose a voyage" />
             <flux:text id="voyage-empty" size="sm" hidden />
             <div id="pending-creations" class="space-y-2" aria-label="Unconfirmed voyage creation"></div>
-<div class="flex items-center justify-between">        
+<div class="flex items-center justify-between">
         <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
 </div><flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text><flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
     </flux:sidebar>
