@@ -52,8 +52,8 @@
                                         <div hidden><flux:select id="edit-vessel" /><flux:select id="edit-workspace" /></div>
                                         <flux:select id="edit-account" variant="listbox" searchable label="Provider account" />
                                         <flux:select id="edit-model" variant="listbox" searchable label="Model" />
-                                        <flux:select id="edit-reasoning" label="Reasoning" />
-                                        <flux:select id="edit-service" label="Service tier" />
+                                        <div class="space-y-3"><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
+                                        <flux:radio.group id="edit-service" label="Service tier" variant="pills" />
                                         <flux:text id="edit-status" role="status" />
                                         <div class="flex flex-wrap gap-2"><flux:button id="edit-retry" type="button" size="sm">Reload</flux:button><flux:button id="edit-close" type="button" size="sm" variant="ghost">Cancel</flux:button><flux:button id="edit-save" type="button" size="sm" variant="primary" disabled>Apply</flux:button></div>
                                     </div>
@@ -62,7 +62,7 @@
                             <flux:dropdown position="top" align="start">
                                 <flux:button id="change-reasoning" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled><span id="composer-reasoning">Default</span></flux:button>
                                 <flux:popover id="reasoning-popover" class="w-64 max-w-[calc(100vw-2rem)] space-y-3">
-                                    <flux:select id="quick-reasoning" label="Reasoning" />
+                                    <div class="space-y-3"><flux:slider id="quick-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="quick-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
                                     <flux:text id="reasoning-status" role="status" />
                                     <flux:button id="reasoning-save" type="button" size="sm" variant="primary">Apply</flux:button>
                                 </flux:popover>
@@ -88,7 +88,7 @@
             <flux:select id="settings-workspace" label="Workspace" />
             <flux:select id="settings-account" variant="listbox" searchable label="Provider account" placeholder="Choose an account" description="Accounts belong to the selected Vessel. Credentials stay there." />
             <flux:select id="settings-model" variant="listbox" searchable label="Model" placeholder="Choose a model" />
-            <div class="grid gap-4 sm:grid-cols-2"><flux:select id="settings-reasoning" label="Reasoning" /><flux:select id="settings-service" label="Service tier" /></div>
+            <div class="grid gap-4 sm:grid-cols-2"><div class="space-y-3"><flux:slider id="settings-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="settings-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div><flux:radio.group id="settings-service" label="Service tier" variant="pills" /></div>
             <flux:callout id="settings-notice" role="status"><flux:callout.text id="settings-status">Loading…</flux:callout.text></flux:callout>
             <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
         </form>
@@ -97,6 +97,7 @@
         <div class="space-y-4"><flux:heading size="lg">Tool / attachment details</flux:heading><pre class="overflow-auto"><flux:text inline id="message-details-content" class="whitespace-pre-wrap break-words font-mono" /></pre></div>
     </flux:modal>
         {{-- Blade renders Flux controls once; JS clones these for socket-driven content. --}}
+        <template id="flux-service-option"><flux:radio value=""><span data-option-label></span></flux:radio></template>
         <template id="flux-card"><flux:card size="sm" class="space-y-3 break-words" /></template>
         <template id="flux-decision"><flux:callout variant="warning" class="decision"><flux:callout.heading data-decision-heading /><flux:callout.text data-decision-text class="whitespace-pre-wrap break-words" /><x-slot name="actions" class="flex-wrap"><div data-decision-actions class="flex flex-wrap items-center gap-2"></div></x-slot></flux:callout></template>
         <template id="flux-action"><flux:button size="sm"><span data-label></span></flux:button></template>

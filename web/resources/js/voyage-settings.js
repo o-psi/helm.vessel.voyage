@@ -1,3 +1,4 @@
+import {setReasoning, reasoningValue} from './inference-controls.js';
 import {request, uuid} from './vessel-client.js';
 
 const same = (a, b) => a && b && ['account_id','connection_id','identity_generation','connection_revision','transport'].every(k => a[k] === b[k]);
@@ -16,13 +17,15 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
     const status = message => { $('settings-status').textContent = clean(message); };
     function options(id, items, selected = null) {
         const field = $(id);
+        if (field.matches('ui-slider')) { setReasoning(field, items.length ? items : [{value:'',label:'Provider default'}], selected); return; }
+        const radio = field.matches('ui-radio-group');
         const custom = field.matches('ui-select'), container = custom ? field.querySelector('ui-options') : field;
         if (custom) container.querySelectorAll('[data-settings-option]').forEach(option => option.remove());
         else container.replaceChildren();
         container.append(...items.map(item => {
-            const option = $(custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
+            const option = $(radio ? 'flux-service-option' : custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
             option.setAttribute('data-settings-option','');
-            option.setAttribute('value', item.value);
+            (radio ? option.querySelector('ui-radio') || option : option).setAttribute('value', item.value);
             (option.querySelector('[data-option-label]') || option).textContent = clean(item.label);
             option.toggleAttribute('disabled', Boolean(item.disabled));
             return option;
@@ -154,10 +157,10 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
         if (saving || $('settings-save').disabled) return;
         const c = connection, client = c?.client, selected = choice(), selectedModel = model();
         if (!client || !selected?.ready || !selectedModel) return status('Reload choices before continuing.');
-        const settings = {account:selected.binding,model:selectedModel.id,reasoning_effort:$('settings-reasoning').value || null,service_tier:$('settings-service').value || null};
+        const settings = {account:selected.binding,model:selectedModel.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null};
         saving = true; ++version;
         status(mode === 'edit' ? 'Applying account and model settings…' : 'Creating voyage on this Vessel…');
-        for (const field of $('voyage-settings-form').querySelectorAll('select,ui-select,button')) field.disabled = true;
+        for (const field of $('voyage-settings-form').querySelectorAll('select,ui-select,ui-slider,ui-radio-group,button')) field.disabled = true;
         let recorded = false;
         try {
             if (mode === 'edit') {

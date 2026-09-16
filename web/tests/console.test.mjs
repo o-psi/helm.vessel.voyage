@@ -61,8 +61,10 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#edit-form').tagName,'DIV','no nested form inside message composer');
         assert.equal($('#change-inference').closest('[data-flux-modal-trigger]'),null);
         $('#change-reasoning').click();
-        assert.equal($('#quick-reasoning').value,'medium');
-        $('#quick-reasoning').value='high';$('#reasoning-save').click();
+        assert.equal($('#quick-reasoning').value,'2');
+        assert.equal($('#quick-reasoning').tagName,'UI-SLIDER');
+        assert.equal($('#edit-service').tagName,'UI-RADIO-GROUP');
+        $('#quick-reasoning').value='3';$('#reasoning-save').click();
         await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
         assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));

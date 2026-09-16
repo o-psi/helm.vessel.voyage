@@ -1,3 +1,4 @@
+import {setReasoning, reasoningValue} from './inference-controls.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {request, voyageResult, mutation, resolved} from './vessel-client.js';
@@ -313,12 +314,9 @@ export function mount(root) {
     let reasoningTarget;
     $('change-reasoning').addEventListener('click', () => {
         reasoningTarget = {vessel:selectedVessel, session_id:selected, incarnation, revision:snapshot?.revision};
-        const field = $('quick-reasoning'); field.replaceChildren();
-        for (const value of ['', ...(snapshot?.inference?.reasoning_efforts || [])]) {
-            const option = $('flux-option').content.firstElementChild.cloneNode(true);
-            option.value = value; option.textContent = value || 'Provider default'; field.append(option);
-        }
-        field.value = snapshot?.inference?.reasoning_effort || '';
+        const inference = snapshot?.inference;
+        const levels = [...new Set(['', ...(inference?.reasoning_efforts || []), ...(inference?.reasoning_effort ? [inference.reasoning_effort] : [])])];
+        setReasoning($('quick-reasoning'), levels.map(value => ({value,label:value || 'Provider default'})), inference?.reasoning_effort || '');
         $('reasoning-status').textContent = 'Applies to the next run.';
         $('reasoning-save').disabled = false;
     });
@@ -329,7 +327,7 @@ export function mount(root) {
         }
         $('reasoning-save').disabled = true;
         const inference = snapshot.inference;
-        const ok = await act('set_account_inference',null,null,{account:inference.account,model:inference.model,reasoning_effort:$('quick-reasoning').value || null,service_tier:inference.service_tier || null});
+        const ok = await act('set_account_inference',null,null,{account:inference.account,model:inference.model,reasoning_effort:reasoningValue($('quick-reasoning')) || null,service_tier:inference.service_tier || null});
         $('reasoning-status').textContent = ok ? 'Settings confirmed.' : 'Not confirmed. Review the voyage status before trying again.';
         if (ok) $('reasoning-popover').hidePopover?.();
     });
