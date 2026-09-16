@@ -18,6 +18,14 @@ checked at gateway dispatch and by each running voyage's authority watcher.
 `vessel revoke-connection` is the local owner's revision-bound revocation operation.
 Helm uses bounded subscription groups on its authenticated duplex socket. Provider credentials remain on the executing host.
 
+## Shared unsent drafts
+
+The authenticated command transport also exposes Vessel-owned
+[composer drafts](shared-drafts.md). This is private draft persistence, not a
+Voyage execution service. Full-access owner connections share owner drafts;
+scoped grant namespaces remain isolated and subject to current rights and
+revocation. Draft image staging and explicit promotion do not submit work.
+
 ## Scoped remote access
 
 A local account uses a private bearer credential to its Vessel's literal-loopback

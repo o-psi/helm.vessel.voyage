@@ -6,8 +6,9 @@ for supported paths, verification and deployment limits.
 
 ## Three programs
 
-**Helm is the TUI.** It owns presentation, per-voyage drafts, navigation and client
-connections. Helm connects to Vessels, whether local or remote. It does not own an
+**Helm is the TUI.** It owns presentation, draft editing, navigation and client
+connections. Vessel owns durable [shared composer drafts](shared-drafts.md),
+including new-chat proposals that have no Voyage process. Helm connects to Vessels, whether local or remote. It does not own an
 agent loop, acknowledge canonical checkpoints or directly supervise voyage processes.
 Its explicitly shared local browser is a narrow execution exception: Helm owns a
 local browser adapter and independently enforces local consent while the Voyage
@@ -50,7 +51,8 @@ is separately versioned. Live-resource requests preserve observed identity fence
 and only the runtime can durably admit work. See [process access](process-access.md#wire-and-retained-state)
 for the implemented API and compatibility rules.
 
-Vessel owns supervision metadata; the voyage owns authoritative session state.
+Vessel owns supervision metadata and shared unsent drafts; the voyage owns
+authoritative session state. Draft saves never allocate a Voyage or admit a run.
 A shared storage engine is possible only if it preserves these ownership fences.
 The source-checkout [embedded SQLite design](https://github.com/o-psi/voyage/blob/main/docs/sqlite-storage.md)
 describes the durable Vessel catalogue and lifecycle schema alongside each
