@@ -13,7 +13,7 @@ for(const key of ['window','document','localStorage','Event','MouseEvent','Optio
 const compiled=mkdtempSync(join(tmpdir(),'helm-sidebar-views-'));
 let rendered;
 try {
-rendered=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
+rendered=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); if (realpath(config('view.compiled')) !== realpath(getenv('VIEW_COMPILED_PATH'))) { fwrite(STDERR, 'Refusing to render outside isolated test view cache'); exit(1); } view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
 } finally { rmSync(compiled,{recursive:true,force:true}); }
 assert.equal(rendered.status,0,rendered.stderr);
 const id='11111111-1111-4111-8111-111111111111', inc='22222222-2222-4222-8222-222222222222', other='33333333-3333-4333-8333-333333333333';
