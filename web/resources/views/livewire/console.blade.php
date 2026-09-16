@@ -91,7 +91,7 @@
             <flux:select id="settings-model" variant="listbox" searchable label="Model" placeholder="Choose a model" />
             <div class="grid gap-4 sm:grid-cols-2"><div class="space-y-3"><flux:slider id="settings-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="settings-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div><flux:radio.group id="settings-service" label="Service tier" variant="pills" /></div>
             <flux:callout id="settings-notice" role="status"><flux:callout.text id="settings-status">Loading…</flux:callout.text></flux:callout>
-            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
+            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-draft" type="button" variant="ghost">Compose shared draft</flux:button><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
         </form>
     </flux:modal>
     <flux:modal name="message-details" class="w-full md:max-w-3xl">
@@ -109,6 +109,15 @@
         <template id="flux-option"><flux:select.option /></template>
         <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span></flux:select.option></template>
         <template id="flux-voyage"><flux:sidebar.item as="button"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item></template>
+        <template id="flux-draft-panel"><div class="space-y-2 p-2">
+            <div class="flex flex-wrap items-end gap-2"><flux:select label="Shared draft" aria-label="Shared draft" /><flux:button type="button" size="sm" variant="ghost" data-new>New draft</flux:button></div>
+            <flux:text role="status" aria-live="polite" />
+            <div class="flex flex-wrap gap-2"><flux:button type="button" size="sm" data-shared hidden>Use shared version</flux:button><flux:button type="button" size="sm" data-fork hidden>Keep mine separately</flux:button></div>
+            <div class="flex flex-wrap gap-2" data-images></div>
+            <flux:input type="file" label="Add pictures (PNG, JPEG, WebP · 2 MiB total)" accept="image/png,image/jpeg,image/webp" multiple />
+        </div></template>
+        <template id="flux-draft-image"><div class="flex max-w-40 flex-col gap-1"><img class="max-h-32 rounded-lg object-contain" hidden /><flux:text data-image-name /><flux:button type="button" size="sm" variant="ghost">Remove picture</flux:button></div></template>
+        <template id="flux-draft-retry"><flux:button type="button" size="sm" variant="ghost">Retry picture upload</flux:button></template>
         <template id="flux-heading"><flux:heading level="2"><span data-label></span></flux:heading></template>
         <template id="flux-text"><flux:text><span data-label></span></flux:text></template>
         <template id="flux-answer"><flux:input placeholder="Custom answer" aria-label="Custom answer" maxlength="4096" /></template>

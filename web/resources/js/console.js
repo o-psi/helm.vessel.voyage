@@ -5,6 +5,8 @@ import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {request, voyageResult, mutation, resolved} from './vessel-client.js';
 import {VesselFleet} from './vessel-fleet.js';
+import {draftComposer} from './draft-composer.js';
+import {imageBytes} from './shared-drafts.js';
 import {voyageSettings} from './voyage-settings.js';
 
 const clean = value => String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
@@ -65,7 +67,11 @@ export function mount(root) {
     const $ = id => root.querySelector(`#${id}`);
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
-    const drafts = new Map();
+    let shared;
+    const admittedDrafts = new Map();
+    const sentKey = command_id => `helm-web:sent-draft:${root.dataset.tenantId}:${selectedVessel}:${command_id}`;
+    function sentDraft(command_id) { try { return admittedDrafts.get(command_id) || JSON.parse(localStorage.getItem(sentKey(command_id))); } catch { return null; } }
+    function forgetSent(command_id) { admittedDrafts.delete(command_id); localStorage.removeItem(sentKey(command_id)); }
     let settings;
     let accountLabelKey = '', accountLabel = 'Account', accountLabelClient;
     const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, socketPath:root.dataset.socketPath, ticket, changed:connectionsChanged});
@@ -78,7 +84,7 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
+            $('reconnect').disabled = busy; $('prompt').disabled = busy || !selectedVessel; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
@@ -113,6 +119,7 @@ export function mount(root) {
             stale = true; refreshing = false;
         }
         const connections = [...fleet.connections.values()];
+        if (!selectedVessel && connections.some(c=>c.client)) { const first=connections.find(c=>c.client); selectedVessel=first.id; client=first.client; journal=first.journal; shared?.select().catch(error=>notice(error.message)); }
         const connected = connections.filter(c => c.client).length;
         $('fleet-state').textContent = connections.length ? `${connected} of ${connections.length} Vessels connected` : 'No Vessels connected';
         $('vessel-statuses').replaceChildren();
@@ -147,13 +154,14 @@ export function mount(root) {
             $('voyages').append(node);
         }
     }
-    function select(vessel, id, title) {
+    function select(vessel, id, title, retainDraft = false) {
         if (busy) return notice('Wait for the current operation, then switch voyages.');
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
-        if (selected) drafts.set(JSON.stringify([selectedVessel, selected]), $('prompt').value);
+
         notice(''); generation++; refreshing = false; selectedVessel = vessel; selected = id;
         client = fleet.connections.get(vessel).client; journal = fleet.connections.get(vessel).journal;
-        $('prompt').value = drafts.get(JSON.stringify([vessel, id])) || '';
+        $('prompt').value = '';
+        !retainDraft && shared?.select().catch(error => notice(error.message));
         $('voyage-title').textContent = title;
         $('voyage-vessel').textContent = clean(fleet.connections.get(vessel).name); $('voyage-vessel').hidden = false;
         accountLabelKey = ''; accountLabel = 'Account';
@@ -164,14 +172,14 @@ export function mount(root) {
         connectionsChanged(); refresh();
     }
     async function refresh() {
-        if (!client || refreshing || busy) return;
+        if (!client || !selected || refreshing || busy) return;
         refreshing = true; const active = client, activeJournal = journal, mine = generation, id = selected;
         try {
             if (!id) return;
             for (const entry of activeJournal.entries().filter(e => e.session_id === id).slice(0, 16)) {
                 const response = await active.exchange(request('receipt', {session_id:id,command_id:entry.command_id}));
                 if (mine !== generation || active !== client) return;
-                if (resolved(response, entry.command_id, id, true)) { activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
+                if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued'].includes(response.result?.result?.status)){try {await shared.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; draft cleanup unconfirmed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
             }
             const envelope = voyageResult(await active.exchange(request('snapshot', {session_id:id})), id);
             const next = envelope.result;
@@ -234,7 +242,18 @@ export function mount(root) {
             if (tool) node.append(fluxTemplate('flux-text', message.role === 'tool' ? 'Tool result' : 'Tool request'));
             const interrupted = node.querySelector('[data-interrupted]');
             if (interrupted) interrupted.hidden = !message.interrupted_attempt;
-            node.append(messageContent(message.content || ''));
+            if (!message.parts?.length) node.append(messageContent(message.content || ''));
+            for (const part of message.parts || []) {
+                if (part.type === 'text') { node.append(messageContent(part.text)); continue; }
+                if (part.type !== 'image') continue;
+                const img = document.createElement('img'); img.alt = clean(part.attachment.name); img.className = 'max-w-full max-h-72 rounded-lg object-contain';
+                const label = document.createElement('span'); label.textContent = 'Loading authorized picture…'; node.append(img,label);
+                const activeClient = client, session_id = selected;
+                imageBytes(activeClient,part.attachment,{session_id}).then(blob => {
+                    if (!img.isConnected || selected !== session_id || client !== activeClient) return;
+                    const url = URL.createObjectURL(blob); img.onload = img.onerror = () => URL.revokeObjectURL(url); img.src = url; label.remove();
+                }).catch(() => { label.textContent = 'Picture unavailable. Reconnect with history access to retry.'; });
+            }
             if (message.tool_calls?.length || message.tool_output || message.parts?.length) {
                 const details = fluxTemplate('flux-details');
                 details.querySelector('button').addEventListener('click', () => {
@@ -388,21 +407,29 @@ export function mount(root) {
         // Invalidate its read results before dispatch; owner revision checks still apply.
         if (refreshing) { generation++; refreshing = false; log('poll_superseded_by_action',{op}); }
         const text = $('prompt').value;
-        if (['submit','steer'].includes(op) && (!text.trim() || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
+        if (['submit','steer'].includes(op) && ((!text.trim() && !shared?.active?.document?.parts.some(p=>p.type==='image')) || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
         if (decision && (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot.run?.run_id)) return notice('Decision expired. Refresh before responding.');
         busy = true; controls();
         const fields = ['submit','steer'].includes(op) ? {prompt:text} : decision ? {decision_id:decision.decision_id,response:answer,expires_at_ms:Math.min(Date.now()+60000,decision.expires_at_ms)} : extra;
-        let command;
+        let command, sent;
         const active = client, activeJournal = journal, id = selected;
         try {
+            if (['submit','steer'].includes(op)) {
+                sent = await shared.beforeSend();
+                if (sent.record.document.parts.some(p=>p.type==='image')) {
+                    const content = await shared.promote(sent,id); op = 'submit_content'; delete fields.prompt; fields.content = content;
+                }
+            }
             command = mutation(op,snapshot,incarnation,fields); activeJournal.prepare(command.command);
+            if(sent) { admittedDrafts.set(command.command.command_id,sent); localStorage.setItem(sentKey(command.command.command_id),JSON.stringify({record:sent.record,vessel:selectedVessel})); }
             const response = await active.exchange(command);
-            if (resolved(response,command.command.command_id,id)) activeJournal.settle(command.command.command_id);
-            if (response.error != null) notice('Vessel refused the action. Refresh before deciding what to do next.');
+
+            if (response.error != null) notice(`Vessel refused the action: ${clean(response.error)}. Draft retained; review model support and attachments.`);
             else if (response.outcome_unknown || !resolved(response,command.command.command_id,id)) notice('Outcome uncertain. Checking receipts only; the action will not be resent.');
-            else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (['submit','steer'].includes(op) && $('prompt').value === text) $('prompt').value = ''; }
+            else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (sent && ['accepted','queued'].includes(response.result?.result?.status)) { await shared.admitted(sent); forgetSent(command.command.command_id); } }
+            if (resolved(response,command.command.command_id,id)) activeJournal.settle(command.command.command_id);
             return response.error == null && resolved(response,command.command.command_id,id);
-        } catch { notice('Action not confirmed. Any recorded command remains pending; reconnect checks receipts without resending.'); }
+        } catch (error) { notice(`${error.message || 'Action not confirmed.'} Draft retained. Any recorded command remains pending; reconnect checks receipts without resending.`); }
         finally { busy = false; stale = true; controls(); refresh(); }
     }
     $('composer').addEventListener('submit', event => { event.preventDefault(); act(running() ? 'steer' : 'submit'); });
@@ -449,9 +476,12 @@ export function mount(root) {
     const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); refresh(); } },1000);
     window.addEventListener('pagehide',() => { generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
+    shared = draftComposer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});
     settings = voyageSettings(root,fleet,{
         current:() => ({vessel:selectedVessel,session_id:selected,incarnation,revision:snapshot?.revision,inference:snapshot?.inference}),
         select,
+        draft: (vessel,workspace)=>shared.newChat(vessel,workspace),
+        created: (...args)=>shared.created(...args),
         apply:async (target,fields) => {
             if (target.vessel !== selectedVessel || target.session_id !== selected || target.incarnation !== incarnation || target.revision !== snapshot?.revision || !actionable() || running()) return false;
             return act('set_account_inference',null,null,fields);

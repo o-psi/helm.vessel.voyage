@@ -9,7 +9,7 @@ async function read(client, op, fields = {}) {
     return response.result;
 }
 
-export function voyageSettings(root, fleet, {current, select, apply}) {
+export function voyageSettings(root, fleet, {current, select, apply, draft, created}) {
     const raw = id => root.querySelector(`#${id}`);
     const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
     let editSection = 'model', usageVersion = 0;
@@ -161,7 +161,8 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
         localStorage.removeItem(storageKey);
         if (!c.voyages.some(v => v.session_id === process.session_id)) c.voyages.unshift(process);
         c.lastCatalogue = 0;
-        select(c.id,process.session_id,process.name || 'New voyage');
+        const retained = await created?.(c.id,process.session_id,command.workspace);
+        if (!retained) select(c.id,process.session_id,process.name || 'New voyage');
         raw('settings-close').click();
         renderPending();
     }
@@ -267,6 +268,7 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
     }
     raw('settings-workspace-path').addEventListener('input',() => { ++version; reset(); });
     raw('settings-workspace-path').addEventListener('change',loadAccounts);
+    raw('settings-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await draft?.(connection.id,workspace());raw('settings-close').click();}catch(error){status(error.message);}});
     raw('voyage-settings-form').addEventListener('submit',save);
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());

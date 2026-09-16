@@ -103,3 +103,39 @@ Initial checks: production build and Laravel optimization, migrations, Composer
 validation/audit, origin HTTP/health, public HTTPS/assets, route-specific titles,
 descriptions and links, environment-file denial and service health. These are
 HTTP/runtime checks; no browser visual QA or agent execution was performed.
+
+### Shared drafts and private pictures (#309)
+
+The composer discovers Vessel-owned drafts across separately paired owner clients;
+scoped credentials see only their authorized namespace. **New voyage → Compose
+shared draft** saves a workspace-targeted draft without creating a voyage. Select
+it on another device, then use New voyage to choose an account/model and create an
+empty voyage in the same workspace; sending remains a separate explicit action.
+Message drafts and steering drafts retain distinct targets, including run and
+incarnation for steering. Pictures cannot steer an active run: wait for completion
+or create an explicit text steering draft.
+
+Draft saves are debounced and revision checked. The composer shows unsaved,
+unconfirmed, saved, and conflict states. Conflicts offer the shared version or a
+separate copy (including re-staged images), never last-writer-wins overwrite.
+Tenant/Vessel-scoped browser recovery retains unsaved documents and exact pending
+mutation identities; reconnect checks shared state rather than replaying sends.
+After admission, an empty-document CAS clears only the sent revision, retaining
+newer edits. Sent-draft linkage and promotion/upload identities survive reload.
+Browser storage is private recovery, not the canonical shared draft store; browser
+storage quota failures stop dispatch rather than dropping text.
+
+Choose PNG/JPEG/WebP pictures using the file picker, clipboard, or drag/drop.
+Uploads show an indeterminate validation state (WebSocket does not expose byte
+progress), errors, and explicit same-identity retry/resume. The Vessel validates
+actual raster format/dimensions and limits: four images, 2 MiB total in a draft.
+The runtime remains authoritative for selected-model image support; refusal keeps
+the draft and displays the server error. Draft images are promoted to immutable
+session artifacts before ordered `submit_content`, never encoded in prompt text.
+History and draft previews fetch bounded authorized byte chunks and verify SHA-256;
+only Blob URLs are rendered, not remote/public URLs or SVG/HTML.
+
+Focused fixtures: `node --test tests/shared-drafts.test.mjs tests/console.test.mjs`
+and `cd gateway && node --test test/*.test.js`. These do not establish a real phone
+journey, native TUI exchange, restart durability, or approved live-provider behavior;
+those require the integrated backend and manual/native evidence.

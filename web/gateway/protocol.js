@@ -23,6 +23,9 @@ const fields = {
   history: ['offset', 'limit'], message_chunk: ['index', 'offset', 'limit', 'expected_revision'],
   run_output: ['run_id', 'offset', 'limit'], receipt: ['command_id'],
   events: ['after', 'limit', 'wait_ms'],
+  read_artifact: ['artifact_id','offset','limit'],
+  upload_image: ['upload_id','name','data_base64'],
+  submit_content: ['command_id','expected_revision','expires_at_ms','content'],
   submit: ['command_id', 'expected_revision', 'expires_at_ms', 'prompt'],
   steer: ['command_id', 'expected_revision', 'expires_at_ms', 'run_id', 'prompt'],
   cancel: ['command_id', 'expected_revision', 'expires_at_ms', 'run_id'],
@@ -31,6 +34,7 @@ const fields = {
 export function validCommand(f) {
   if (!exact(f, ['type', 'request_id', 'request']) || f.type !== 'command' || !uuid(f.request_id) || !exact(f.request, ['protocol', 'command']) || f.request.protocol !== 1) return false;
   const c = f.request.command;
+  if (object(c) && c.op === 'drafts') return exact(c,['op','operation']) && validDraftOperation(c.operation);
   if (object(c) && accountCommand(c)) return true;
   if (!object(c) || !Object.hasOwn(fields, c.op)) return false;
   const vessel = ['capabilities', 'catalogue', 'inspect'].includes(c.op);
@@ -42,10 +46,13 @@ export function validCommand(f) {
     if (k === 'op' || k === 'response') return true; // response is serde_json::Value; owner validates decision kind.
     if (k === 'incarnation' && !live && v === null) return true;
     if (k.endsWith('_id') || k === 'incarnation') return uuid(v);
+    if (k === 'content') return validParts(v);
+    if (k === 'name') return text(v);
+    if (k === 'data_base64') return typeof v === 'string' && v.length <= 2796204 && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
     if (k === 'prompt') return typeof v === 'string' && v.length > 0;
     if (k === 'expected_revision' && c.op === 'history' && v === null) return true;
     if (!uint(v)) return false;
-    if (k === 'limit') return v >= 1 && v <= (['message_chunk', 'run_output'].includes(c.op) ? 65536 : 128);
+    if (k === 'limit') return v >= 1 && v <= (['message_chunk', 'run_output','read_artifact'].includes(c.op) ? 65536 : 128);
     if (k === 'wait_ms') return v <= 10000;
     return true;
   });
@@ -73,4 +80,24 @@ export function restrictCapabilities(value, vesselId) {
   result.rights = Array.isArray(value.rights) ? value.rights.filter(v => typeof v === 'string') : [];
   result.workspaces = Array.isArray(value.workspaces) ? value.workspaces.filter(v => object(v) && text(v.path)).map(v => ({path:v.path, name:typeof v.name === 'string' ? v.name : v.path})) : [];
   return result;
+}
+
+function validParts(parts) {
+  return Array.isArray(parts) && parts.length <= 16 && parts.every(p => exact(p,['type','text']) && p.type === 'text' && typeof p.text === 'string' && Buffer.byteLength(p.text) <= 65536 || exact(p,['type','attachment']) && p.type === 'image' && exact(p.attachment,['id','sha256','name','media_type','byte_size','width','height']) && uuid(p.attachment.id) && /^[a-f0-9]{64}$/.test(p.attachment.sha256) && text(p.attachment.name) && ['image/png','image/jpeg','image/webp'].includes(p.attachment.media_type) && ['byte_size','width','height'].every(k=>uint(p.attachment[k])) && p.attachment.byte_size<=2097152);
+}
+export function validDraftOperation(o) {
+  const fields={list:[],get:['draft_id'],put:['command_id','draft_id','expected_revision','document'],delete:['command_id','draft_id','expected_revision'],upload_image:['command_id','draft_id','name','data_base64'],read_image:['draft_id','attachment_id','offset','limit'],promote:['command_id','draft_id','expected_revision','session_id']};
+  if(!object(o) || !Object.hasOwn(fields,o.op) || !exact(o,['op',...fields[o.op]]))return false;
+  return Object.entries(o).every(([k,v])=>{
+    if(k==='op')return true;
+    if(k.endsWith('_id'))return uuid(v);
+    if(k==='document') {
+      if(!exact(v,['target','parts']) || !validParts(v.parts))return false;
+      const t=v.target;
+      return exact(t,['type','workspace']) && t.type==='new_chat' && text(t.workspace) || exact(t,['type','session_id']) && t.type==='message' && uuid(t.session_id) || exact(t,['type','session_id','run_id','incarnation']) && t.type==='steer' && uuid(t.session_id) && uuid(t.run_id) && uuid(t.incarnation);
+    }
+    if(k==='name')return text(v);
+    if(k==='data_base64')return typeof v==='string' && v.length<=2796204 && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
+    return uint(v) && (k!=='limit' || v>0 && v<=65536);
+  });
 }

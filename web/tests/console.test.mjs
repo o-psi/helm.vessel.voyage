@@ -25,13 +25,21 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     const $=selector=>root.querySelector(selector);
     let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
     globalThis.fetch=async()=>({ok:true,json:async()=>({ticket:'synthetic.ticket'})});
+    const sharedRecords=new Map();
     class Socket extends dom.window.EventTarget {
         readyState=0;
         constructor(){super();sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
         send(text){const frame=JSON.parse(text);if(frame.type==='authenticate'){setTimeout(()=>this.receive({type:'ready',vessel_id:vessel}),0);return;}
             const command=frame.request.command;requests.push(command);
             let result;
-            if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
+            if(command.op==='drafts') {
+                const operation=command.operation; this.drafts ||= sharedRecords;
+                if(operation.op==='list')result={drafts:[...this.drafts.values()]};
+                else if(operation.op==='get')result=this.drafts.get(operation.draft_id)||null;
+                else if(operation.op==='put'){result={draft_id:operation.draft_id,revision:operation.expected_revision+1,document:operation.document};this.drafts.set(operation.draft_id,result);}
+                else if(operation.op==='delete'){this.drafts.delete(operation.draft_id);result={deleted:true};}
+            }
+            else if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
             else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
@@ -119,7 +127,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         await until(()=>uncertain);assert.ok($('#send').disabled);assert.match($('#pending').textContent,/outcome not confirmed/);
         await until(()=>requests.some(c=>c.op==='receipt')&&!$('#send').disabled);
         assert.equal(requests.filter(c=>c.op==='submit').length,2,'reconnect must not replay the uncertain submit');
-        assert.equal($('#pending').textContent,'');assert.equal($('#prompt').value,'Uncertain dispatch');
+        assert.equal($('#pending').textContent,'');assert.equal($('#prompt').value,'','accepted receipt safely clears the sent revision');
         assert.ok(sockets.length>=2);assert.match($('#notice').textContent,/Receipt/);
     } finally {window.dispatchEvent(new Event('pagehide'));root.remove();}
 });
