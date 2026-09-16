@@ -66,7 +66,10 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token,Origin:'https://helm.example'},body:JSON.stringify(body)},who);
   assert.equal((await post('/console/ticket',{vessel:seed.bob.connection})).status,404);
   assert.equal((await call('/connections/'+seed.bob.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice')).status,404);
-  const connections=await call('/connections',{},'alice');const list=await connections.text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
+  const connections=await call('/connections',{},'alice');assert.equal(connections.status,302);assert.match(connections.headers.get('location'),/manage-vessels=1/);const list=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
+  const invalidPair=await call('/connections/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':csrf,Referer:`http://127.0.0.1:${p}/`},body:new URLSearchParams({name:'',invitation:pairingSecret})},'alice');
+  assert.equal(invalidPair.status,302);
+  const failedPage=await (await call('/',{},'alice')).text();assert.match(failedPage,/Check the supplied fields/);assert.match(failedPage,/\$nextTick\(\(\) => \$flux.modal/);assert.ok(!failedPage.includes(pairingSecret));
   const mintBody={vessel:seed.alice.connection};
   const mintHeaders={Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf};
   for(const origin of [null,'https://evil.example',`http://127.0.0.1:${p}`,'https://helm.example/']) {
@@ -90,9 +93,10 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   // Direct credentials are not legacy gateway tickets, and no redemption service is needed.
   assert.equal((await call('/console/gateway/authorize',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({ticket:first.token})})).status,403);
   assert.equal(php("echo Illuminate\\Support\\Facades\\DB::table('web_gateway_tickets')->count();"),'0');
-  const deleted=await call('/connections/'+seed.alice.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice');assert.equal(deleted.status,302);
+  assert.equal((await call('/connections/'+seed.alice.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice')).status,422);
+  const deleted=await call('/connections/'+seed.alice.connection,{method:'DELETE',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf},body:JSON.stringify({confirm_disconnect:1})},'alice');assert.equal(deleted.status,302);
   assert.equal((await post('/console/ticket',mintBody)).status,404);
-  assert.ok(!(await (await call('/connections',{},'alice')).text()).includes('alice vessel'));
+  assert.ok(!(await (await call('/?manage-vessels=1',{},'alice')).text()).includes('alice vessel'));
   // Removal/logout prevent new minting, not immediate revocation of credentials already issued.
   const bobPage=await call('/',{},'bob');const bobHtml=await bobPage.text();const bobCsrf=bobHtml.match(/name="csrf-token" content="([^"]+)"/)[1];
   await issue('bob',bobCsrf);

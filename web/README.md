@@ -150,3 +150,14 @@ source's matching `snapshot_committed` receipt plus observation of its exact chi
 ID; a missing child remains uncertain. A changed incarnation after an uncertain
 restart is reported as observed state, not exact acknowledgement; reopen Restore
 to finish unarchiving. Cancel admission does not establish completed cleanup.
+
+### Vessel management
+
+**Manage Vessels** opens a Flux dialog in the console rather than navigating away.
+It groups saved connection details, unconfirmed pairing recovery, first-time setup,
+pairing and advanced credential import. Saved connections are not an online-status
+claim. Disconnect requires confirmation and removes only this account’s saved
+connection; admitted voyages continue and the underlying Vessel grant is retained.
+The legacy `/connections` URL redirects to `/?manage-vessels=1`. Form submissions
+reload the console and reopen management with their result or validation errors;
+invitation and credential fields are never repopulated.

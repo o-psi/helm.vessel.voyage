@@ -16,6 +16,6 @@ class Console extends Component
 
     public function render()
     {
-        return view('livewire.console', ['vessels' => \App\Models\VesselConnection::where('tenant_id', request()->user()->tenant_id)->get(), 'tenantId' => request()->user()->tenant_id]);
+        return view('livewire.console', ['vessels' => \App\Models\VesselConnection::where('tenant_id', request()->user()->tenant_id)->get(), 'tenantId' => request()->user()->tenant_id, 'tenant' => request()->user()->tenant, 'pairings' => \App\Models\VesselPairing::where('tenant_id', request()->user()->tenant_id)->where('status', 'pending')->get()]);
     }
 }
