@@ -1,3 +1,4 @@
+import {conversationScroll} from './conversation-scroll.js';
 import {ConversationStream, renderPreviews} from './conversation-stream.js';
 import {connectionDiagnostic as log} from './connection-diagnostics.js';
 import {actionDescription, actionStatus, actionDuration} from './tool-presentation.js';
@@ -66,6 +67,7 @@ export function messageContent(text) {
 
 export function mount(root) {
     const $ = id => root.querySelector(`#${id}`);
+    const scrolling = conversationScroll($('conversation'), fluxTemplate('flux-action', 'Jump to latest ↓'));
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     let shared;
@@ -179,6 +181,7 @@ export function mount(root) {
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
 
         stopStream(); refreshQueued = false;
+        scrolling.reset();
         notice(''); generation++; refreshing = false; selectedVessel = vessel; selected = id;
         client = fleet.connections.get(vessel).client; journal = fleet.connections.get(vessel).journal;
         $('prompt').value = '';
@@ -246,7 +249,6 @@ export function mount(root) {
     }
     function renderMessages() {
         const fingerprint = JSON.stringify(messages); if (fingerprint === messageFingerprint) return; messageFingerprint = fingerprint;
-        const scroll = $('conversation'), atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
         const opened = new Set([...$('messages').querySelectorAll('[data-tool-entry][open]')].map(node => node.dataset.key));
         const olderOpen = new Set([...$('messages').querySelectorAll('[data-tool-group][data-older-open]')].map(n=>n.dataset.key));
         const focused = document.activeElement?.closest('[data-tool-entry]')?.dataset.key;
@@ -344,7 +346,6 @@ export function mount(root) {
             group.updateOlder();
         }
         $('earlier').hidden = earliest <= 0;
-        if (atBottom) scroll.scrollTop = scroll.scrollHeight;
     }
     async function earlier() {
         if (!actionable() || refreshing) return;
@@ -364,7 +365,7 @@ export function mount(root) {
                 }
                 messages.sort((a,b) => a.message_index-b.message_index);
             }
-            earliest = offset; renderMessages();
+            earliest = offset; scrolling.preservePrepend(renderMessages);
         } catch (error) { stale = true; notice(error.message); } finally { busy = false; controls(); }
     }
     async function expand(index) {
@@ -499,7 +500,7 @@ export function mount(root) {
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
     const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (pending().length || Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
-    window.addEventListener('pagehide',() => { stopStream(); generation++;clearInterval(timer);fleet.close(); });
+    window.addEventListener('pagehide',() => { scrolling.dispose(); stopStream(); generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
     shared = draftComposer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});
     settings = voyageSettings(root,fleet,{

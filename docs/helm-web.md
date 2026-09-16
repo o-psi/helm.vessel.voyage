@@ -60,6 +60,10 @@ update from the same bounded projections used by the TUI. Native events are
 invalidations, not append-only token payloads: bursts coalesce into fresh reads.
 Gaps, owner changes and reconnect seed a new snapshot/subscription. Canonical
 messages replace provisional tool previews without executing preview content.
+The conversation follows new messages, live output and delayed content resizing while
+the reader remains at the bottom. Scrolling upward pauses following; returning to
+the bottom or choosing **Jump to latest** resumes it. Loading earlier history
+preserves the reading position, and selecting a voyage starts at its latest output.
 This is not per-token PHP rendering. The sidebar aggregates permitted voyages from all configured Vessels, with the Vessel name on each entry.
 
 Browser intent records are tenant/connection/Vessel scoped and contain command
