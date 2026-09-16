@@ -120,6 +120,8 @@ test('quiet composer: no permanent draft form, file picker is hidden, contextual
  draft.conflict=null;draft.edit([{type:'image',attachment:s.attachment}]);
  assert.equal(a.$('[data-draft-conflict]').hidden,true);assert.equal(a.$('[data-images]').hidden,false);
  assert.equal(a.$('[data-images]').querySelectorAll('[data-picture-card]').length,1);
+ assert.ok(a.$('[data-picture-card] button svg'));assert.doesNotMatch(a.$('[data-picture-card] button').textContent,/Remove/);
+ assert.match(context.className,/col-span-4/);assert.match(a.$('#composer').className,/max-w-3xl/);assert.equal(prompt.getAttribute('rows'),'2');
  a.$('[data-picture-card] button').click();assert.equal(context.hidden,true);
  }finally{a.dispose();}
 });
