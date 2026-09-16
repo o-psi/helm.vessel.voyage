@@ -776,6 +776,64 @@ mod transport {
     }
 
     #[tokio::test]
+    async fn account_filters_and_private_enrollment_survive_browser_socket() {
+        let fixture = Fixture::new().await;
+        let token = fixture.mint().await;
+        let mut wire = fixture.browser(ORIGIN, &token).await;
+        wire.hello(fixture.vessel).await;
+        let enrollment_id = Uuid::new_v4();
+        let commands = vec![
+            VesselCommand::Accounts {
+                workspace: "/fixture".into(),
+                transport: Some(voyage_protocol::accounts::Transport::ChatgptOauth),
+            },
+            VesselCommand::EnrollAccount {
+                command_id: Uuid::new_v4(),
+                enrollment_id,
+                workspace: "/fixture".into(),
+                connection_id: Uuid::new_v4(),
+                alias: "fixture".into(),
+                label: "Fixture".into(),
+            },
+            VesselCommand::ResolveAccountEnrollment {
+                command_id: Uuid::new_v4(),
+                enrollment_id,
+                workspace: "/fixture".into(),
+                connection_id: Uuid::new_v4(),
+                alias: "fixture".into(),
+                label: "Fixture".into(),
+            },
+            VesselCommand::PrivateAccountEnrollment {
+                enrollment_id,
+                workspace: "/fixture".into(),
+            },
+            VesselCommand::CancelAccountEnrollment {
+                command_id: Uuid::new_v4(),
+                enrollment_id,
+                workspace: "/fixture".into(),
+            },
+        ];
+        for command in commands {
+            let expected = serde_json::to_value(&command).unwrap();
+            let id = wire.command(command).await;
+            wire.reply(id).await;
+            assert!(
+                fixture
+                    .authority
+                    .lock()
+                    .unwrap()
+                    .commands
+                    .iter()
+                    .any(|c| serde_json::to_value(c).unwrap() == expected),
+                "command must reach scoped supervisor unchanged"
+            );
+        }
+        let id = wire.command(VesselCommand::Catalogue).await;
+        wire.reply(id).await;
+        assert_eq!(fixture.catalogue_count(), 1);
+    }
+
+    #[tokio::test]
     async fn native_header_auth_still_works_without_browser_first_frame() {
         let fixture = Fixture::new().await;
         let headers = format!(

@@ -394,3 +394,9 @@ prove upstream provider effects were undone. Losing browser storage loses these
 recovery identities. No provider effects run until the explicit Start action.
 API-key creation and provider-connection administration are not implemented here.
 Live provider sign-in is not established by the offline browser fixtures.
+
+The public Vessel browser socket permits typed account catalogue filters and the
+start/resolve/cancel/private-status enrollment commands. These still pass through
+the existing authenticated supervisor account-enrollment scope checks; browser
+transport admission does not grant account authority. Older Vessel API adapters
+without these commands close the socket when opening sign-in and must be upgraded.

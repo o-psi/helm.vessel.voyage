@@ -211,9 +211,11 @@ fn allowed(command: &VesselCommand) -> bool {
         | VesselCommand::Inspect { .. }
         | VesselCommand::Branch { .. }
         | VesselCommand::Restart { .. }
-        | VesselCommand::Accounts {
-            transport: None, ..
-        }
+        | VesselCommand::Accounts { .. }
+        | VesselCommand::EnrollAccount { .. }
+        | VesselCommand::ResolveAccountEnrollment { .. }
+        | VesselCommand::CancelAccountEnrollment { .. }
+        | VesselCommand::PrivateAccountEnrollment { .. }
         | VesselCommand::AccountDefaults { .. }
         | VesselCommand::AccountUsage { .. }
         | VesselCommand::AccountModels { .. }

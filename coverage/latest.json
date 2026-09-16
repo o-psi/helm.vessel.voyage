@@ -1,15 +1,15 @@
 {
-  "source_commit": "2c72daa8ef2459938afd58871655f1e98d1083b6",
+  "measured_at_utc": "2026-09-16T22:29:38.404495+00:00",
+  "source_commit": "786f41c71a911a71fd55fca38814365dcb900eed",
   "dirty": true,
-  "source_fingerprint_sha256": "bb01d32f95f686718d98d94196ea2ccf59b4653ff36f4dcfe39431ceb0880c0e",
+  "source_fingerprint_sha256": "981a025b3255ef9522958c341f2857945a191e35a3f3a7fe6ce4d3139abf9214",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes; missing paths marked MISSING",
-  "measured_at_utc": "2026-09-16T21:33:00.722Z",
-  "platform": "Linux 6.18.50-2-lts x86_64",
+  "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1682,
+    "passed": 1683,
     "failed": 0,
     "ignored": 1
   },
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 9826,
-      "covered": 7111,
-      "percent": 72.36922450641156
+      "covered": 7112,
+      "percent": 72.37940158762467
     },
     "instantiations": {
       "count": 22426,
-      "covered": 9019,
-      "percent": 40.21671274413627
+      "covered": 9018,
+      "percent": 40.212253634174616
     },
     "lines": {
       "count": 101864,
-      "covered": 77148,
-      "percent": 75.7362758187387
+      "covered": 77139,
+      "percent": 75.72744050891384
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 166761,
-      "covered": 120707,
-      "notcovered": 46054,
-      "percent": 72.38323109120238
+      "covered": 120705,
+      "notcovered": 46056,
+      "percent": 72.38203177001817
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue320-private -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -99,8 +99,8 @@
     "Dependency and test-source exclusions"
   ],
   "notes": [
-    "Issue #320: explicit token_expired recovery, same-account fenced refresh and recorded inference retry admission. Existing unrelated staged Helm render changes included in measured dirty-tree fingerprint.",
-    "Complete current Cargo executable set selected from instrumented cargo test --no-run metadata, with every executed test binary included. Reused installer/storage sources under the prior sidebar-actions worktree were byte-validated against prior measured commit bcc2837814b0204c1ed580c128837dd3b62ca29b and current source. No duplicate source identities or LLVM export diagnostics. Default mixed-artifact report retained locally.",
-    "Initial sandbox run failed on restricted sockets/processes; subsequent umask 022 run failed private-storage fixtures. Final independent measurement uses umask 077. Live read-only account refresh/model discovery succeeded separately, with profiles outside measurement. No live inference or native macOS/Windows claim."
+    "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
+    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint.",
+    "Issue #319: browser account filters and enrollment transport regression; 1683 tests passed. Existing unrelated staged Helm render changes included in dirty fingerprint. No live provider authorization."
   ]
 }
