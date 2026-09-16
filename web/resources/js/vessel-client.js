@@ -10,7 +10,8 @@ export function voyageResult(response, session, incarnation = null) {
 export function mutation(op, snapshot, incarnation, fields = {}) {
     if (!Number.isSafeInteger(snapshot.revision) || !snapshot.session_id) throw new Error('A current snapshot is required.');
     const command = {session_id: snapshot.session_id, command_id: uuid(), expected_revision: snapshot.revision, expires_at_ms: Date.now() + 60000};
-    if (op !== 'submit') Object.assign(command, {incarnation, run_id: snapshot.run?.run_id});
+    if (op !== 'submit') command.incarnation = incarnation;
+    if (['steer','cancel','respond'].includes(op)) command.run_id = snapshot.run?.run_id;
     return request(op, {...command, ...fields});
 }
 export function resolved(response, commandId, sessionId, receipt = false) {

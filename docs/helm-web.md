@@ -22,7 +22,7 @@ not an OS execution sandbox.
 
 ## Flux presentation
 
-All pages use the installed free Flux v2 components: public header/navigation,
+All pages use the installed licensed Flux Pro v2 components: public header/navigation,
 product headings/cards/actions, login, connection forms and console controls.
 `resources/css/app.css` contains Tailwind/Flux imports, the documented class-based
 dark variant and shared accent variables—not global element overrides or a
@@ -55,16 +55,14 @@ provisional live output, approval/question cards and send/steer/cancel are
 implemented. JavaScript owns the `wire:ignore` conversation region. Snapshot and
 pending-decision reads are serialized at one-second intervals while visible;
 catalogue refreshes every ten seconds. This is not per-token PHP rendering or
-push-token subscription. Select a connected Vessel to see its permitted voyages.
+push-token subscription. The sidebar aggregates permitted voyages from all configured Vessels, with the Vessel name on each entry.
 
 Browser intent records are tenant/connection/Vessel scoped and contain command
 identities only, not prompts. They are persisted before dispatch. Reconnect reads
 receipts only and never automatically resends uncertain mutations. An admission
 receipt is not execution completion. Storage failure blocks sending; clearing
 site storage loses local recovery evidence. Full-message expansion is capped at
-4 MiB with explicit handoff to native Helm. Creation of voyages, uploads, private
-terminals, browser execution, provider accounts and settings remain native-client
-capabilities.
+4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Uploads, private terminals, browser execution, account enrollment and the remaining native administration surfaces are still parity gaps.
 
 ## Connect your Vessels
 
@@ -130,7 +128,7 @@ Vessel secrets must not be logged. Never enable debug output publicly.
 
 ## Deployment
 
-Install the locked dependencies and build assets:
+Install the locked dependencies and build assets. Flux Pro requires Composer authentication for `composer.fluxui.dev`, following the [official installation instructions](https://fluxui.dev/docs/installation). Keep credentials in ignored, owner-private `web/auth.json` or deployment `COMPOSER_AUTH`; never commit license keys. The deployment must install the licensed package before serving its Blade components:
 
 ```sh
 cd web
@@ -229,7 +227,7 @@ No Rust source changes or Rust coverage refresh belong to this web delivery.
 
 ## Native Flux console presentation
 
-Console, sign-in and connection management use the installed free Flux v2 Blade
+Console, sign-in and connection management use the installed licensed Flux Pro v2 Blade
 components. Follow the official [sidebar](https://fluxui.dev/layouts/sidebar),
 [modal](https://fluxui.dev/components/modal),
 [callout](https://fluxui.dev/components/callout),
@@ -241,8 +239,7 @@ inside fixed-height navigation rows. Unchanged catalogue polls retain the contro
 Socket-driven controls clone server-rendered Flux templates. Do not create raw
 interactive elements, copy vendor component markup/styles, or add another widget
 library. Use documented component slots for callout headings, text and actions.
-The existing message composer combines native Flux textarea/buttons; no unlicensed
-Pro components are substituted or imitated. Tool/attachment inspection uses a
+The message input uses the licensed native `flux:composer`, including its action slots, automatic height and Ctrl/Cmd+Enter submission. Account and model choices use native searchable Pro listboxes. Tool/attachment inspection uses a
 native Flux modal with its built-in dismissal and focus behavior.
 
 Semantic forms, layout containers and sanitized Markdown/code/list content remain
@@ -252,3 +249,43 @@ supply Flux/Alpine attributes or controls. Shared CSS remains Flux/Tailwind impo
 and theme tokens; component appearance belongs to Flux, with utilities limited to
 layout and content formatting. Empty output and obsolete selection notices are
 hidden without changing receipt handling, canonical history or execution policy.
+
+## Aggregated Vessel navigation
+
+The console opens independent authenticated sockets to every configured Vessel,
+merges their catalogues and identifies each voyage with a native Flux Vessel badge.
+Search matches voyage titles, session IDs and Vessel names. Selection and in-memory
+composer drafts use connection ID plus session ID, so identical voyage IDs on two
+Vessels cannot share drafts or route commands through one another. The conversation
+header also names the selected Vessel. Reloading clears unsent in-memory drafts.
+
+Each connection owns its lease renewal, reconnect backoff, catalogue and command
+journal. An unavailable Vessel retains its last known catalogue with offline status;
+other Vessels remain usable. Read and mutation commands use only the selected
+connection. Reconnection checks retained receipts and never replays an uncertain
+mutation. Removed/unauthorized connections stop retrying automatically; refreshing
+connections explicitly retries them. Reload after adding/removing connections in
+another tab to update the configured set.
+
+The ticket endpoint allows 256 requests per minute per user and 30 per connection,
+covering initial connection and 30-second renewals for up to 64 Vessels. The gateway
+retains its 64-socket global cap, permits up to 64 sockets per authenticated session,
+and caps each session/tenant/connection at four sockets. Global capacity is shared
+across users and tabs; a configured connection is not a reservation of capacity.
+Credentials, grant identity validation and revocation are unchanged.
+
+Browser verification used two synthetic Vessels with identical voyage names and
+session IDs: combined labels, Vessel-name search, empty search, switching/draft
+isolation, selected-Vessel submission, one-Vessel outage and recovery. The deployed
+browser has one configured real Vessel; no second production connection or live
+provider run was created for verification.
+
+## New voyages and provider accounts
+
+New voyage opens a native Flux modal for Vessel, authorized workspace, provider account, model, reasoning and service tier. Account metadata and models are fetched from that exact Vessel. Unavailable accounts remain labeled and cannot be selected. Explicit model/account changes reset reasoning and service options to provider defaults. Creating starts an empty independent voyage process; no inference is submitted until the user sends a message.
+
+Creation needs `create` and `account_use` rights and explicit account UUIDs in the workspace connection grant. Pairing help documents `--accounts` alongside the rights. Existing idle voyages expose Account & model in the Pro Composer; changes require `account_use` and bind the reviewed session, incarnation and revision. Host-owner configuration and credentials are never tunneled through the browser.
+
+Creation stores only its immutable request metadata under tenant/connection/Vessel identity before dispatch. An unconfirmed reply leaves a Check creation action which sends `resolve_start_account` for that exact request; it never repeats start or submits a prompt. Confirmed created/not-admitted outcomes settle the record. A pending creation blocks another creation on that connection. Connection replacement does not erase recovery records.
+
+Full native-client parity remains open: account enrollment/usage, attachments, private terminals, browser sharing, lifecycle and other native administration are not implemented by these controls.

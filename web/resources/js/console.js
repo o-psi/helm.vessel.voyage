@@ -1,6 +1,8 @@
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
-import {request, voyageResult, mutation, resolved, IntentJournal, VesselSocket} from './vessel-client.js';
+import {request, voyageResult, mutation, resolved} from './vessel-client.js';
+import {VesselFleet} from './vessel-fleet.js';
+import {voyageSettings} from './voyage-settings.js';
 
 const clean = value => String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
 export function markdown(text) {
@@ -58,8 +60,11 @@ export function messageContent(text) {
 
 export function mount(root) {
     const $ = id => root.querySelector(`#${id}`);
-    let client, journal, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
-    let voyages = [], messages = [], decisions = [], earliest = 0, revision = null, renewal, reconnectTimer, stopped = false, retry = 1000, lastCatalogue = 0;
+    let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
+    let messages = [], decisions = [], earliest = 0, revision = null;
+    const drafts = new Map();
+    let settings;
+    const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, socketPath:root.dataset.socketPath, ticket, changed:connectionsChanged});
     let voyageFingerprint = '', messageFingerprint = '', decisionFingerprint = '', lastFresh = 0, outputFingerprint = '', outputOffset = null;
     const state = text => { $('connection-state').textContent = text; };
     const notice = text => { $('notice').textContent = clean(text); $('notice-panel').hidden = !text; };
@@ -69,8 +74,11 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('vessel').disabled = busy; $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
+            $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
             $('send').textContent = running() ? 'Steer run' : 'Send';
+            $('change-inference').disabled = !enabled || running();
+            $('new-voyage').disabled = busy;
+            $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
             for (const entry of pending()) $('pending').append(fluxTemplate('flux-text', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));
             for (const node of $('decisions').querySelectorAll('button,input')) node.disabled = !enabled || Number(node.closest('.decision').dataset.expires) <= Date.now();
@@ -78,76 +86,74 @@ export function mount(root) {
     }
     async function ticket(alias) {
         const response = await fetch(root.dataset.ticketUrl, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content}, body: JSON.stringify({vessel:alias})});
-        if (!response.ok) { if ([401,403,419].includes(response.status)) stopped = true; throw new Error('Unable to authorize connection. Sign in again if your session expired.'); }
+        if (!response.ok) { const error = new Error([401,403,419].includes(response.status) ? 'Sign-in required' : response.status === 404 ? 'Connection removed' : 'Authorization unavailable'); error.permanent = [401,403,404,419].includes(response.status); throw error; }
         return (await response.json()).ticket;
     }
-    async function connect() {
-        clearTimeout(reconnectTimer); clearInterval(renewal); generation++; const mine = generation;
-        client?.close(); client = null; stale = true; refreshing = false; state('Connecting…'); controls();
-        const alias = $('vessel').value;
-        if (!alias) { state('No Vessels connected'); notice('Add your first Vessel using Manage Vessels.'); return; }
-        try {
-            const auth = await ticket(alias); if (mine !== generation) return;
-            const url = new URL(root.dataset.socketPath, location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(url);
-            const ready = await new Promise((resolve, reject) => {
-                const timer = setTimeout(() => { socket.close(); reject(new Error('Gateway connection timed out.')); }, 10000);
-                socket.addEventListener('open', () => socket.send(JSON.stringify({type:'authenticate',ticket:auth})));
-                socket.addEventListener('message', function receive(event) {
-                    try { const frame = JSON.parse(event.data); if (frame.type === 'ready') { clearTimeout(timer); socket.removeEventListener('message', receive); resolve(frame); } } catch { socket.close(); }
-                });
-                socket.addEventListener('close', () => { clearTimeout(timer); reject(new Error('Gateway connection refused or unavailable.')); }, {once:true});
-                socket.addEventListener('error', () => { socket.close(); });
-            });
-            if (mine !== generation || stopped) { socket.close(); return; }
-            try { if (typeof ready.vessel_id !== 'string') throw new Error('Gateway identity missing.'); journal = new IntentJournal(localStorage, `${root.dataset.tenantId}:${alias}:${ready.vessel_id}`); journal.entries(); } catch (error) { socket.close(); stopped = true; throw error; }
-            client = new VesselSocket(socket, () => {
-                if (mine !== generation) return;
-                client = null; stale = true; clearInterval(renewal); state('Disconnected · stale view'); controls(); schedule();
-            });
-            retry = 1000; state('Connected'); lastCatalogue = 0;
-            renewal = setInterval(async () => { try { const token = await ticket(alias); if (mine === generation && socket.readyState === 1) socket.send(JSON.stringify({type:'authenticate',ticket:token})); } catch (e) { notice(e.message); socket.close(); } }, 30000);
-            await refresh();
-        } catch (error) { if (mine !== generation) return; notice(error.message); state('Disconnected'); schedule(); }
+    function connectionsChanged() {
+        const connection = fleet.connections.get(selectedVessel);
+        if (client !== connection?.client) {
+            generation++; client = connection?.client; journal = connection?.journal;
+            stale = true; refreshing = false;
+        }
+        const connections = [...fleet.connections.values()];
+        const connected = connections.filter(c => c.client).length;
+        $('fleet-state').textContent = connections.length ? `${connected} of ${connections.length} Vessels connected` : 'No Vessels connected';
+        $('vessel-statuses').replaceChildren();
+        for (const c of connections.filter(c => c.status !== 'Connected')) {
+            $('vessel-statuses').append(fluxTemplate('flux-text', `${c.name} · ${c.status}`));
+        }
+        if (!selected) state(connected ? 'Ready' : connections.length ? 'Connecting…' : 'No Vessels connected');
+        else if (!client) state(`${connection?.name || 'Vessel'} · ${connection?.status || 'Unavailable'}`);
+        else if (stale) state('Loading voyage…');
+        renderVoyages(); controls(); settings?.renderPending();
     }
-    function schedule() { if (!stopped) { clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); } }
     function renderVoyages() {
         const query = $('voyage-search').value.toLowerCase();
-        const fingerprint = JSON.stringify([voyages, query, selected]);
+        const voyages = [...fleet.connections.values()].flatMap(connection => connection.voyages.map(v => ({...v, connection})));
+        const fingerprint = JSON.stringify([voyages.map(v => [v.session_id,v.name,v.state,v.connection.id,Boolean(v.connection.client)]), query, selectedVessel, selected]);
         if (fingerprint === voyageFingerprint) return;
         voyageFingerprint = fingerprint; $('voyages').replaceChildren();
-        for (const item of voyages.filter(v => `${v.name || ''} ${v.session_id}`.toLowerCase().includes(query))) {
-            const label = clean(`${item.name || item.session_id} · ${item.state}`);
+        const filtered = voyages.filter(v => `${v.name || ''} ${v.session_id} ${v.connection.name}`.toLowerCase().includes(query));
+        $('voyage-empty').hidden = filtered.length > 0;
+        $('voyage-empty').textContent = query ? 'No voyages match your search.' : 'Voyages from your connected Vessels appear here.';
+        for (const item of filtered) {
+            const label = clean(item.name || item.session_id), connection = item.connection;
+            const description = clean(`${label} · ${connection.name} · ${connection.client ? item.state : 'offline'}`);
             const node = fluxTemplate('flux-voyage', label), control = node.querySelector('button');
-            control.addEventListener('click', () => select(item.session_id));
-            control.toggleAttribute('data-current', item.session_id === selected);
-            control.setAttribute('aria-current', String(item.session_id === selected));
-            control.title = label;
+            node.querySelector('[data-vessel-label]').textContent = clean(connection.name);
+            control.addEventListener('click', () => select(connection.id, item.session_id, label));
+            const current = item.session_id === selected && connection.id === selectedVessel;
+            control.toggleAttribute('data-current', current); control.setAttribute('aria-current', String(current));
+            control.setAttribute('aria-label', description); control.title = description;
             const tooltip = node.querySelector('[data-flux-tooltip-content]');
-            if (tooltip) tooltip.textContent = label;
+            if (tooltip) tooltip.textContent = description;
             $('voyages').append(node);
         }
     }
-    function select(id) {
-        if (busy || refreshing) return notice('Wait for the current operation, then switch voyages.');
-        notice(''); selected = id; snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
-        messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); $('live-output').hidden = true;
-        renderVoyages(); controls(); refresh();
+    function select(vessel, id, title) {
+        if (busy) return notice('Wait for the current operation, then switch voyages.');
+        root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
+        if (selected) drafts.set(JSON.stringify([selectedVessel, selected]), $('prompt').value);
+        notice(''); generation++; refreshing = false; selectedVessel = vessel; selected = id;
+        client = fleet.connections.get(vessel).client; journal = fleet.connections.get(vessel).journal;
+        $('prompt').value = drafts.get(JSON.stringify([vessel, id])) || '';
+        $('voyage-title').textContent = title;
+        $('voyage-vessel').textContent = clean(fleet.connections.get(vessel).name); $('voyage-vessel').hidden = false;
+        snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
+        messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); $('live-output').hidden = true; $('earlier').hidden = true;
+        $('conversation-empty').hidden = false;
+        $('conversation-empty').textContent = client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
+        connectionsChanged(); refresh();
     }
     async function refresh() {
         if (!client || refreshing || busy) return;
-        refreshing = true; const active = client, mine = generation, id = selected;
+        refreshing = true; const active = client, activeJournal = journal, mine = generation, id = selected;
         try {
-            if (Date.now() - lastCatalogue > 10000) {
-                const response = await active.exchange(request('catalogue'));
-                if (response.protocol !== 1 || response.error != null || response.outcome_unknown !== false || !Array.isArray(response.result)) throw new Error('Catalogue unavailable.');
-                if (mine !== generation) return;
-                voyages = response.result; lastCatalogue = Date.now(); renderVoyages();
-            }
-            if (!id) { notice('Select an existing voyage.'); return; }
-            for (const entry of journal.entries().filter(e => e.session_id === id).slice(0, 16)) {
+            if (!id) return;
+            for (const entry of activeJournal.entries().filter(e => e.session_id === id).slice(0, 16)) {
                 const response = await active.exchange(request('receipt', {session_id:id,command_id:entry.command_id}));
-                if (resolved(response, entry.command_id, id, true)) { journal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
+                if (mine !== generation || active !== client) return;
+                if (resolved(response, entry.command_id, id, true)) { activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
             }
             const envelope = voyageResult(await active.exchange(request('snapshot', {session_id:id})), id);
             const next = envelope.result;
@@ -158,8 +164,9 @@ export function mount(root) {
             snapshot = next; incarnation = envelope.incarnation; decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
             if (changed) { revision = next.revision; messages = next.messages || []; earliest = next.message_offset || 0; }
             stale = false; lastFresh = Date.now(); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
+            $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
             renderMessages(); renderDecisions(); renderOutput();
-        } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); notice(error.message); } }
+        } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
         finally { if (mine === generation) { refreshing = false; controls(); } }
     }
     function renderMessages() {
@@ -258,36 +265,44 @@ export function mount(root) {
             $('decisions').append(card);
         }
     }
-    async function act(op, decision = null, answer = null) {
+    async function act(op, decision = null, answer = null, extra = {}) {
         if (!actionable() || refreshing) return notice('Wait for a fresh connected snapshot before acting.');
         const text = $('prompt').value;
         if (['submit','steer'].includes(op) && (!text.trim() || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
         if (decision && (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot.run?.run_id)) return notice('Decision expired. Refresh before responding.');
         busy = true; controls();
-        const fields = ['submit','steer'].includes(op) ? {prompt:text} : decision ? {decision_id:decision.decision_id,response:answer,expires_at_ms:Math.min(Date.now()+60000,decision.expires_at_ms)} : {};
+        const fields = ['submit','steer'].includes(op) ? {prompt:text} : decision ? {decision_id:decision.decision_id,response:answer,expires_at_ms:Math.min(Date.now()+60000,decision.expires_at_ms)} : extra;
         let command;
+        const active = client, activeJournal = journal, id = selected;
         try {
-            command = mutation(op,snapshot,incarnation,fields); journal.prepare(command.command);
-            const response = await client.exchange(command);
-            if (resolved(response,command.command.command_id,selected)) journal.settle(command.command.command_id);
+            command = mutation(op,snapshot,incarnation,fields); activeJournal.prepare(command.command);
+            const response = await active.exchange(command);
+            if (resolved(response,command.command.command_id,id)) activeJournal.settle(command.command.command_id);
             if (response.error != null) notice('Vessel refused the action. Refresh before deciding what to do next.');
-            else if (response.outcome_unknown || !resolved(response,command.command.command_id,selected)) notice('Outcome uncertain. Checking receipts only; the action will not be resent.');
+            else if (response.outcome_unknown || !resolved(response,command.command.command_id,id)) notice('Outcome uncertain. Checking receipts only; the action will not be resent.');
             else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (['submit','steer'].includes(op) && $('prompt').value === text) $('prompt').value = ''; }
+            return response.error == null && resolved(response,command.command.command_id,id);
         } catch { notice('Action not confirmed. Any recorded command remains pending; reconnect checks receipts without resending.'); }
         finally { busy = false; stale = true; controls(); refresh(); }
     }
     $('composer').addEventListener('submit', event => { event.preventDefault(); act(running() ? 'steer' : 'submit'); });
-    $('prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !event.isComposing) { event.preventDefault(); act(running() ? 'steer' : 'submit'); } });
     $('cancel').addEventListener('click',() => act('cancel'));
     $('earlier').addEventListener('click',earlier); $('more-output').addEventListener('click',moreOutput);
     $('voyage-search').addEventListener('input',renderVoyages);
-    $('reconnect').addEventListener('click',() => { stopped = false; connect(); });
-    $('vessel').addEventListener('change',() => { if (busy) return; selected=null;snapshot=null;messages=[];decisions=[];journal=null;voyages=[];revision=null;incarnation=null;messageFingerprint='';decisionFingerprint='';outputFingerprint='';$('live-output').hidden=true;$('voyage-title').textContent='Choose a voyage';renderVoyages();$('messages').replaceChildren();$('decisions').replaceChildren();connect(); });
+    $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
-    const timer = setInterval(() => { controls(); if (!document.hidden) refresh(); },1000);
-    window.addEventListener('pagehide',() => { stopped=true;generation++;clearInterval(timer);clearInterval(renewal);clearTimeout(reconnectTimer);client?.close(); });
-    document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();refresh(); } });
-    connect();
+    const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); refresh(); } },1000);
+    window.addEventListener('pagehide',() => { generation++;clearInterval(timer);fleet.close(); });
+    document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
+    settings = voyageSettings(root,fleet,{
+        current:() => ({vessel:selectedVessel,session_id:selected,incarnation,revision:snapshot?.revision,inference:snapshot?.inference}),
+        select,
+        apply:async (target,fields) => {
+            if (target.vessel !== selectedVessel || target.session_id !== selected || target.incarnation !== incarnation || target.revision !== snapshot?.revision || !actionable() || running()) return false;
+            return act('set_account_inference',null,null,fields);
+        },
+    });
+    connectionsChanged(); fleet.start();
 }
 const root = typeof document !== 'undefined' && document.querySelector('#helm-client');
 if (root) mount(root);

@@ -79,6 +79,11 @@ test('strict public operation shapes and forbidden execution surfaces', () => {
     {op:'steer',session_id,incarnation,run_id,...mutation,prompt:'hello'}, {op:'cancel',session_id,incarnation,run_id,...mutation},
     {op:'respond',session_id,incarnation,run_id,...mutation,decision_id:randomUUID(),response:{answer:'yes'}}];
   for (const c of allowed) assert.ok(validCommand(command(c)), c.op);
+  const account = {account_id:randomUUID(),connection_id:randomUUID(),identity_generation:1,connection_revision:1,transport:'chatgpt_oauth'};
+  const settings = {account,model:'host-model',reasoning_effort:null,service_tier:null};
+  const start = {op:'start_account',command_id:randomUUID(),session_id,workspace:'/approved/project',...settings};
+  for (const c of [start,{...start,op:'resolve_start_account'}, {op:'accounts',workspace:start.workspace,transport:null}, {op:'account_defaults',workspace:start.workspace}, {op:'account_models',workspace:start.workspace,account}, {op:'set_account_inference',session_id,incarnation,...mutation,...settings}]) assert.ok(validCommand(command(c)),c.op);
+  for (const extra of [{config_path:'/owner/private.toml'},{token:'secret'},{account:{...account,credential:'secret'}},{account:{...account,identity_generation:-1}}]) assert.equal(validCommand(command({...start,...extra})),false);
   for (const op of ['browser','execute_tool','terminal','configure','grant','start','resolve','notifications','__proto__']) assert.equal(validCommand(command({op,session_id})), false);
   assert.equal(validCommand(command({op:'capabilities',token:'leak'})),false);
   assert.equal(validCommand(command({op:'cancel',session_id,run_id,...mutation})),false);
@@ -214,4 +219,22 @@ test('pair forwards exact HTTP request and never retries uncertain result', asyn
 test('redemption outage fails closed without opening upstream', async t => {
   const f = await fixture(t,{authOutage:true}); const {ws} = await f.connect();
   const [code,reason] = await once(ws,'close');assert.equal(code,1008);assert.equal(reason.toString(),'gateway refused');assert.equal(f.requests.length,0);
+});
+
+
+test('one session aggregates more than four Vessels while each connection remains bounded', async t => {
+  const f = await fixture(t);
+  for (let i = 0; i < 5; i++) {
+    const client = await f.connect(ticket({vessel:randomUUID()}));
+    assert.equal((await client.next()).type, 'ready');
+  }
+  const same = [];
+  for (let i = 0; i < LIMITS.perVessel; i++) {
+    const client = await f.connect(); same.push(client);
+    assert.equal((await client.next()).type, 'ready');
+  }
+  const refused = await f.connect();
+  assert.equal((await once(refused.ws,'close'))[0],1008);
+  const frame = command({op:'catalogue'}); same[0].ws.send(JSON.stringify(frame));
+  assert.equal((await same[0].next()).request_id,frame.request_id);
 });

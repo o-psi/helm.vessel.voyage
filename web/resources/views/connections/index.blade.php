@@ -53,6 +53,7 @@
   --rights catalogue,observe,history,execute,steer,decide,cancel \
   --output /private/invitation.json</flux:text></pre></flux:card>
                     <flux:text>Replace the example paths and hostname, then paste the generated invitation JSON into the pairing form.</flux:text>
+                    <flux:callout><flux:callout.heading>New voyages and provider accounts</flux:callout.heading><flux:callout.text>Add <code>create,account_use</code> to the rights above and add <code>--accounts ACCOUNT_UUID</code> for each provider account this connection may use (comma-separated UUIDs). Without these scopes, the console can open existing voyages but cannot create voyages or switch provider accounts. Account credentials stay on this Vessel.</flux:callout.text></flux:callout>
                 </div>
                 <flux:separator />
                 <div class="space-y-3">

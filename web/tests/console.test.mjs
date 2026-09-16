@@ -20,7 +20,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     assert.equal(rendered.status,0,rendered.stderr);
     const fixture = document.createElement('div'); fixture.innerHTML = rendered.stdout;
     root.innerHTML = fixture.querySelector('#helm-client').innerHTML;
-    root.querySelector('#vessel').append(new dom.window.Option('local','local'));
+    root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
     let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[];

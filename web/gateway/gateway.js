@@ -5,7 +5,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { exact, UUID, validCommand, validHello, validReply, restrictCapabilities } from './protocol.js';
 import { validateConfig } from './config.js';
 
-export const LIMITS = Object.freeze({ bytes: 4 * 1024 * 1024, connections: 64, perSubject: 4, inflight: 32,
+export const LIMITS = Object.freeze({ bytes: 4 * 1024 * 1024, connections: 64, perSubject: 64, perVessel: 4, inflight: 32,
   rate: 60, authMs: 5000, helloMs: 5000, requestMs: 15000, heartbeatMs: 5000, seen: 10000 });
 
 export function verifyTicket(ticket) {
@@ -22,7 +22,7 @@ const identity = c => JSON.stringify([c.sub, c.tenant, c.vessel, c.connection.ur
 
 export function createGateway(config, limits = LIMITS, io = transport) {
   validateConfig(config);
-  const subjects = new Map(), connections = new Set();
+  const subjects = new Map(), vessels = new Map(), connections = new Set();
   const server = http.createServer(localHandler(config, io, limits));
   server.headersTimeout = 5000;
   server.requestTimeout = 5000;
@@ -38,7 +38,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
   wss.on('connection', browser => {
     connections.add(browser);
     let authenticating = false;
-    let upstream, claims, subjectKey, leaseTimer, helloTimer, heartbeat, ready = false, stopped = false;
+    let upstream, claims, subjectKey, vesselKey, leaseTimer, helloTimer, heartbeat, ready = false, stopped = false;
     let budget = limits.rate, budgetAt = Date.now();
     const pending = new Map(), seen = new Set();
     const authTimer = setTimeout(() => stop(1008, 'authentication required'), limits.authMs);
@@ -49,6 +49,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
       for (const entry of pending.values()) clearTimeout(entry.timer);
       pending.clear(); connections.delete(browser);
       if (subjectKey) { const n = subjects.get(subjectKey) - 1; if (n) subjects.set(subjectKey, n); else subjects.delete(subjectKey); }
+      if (vesselKey) { const n = vessels.get(vesselKey) - 1; if (n) vessels.set(vesselKey, n); else vessels.delete(vesselKey); }
       for (const ws of [browser, upstream]) if (ws) {
         if (ws.readyState === WebSocket.OPEN) ws.close(code, reason); else if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
         const kill = setTimeout(() => ws.terminate(), 1000); kill.unref(); ws.once('close', () => clearTimeout(kill));
@@ -69,9 +70,11 @@ export function createGateway(config, limits = LIMITS, io = transport) {
       if (stopped || (claims && identity(next) !== identity(claims))) throw Error();
       const now = Date.now();
       if (!claims) {
-        subjectKey = next.sub;
-        if ((subjects.get(subjectKey) ?? 0) >= limits.perSubject) { subjectKey = undefined; throw Error(); }
+        const subject = next.sub, vessel = JSON.stringify([next.sub, next.tenant, next.vessel]);
+        if ((subjects.get(subject) ?? 0) >= limits.perSubject || (vessels.get(vessel) ?? 0) >= limits.perVessel) throw Error();
+        subjectKey = subject; vesselKey = vessel;
         subjects.set(subjectKey, (subjects.get(subjectKey) ?? 0) + 1);
+        vessels.set(vesselKey, (vessels.get(vesselKey) ?? 0) + 1);
       }
       claims = next;
       clearTimeout(authTimer); clearTimeout(leaseTimer);

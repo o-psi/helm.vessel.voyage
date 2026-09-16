@@ -1,6 +1,6 @@
 # Helm website
 
-Laravel 13, Livewire 4 and free Flux UI 2 product website for
+Laravel 13, Livewire 4 and licensed Flux Pro UI 2 product website for
 https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
 as a product suite for running coding agents across machines the user controls.
 Product copy leads with customer outcomes while accurately distinguishing current
@@ -17,7 +17,7 @@ The console never executes agents on the web host.
 ## Development
 
 Requires PHP 8.3+ with Laravel extensions, Composer, and a Node version supported
-by the locked Vite release (Node 20.19+ or 22.12+).
+by the locked Vite release (Node 20.19+ or 22.12+). Flux Pro also requires private Composer authentication for composer.fluxui.dev; keep auth.json out of Git (it is ignored).
 
 ```sh
 cd web
