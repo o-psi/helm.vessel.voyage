@@ -168,7 +168,7 @@ def main(binaries):
         assert draft(delete) == deleted
         assert not any(item['draft_id'] == draft_id for item in draft({'op': 'list'})['drafts'])
         assert draft({**put, 'command_id': uid()}, True).get('error'), 'stale device resurrected deleted identity'
-        retained = request({'op': 'read_artifact', 'session_id': sid, 'artifact_id': artifact['id'], 'offset': 0, 'limit': 262144})['result']['result']
+        retained = request({'op': 'read_artifact', 'session_id': sid, 'artifact_id': artifact['id'], 'offset': 0, 'limit': 65536})['result']['result']
         assert base64.b64decode(retained['data_base64']) == png(), 'discarding draft removed session artifact'
         log.flush()
         assert image not in (root / 'vessel.log').read_text(errors='replace'), 'image bytes entered diagnostics'

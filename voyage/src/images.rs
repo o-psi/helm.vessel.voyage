@@ -449,6 +449,30 @@ impl Store {
         Ok((principal, bytes))
     }
 
+    /// Authorized history clients may read uploaded rasters through the bounded
+    /// artifact transport. The caller must enforce session history authority.
+    pub fn chunk(&self, id: Uuid, offset: u64, limit: usize) -> Result<serde_json::Value> {
+        ensure!((1..=65536).contains(&limit), "invalid image chunk limit");
+        self.check_files()?;
+        let encoded: String = self.connection.query_row(
+            "SELECT metadata FROM images WHERE id=?1 AND session=?2",
+            params![id.to_string(), self.session.to_string()],
+            |row| row.get(0),
+        )?;
+        let metadata: ImageAttachment = serde_json::from_str(&encoded)?;
+        ensure!(metadata.id == id, "image identity mismatch");
+        let bytes = self.resolve(&metadata)?;
+        ensure!(offset <= bytes.len() as u64, "invalid image chunk offset");
+        let start = usize::try_from(offset)?;
+        let end = start.saturating_add(limit).min(bytes.len());
+        use base64::Engine as _;
+        Ok(serde_json::json!({
+            "metadata":metadata,
+            "data_base64":base64::engine::general_purpose::STANDARD.encode(&bytes[start..end]),
+            "offset":offset,"next_offset":end,"eof":end==bytes.len()
+        }))
+    }
+
     pub fn resolve(&self, attachment: &ImageAttachment) -> Result<Vec<u8>> {
         self.load(attachment).map(|(_, bytes)| bytes)
     }
@@ -490,6 +514,41 @@ mod tests {
         image.write_to(&mut buffer, format).unwrap();
         buffer.into_inner()
     }
+    #[test]
+    fn history_chunks_validate_raster_identity_and_ranges() {
+        let root = tempfile::tempdir().unwrap();
+        let session = Uuid::new_v4();
+        let mut store = Store::open(root.path(), session).unwrap();
+        let bytes = raster(ImageFormat::Png);
+        let id = Uuid::new_v4();
+        let metadata = store
+            .put(Uuid::new_v4(), id, "picture.png", &bytes)
+            .unwrap();
+        let first = store.chunk(id, 0, 10).unwrap();
+        assert_eq!(first["metadata"], serde_json::to_value(&metadata).unwrap());
+        assert_eq!(first["next_offset"], 10);
+        assert_eq!(first["eof"], false);
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(first["data_base64"].as_str().unwrap())
+                .unwrap(),
+            bytes[..10]
+        );
+        assert!(store.chunk(id, 0, 65537).is_err());
+        assert!(store.chunk(id, bytes.len() as u64 + 1, 1).is_err());
+        assert!(store.chunk(Uuid::new_v4(), 0, 10).is_err());
+        assert_eq!(store.chunk(id, bytes.len() as u64, 1).unwrap()["eof"], true);
+        store
+            .connection
+            .execute(
+                "UPDATE images SET bytes=zeroblob(length(bytes)) WHERE id=?1",
+                [id.to_string()],
+            )
+            .unwrap();
+        assert!(store.chunk(id, 0, 10).is_err());
+    }
+
     #[test]
     fn signatures_full_rasters_and_truncation() {
         for (format, media) in [

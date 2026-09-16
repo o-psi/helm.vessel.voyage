@@ -289,6 +289,13 @@ pub(super) async fn dispatch_admitted(
                 state.registration.session_id,
             )?
             .chunk(artifact_id, offset, limit as usize)
+            .or_else(|_| {
+                crate::images::Store::open(
+                    &state.directory.join("journal"),
+                    state.registration.session_id,
+                )?
+                .chunk(artifact_id, offset, limit as usize)
+            })
             .map_err(|_| anyhow::anyhow!("artifact unavailable or invalid range"))
         }
         RuntimeCommand::RunOutput {
