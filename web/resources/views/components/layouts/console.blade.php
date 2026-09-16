@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex, nofollow">
     <title>Helm Console</title>
-    @vite(['resources/css/console.css', 'resources/js/console.js'])
+    @vite(['resources/css/console.css', 'resources/js/app.js', 'resources/js/console.js'])
     @livewireStyles
     @fluxAppearance
 </head>
