@@ -10,18 +10,27 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin},
+    process::Child,
     sync::{broadcast, oneshot},
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[cfg(not(test))]
+use tokio::process::ChildStdin;
+
 const FRAME_LIMIT: usize = 4 * 1024 * 1024;
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value>>>>>;
 
 pub(super) struct Helper {
+    #[cfg(not(test))]
     input: tokio::sync::Mutex<ChildStdin>,
+    #[cfg(test)]
+    input: tokio::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Unpin + Send>>,
+    #[cfg(not(test))]
     child: tokio::sync::Mutex<Child>,
+    #[cfg(test)]
+    child: tokio::sync::Mutex<Option<Child>>,
     pending: Pending,
     events: broadcast::Sender<Value>,
     stopped: CancellationToken,
@@ -126,8 +135,14 @@ impl Helper {
             }
         });
         Ok(Arc::new(Self {
+            #[cfg(not(test))]
             input: tokio::sync::Mutex::new(input),
+            #[cfg(test)]
+            input: tokio::sync::Mutex::new(Box::new(input)),
+            #[cfg(not(test))]
             child: tokio::sync::Mutex::new(child),
+            #[cfg(test)]
+            child: tokio::sync::Mutex::new(Some(child)),
             pending,
             events,
             stopped,
@@ -211,6 +226,8 @@ impl Helper {
             .call(json!({"op":"shutdown"}), Duration::from_secs(5))
             .await;
         let mut child = self.child.lock().await;
+        #[cfg(test)]
+        let child = child.as_mut().expect("shutdown requires a real child");
         let observed = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
         if !matches!(observed, Ok(Ok(_))) {
             #[cfg(unix)]
@@ -231,3 +248,7 @@ impl Helper {
         graceful.map(|_| ())
     }
 }
+
+#[cfg(test)]
+#[path = "helper_tests.rs"]
+pub(super) mod tests;

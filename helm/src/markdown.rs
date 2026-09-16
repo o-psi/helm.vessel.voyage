@@ -900,3 +900,7 @@ pub fn wrap_text(text: Text<'_>, width: usize) -> Text<'static> {
     }
     Text::from(output)
 }
+
+#[cfg(test)]
+#[path = "markdown_tests.rs"]
+mod coverage_tests;

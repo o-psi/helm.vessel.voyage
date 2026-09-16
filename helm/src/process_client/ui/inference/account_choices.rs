@@ -417,3 +417,6 @@ mod tests {
         assert!(!choices[0].label.contains('\u{1b}'));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests;

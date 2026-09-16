@@ -94,3 +94,12 @@ pub(super) async fn run(
 ) -> Result<()> {
     commands::run(args, config, workspace, model_overridden).await
 }
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(all(test, unix))]
+mod managed_final_tests;
+#[cfg(test)]
+#[path = "managed/transport_tests.rs"]
+mod transport_tests;

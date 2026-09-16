@@ -20,7 +20,11 @@ async fn configured(accepted: bool) -> (Fixture, Supervisor, ProcessRegistration
         recipient_grant_revision: 1,
         source_vessel_id: vessel,
         source_session_id: r.session_id,
-        event_kinds: vec![NotificationKind::Attention, NotificationKind::Test],
+        event_kinds: vec![
+            NotificationKind::Attention,
+            NotificationKind::Test,
+            NotificationKind::Completed,
+        ],
         expires_at_ms: access::now().unwrap() + 60_000,
         notification_ttl_ms: 60_000,
         quiet_hours_utc: None,
@@ -347,7 +351,7 @@ async fn events_before_recipient_acceptance_are_not_backfilled() {
 async fn unsubscribed_kind_is_filtered_without_stalling_source_cursor() {
     let (f, s, r, d) = configured(true).await;
     let mut e = event(&r);
-    e["kind"] = json!("completed");
+    e["kind"] = json!("failed");
     e["decision_id"] = Value::Null;
     deliver(&f, &s, &r, &d, page(vec![e], 1)).await;
     assert_eq!(cursor(&f, &d).after, 1);
@@ -398,4 +402,154 @@ async fn relinquished_source_is_unavailable_without_attempting_ipc() {
             .join(format!("delivery-{}.json", d.id))
             .exists()
     );
+}
+
+async fn open_with_decisions(change: &str) -> Value {
+    let (f, s, r, d) = configured(true).await;
+    let source = event(&r);
+    deliver(&f, &s, &r, &d, page(vec![source.clone()], 1)).await;
+    let event_id = serde_json::from_value(source["source_event_id"].clone()).unwrap();
+    let mut decision = json!({
+        "decision_id": source["decision_id"], "incarnation":r.incarnation,
+        "run_id":source["run_id"], "expires_at_ms":access::now().unwrap()+60_000,
+        "preview":"synthetic pending decision"
+    });
+    match change {
+        "wrong_run" => decision["run_id"] = json!(Uuid::new_v4()),
+        "wrong_incarnation" => decision["incarnation"] = json!(Uuid::new_v4()),
+        "wrong_decision" => decision["decision_id"] = json!(Uuid::new_v4()),
+        "expired" => decision["expires_at_ms"] = json!(0),
+        "missing_expiry" => {
+            decision.as_object_mut().unwrap().remove("expires_at_ms");
+        }
+        _ => {}
+    }
+    let path = registry::directory(&f.0, r.session_id).join("runtime.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    let registration = r.clone();
+    let root = f.0.clone();
+    let change = change.to_owned();
+    let peer = tokio::spawn(async move {
+        let (mut stream, _) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+        let request: RuntimeRequest = read_frame(&mut stream).await.unwrap();
+        assert_eq!(request.token, registration.token);
+        assert!(request.authorization.is_none());
+        assert!(matches!(
+            request.command,
+            voyage_protocol::process::RuntimeCommand::Decisions
+        ));
+        // Alter authority during the owner wait, not before the preliminary checks.
+        if change == "owner_changed" {
+            let mut next = registration.clone();
+            next.restart_from = Some(registration.incarnation);
+            next.incarnation = Uuid::new_v4();
+            database::save(&root, &next).await.unwrap();
+        }
+        write_frame(
+            &mut stream,
+            &RuntimeResponse {
+                protocol: PROCESS_PROTOCOL,
+                session_id: registration.session_id,
+                incarnation: registration.incarnation,
+                result: if change == "empty" {
+                    json!([])
+                } else {
+                    json!([decision])
+                },
+                error: (change == "refused").then(|| "fixture refusal".into()),
+                outcome_unknown: change == "unknown",
+                resumed_from: None,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        s.notifications(
+            NotificationOperation::Open {
+                destination_id: d.id,
+                event_id,
+            },
+            None,
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    peer.await.unwrap();
+    assert_eq!(reply["actionable"], false);
+    reply
+}
+
+#[tokio::test]
+async fn opening_attention_fetches_current_decision_but_never_grants_approval() {
+    let reply = open_with_decisions("current").await;
+    assert_eq!(reply["status"], "current");
+    assert_eq!(reply["approval_granted"], false);
+    assert_eq!(
+        reply["decision_requires"],
+        "separate_explicit_owner_response"
+    );
+    assert_eq!(reply["decision"]["preview"], "synthetic pending decision");
+}
+
+#[tokio::test]
+async fn opening_attention_matches_full_decision_identity_and_current_lifetime() {
+    for change in ["wrong_run", "wrong_incarnation", "wrong_decision", "empty"] {
+        assert_eq!(
+            open_with_decisions(change).await["status"],
+            "resolved_or_expired",
+            "{change}"
+        );
+    }
+    for change in ["expired", "missing_expiry", "owner_changed"] {
+        assert_eq!(
+            open_with_decisions(change).await["status"],
+            "stale",
+            "{change}"
+        );
+    }
+    for change in ["refused", "unknown"] {
+        assert_eq!(
+            open_with_decisions(change).await["status"],
+            "unavailable",
+            "{change}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn informational_open_is_metadata_only_and_revocation_removes_the_reference() {
+    let (f, s, r, d) = configured(true).await;
+    let mut source = event(&r);
+    source["kind"] = json!("completed");
+    source["decision_id"] = Value::Null;
+    let event_id = serde_json::from_value(source["source_event_id"].clone()).unwrap();
+    deliver(&f, &s, &r, &d, page(vec![source], 1)).await;
+    let operation = NotificationOperation::Open {
+        destination_id: d.id,
+        event_id,
+    };
+    let reply = s.notifications(operation.clone(), None).await.unwrap();
+    assert_eq!(reply["status"], "current");
+    assert_eq!(reply["actionable"], false);
+    assert_eq!(reply["execution_cleanup"], "not_implied");
+    assert_eq!(reply["source"]["session_id"], r.session_id.to_string());
+    s.notifications(
+        NotificationOperation::Revoke {
+            command_id: Uuid::new_v4(),
+            destination_id: d.id,
+        },
+        None,
+    )
+    .await
+    .unwrap();
+    let reply = s.notifications(operation, None).await.unwrap();
+    assert_eq!(reply["status"], "expired_or_revoked");
+    assert_eq!(reply["actionable"], false);
 }

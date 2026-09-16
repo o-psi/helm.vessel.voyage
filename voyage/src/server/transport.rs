@@ -275,3 +275,7 @@ fn token_matches(left: &str, right: &str) -> bool {
             .fold(0u8, |difference, (a, b)| difference | (a ^ b))
             == 0
 }
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod tests;

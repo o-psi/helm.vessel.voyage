@@ -165,3 +165,7 @@ impl Supervisor {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "access_tests.rs"]
+mod tests;

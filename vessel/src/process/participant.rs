@@ -156,3 +156,6 @@ impl Supervisor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod participant_final_tests;

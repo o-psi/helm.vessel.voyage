@@ -218,3 +218,7 @@ impl App {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "operator_bridge_tests.rs"]
+mod coverage_tests;

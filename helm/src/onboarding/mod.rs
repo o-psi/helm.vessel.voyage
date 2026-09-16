@@ -429,3 +429,6 @@ pub fn run(args: OnboardArgs, config: &Config, workspace: Option<PathBuf>) -> Re
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

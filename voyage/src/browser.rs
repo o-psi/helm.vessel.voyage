@@ -1065,3 +1065,7 @@ mod tests {
         assert!(persisted.entries[&id].receipt.cleanup_pending);
     }
 }
+
+#[cfg(test)]
+#[path = "browser_coverage_tests.rs"]
+mod coverage_tests;

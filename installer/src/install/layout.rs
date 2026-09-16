@@ -15,6 +15,13 @@ pub(super) struct Layout {
 }
 impl Layout {
     pub(super) fn get() -> Result<Self> {
+        #[cfg(test)]
+        if let Some(root) = crate::fixture_tests::required_root()? {
+            return Ok(Self {
+                root: root.join("install"),
+                bin: root.join("bin"),
+            });
+        }
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is required")?);
         files::safe(&home)?;
         Ok(Self {

@@ -345,3 +345,6 @@ pub(crate) fn resolve_using(
     };
     Ok((preview.proposed, guard))
 }
+
+#[cfg(test)]
+mod tests;

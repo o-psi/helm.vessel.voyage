@@ -1242,3 +1242,10 @@ fn preview(text: &str) -> String {
     }
     format!("{}… [preview]", &text[..end])
 }
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+#[path = "runtime/supervision_contract_tests.rs"]
+mod supervision_contract_tests;

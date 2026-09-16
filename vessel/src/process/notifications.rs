@@ -1097,3 +1097,6 @@ mod authority_regressions;
 
 #[cfg(test)]
 mod delivery_tests;
+
+#[cfg(test)]
+mod notifications_final_tests;

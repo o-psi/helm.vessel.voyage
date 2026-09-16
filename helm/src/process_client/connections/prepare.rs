@@ -419,3 +419,7 @@ pub(super) async fn inspect(
     }
     Ok((vessel_id, principal_id, scope, metadata))
 }
+
+#[cfg(all(test, unix))]
+#[path = "prepare_tests.rs"]
+mod tests;

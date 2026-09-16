@@ -176,3 +176,7 @@ mod tests {
         assert_eq!(open(b"legacy", b"unchanged").unwrap(), b"unchanged");
     }
 }
+
+#[cfg(test)]
+#[path = "credentials_tests.rs"]
+mod envelope_tests;

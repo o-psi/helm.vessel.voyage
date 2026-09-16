@@ -898,3 +898,7 @@ mod confidentiality_tests {
 #[cfg(test)]
 #[path = "runtime_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(test)]
+#[path = "runtime_final_tests.rs"]
+mod final_tests;

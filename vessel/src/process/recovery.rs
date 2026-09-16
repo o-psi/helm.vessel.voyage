@@ -206,3 +206,7 @@ impl Supervisor {
         Ok(serde_json::to_value(observed)?)
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod tests;

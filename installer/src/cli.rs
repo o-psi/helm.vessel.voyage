@@ -162,3 +162,7 @@ Service commands: install-user-service --bin-dir ABS [--start] [--dry-run],
 service-status, service-stop, service-uninstall
 --help, --version");
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "cli_tests.rs"]
+mod tests;

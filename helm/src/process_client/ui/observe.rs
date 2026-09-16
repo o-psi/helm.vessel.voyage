@@ -427,3 +427,7 @@ async fn refresh(
         .await;
     cursor
 }
+
+#[cfg(all(test, unix))]
+#[path = "observe_tests.rs"]
+mod coverage_tests;

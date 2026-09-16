@@ -52,3 +52,7 @@ pub fn describe(report: &install::Report, options: &Options) -> Vec<String> {
     });
     lines
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "flow_tests.rs"]
+mod tests;

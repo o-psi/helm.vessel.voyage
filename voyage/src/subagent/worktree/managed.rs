@@ -132,3 +132,7 @@ fn directory(path: &Path) -> Result<bool> {
     );
     Ok(created)
 }
+
+#[cfg(test)]
+#[path = "managed_contract_tests.rs"]
+mod contract_tests;

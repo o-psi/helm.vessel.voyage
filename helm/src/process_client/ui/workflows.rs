@@ -1048,3 +1048,7 @@ mod tests {
         assert!(app.workflows.panel.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "workflows_tests.rs"]
+mod coverage_tests;

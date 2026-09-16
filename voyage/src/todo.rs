@@ -695,3 +695,7 @@ fn sync_directory(path: &std::path::Path) -> Result<()> {
 fn sync_directory(_: &std::path::Path) -> Result<()> {
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "todo_coverage_tests.rs"]
+mod coverage_tests;

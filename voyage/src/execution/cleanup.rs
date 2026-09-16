@@ -249,3 +249,6 @@ impl CleanupSlot {
         .is_ok()
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -138,3 +138,6 @@ impl App {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+mod tests;

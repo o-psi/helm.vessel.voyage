@@ -560,3 +560,7 @@ fn optional_string(value: &Value, field: &str, max: usize) -> Result<Option<Stri
         }
     }
 }
+
+#[cfg(test)]
+#[path = "artifacts_coverage_tests.rs"]
+mod coverage_tests;

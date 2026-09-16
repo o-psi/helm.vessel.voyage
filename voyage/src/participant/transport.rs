@@ -97,3 +97,7 @@ pub(super) async fn request(
     );
     Ok(response)
 }
+
+#[cfg(test)]
+#[path = "transport_contract_tests.rs"]
+mod contract_tests;

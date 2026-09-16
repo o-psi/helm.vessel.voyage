@@ -463,3 +463,6 @@ pub(super) fn validate_credential(connection: &Connection, credential: &Credenti
 pub fn protect_credentials(root: &std::path::Path) -> Result<usize> {
     private::protect(root)
 }
+
+#[cfg(all(test, unix))]
+mod tests;

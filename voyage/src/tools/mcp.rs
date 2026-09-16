@@ -745,3 +745,7 @@ impl Drop for McpLease {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "mcp/http_contract_tests.rs"]
+mod http_contract_tests;

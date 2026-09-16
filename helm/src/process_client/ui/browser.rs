@@ -194,3 +194,7 @@ impl App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "browser_tests.rs"]
+mod coverage_tests;

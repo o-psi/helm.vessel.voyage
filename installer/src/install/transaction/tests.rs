@@ -5,9 +5,11 @@ use std::{collections::BTreeMap, os::unix::fs::PermissionsExt, path::PathBuf};
 struct Fixture {
     path: PathBuf,
     layout: Layout,
+    _process: std::sync::MutexGuard<'static, ()>,
 }
 impl Fixture {
     fn new() -> Self {
+        let process = crate::fixture_tests::process_guard();
         let path = std::env::temp_dir().join(format!(
             "voyage-installer-test-{}-{}",
             std::process::id(),
@@ -23,7 +25,11 @@ impl Fixture {
         };
         files::private_directory(&layout.root).unwrap();
         files::directory(&layout.root.join("releases")).unwrap();
-        Self { path, layout }
+        Self {
+            path,
+            layout,
+            _process: process,
+        }
     }
     fn source(&self, version: &str) -> (PathBuf, Manifest) {
         let source = self.path.join(version).join("bin");

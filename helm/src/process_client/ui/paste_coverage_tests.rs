@@ -136,3 +136,89 @@ async fn unavailable_destinations_return_errors_without_mutation() {
     app.selected = None;
     assert!(app.paste_destination().is_none());
 }
+
+#[tokio::test]
+async fn supplied_paste_preserves_anchor_and_handles_cancellation_cleanup_failure_and_stale_reply()
+{
+    let (_fixture, mut app, target) = coverage_support::app();
+    app.views
+        .get_mut(&target)
+        .unwrap()
+        .draft
+        .set_text("before after".into());
+    app.views.get_mut(&target).unwrap().draft.cursor = 7;
+    app.begin_paste(
+        Destination::Live(target),
+        Some((crate::clipboard::Content::Text("inserted ".into()), None)),
+    )
+    .unwrap();
+    assert!(
+        app.ensure_paste_finished(Destination::Live(target))
+            .is_err()
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while app.clipboard_pending.is_some() {
+            app.poll_clipboard();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(app.views[&target].draft.text, "before inserted after");
+    assert!(app.views[&target].pending.is_none());
+    app.begin_paste(
+        Destination::Live(target),
+        Some((crate::clipboard::Content::Empty, None)),
+    )
+    .unwrap();
+    let id = app.clipboard_pending.as_ref().unwrap().id;
+    app.paste_result(Uuid::new_v4(), Ok(Prepared::Text("wrong".into())));
+    assert!(app.clipboard_pending.is_some());
+    app.clipboard_pending.as_ref().unwrap().cancel.cancel();
+    app.paste_result(id, Ok(Prepared::Text("cancelled".into())));
+    assert!(!app.views[&target].draft.text.contains("cancelled"));
+    assert!(app.status.contains("cancelled"));
+    app.begin_paste(
+        Destination::Live(target),
+        Some((crate::clipboard::Content::Empty, None)),
+    )
+    .unwrap();
+    let id = app.clipboard_pending.as_ref().unwrap().id;
+    app.paste_result(id, Err("fixture cleanup failed".into()));
+    assert!(app.clipboard_blocked);
+    assert!(
+        app.begin_paste(
+            Destination::Live(target),
+            Some((crate::clipboard::Content::Empty, None))
+        )
+        .is_err()
+    );
+    assert_eq!(app.views[&target].draft.text, "before inserted after");
+}
+#[tokio::test]
+async fn replaced_draft_cannot_receive_old_paste_and_empty_paste_is_non_destructive() {
+    let (_fixture, mut app, target) = coverage_support::app();
+    app.begin_paste(
+        Destination::Live(target),
+        Some((crate::clipboard::Content::Empty, None)),
+    )
+    .unwrap();
+    let id = app.clipboard_pending.as_ref().unwrap().id;
+    app.views
+        .get_mut(&target)
+        .unwrap()
+        .draft
+        .set_text("replacement".into());
+    app.paste_result(id, Ok(Prepared::Text("stale".into())));
+    assert_eq!(app.views[&target].draft.text, "replacement");
+    assert!(app.status.contains("replaced"));
+    app.begin_paste(
+        Destination::Live(target),
+        Some((crate::clipboard::Content::Empty, None)),
+    )
+    .unwrap();
+    let id = app.clipboard_pending.as_ref().unwrap().id;
+    app.paste_result(id, Ok(Prepared::Empty));
+    assert_eq!(app.views[&target].draft.text, "replacement");
+    assert!(app.status.contains("no image or text"));
+}

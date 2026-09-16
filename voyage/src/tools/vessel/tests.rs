@@ -360,3 +360,258 @@ fn create_settings_schema_matches_typed_overrides() {
     assert!(schema.validate(&request).is_err());
     assert!(serde_json::from_value::<Action>(request).is_err());
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mutation_dispatch_journals_exact_intent_and_never_resends_retained_result() {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let owner = Uuid::new_v4();
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(root.path().join("sessions"))
+        .unwrap();
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(root.path().join("sessions").join(owner.to_string()))
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    std::fs::write(
+        root.path().join("process-http.json"),
+        json!({"endpoint":endpoint,"token":"a".repeat(64)}).to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        root.path().join("process-http.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let session = Uuid::new_v4();
+    let id = Uuid::new_v4();
+    let peer = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        let body;
+        loop {
+            let mut chunk = [0; 4096];
+            let n = socket.read(&mut chunk).await.unwrap();
+            assert!(n > 0);
+            bytes.extend_from_slice(&chunk[..n]);
+            if let Some(end) = bytes.windows(4).position(|v| v == b"\r\n\r\n") {
+                let header = String::from_utf8_lossy(&bytes[..end]).to_ascii_lowercase();
+                let length = header
+                    .lines()
+                    .find_map(|l| {
+                        l.strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap();
+                if bytes.len() >= end + 4 + length {
+                    body = serde_json::from_slice::<Value>(&bytes[end + 4..]).unwrap();
+                    break;
+                }
+            }
+        }
+        assert_eq!(body["command"]["op"], "rename");
+        assert_eq!(body["command"]["command_id"], id.to_string());
+        let response=json!({"protocol":1,"result":{"session_id":session,"incarnation":Uuid::new_v4(),"result":{"command_id":id,"status":"renamed"}},"error":null,"outcome_unknown":false}).to_string();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                    response.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    let tool = VesselTool::new(
+        VesselSettings::default(),
+        Some(VesselContext {
+            session_id: owner,
+            directory: root.path().into(),
+        }),
+    );
+    let ctx = crate::tools::reliability_tests::context(root.path());
+    let request = json!({"action":"rename","session_id":session,"command_id":id,"expected_revision":1,"name":"fixture"});
+    let first = tool.execute(request.clone(), &ctx).await.unwrap();
+    assert!(first.contains("renamed"));
+    peer.await.unwrap();
+    let second = tool.execute(request.clone(), &ctx).await.unwrap();
+    assert_eq!(first, second);
+    let mut changed = request;
+    changed["name"] = json!("different");
+    assert!(tool.execute(changed, &ctx).await.is_err());
+    let operations = tool
+        .execute(json!({"action":"operations","offset":0,"limit":10}), &ctx)
+        .await
+        .unwrap();
+    assert!(operations.contains(&id.to_string()));
+    let receipt = tool
+        .execute(json!({"action":"receipt","command_id":id}), &ctx)
+        .await
+        .unwrap();
+    assert!(receipt.contains("renamed"));
+}
+#[tokio::test]
+async fn route_validation_and_preflight_refuse_before_any_transport() {
+    let root = tempfile::tempdir().unwrap();
+    let ctx = crate::tools::reliability_tests::context(root.path());
+    let tool = VesselTool::new(VesselSettings::default(), None);
+    let routes: Value = serde_json::from_str(
+        &tool
+            .execute(json!({"action":"routes"}), &ctx)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(routes["automatic_start"], false);
+    for request in [
+        json!({"action":"list","limit":0}),
+        json!({"action":"search","query":" "}),
+        json!({"action":"wait","session_id":Uuid::new_v4(),"wait_ms":30001}),
+        json!({"action":"details","session_id":Uuid::new_v4(),"path":"not/pointer"}),
+        json!({"action":"list","target":17}),
+        json!({"action":"rename","session_id":Uuid::new_v4(),"command_id":Uuid::new_v4(),"expected_revision":0,"name":" "}),
+        json!({"action":"capabilities","target":"unknown"}),
+    ] {
+        assert!(tool.execute(request, &ctx).await.is_err());
+    }
+    let disabled = VesselTool::new(
+        VesselSettings {
+            enabled: false,
+            ..Default::default()
+        },
+        None,
+    );
+    assert!(matches!(
+        disabled.execute(json!({"action":"routes"}), &ctx).await,
+        Err(ToolError::Denied(_))
+    ));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn dispatch_matrix_preserves_public_read_and_mutation_envelopes() {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let session = Uuid::new_v4();
+    let run = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    let task = tokio::spawn(async move {
+        let mut commands = Vec::new();
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = vec![];
+            let end;
+            loop {
+                let mut block = [0; 4096];
+                let n = socket.read(&mut block).await.unwrap();
+                if n == 0 {
+                    return commands;
+                }
+                bytes.extend_from_slice(&block[..n]);
+                if let Some(e) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                    let header = String::from_utf8_lossy(&bytes[..e]).to_ascii_lowercase();
+                    let length = header
+                        .lines()
+                        .find_map(|l| {
+                            l.strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    if bytes.len() >= e + 4 + length {
+                        end = e + 4;
+                        break;
+                    }
+                }
+            }
+            let request: Value = serde_json::from_slice(&bytes[end..]).unwrap();
+            let wire = request["command"].clone();
+            let op = wire["op"].as_str().unwrap();
+            let payload = match op {
+                "capabilities" => json!({"features":["start_settings"]}),
+                "list" => json!([]),
+                "inspect" => {
+                    json!({"session_id":session,"incarnation":incarnation,"workspace":"/fixture","state":"live"})
+                }
+                "start_settings" => {
+                    json!({"session_id":wire["session_id"],"incarnation":incarnation})
+                }
+                "snapshot" => json!({"revision":0,"messages":[]}),
+                _ => json!({"status":"fixture","command_id":wire["command_id"]}),
+            };
+            let result = if matches!(op, "capabilities" | "list" | "inspect" | "start_settings") {
+                payload
+            } else {
+                json!({"session_id":session,"incarnation":incarnation,"result":payload})
+            };
+            commands.push(wire);
+            let body = json!({"protocol":1,"result":result,"error":null,"outcome_unknown":false})
+                .to_string();
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        }
+    });
+    std::fs::write(
+        root.path().join("process-http.json"),
+        json!({"endpoint":endpoint,"token":"a".repeat(64)}).to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        root.path().join("process-http.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let mut transport = transport::Transport::open(root.path(), None).unwrap();
+    let journal = root.path().join("wire");
+    std::fs::create_dir(&journal).unwrap();
+    transport.journal(journal);
+    let ctx = crate::tools::reliability_tests::context(root.path());
+    let actions = vec![
+        json!({"action":"capabilities"}),
+        json!({"action":"list"}),
+        json!({"action":"search","query":"fixture"}),
+        json!({"action":"controls","session_id":session,"section":"policy"}),
+        json!({"action":"controls","session_id":session,"section":"models","run_id":run}),
+        json!({"action":"provider_attempts","session_id":session}),
+        json!({"action":"history","session_id":session}),
+        json!({"action":"follow","session_id":session}),
+        json!({"action":"wait","session_id":session}),
+        json!({"action":"receipt","session_id":session,"command_id":command}),
+        json!({"action":"submit","session_id":session,"command_id":Uuid::new_v4(),"expected_revision":0,"prompt":"fixture"}),
+        json!({"action":"steer","session_id":session,"command_id":Uuid::new_v4(),"incarnation":incarnation,"run_id":run,"expected_revision":0,"prompt":"fixture"}),
+        json!({"action":"cancel","session_id":session,"command_id":Uuid::new_v4(),"incarnation":incarnation,"run_id":run,"expected_revision":0}),
+        json!({"action":"rename","session_id":session,"command_id":Uuid::new_v4(),"expected_revision":0,"name":"fixture"}),
+        json!({"action":"archive","session_id":session,"command_id":Uuid::new_v4(),"expected_revision":0}),
+        json!({"action":"restore","session_id":session,"command_id":Uuid::new_v4(),"expected_revision":0}),
+    ];
+    for value in actions {
+        let action: Action = serde_json::from_value(value.clone()).unwrap();
+        let result = perform(action, &transport, &ctx, None, None).await;
+        assert!(result.is_ok(), "{value}: {result:?}");
+    }
+    task.abort();
+    let _ = task.await;
+}

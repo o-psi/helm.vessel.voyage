@@ -206,3 +206,7 @@ fn inspect(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "schema_contract_tests.rs"]
+mod contract_tests;

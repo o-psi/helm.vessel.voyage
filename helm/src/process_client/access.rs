@@ -323,3 +323,7 @@ mod catalog_error_tests {
         assert!(!error.contains("RAW-BODY"));
     }
 }
+
+#[cfg(test)]
+#[path = "access_tests.rs"]
+mod tests;

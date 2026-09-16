@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod loop_final_tests;
 mod provider_attempts;
 mod retry;
 #[cfg(test)]
@@ -1821,3 +1823,11 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition], access: AccessMode) ->
 
 mod reasoning_preview;
 mod tool_preview;
+
+#[cfg(test)]
+#[path = "agent/tool_journey_tests.rs"]
+mod tool_journey_tests;
+
+#[cfg(test)]
+#[path = "agent/outcome_final_tests.rs"]
+mod outcome_final_tests;

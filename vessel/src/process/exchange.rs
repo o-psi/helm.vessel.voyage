@@ -59,3 +59,7 @@ pub async fn exchange(directory: &Path, request: &VesselRequest) -> Result<Vesse
     );
     Ok(response)
 }
+
+#[cfg(test)]
+#[path = "exchange_tests.rs"]
+mod tests;

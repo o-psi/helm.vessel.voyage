@@ -458,3 +458,6 @@ pub(super) async fn socket(
         .max_frame_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
         .on_upgrade(move |socket| vessel::duplex::serve(socket, backend, vessel_id, permit))
 }
+
+#[cfg(test)]
+mod tests;

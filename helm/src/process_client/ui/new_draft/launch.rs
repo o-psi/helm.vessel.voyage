@@ -238,3 +238,6 @@ fn retain_receipt(
     storage::save(saved)?;
     Ok(Some(receipt))
 }
+
+#[cfg(all(test, unix))]
+mod tests;

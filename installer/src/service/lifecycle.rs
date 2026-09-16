@@ -45,3 +45,7 @@ pub fn manage(operation: &str) -> Result<()> {
     };
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod tests;

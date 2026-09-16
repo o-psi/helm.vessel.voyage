@@ -353,3 +353,7 @@ pub(super) fn text_page(value: &Value, request: &Value, bytes: usize) -> Result<
 pub(super) const fn preview_bytes() -> usize {
     PREVIEW_BYTES
 }
+
+#[cfg(test)]
+#[path = "inspection_contract_tests.rs"]
+mod contract_tests;

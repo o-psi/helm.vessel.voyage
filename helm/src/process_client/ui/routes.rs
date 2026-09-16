@@ -306,3 +306,7 @@ pub(super) fn retain_receipt(
     std::fs::File::open(root)?.sync_all()?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "routes_tests.rs"]
+mod coverage_tests;

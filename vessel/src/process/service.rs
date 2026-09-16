@@ -476,3 +476,10 @@ impl Supervisor {
         super::database::registration(&self.directory, session_id).await
     }
 }
+
+#[cfg(test)]
+#[path = "subscriptions_final_tests.rs"]
+mod subscriptions_final_tests;
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod tests;

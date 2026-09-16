@@ -449,3 +449,7 @@ fn git_command<const N: usize>(
     }
     Ok(command)
 }
+
+#[cfg(test)]
+#[path = "worktree_contract_tests.rs"]
+mod contract_tests;

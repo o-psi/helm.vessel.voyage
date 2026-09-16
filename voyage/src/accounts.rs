@@ -897,3 +897,7 @@ fn describe(a: &Account) -> AccountDescriptor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "accounts/lifecycle_boundary_tests.rs"]
+mod lifecycle_boundary_tests;

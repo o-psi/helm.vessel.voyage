@@ -615,3 +615,7 @@ mod publication_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "catalog_coverage_tests.rs"]
+mod coverage_tests;

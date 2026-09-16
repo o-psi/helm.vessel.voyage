@@ -255,3 +255,7 @@ async fn live(
     }
     Ok(text)
 }
+
+#[cfg(all(test, unix))]
+#[path = "history_tests.rs"]
+mod coverage_tests;

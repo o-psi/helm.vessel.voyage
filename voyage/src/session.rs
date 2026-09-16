@@ -1037,3 +1037,7 @@ mod working_context_tests {
         loaded.working_context.validate(&loaded.messages).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "session_coverage_tests.rs"]
+mod coverage_tests;

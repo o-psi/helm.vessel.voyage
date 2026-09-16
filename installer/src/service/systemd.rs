@@ -45,6 +45,10 @@ fn plan(bin: &Path, start: bool) -> Result<Plan> {
             .parse()
             .context("Active supervisor PID unavailable")?;
         ensure!(pid > 1, "Invalid active supervisor identity");
+        #[cfg(test)]
+        let executable = crate::fixture_tests::executable(pid)
+            .context("Cannot inspect active supervisor executable")?;
+        #[cfg(not(test))]
         let executable = fs::read_link(format!("/proc/{pid}/exe"))
             .context("Cannot inspect active supervisor executable")?;
         ensure!(
@@ -236,3 +240,7 @@ pub(super) fn wait_inactive() -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+#[cfg(test)]
+#[path = "systemd_tests.rs"]
+mod tests;

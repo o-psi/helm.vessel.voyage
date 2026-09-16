@@ -140,3 +140,7 @@ fn instruction_guard(
     }
     Ok(Some(guard))
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

@@ -487,3 +487,7 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
         .ok()?
         .strip_prefix("Bearer ")
 }
+
+#[cfg(test)]
+#[path = "main/tests.rs"]
+mod tests;

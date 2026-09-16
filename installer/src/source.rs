@@ -116,6 +116,9 @@ mod linux {
 
     pub(super) fn prepare(source: Source, cancelled: &AtomicBool) -> Result<Prepared> {
         ensure!(!cancelled.load(Ordering::Relaxed), "Upgrade cancelled");
+        #[cfg(test)]
+        let home = crate::fixture_tests::root().context("source test requires isolated fixture")?;
+        #[cfg(not(test))]
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is required")?);
         let cache = home.join(".cache/voyage/upgrades");
         crate::install::files::private_directory(&cache)?;
@@ -139,6 +142,12 @@ mod linux {
             .mode(0o600)
             .open(&log_path)?;
         let mut command = Command::new("python3");
+        #[cfg(test)]
+        let fixture_acquire = crate::fixture_tests::acquire();
+        #[cfg(test)]
+        let acquire = fixture_acquire.as_str();
+        #[cfg(not(test))]
+        let acquire = include_str!("source_acquire.py");
         command
             .env_clear()
             .env("HOME", &home)
@@ -152,7 +161,7 @@ mod linux {
                 std::env::var_os("RUSTUP_HOME")
                     .unwrap_or_else(|| home.join(".rustup").into_os_string()),
             )
-            .args(["-I", "-c", include_str!("source_acquire.py")])
+            .args(["-I", "-c", acquire])
             .arg(match source {
                 Source::Latest => "latest",
                 Source::Main => "main",
@@ -243,7 +252,7 @@ impl Cancellation {
             #[cfg(unix)]
             signals: Vec::new(),
         };
-        #[cfg(unix)]
+        #[cfg(all(unix, not(test)))]
         for signal in [
             signal_hook::consts::SIGINT,
             signal_hook::consts::SIGTERM,
@@ -264,3 +273,7 @@ impl Drop for Cancellation {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "source_tests.rs"]
+mod tests;

@@ -803,3 +803,7 @@ mod subscription_tests {
         reader_retirement(true, false).await;
     }
 }
+
+#[cfg(test)]
+#[path = "duplex_tests.rs"]
+mod coverage_tests;

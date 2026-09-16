@@ -49,3 +49,6 @@ pub(crate) async fn models(
     normalize_models(&mut models);
     Ok(Some(models))
 }
+
+#[cfg(test)]
+mod tests;

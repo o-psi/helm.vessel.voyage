@@ -391,3 +391,6 @@ async fn secure(path: &std::path::Path, mode: u32) -> Result<()> {
 async fn secure(_: &std::path::Path, _: u32) -> Result<()> {
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

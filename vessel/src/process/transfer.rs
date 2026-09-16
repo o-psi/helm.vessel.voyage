@@ -72,3 +72,6 @@ impl Supervisor {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod transfer_final_tests;

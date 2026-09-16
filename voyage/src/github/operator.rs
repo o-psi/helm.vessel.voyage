@@ -597,3 +597,7 @@ async fn read_input(
     .await
     .map_err(|_| anyhow::anyhow!("GitHub input reader failed"))?
 }
+
+#[cfg(test)]
+#[path = "operator_final_tests.rs"]
+mod final_tests;

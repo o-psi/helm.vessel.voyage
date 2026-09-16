@@ -1292,3 +1292,70 @@ async fn coverage_accounts_render_connection_and_api_setup_modes() {
     assert!(draw(&app, 110, 32).contains("Private API setup"));
     assert!(app.views[&target].pending.is_none());
 }
+
+#[tokio::test]
+async fn coverage_catalogue_refresh_is_identity_fenced_and_preserves_authored_state() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = app(root.path());
+    let target = live(&mut app);
+    let _socket = picker(&mut app, target);
+    let id = app.accounts.picker.as_ref().unwrap().id;
+    let mut catalogue = copy_catalogue(&app.accounts.picker.as_ref().unwrap().catalogue);
+    catalogue.accounts[0].label = "Fresh label".into();
+    let account = catalogue.accounts[0].id;
+    app.accounts.picker.as_mut().unwrap().query = "stale search".into();
+    app.account_reply(
+        Uuid::new_v4(),
+        Ok(Reply::Catalogue(copy_catalogue(&catalogue), Some(account))),
+    )
+    .unwrap();
+    assert_eq!(app.accounts.picker.as_ref().unwrap().query, "stale search");
+    app.account_reply(id, Ok(Reply::Catalogue(catalogue, Some(account))))
+        .unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.query.is_empty());
+    assert!(p.notice.contains("Signed in"));
+    assert_eq!(app.accounts.labels[&(target.route, account)], "Fresh label");
+    assert_eq!(app.views[&target].draft.text, "preserve my composer");
+    assert!(app.views[&target].pending.is_none());
+    app.accounts.picker.as_mut().unwrap().disconnected = true;
+    app.account_reply(id, Err(anyhow::anyhow!("late private failure")))
+        .unwrap();
+    assert!(
+        !app.accounts
+            .picker
+            .as_ref()
+            .unwrap()
+            .notice
+            .contains("late private")
+    );
+}
+#[tokio::test]
+async fn coverage_loaded_catalogue_rejects_oversize_without_starting_enrollment() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = app(root.path());
+    let target = live(&mut app);
+    let _socket = picker(&mut app, target);
+    let id = app.accounts.picker.as_ref().unwrap().id;
+    let mut catalogue = copy_catalogue(&app.accounts.picker.as_ref().unwrap().catalogue);
+    catalogue.accounts = vec![catalogue.accounts[0].clone(); 129];
+    assert!(
+        app.account_reply(id, Ok(Reply::Catalogue(catalogue, None)))
+            .is_err()
+    );
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.notice.contains("limits"));
+    assert!(!p.busy);
+    assert!(p.intent.is_none());
+    assert_eq!(app.views[&target].draft.text, "preserve my composer");
+}
+
+fn copy_catalogue(c: &Catalogue) -> Catalogue {
+    Catalogue {
+        accounts: c.accounts.clone(),
+        connections: c.connections.clone(),
+        default_account: c.default_account.clone(),
+        default_revision: c.default_revision,
+        can_set_default: c.can_set_default,
+    }
+}

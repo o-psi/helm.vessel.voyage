@@ -41,3 +41,9 @@ mod database;
 #[cfg(test)]
 #[path = "process/test_support_tests.rs"]
 mod test_support;
+
+#[cfg(test)]
+mod start_tests;
+
+#[cfg(test)]
+mod account_flows_tests;

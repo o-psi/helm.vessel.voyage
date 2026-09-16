@@ -943,3 +943,6 @@ pub(crate) fn truncate(mut bytes: Vec<u8>, max: usize) -> String {
         String::from_utf8_lossy(&bytes)
     )
 }
+
+#[cfg(test)]
+mod dispatch_contract_tests;

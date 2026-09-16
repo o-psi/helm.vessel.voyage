@@ -212,3 +212,6 @@ pub async fn follow_json(client: &Client, session: Uuid, run: Uuid) -> Result<()
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod plain_final_tests;

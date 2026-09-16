@@ -226,3 +226,6 @@ pub async fn run_connected(client: Client, session: Uuid) -> Result<()> {
     .await;
     result.and(handle.finish().await)
 }
+
+#[cfg(test)]
+mod tests;

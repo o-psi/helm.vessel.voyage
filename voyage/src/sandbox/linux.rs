@@ -594,3 +594,6 @@ fn apply_profile(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

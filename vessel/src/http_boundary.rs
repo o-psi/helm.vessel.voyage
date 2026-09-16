@@ -55,3 +55,7 @@ async fn receive(request: Request, next: Next) -> Response {
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
 }
+
+#[cfg(test)]
+#[path = "http_boundary_tests.rs"]
+mod tests;

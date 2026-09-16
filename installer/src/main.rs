@@ -9,6 +9,9 @@ mod ui;
 use anyhow::{Context, Result};
 
 fn run() -> Result<bool> {
+    #[cfg(all(test, target_os = "linux"))]
+    let mut args = fixture_tests::arguments();
+    #[cfg(not(all(test, target_os = "linux")))]
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--help" | "-h") if args.len() == 1 => {
@@ -132,3 +135,9 @@ fn main() {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+mod fixture_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod main_tests;

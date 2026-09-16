@@ -249,3 +249,7 @@ mod tests {
         assert!(Args::try_parse_from(["inbox", "inspect", &id, &id]).is_ok());
     }
 }
+
+#[cfg(test)]
+#[path = "inbox_tests.rs"]
+mod coverage_tests;

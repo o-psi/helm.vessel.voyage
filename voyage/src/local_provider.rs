@@ -362,3 +362,7 @@ pub async fn run(command: Command) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "local_provider_coverage_tests.rs"]
+mod coverage_tests;

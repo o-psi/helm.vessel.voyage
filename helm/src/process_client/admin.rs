@@ -92,3 +92,9 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> Result<T
     ensure!(bytes.len() <= 65536, "administration input exceeds limit");
     Ok(serde_json::from_slice(&bytes)?)
 }
+
+#[cfg(all(test, unix))]
+mod admin_final_tests;
+#[cfg(test)]
+#[path = "admin_tests.rs"]
+mod coverage_tests;

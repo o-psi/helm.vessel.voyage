@@ -261,3 +261,7 @@ pub(crate) fn resource_root() -> PathBuf {
         .cloned()
         .unwrap_or_else(crate::config::default_data_dir)
 }
+
+#[cfg(test)]
+#[path = "build/offline_coverage_tests.rs"]
+mod offline_coverage_tests;

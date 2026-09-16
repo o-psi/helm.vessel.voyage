@@ -333,3 +333,109 @@ async fn scoped_enrollment_operations_recheck_revocation_before_device_access() 
     assert!(s.enrollment_workers.lock().await.is_empty());
     assert!(s.devices.resume_candidates().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn settings_replay_freezes_snapshot_even_when_original_base_disappears() {
+    // Exercise private snapshot preparation, not public account authorization.
+    // The public StartSettings entry point requires a validated host account.
+    async fn prepare(s: &Supervisor, request: VesselCommand) -> Result<Value> {
+        let VesselCommand::StartSettings {
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            settings,
+            binding,
+        } = request.clone()
+        else {
+            panic!("expected settings request");
+        };
+        s.start_settings(
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            settings,
+            binding,
+            request,
+        )
+        .await
+    }
+
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut r = f.registration();
+    r.state = ProcessState::Stopped;
+    let base = f.0.join("settings-base.json");
+    let config = voyage_runtime::Config::default();
+    let launch = voyage_runtime::launch_config::LaunchConfig::capture(&config, &f.0).unwrap();
+    store::save_bounded(&base, &launch, 1024 * 1024).unwrap();
+    let request = VesselCommand::StartSettings {
+        command_id: r.command_id, session_id: r.session_id, workspace: f.0.clone(),
+        config_path: Some(base.clone()),
+        settings: serde_json::from_value(json!({"model":"offline-retained-model", "max_output_tokens":512, "reasoning_effort":null, "service_tier":null})).unwrap(),
+        binding: None,
+    };
+    // This accountless base is valid only for the private preparation fixture.
+    // Public admission must still reject it before recording any creation.
+    let error = s
+        .host_accounts(request.clone(), Scope::Owner)
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), "configuration has no account");
+    assert!(
+        super::super::database::creation_receipt(&f.0, r.command_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    // Simulate prior durable admission/creation to exercise snapshot preparation
+    // and exact replay without consulting host accounts or starting a child.
+    super::super::database::admit(&f.0, &r, serde_json::to_vec(&request).unwrap())
+        .await
+        .unwrap();
+    let info = ProcessInfo::from(&r);
+    super::super::database::settle_creation(&f.0, r.command_id, &info)
+        .await
+        .unwrap();
+    // Even an exact settled receipt cannot bypass public account authorization.
+    assert_eq!(
+        s.host_accounts(request.clone(), Scope::Owner)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "configuration has no account"
+    );
+    let response = prepare(&s, request.clone()).await.unwrap();
+    assert_eq!(response["session_id"], r.session_id.to_string());
+    assert_eq!(response["state"], "stopped");
+    let retained =
+        f.0.join("account-launch")
+            .join(format!("{}-{}-settings.json", r.session_id, r.command_id));
+    let bytes = std::fs::read(&retained).unwrap();
+    let snapshot: voyage_runtime::launch_config::LaunchConfig =
+        serde_json::from_slice(&bytes).unwrap();
+    let config = snapshot.resolve(&f.0).unwrap();
+    assert_eq!(config.model, "offline-retained-model");
+    assert_eq!(config.max_tokens, 512);
+    assert_eq!(config.reasoning_effort, None);
+    assert_eq!(config.service_tier, None);
+    std::fs::remove_file(base).unwrap();
+    assert_eq!(prepare(&s, request.clone()).await.unwrap(), response);
+    assert_eq!(std::fs::read(&retained).unwrap(), bytes);
+    let mut changed = serde_json::to_value(&request).unwrap();
+    changed["settings"]["model"] = json!("different");
+    assert!(
+        prepare(&s, serde_json::from_value(changed).unwrap())
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&retained).unwrap(), bytes);
+    assert_eq!(
+        super::super::database::registration(&f.0, r.session_id)
+            .await
+            .unwrap()
+            .incarnation,
+        r.incarnation
+    );
+}

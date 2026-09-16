@@ -390,3 +390,7 @@ mod schema_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tool_contract_tests.rs"]
+mod contract_tests;

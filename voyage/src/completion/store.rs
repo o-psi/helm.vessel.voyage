@@ -330,3 +330,7 @@ fn ensure_private(metadata: &fs::Metadata) -> Result<()> {
     let _ = metadata; // Inherits the trusted data directory's Windows ACL.
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "store_final_tests.rs"]
+mod final_tests;

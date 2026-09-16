@@ -556,3 +556,7 @@ mod restoration_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_final_tests.rs"]
+mod terminal_final_tests;

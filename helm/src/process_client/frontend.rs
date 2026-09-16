@@ -342,3 +342,9 @@ pub fn persist_launch(
 ) -> Result<PathBuf> {
     launch::persist(config, workspace, directory)
 }
+
+#[cfg(test)]
+#[path = "frontend_tests.rs"]
+mod coverage_tests;
+#[cfg(all(test, unix))]
+mod frontend_final_tests;

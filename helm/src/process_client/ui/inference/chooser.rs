@@ -1215,3 +1215,7 @@ mod preload_tests {
         assert!(app.inference.catalog_job.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "chooser_final_tests.rs"]
+mod chooser_final_tests;

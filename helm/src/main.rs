@@ -430,3 +430,7 @@ async fn main() -> Result<()> {
 fn safe_diagnostic(text: &str) -> String {
     text.chars().filter(|ch|!ch.is_control()&&!matches!(*ch,'\u{7f}'|'\u{80}'..='\u{9f}'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}')).collect()
 }
+
+#[cfg(test)]
+#[path = "main_tests.rs"]
+mod coverage_tests;

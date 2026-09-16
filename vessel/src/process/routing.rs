@@ -96,3 +96,7 @@ pub async fn inspect(directory: &Path, registration: &ProcessRegistration) -> Pr
     }
     info
 }
+
+#[cfg(test)]
+#[path = "routing_tests.rs"]
+mod tests;

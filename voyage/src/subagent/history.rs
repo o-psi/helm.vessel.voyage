@@ -209,3 +209,6 @@ fn write(path: &Path, value: &EventHistory) -> Result<()> {
     );
     super::history_storage::write(path, &bytes)
 }
+
+#[cfg(test)]
+mod tests;

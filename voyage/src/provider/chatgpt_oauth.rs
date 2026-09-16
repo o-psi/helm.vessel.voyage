@@ -1351,3 +1351,7 @@ mod offline_tests;
 #[cfg(test)]
 #[path = "chatgpt_oauth_offline_error_tests.rs"]
 mod offline_error_tests;
+
+#[cfg(test)]
+#[path = "chatgpt_oauth_http_tests.rs"]
+mod http_tests;

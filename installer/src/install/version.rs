@@ -84,3 +84,7 @@ pub fn inspect(bin: &Path) -> Result<String> {
     }
     version.context("Missing release version")
 }
+
+#[cfg(test)]
+#[path = "version_tests.rs"]
+mod tests;

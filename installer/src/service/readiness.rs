@@ -39,7 +39,19 @@ pub(super) fn wait(
             && super::command::query("MainPID")
                 .ok()
                 .and_then(|pid| pid.parse::<u32>().ok())
-                .and_then(|pid| std::fs::read_link(format!("/proc/{pid}/exe")).ok())
+                .and_then(|pid| {
+                    {
+                        #[cfg(test)]
+                        {
+                            crate::fixture_tests::executable(pid)
+                        }
+                        #[cfg(not(test))]
+                        {
+                            std::fs::read_link(format!("/proc/{pid}/exe"))
+                        }
+                    }
+                    .ok()
+                })
                 .is_some_and(|path| path == bin.join("vessel"))
             && prior_invocation.is_none_or(|prior| {
                 super::command::query("InvocationID")
@@ -66,3 +78,7 @@ pub(super) fn wait(
         std::thread::sleep(Duration::from_millis(100));
     }
 }
+
+#[cfg(test)]
+#[path = "readiness_tests.rs"]
+mod tests;

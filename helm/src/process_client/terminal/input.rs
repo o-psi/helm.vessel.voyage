@@ -203,3 +203,7 @@ mod tests {
         assert!(!detached(KeyCode::Char('t'), KeyModifiers::CONTROL));
     }
 }
+
+#[cfg(test)]
+#[path = "input_tests.rs"]
+mod coverage_tests;

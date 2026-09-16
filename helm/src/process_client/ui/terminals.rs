@@ -409,3 +409,7 @@ mod observation_tests {
         assert_eq!(browser.summary(), "Program status unavailable");
     }
 }
+
+#[cfg(test)]
+#[path = "terminals_tests.rs"]
+mod coverage_tests;

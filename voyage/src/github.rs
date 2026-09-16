@@ -106,4 +106,4 @@ pub(super) fn redact_value(
 
 #[cfg(test)]
 #[path = "github/http_fixture_tests.rs"]
-mod http_fixture;
+pub(crate) mod http_fixture;

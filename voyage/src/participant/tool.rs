@@ -290,3 +290,7 @@ impl Tool for ParticipantTool {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "tool_contract_tests.rs"]
+mod contract_tests;

@@ -858,3 +858,6 @@ fn check_provider_authority(
 
 #[cfg(test)]
 mod offline_stream_tests;
+
+#[cfg(test)]
+mod native_http_tests;

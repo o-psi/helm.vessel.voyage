@@ -296,6 +296,7 @@ mod tests {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     #[test]
     fn encrypted_connection_files() {
+        let _process = super::super::tests::process_guard();
         if std::env::var_os("VOYAGE_TEST_CONNECTION_CHILD").is_none() {
             let root = tempfile::tempdir().unwrap();
             let keys = tempfile::Builder::new()

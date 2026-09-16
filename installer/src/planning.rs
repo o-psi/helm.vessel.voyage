@@ -24,7 +24,11 @@ pub fn start(mut options: Options) -> Task {
     let (send, receive) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let flag = cancelled.clone();
+    #[cfg(all(test, target_os = "linux"))]
+    let fixture = crate::fixture_tests::capture();
     let worker = std::thread::spawn(move || {
+        #[cfg(all(test, target_os = "linux"))]
+        crate::fixture_tests::enter(fixture);
         let result = (|| -> anyhow::Result<Review> {
             options.prepare(&flag)?;
             anyhow::ensure!(!flag.load(Ordering::Relaxed), "Preparation cancelled");
@@ -45,3 +49,7 @@ pub fn start(mut options: Options) -> Task {
         worker: Some(worker),
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "planning_tests.rs"]
+mod tests;

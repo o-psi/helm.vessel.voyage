@@ -382,3 +382,9 @@ mod provider_attempts;
 #[cfg(test)]
 #[path = "coverage_support_tests.rs"]
 mod coverage_support;
+
+#[cfg(test)]
+mod campaign_journey_tests;
+
+#[cfg(all(test, unix))]
+mod socket_support_tests;

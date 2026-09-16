@@ -404,3 +404,6 @@ pub(crate) fn run(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

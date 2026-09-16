@@ -305,3 +305,7 @@ pub async fn execute_admitted_with_controls(
         construction_failed: false,
     })
 }
+
+#[cfg(test)]
+#[path = "execution/coverage_tests.rs"]
+mod coverage_tests;

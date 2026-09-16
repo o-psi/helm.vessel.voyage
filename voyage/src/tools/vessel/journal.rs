@@ -191,3 +191,6 @@ pub(super) fn wire(root: &Path, id: Uuid, command: &Value) -> Result<(), ToolErr
     }
     exclusive(&root.join(format!("{id}.{op}.command.json")), command)
 }
+
+#[cfg(all(test, unix))]
+mod tests;

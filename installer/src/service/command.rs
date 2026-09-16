@@ -95,8 +95,13 @@ pub(super) fn run(program: &Path, args: &[&str], input: Option<&[u8]>) -> Result
     Ok(output)
 }
 pub(super) fn systemctl(args: &[&str]) -> Result<String> {
+    #[cfg(test)]
+    return crate::fixture_tests::systemctl(args);
+    #[cfg(not(test))]
     let mut all = vec!["--user", "--no-pager"];
+    #[cfg(not(test))]
     all.extend_from_slice(args);
+    #[cfg(not(test))]
     Ok(
         String::from_utf8(run(Path::new("/usr/bin/systemctl"), &all, None)?)?
             .trim()
@@ -106,3 +111,7 @@ pub(super) fn systemctl(args: &[&str]) -> Result<String> {
 pub(super) fn query(property: &str) -> Result<String> {
     systemctl(&["show", super::unit::NAME, "--value", "--property", property])
 }
+
+#[cfg(test)]
+#[path = "command_tests.rs"]
+mod tests;

@@ -14,6 +14,16 @@ pub(super) struct Layout {
 }
 impl Layout {
     pub fn discover() -> Result<Self> {
+        #[cfg(test)]
+        if let Some(root) = crate::fixture_tests::required_root()? {
+            let units = root.join("units");
+            return Ok(Self {
+                uid: unsafe { libc::geteuid() },
+                state: root.join("state"),
+                unit: units.join(NAME),
+                units,
+            });
+        }
         let uid = unsafe { libc::geteuid() };
         ensure!(
             uid != 0 && uid == unsafe { libc::getuid() },
@@ -167,3 +177,7 @@ pub(super) fn check_effective(layout: &Layout) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "unit_tests.rs"]
+mod tests;

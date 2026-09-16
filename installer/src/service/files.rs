@@ -145,3 +145,7 @@ fn rename(from: &Path, to: &Path, flags: u32) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "files_tests.rs"]
+mod tests;

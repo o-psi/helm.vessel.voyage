@@ -3,7 +3,7 @@ use super::transport::Client;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub(super) struct Reply {
+pub(crate) struct Reply {
     pub method: &'static str,
     pub path: String,
     pub status: u16,
@@ -28,7 +28,7 @@ impl Reply {
     }
 }
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     pub address: std::net::SocketAddr,
     task: tokio::task::JoinHandle<Vec<Vec<u8>>>,
 }

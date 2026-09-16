@@ -292,3 +292,7 @@ mod response_tests {
         assert_eq!(encoded, "é");
     }
 }
+
+#[cfg(test)]
+#[path = "export_tests.rs"]
+mod coverage_tests;
