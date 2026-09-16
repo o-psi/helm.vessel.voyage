@@ -33,7 +33,7 @@
         <flux:modal name="connection-help" class="md:w-xl">
             <div class="space-y-6">
                 <flux:heading size="lg">Set up your first Vessel</flux:heading>
-                <flux:text>Helm is this web console. A Vessel runs on your computer or server and manages your AI conversations, called voyages. Your computer must stay on while they run.</flux:text>
+                <flux:text>Helm is this web console. A Vessel runs on your computer or server and manages your AI conversations, called voyages. Connecting gives this web account full access to that Vessel. Your computer must stay on while voyages run.</flux:text>
                 <div class="space-y-3">
                     <flux:heading>1. Install on your computer</flux:heading>
                     <flux:text>Open a terminal on a Linux computer you control. Follow the <flux:link href="https://github.com/o-psi/voyage/blob/main/docs/getting-started.md" target="_blank" rel="noopener noreferrer">first-time setup guide</flux:link> to install Helm, Vessel and Voyage and connect your AI provider account. Then return here.</flux:text>
@@ -45,30 +45,25 @@
                 </div>
                 <div class="space-y-3">
                     <flux:heading>3. Make an invitation</flux:heading>
-                    <flux:text>In a terminal on that same computer, replace the three example values below. “State” is the directory used when starting Vessel; “workspace” is the folder you want to work in. Your web account ID is already filled in.</flux:text>
+                    <flux:text>In a terminal on that same computer, replace the two example values below. “State” is the directory used when starting Vessel. Your web account ID is already filled in.</flux:text>
                     <flux:card size="sm"><pre class="overflow-x-auto select-all"><flux:text inline class="font-mono">STATE="/path/to/vessel/state"
-WORKSPACE="/path/to/your/project"
 ENDPOINT="https://vessel.example.com"
 
 INVITE_DIR=$(mktemp -d)
 vessel pair-invite --directory "$STATE" \
   --endpoint "$ENDPOINT" \
   --principal {{ $tenant->principal_id }} \
-  --workspace "$WORKSPACE" \
-  --rights catalogue,observe,history,execute,steer,decide,cancel \
+  --full-access \
   --output "$INVITE_DIR/invitation.json" &amp;&amp;
 cat "$INVITE_DIR/invitation.json"</flux:text></pre></flux:card>
                 </div>
                 <div class="space-y-3">
                     <flux:heading>4. Paste and connect</flux:heading>
-                    <flux:text>Close this help, choose a name like “My computer”, and paste the complete invitation printed in your terminal into “Invitation from step 3”. Click <strong>Pair Vessel</strong>, then <strong>Console</strong> to open an existing voyage.</flux:text>
+                    <flux:text>Close this help, choose a name like “My computer”, and paste the complete invitation printed in your terminal into “Invitation from step 3”. Click <strong>Pair Vessel</strong>, then <strong>Console</strong> to start or open a voyage.</flux:text>
                     <flux:text>Use the invitation within 10 minutes. Keep it private—never paste it into a chat.</flux:text>
                 </div>
-                <details class="space-y-3">
-                    <summary class="cursor-pointer">Optional: create new voyages or use an existing credential</summary>
-                    <flux:text>The command above connects existing voyages. To create new ones, also grant <code>create,account_use</code> in <code>--rights</code> and add <code>--accounts ACCOUNT_UUID</code> with the provider account’s ID. See <flux:link href="https://github.com/o-psi/voyage/blob/main/docs/provider-accounts.md" target="_blank" rel="noopener noreferrer">provider account setup</flux:link>. Provider credentials stay on your computer.</flux:text>
-                    <flux:text>Already have connection credential JSON? Use “Import an existing connection credential” instead of the invitation form.</flux:text>
-                </details>
+                <flux:text>This connection can use all workspaces, voyages and provider accounts on your Vessel, including ones added later. Provider credentials stay on that computer. Only connect a web console you trust.</flux:text>
+                <flux:text>Already connected with limited access? Make a new invitation with the command above and pair again; old connections are not automatically upgraded.</flux:text>
                 <flux:modal.close><flux:button variant="primary">Got it</flux:button></flux:modal.close>
             </div>
         </flux:modal>

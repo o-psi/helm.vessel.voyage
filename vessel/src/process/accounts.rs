@@ -39,7 +39,7 @@ impl Scope {
             workspace: workspace.to_string_lossy().into_owned(),
         }
     }
-    fn check(&self, root: &Path, workspace: &Path, right: ProcessRight) -> Result<()> {
+    pub(super) fn check(&self, root: &Path, workspace: &Path, right: ProcessRight) -> Result<()> {
         ensure!(
             workspace.is_absolute()
                 && workspace.is_dir()
@@ -51,7 +51,8 @@ impl Scope {
             Self::Connection(g) => {
                 store::current_connection(root, g)?;
                 ensure!(
-                    g.rights.contains(&right) && g.workspaces.iter().any(|w| w.path == workspace),
+                    g.rights.contains(&right)
+                        && (g.full_access || g.workspaces.iter().any(|w| w.path == workspace)),
                     "account workspace permission denied"
                 );
                 Ok(())
@@ -60,7 +61,8 @@ impl Scope {
                 let latest: ProcessGrant = store::load(&store::grant_path(root, g.grant_id))?;
                 current_session_scope(root, &latest)?;
                 ensure!(
-                    latest.grant_id == g.grant_id
+                    latest.full_access == g.full_access
+                        && latest.grant_id == g.grant_id
                         && latest.accounts == g.accounts
                         && latest.enrollment_connections == g.enrollment_connections
                         && latest.rights == g.rights
@@ -77,8 +79,8 @@ impl Scope {
     fn connection_allowed(&self, id: Uuid) -> bool {
         match self {
             Self::Owner => true,
-            Self::Connection(g) => g.enrollment_connections.contains(&id),
-            Self::Session(g) => g.enrollment_connections.contains(&id),
+            Self::Connection(g) => g.full_access || g.enrollment_connections.contains(&id),
+            Self::Session(g) => g.full_access || g.enrollment_connections.contains(&id),
         }
     }
     fn account_allowed(
@@ -90,6 +92,8 @@ impl Scope {
     ) -> bool {
         let (ids, rights) = match self {
             Self::Owner => return true,
+            Self::Connection(g) if g.full_access => return true,
+            Self::Session(g) if g.full_access => return true,
             Self::Connection(g) => (&g.accounts, &g.rights),
             Self::Session(g) => (&g.accounts, &g.rights),
         };
@@ -171,15 +175,24 @@ impl voyage_runtime::policy::ExecutionAuthority for UsageAuthority {
 /// continue enrollment merely because a derived session record is still present.
 fn current_session_scope(root: &Path, grant: &ProcessGrant) -> Result<()> {
     store::current(grant)?;
+    ensure!(
+        !grant.full_access
+            || (grant.connection_binding.is_some()
+                && grant.parent_grant.is_none()
+                && grant.participant_binding.is_none()),
+        "invalid owner authority"
+    );
     if let Some(binding) = &grant.connection_binding {
         let parent: ConnectionGrant = store::load(&store::connection_path(root, binding.grant_id))?;
         store::current_connection(root, &parent)?;
         ensure!(
-            parent.principal_id == grant.principal_id
+            parent.full_access == grant.full_access
+                && parent.principal_id == grant.principal_id
                 && binding.principal_id == grant.principal_id
                 && binding.revision == parent.revision
                 && grant.expires_at_ms <= parent.expires_at_ms
-                && parent.workspaces.iter().any(|w| w.path == grant.workspace)
+                && (parent.full_access
+                    || parent.workspaces.iter().any(|w| w.path == grant.workspace))
                 && grant.rights.iter().all(|r| parent.rights.contains(r))
                 && grant.accounts.iter().all(|id| parent.accounts.contains(id))
                 && grant

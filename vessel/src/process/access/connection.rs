@@ -36,9 +36,9 @@ impl Supervisor {
             VesselCommand::Capabilities => Ok(json!({
                 "protocol": VESSEL_API_VERSION, "version": env!("CARGO_PKG_VERSION"),
                 "vessel_id": grant.vessel_id, "principal_id": grant.principal_id,
-                "scope": "workspaces", "grant_revision": grant.revision,
+                "scope": if grant.full_access { "owner" } else { "workspaces" }, "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
-                "workspaces": grant.workspaces,
+                "workspaces": self.connection_workspaces(&grant).await?,
                 "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
             })),
             command @ (VesselCommand::Accounts { .. }
@@ -61,12 +61,18 @@ impl Supervisor {
             }
             VesselCommand::Catalogue => {
                 has(ProcessRight::Catalogue)?;
-                let mut entries: Vec<_> = self
-                    .catalogue()
-                    .await?
-                    .into_iter()
-                    .filter(|p| grant.workspaces.iter().any(|w| w.path == p.workspace))
-                    .collect();
+                let mut entries = Vec::new();
+                for entry in self.catalogue().await? {
+                    if (grant.full_access
+                        || grant.workspaces.iter().any(|w| w.path == entry.workspace))
+                        && self
+                            .registration(entry.session_id)
+                            .await
+                            .is_ok_and(|registration| ordinary(&registration).is_ok())
+                    {
+                        entries.push(entry);
+                    }
+                }
                 if !grant.rights.contains(&ProcessRight::History) {
                     for entry in &mut entries {
                         if let Some(metadata) = &mut entry.catalogue {
@@ -156,6 +162,12 @@ impl Supervisor {
             }
             VesselCommand::Voyage(request) => {
                 let right = crate::process::api::required_right(&request.command)
+                    .or_else(|| {
+                        grant
+                            .full_access
+                            .then(|| crate::process::api::owner_connection_right(&request.command))
+                            .flatten()
+                    })
                     .ok_or_else(|| anyhow::anyhow!("operation unavailable to workspace clients"))?;
                 has(right)?;
                 if request.command.requires_browser_history() {
@@ -207,6 +219,49 @@ impl Supervisor {
             super::redact_catalogue_reply(&mut response);
         }
         Ok(response)
+    }
+
+    async fn connection_workspaces(
+        &self,
+        grant: &ConnectionGrant,
+    ) -> Result<Vec<ApprovedWorkspace>> {
+        if !grant.full_access {
+            return Ok(grant.workspaces.clone());
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for entry in self.catalogue().await? {
+            if self
+                .registration(entry.session_id)
+                .await
+                .is_ok_and(|registration| ordinary(&registration).is_ok())
+                && entry.workspace.is_dir()
+                && std::fs::canonicalize(&entry.workspace).is_ok_and(|p| p == entry.workspace)
+            {
+                paths.insert(entry.workspace);
+            }
+        }
+        if paths.is_empty() {
+            paths.insert(std::fs::canonicalize(std::env::current_dir()?)?);
+        }
+        Ok(paths
+            .into_iter()
+            .map(|path| {
+                let mut hash = Sha256::new();
+                hash.update(b"voyage/owner-workspace/v1\0");
+                hash.update(grant.vessel_id.as_bytes());
+                hash.update(path.as_os_str().as_encoded_bytes());
+                let bytes: [u8; 32] = hash.finalize().into();
+                ApprovedWorkspace {
+                    id: Uuid::from_bytes(bytes[..16].try_into().expect("UUID bytes")),
+                    name: path
+                        .file_name()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "Workspace".into()),
+                    path,
+                    provider_ready: None,
+                }
+            })
+            .collect())
     }
 
     // The public start payload has no bearer. Retain its exact principal/grant
@@ -272,7 +327,8 @@ impl Supervisor {
         if path.exists() {
             let previous: ProcessGrant = store::load(&path)?;
             ensure!(
-                previous.grant_id == id
+                previous.full_access == grant.full_access
+                    && previous.grant_id == id
                     && previous.principal_id == grant.principal_id
                     && previous.session_id == session_id
                     && previous.workspace == workspace
@@ -303,6 +359,7 @@ impl Supervisor {
             store::save(
                 &path,
                 &ProcessGrant {
+                    full_access: grant.full_access,
                     grant_id: id,
                     principal_id: grant.principal_id,
                     session_id,
@@ -333,7 +390,7 @@ fn approved(grant: &ConnectionGrant, workspace: &std::path::Path) -> Result<()> 
         workspace.is_absolute()
             && workspace.is_dir()
             && std::fs::canonicalize(workspace)? == workspace
-            && grant.workspaces.iter().any(|w| w.path == workspace),
+            && (grant.full_access || grant.workspaces.iter().any(|w| w.path == workspace)),
         "workspace scope denied"
     );
     Ok(())

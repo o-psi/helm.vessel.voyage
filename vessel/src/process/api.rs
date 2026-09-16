@@ -492,8 +492,26 @@ impl Supervisor {
             _ => None,
         };
         if let Some((command, reserve)) = inference {
+            let owner_connection = if let Some(binding) = &authorization {
+                let grant: ProcessGrant = super::access::store::load(
+                    &super::access::store::grant_path(&self.directory, binding.grant_id),
+                )?;
+                let scope = super::accounts::Scope::Session(grant.clone());
+                scope.check(&self.directory, &grant.workspace, ProcessRight::AccountUse)?;
+                ensure!(
+                    grant.grant_id == binding.grant_id
+                        && grant.principal_id == binding.principal_id
+                        && grant.revision == binding.revision
+                        && grant.session_id == request.session_id,
+                    "inference authority mismatch"
+                );
+                grant.full_access
+            } else {
+                false
+            };
             ensure!(
                 authorization.is_none()
+                    || owner_connection
                     || matches!(command, VoyageCommand::SetAccountInference { .. }),
                 "inference settings require owner authority"
             );
@@ -636,3 +654,20 @@ mod workflow_preview_tests {
 
 #[cfg(test)]
 mod regression_tests;
+
+/// Additional human owner operations; unknown and internal commands remain denied.
+pub fn owner_connection_right(command: &VoyageCommand) -> Option<ProcessRight> {
+    match command {
+        VoyageCommand::Resolve {
+            command_id,
+            original: Some(original),
+        } if original.mutation_id() == Some(*command_id) => owner_connection_right(original),
+        VoyageCommand::Configure { .. }
+        | VoyageCommand::SetAccess { .. }
+        | VoyageCommand::SetInference { .. } => Some(ProcessRight::Execute),
+        VoyageCommand::Controls { section, .. } if section == "host_resources" => {
+            Some(ProcessRight::History)
+        }
+        _ => required_right(command),
+    }
+}

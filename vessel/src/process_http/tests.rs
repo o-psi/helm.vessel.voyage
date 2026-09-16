@@ -170,3 +170,24 @@ async fn valid_auth_transport_failure_remains_explicitly_unknown() {
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
+
+#[test]
+fn owner_socket_authority_excludes_only_dynamic_workspace_discovery() {
+    let original = serde_json::json!({"scope":"owner", "grant_revision":1, "principal_id":"principal", "workspaces":[]});
+    let mut changed = original.clone();
+    changed["workspaces"] = serde_json::json!([{"path":"/new/workspace"}]);
+    assert_eq!(
+        socket_authority(original.clone()),
+        socket_authority(changed.clone())
+    );
+    changed["grant_revision"] = serde_json::json!(2);
+    assert_ne!(
+        socket_authority(original.clone()),
+        socket_authority(changed)
+    );
+    let mut scoped = original;
+    scoped["scope"] = serde_json::json!("workspaces");
+    let mut changed = scoped.clone();
+    changed["workspaces"] = serde_json::json!([{"path":"/new/workspace"}]);
+    assert_ne!(socket_authority(scoped), socket_authority(changed));
+}

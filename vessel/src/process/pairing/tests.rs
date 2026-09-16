@@ -98,6 +98,31 @@ fn encrypted_pairing_lifecycle() {
         connection_audit(&root, 64, None).unwrap()["recording"],
         "not_started"
     );
+    let owner_invite = invite_owner(&root, "http://127.0.0.1:9999", Uuid::new_v4(), 600).unwrap();
+    let owner_command = Uuid::new_v4();
+    let owner_credential = redeem(
+        &root,
+        &owner_invite.endpoint,
+        None,
+        request(&owner_invite, owner_command),
+    )
+    .unwrap();
+    let owner: ConnectionGrant =
+        store::load(&connection_path(&root, owner_credential.grant_id)).unwrap();
+    assert!(owner.full_access);
+    assert!(owner.workspaces.is_empty());
+    assert_eq!(owner.rights, ProcessRight::all());
+    let retry = redeem(
+        &root,
+        &owner_invite.endpoint,
+        None,
+        request(&owner_invite, owner_command),
+    )
+    .unwrap();
+    assert_eq!(retry.grant_id, owner_credential.grant_id);
+    assert_eq!(retry.token, owner_credential.token);
+    let owner_inventory = inventory(&root).unwrap();
+    assert_eq!(owner_inventory["connections"][0]["full_access"], true);
     let mut retained_revoke = None;
     for stage in ["grant_publish", "audit_finalize"] {
         let invitation = make_invite();

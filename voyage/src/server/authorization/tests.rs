@@ -8,6 +8,7 @@ use uuid::Uuid;
 use voyage_protocol::process::{ProcessState, RuntimeCommand};
 fn grant(workspace: &Path) -> ProcessGrant {
     ProcessGrant {
+        full_access: false,
         grant_id: Uuid::new_v4(),
         principal_id: Uuid::new_v4(),
         session_id: Uuid::new_v4(),
@@ -171,4 +172,69 @@ fn admission_enforces_operation_rights_supervised_path_and_workspace() {
     g.workspace = root.path().join("different");
     save(&path, &g);
     assert!(authorize_parts(actor, &registration, &request, &directory).is_err());
+}
+
+#[test]
+fn owner_connection_authority_requires_current_explicit_parent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut g = grant(root.path());
+    g.full_access = true;
+    g.rights = ProcessRight::all();
+    let path = root
+        .path()
+        .join("access/grants")
+        .join(format!("{}.json", g.grant_id));
+    save(&path, &g);
+    assert!(read_current(&path, &binding(&g), g.session_id).is_err());
+    let mut parent = voyage_protocol::process::ConnectionGrant {
+        full_access: true,
+        schema_version: 1,
+        grant_id: Uuid::new_v4(),
+        principal_id: g.principal_id,
+        vessel_id: Uuid::new_v4(),
+        revision: 1,
+        rights: ProcessRight::all(),
+        accounts: vec![],
+        enrollment_connections: vec![],
+        expires_at_ms: u64::MAX,
+        revoked: false,
+        token_hash: "synthetic".into(),
+        workspaces: vec![],
+    };
+    save(
+        &root.path().join("identity/key.json"),
+        &serde_json::json!({"vessel_id": parent.vessel_id}),
+    );
+    g.connection_binding = Some(GrantBinding {
+        grant_id: parent.grant_id,
+        principal_id: parent.principal_id,
+        revision: parent.revision,
+    });
+    let parent_path = root
+        .path()
+        .join("access/connections")
+        .join(format!("{}.json", parent.grant_id));
+    save(&path, &g);
+    save(&parent_path, &parent);
+    read_current(&path, &binding(&g), g.session_id).unwrap();
+    for case in 0..4 {
+        let mut changed = parent.clone();
+        match case {
+            0 => changed.full_access = false,
+            1 => changed.revoked = true,
+            2 => changed.revision += 1,
+            _ => changed.expires_at_ms = 0,
+        }
+        save(&parent_path, &changed);
+        assert!(read_current(&path, &binding(&g), g.session_id).is_err());
+    }
+    parent.full_access = false;
+    save(&parent_path, &parent);
+    let mut legacy = serde_json::to_value(&g).unwrap();
+    legacy.as_object_mut().unwrap().remove("full_access");
+    assert!(
+        !serde_json::from_value::<ProcessGrant>(legacy)
+            .unwrap()
+            .full_access
+    );
 }

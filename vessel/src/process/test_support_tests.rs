@@ -34,6 +34,7 @@ impl Fixture {
     }
     pub fn session(&self) -> ProcessGrant {
         ProcessGrant {
+            full_access: false,
             grant_id: Uuid::new_v4(),
             principal_id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
@@ -56,6 +57,7 @@ impl Fixture {
     }
     pub fn connection(&self) -> ConnectionGrant {
         ConnectionGrant {
+            full_access: false,
             schema_version: 1,
             grant_id: Uuid::new_v4(),
             principal_id: Uuid::new_v4(),

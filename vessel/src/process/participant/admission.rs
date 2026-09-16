@@ -130,6 +130,7 @@ impl Supervisor {
             store::save_bounded(&path, &assignment, 2 * 1024 * 1024)
                 .map_err(|error| error.context(routing::OutcomeUnknown))?;
             let child = ProcessGrant {
+                full_access: false,
                 grant_id: child_grant_id,
                 principal_id: grant.principal_id,
                 session_id: child_session_id,
@@ -190,6 +191,7 @@ impl Supervisor {
                 "assignment authority changed"
             );
             let child = ProcessGrant {
+                full_access: false,
                 grant_id: assignment.child_grant_id,
                 principal_id: assignment.principal_id,
                 session_id: assignment.observation.child_session_id,

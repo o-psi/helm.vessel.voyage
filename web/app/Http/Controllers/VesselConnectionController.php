@@ -16,7 +16,7 @@ class VesselConnectionController extends Controller {
         try {
             $credential = json_decode($data['credential'], true, flags: JSON_THROW_ON_ERROR);
             $this->save($request, $gateway, $data['name'], $credential);
-        } catch (\Throwable) { return back()->withErrors(['connection' => 'Unable to add this Vessel. Check the public endpoint, identity and grant.']); }
+        } catch (\Throwable) { return back()->withErrors(['connection' => 'Unable to add this Vessel. Check the web address and connection credential.']); }
         return redirect()->route('connections')->with('status', 'Vessel connected.');
     }
     private function save(Request $request, VesselGateway $gateway, string $name, array $credential): void {
@@ -68,6 +68,6 @@ class VesselConnectionController extends Controller {
     public function destroy(Request $request,string $id) {
         $connection = VesselConnection::where('tenant_id',$request->user()->tenant_id)->findOrFail($id);
         $connection->delete();
-        return back()->with('status','Connection removed. Open sockets expire within 60 seconds. Revoke its grant on the Vessel if it is no longer needed.');
+        return back()->with('status','Connection removed. Open sockets expire within 60 seconds. Revoke this connection on the Vessel if it is no longer needed.');
     }
 }

@@ -65,10 +65,11 @@ fn current_authority(
                 && destination.expires_at_ms <= grant.expires_at_ms
                 && (!destination.event_kinds.contains(&NotificationKind::Budget)
                     || grant.rights.contains(&ProcessRight::History))
-                && grant
-                    .workspaces
-                    .iter()
-                    .any(|w| w.path == registration.workspace),
+                && (grant.full_access
+                    || grant
+                        .workspaces
+                        .iter()
+                        .any(|w| w.path == registration.workspace)),
             "notification recipient unavailable"
         );
         return Ok(RecipientAuthority::Connection(grant));

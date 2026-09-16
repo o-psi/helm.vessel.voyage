@@ -105,6 +105,7 @@ impl Supervisor {
             }
         };
         let grant = ProcessGrant {
+            full_access: false,
             grant_id: *grant_id,
             principal_id: *principal_id,
             session_id: *session_id,

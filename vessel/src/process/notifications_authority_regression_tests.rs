@@ -128,3 +128,27 @@ fn connection_recipient_rechecks_budget_permission_workspace_and_revision() {
         );
     }
 }
+
+#[test]
+fn owner_notifications_follow_new_workspaces_but_not_revoked_authority() {
+    let f = Fixture::new();
+    let mut r = f.registration();
+    r.workspace = f.0.join("later");
+    crate::process::registry::private_directory(&r.workspace).unwrap();
+    let mut g = f.connection();
+    g.full_access = true;
+    g.rights = ProcessRight::all();
+    g.workspaces.clear();
+    g.accounts.clear();
+    g.enrollment_connections.clear();
+    let mut d = destination(&f, &r);
+    d.recipient_grant_id = g.grant_id;
+    d.recipient_principal_id = g.principal_id;
+    d.recipient_grant_revision = g.revision;
+    d.event_kinds.push(NotificationKind::Budget);
+    f.save_connection(&g);
+    assert!(current_authority(&f.0, &d, ProcessRight::Observe, &r).is_ok());
+    g.revoked = true;
+    f.save_connection(&g);
+    assert!(current_authority(&f.0, &d, ProcessRight::Observe, &r).is_err());
+}

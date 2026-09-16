@@ -78,6 +78,8 @@ struct Redemption {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Pending {
+    #[serde(default)]
+    full_access: bool,
     invitation_id: Uuid,
     principal_id: Uuid,
     vessel_id: Uuid,
@@ -279,6 +281,8 @@ fn secret() -> String {
 /// part of the inventory output, including if the grant format grows later.
 #[derive(Deserialize, Serialize)]
 struct ConnectionSummary {
+    #[serde(default)]
+    full_access: bool,
     schema_version: u32,
     grant_id: Uuid,
     principal_id: Uuid,
@@ -414,7 +418,7 @@ pub fn inventory(root: &Path) -> Result<Value> {
                     .iter()
                     .enumerate()
                     .all(|(i, right)| !summary.rights[..i].contains(right))
-                && !summary.workspaces.is_empty()
+                && (summary.full_access || !summary.workspaces.is_empty())
                 && summary.workspaces.len() <= 32
                 && summary.workspaces.iter().enumerate().all(|(i, workspace)| {
                     !workspace.id.is_nil()
@@ -445,6 +449,49 @@ pub fn invite(
     enrollment_connections: Vec<Uuid>,
     ttl_seconds: u64,
 ) -> Result<Invitation> {
+    invite_with_access(
+        root,
+        endpoint,
+        principal_id,
+        workspaces,
+        rights,
+        accounts,
+        enrollment_connections,
+        ttl_seconds,
+        false,
+    )
+}
+
+pub fn invite_owner(
+    root: &Path,
+    endpoint: &str,
+    principal_id: Uuid,
+    ttl_seconds: u64,
+) -> Result<Invitation> {
+    invite_with_access(
+        root,
+        endpoint,
+        principal_id,
+        vec![],
+        ProcessRight::all(),
+        vec![],
+        vec![],
+        ttl_seconds,
+        true,
+    )
+}
+
+fn invite_with_access(
+    root: &Path,
+    endpoint: &str,
+    principal_id: Uuid,
+    workspaces: Vec<ApprovedWorkspace>,
+    rights: Vec<ProcessRight>,
+    accounts: Vec<Uuid>,
+    enrollment_connections: Vec<Uuid>,
+    ttl_seconds: u64,
+    full_access: bool,
+) -> Result<Invitation> {
     let _lock = lock(root)?;
     let mut state = load(root)?;
     let now = store::now()?;
@@ -455,7 +502,7 @@ pub fn invite(
         "invitation lifetime must be within 15 minutes"
     );
     ensure!(
-        !workspaces.is_empty() && workspaces.len() <= 32,
+        (full_access || !workspaces.is_empty()) && workspaces.len() <= 32,
         "approve between 1 and 32 workspaces"
     );
     for (i, workspace) in workspaces.iter().enumerate() {
@@ -520,6 +567,7 @@ pub fn invite(
         Some(invitation.invitation_id),
         None,
     );
+    event.full_access = full_access;
     event.principal_id = Some(principal_id);
     event.expires_at_ms = Some(invitation.expires_at_ms);
     event.workspace_ids = workspaces.iter().map(|w| w.id).collect();
@@ -528,6 +576,7 @@ pub fn invite(
     event.enrollment_connection_ids = enrollment_connections.clone();
     append(&mut state, event)?;
     state.invitations.push(Pending {
+        full_access,
         invitation_id: invitation.invitation_id,
         principal_id,
         vessel_id: invitation.vessel_id,
@@ -630,6 +679,7 @@ pub fn redeem(
             token: secret(),
         };
         let grant = ConnectionGrant {
+            full_access: p.full_access,
             schema_version: 1,
             grant_id: credential.grant_id,
             principal_id: p.principal_id,

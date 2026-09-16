@@ -439,3 +439,34 @@ async fn settings_replay_freezes_snapshot_even_when_original_base_disappears() {
         r.incarnation
     );
 }
+
+#[test]
+fn owner_connection_accounts_and_enrollment_are_dynamic_and_revocable() {
+    let f = Fixture::new();
+    let mut grant = f.connection();
+    grant.full_access = true;
+    grant.rights = ProcessRight::all();
+    grant.accounts.clear();
+    grant.enrollment_connections.clear();
+    grant.workspaces.clear();
+    f.save_connection(&grant);
+    let scope = Scope::Connection(grant.clone());
+    let workspace = f.0.join("later");
+    crate::process::registry::private_directory(&workspace).unwrap();
+    scope
+        .check(&f.0, &workspace, ProcessRight::AccountUse)
+        .unwrap();
+    let registry = Registry::new(f.0.join("accounts"));
+    let connection = Uuid::new_v4();
+    assert!(scope.account_allowed(&registry, Uuid::new_v4(), connection, &workspace));
+    assert!(scope.connection_allowed(connection));
+    assert!(enrollment_authorized(&f.0, &scope.actor(&f.0), connection));
+    grant.revoked = true;
+    f.save_connection(&grant);
+    assert!(
+        scope
+            .check(&f.0, &workspace, ProcessRight::AccountUse)
+            .is_err()
+    );
+    assert!(!enrollment_authorized(&f.0, &scope.actor(&f.0), connection));
+}

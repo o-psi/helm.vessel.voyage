@@ -337,3 +337,72 @@ async fn workspace_catalogue_filters_unapproved_sessions_and_rechecks_revocation
             .contains("revoked")
     );
 }
+
+#[tokio::test]
+async fn owner_connection_discovers_dynamic_workspaces_and_never_upgrades_scoped_grants() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut owner = f.connection();
+    owner.full_access = true;
+    owner.workspaces.clear();
+    owner.accounts.clear();
+    owner.enrollment_connections.clear();
+    owner.rights = ProcessRight::all();
+    owner.token_hash = store::hash(TOKEN);
+    f.save_connection(&owner);
+    let caps = s
+        .connected(owner.grant_id, TOKEN, VesselCommand::Capabilities)
+        .await
+        .unwrap();
+    assert_eq!(caps["scope"], "owner");
+    assert!(!caps["workspaces"].as_array().unwrap().is_empty());
+    let mut r = f.registration();
+    r.workspace = f.0.join("created-after-pairing");
+    registry::private_directory(&r.workspace).unwrap();
+    database::save(&f.0, &r).await.unwrap();
+    let caps = s
+        .connected(owner.grant_id, TOKEN, VesselCommand::Capabilities)
+        .await
+        .unwrap();
+    assert_eq!(
+        caps["workspaces"][0]["path"],
+        r.workspace.to_string_lossy().as_ref()
+    );
+    let catalogue = s
+        .connected(owner.grant_id, TOKEN, VesselCommand::Catalogue)
+        .await
+        .unwrap();
+    assert_eq!(catalogue.as_array().unwrap().len(), 1);
+    let binding = s
+        .connection_session(&owner, r.session_id, &r.workspace)
+        .unwrap();
+    let derived: ProcessGrant = store::load(&store::grant_path(&f.0, binding.grant_id)).unwrap();
+    assert!(derived.full_access);
+    assert_eq!(derived.connection_binding.unwrap().grant_id, owner.grant_id);
+    let scoped = f.connection();
+    f.save_connection(&scoped);
+    assert!(
+        s.connection_session(&scoped, r.session_id, &r.workspace)
+            .is_err()
+    );
+    let mut legacy = serde_json::to_value(&owner).unwrap();
+    legacy.as_object_mut().unwrap().remove("full_access");
+    let legacy: ConnectionGrant = serde_json::from_value(legacy).unwrap();
+    assert!(!legacy.full_access);
+    assert!(store::current_connection(&f.0, &legacy).is_err());
+    let mut contradictory = owner.clone();
+    contradictory.accounts.push(Uuid::new_v4());
+    f.save_connection(&contradictory);
+    assert!(store::current_connection(&f.0, &contradictory).is_err());
+    owner.revoked = true;
+    f.save_connection(&owner);
+    assert!(
+        s.connected(owner.grant_id, TOKEN, VesselCommand::Catalogue)
+            .await
+            .is_err()
+    );
+    assert!(
+        s.connection_session(&owner, r.session_id, &r.workspace)
+            .is_err()
+    );
+}

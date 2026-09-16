@@ -15,8 +15,8 @@ of this release. Google, X and GitHub are configurable providers. Only configure
 providers are shown. OAuth tokens are used to retrieve identity then discarded.
 
 Vessels run on their owners' hosts, own voyages and keep provider credentials.
-The web host stores encrypted, explicitly supplied Vessel connection grants. It
-is trusted to exercise those grants on behalf of their tenant. It does not run
+The web host stores encrypted, explicitly supplied Vessel connection credentials.
+The owner’s full-access pairing trusts it to operate that Vessel on behalf of its tenant. It does not run
 Voyage agents or provision compute. Database tenant IDs are authorization scope,
 not an OS execution sandbox.
 
@@ -84,8 +84,7 @@ On `/connections`, copy your tenant's pairing principal. On the Vessel host:
 vessel pair-invite --directory /path/to/vessel/state \
   --endpoint https://your-vessel.example.com \
   --principal TENANT_PRINCIPAL_UUID \
-  --workspace /your/workspace \
-  --rights catalogue,observe,history,execute,steer,decide,cancel \
+  --full-access \
   --output /private/invitation.json
 ```
 
@@ -93,13 +92,13 @@ Paste the private invitation into the pairing form. It must target this tenant's
 principal. Pending attempts retain the exact command identity and encrypted
 invitation before dispatch. If delivery is uncertain, use **retry original
 pairing**: Vessel's exact pairing deduplication returns the original credential,
-not a replacement grant. This differs from ordinary conversation mutations,
+not a replacement connection. This differs from ordinary conversation mutations,
 which are reconciled through read-only receipts. A successful credential is
 verified against the public pinned Vessel, encrypted at rest and never embedded
 in the conversation page or gateway ticket.
 
 Existing private credential JSON can also be imported. It must contain a public
-`endpoint`, exact `vessel_id`, `grant_id` and `token`. Use a dedicated scoped grant.
+`endpoint`, exact `vessel_id`, `grant_id` and `token`. Use a dedicated connection credential.
 Importing the same Vessel again replaces its credential inside this tenant and
 increments connection revision; it cannot overwrite another tenant's connection.
 Removing a connection stops new tickets and renewals. Open sockets retain a
@@ -282,9 +281,11 @@ provider run was created for verification.
 
 ## New voyages and provider accounts
 
-New voyage opens a native Flux modal for Vessel, authorized workspace, provider account, model, reasoning and service tier. Account metadata and models are fetched from that exact Vessel. Unavailable accounts remain labeled and cannot be selected. Explicit model/account changes reset reasoning and service options to provider defaults. Creating starts an empty independent voyage process; no inference is submitted until the user sends a message.
+New voyage opens a native Flux modal for Vessel, workspace folder, provider account, model, reasoning and service tier. Account metadata and models are fetched from that exact Vessel. Unavailable accounts remain labeled and cannot be selected. Explicit model/account changes reset reasoning and service options to provider defaults. Creating starts an empty independent voyage process; no inference is submitted until the user sends a message.
 
-Creation needs `create` and `account_use` rights and explicit account UUIDs in the workspace connection grant. Pairing help documents `--accounts` alongside the rights. Existing idle voyages expose Account & model in the Pro Composer; changes require `account_use` and bind the reviewed session, incarnation and revision. Host-owner configuration and credentials are never tunneled through the browser.
+Owner pairing uses `--full-access`: no rights, workspace or account allowlists are required. It covers all ordinary voyages, canonical workspace folders and provider accounts, including resources added after pairing. The workspace picker offers known folders and **Another folder…** for an existing absolute path on the Vessel. Authentication, expiry, revocation and each voyage’s local execution policy still apply. Provider credentials remain on the Vessel. Full access does not add web UI features that are listed above as parity gaps.
+
+Older scoped connections are not upgraded automatically. Pair a new full-access invitation to replace one. Scoped invitations remain supported for other clients. Existing idle voyages expose account/model controls, binding the reviewed session, incarnation and revision.
 
 Creation stores only its immutable request metadata under tenant/connection/Vessel identity before dispatch. An unconfirmed reply leaves a Check creation action which sends `resolve_start_account` for that exact request; it never repeats start or submits a prompt. Confirmed created/not-admitted outcomes settle the record. A pending creation blocks another creation on that connection. Connection replacement does not erase recovery records.
 

@@ -340,6 +340,21 @@ impl SocketBackend {
         })
     }
 }
+// Discovery metadata is dynamic, not an authority version. The authenticated
+// grant revision/identity/expiry/rights still invalidate the socket on change.
+fn socket_authority(mut capabilities: serde_json::Value) -> serde_json::Value {
+    if capabilities
+        .get("scope")
+        .and_then(serde_json::Value::as_str)
+        == Some("owner")
+    {
+        if let Some(object) = capabilities.as_object_mut() {
+            object.remove("workspaces");
+        }
+    }
+    capabilities
+}
+
 impl vessel::duplex::Backend for SocketBackend {
     fn command(&self, request: VesselRequest) -> vessel::duplex::BackendFuture<VesselResponse> {
         let backend = self.clone();
@@ -351,7 +366,7 @@ impl vessel::duplex::Backend for SocketBackend {
             let current = backend.exchange(VesselCommand::Capabilities).await;
             if current.error.is_some()
                 || current.outcome_unknown
-                || current.result != backend.authority
+                || socket_authority(current.result) != backend.authority
             {
                 return false;
             }
@@ -444,7 +459,7 @@ pub(super) async fn socket(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     backend.expected_vessel_id = Some(vessel_id);
-    backend.authority = initial.result;
+    backend.authority = socket_authority(initial.result);
     if !tokio::time::timeout(std::time::Duration::from_secs(3), backend.authorize(None))
         .await
         .unwrap_or(false)

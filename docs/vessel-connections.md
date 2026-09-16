@@ -57,6 +57,18 @@ working directory is never silently substituted for a remote workspace. Choosing
 a workspace creates only a private draft; the first send retains the existing
 separate, deduplicated create-and-submit workflow.
 
+## Connect the web console as the owner
+
+For full access from Helm Web, use the console’s **Set up your first Vessel** help
+and create an invitation with `vessel pair-invite --full-access` (plus directory,
+endpoint, principal and private output path). No workspace, rights or account
+selection is needed. The authenticated connection covers all ordinary voyages,
+canonical workspace folders and provider accounts, including future additions.
+Only pair a web host you trust with this access. Runtime execution policy and
+provider credential secrecy remain unchanged; connection expiry and owner
+revocation still apply. Existing limited credentials never gain access implicitly:
+pair a new owner invitation to replace one. See [web setup](helm-web.md).
+
 ## Pair a workspace connection
 
 1. Open **Vessels → Add HTTPS + pairing** and enter the HTTPS origin, such as

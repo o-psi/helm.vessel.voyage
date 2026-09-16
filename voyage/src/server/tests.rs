@@ -65,6 +65,7 @@ pub(super) async fn fixture() -> (tempfile::TempDir, Arc<State>) {
 }
 fn auth(state: &State) -> authorization::Authorization {
     authorization::Authorization {
+        owner_connection: false,
         authority: None,
         actor: state.actor,
         grant: None,
@@ -1055,6 +1056,7 @@ mod submission_configuration_batch {
     use serde_json::json;
     fn authorization(state: &State) -> authorization::Authorization {
         authorization::Authorization {
+            owner_connection: false,
             authority: None,
             actor: state.actor,
             grant: None,

@@ -13,6 +13,9 @@ use voyage_protocol::process::{ApprovedWorkspace, ProcessRight};
 
 #[derive(Args)]
 pub struct PairInviteArgs {
+    /// Explicit revocable owner authority over dynamic host resources.
+    #[arg(long, conflicts_with_all = ["workspace", "rights", "accounts", "enrollment_connections"])]
+    pub full_access: bool,
     #[arg(long)]
     pub directory: PathBuf,
     #[arg(long)]
@@ -21,7 +24,11 @@ pub struct PairInviteArgs {
     #[arg(long)]
     pub principal: Uuid,
     /// Owner-approved canonical directory. Repeat for each permitted workspace.
-    #[arg(long, required = true)]
+    #[arg(
+        long,
+        required_unless_present = "full_access",
+        conflicts_with = "full_access"
+    )]
     pub workspace: Vec<PathBuf>,
     /// New private file (never stdout). Its parent must be owner-private.
     #[arg(long)]
@@ -126,16 +133,25 @@ pub fn invite(args: PairInviteArgs) -> Result<()> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let invitation = pairing::invite(
-        &args.directory,
-        &args.endpoint,
-        args.principal,
-        workspaces,
-        rights,
-        args.accounts,
-        args.enrollment_connections,
-        args.ttl_seconds,
-    )?;
+    let invitation = if args.full_access {
+        pairing::invite_owner(
+            &args.directory,
+            &args.endpoint,
+            args.principal,
+            args.ttl_seconds,
+        )?
+    } else {
+        pairing::invite(
+            &args.directory,
+            &args.endpoint,
+            args.principal,
+            workspaces,
+            rights,
+            args.accounts,
+            args.enrollment_connections,
+            args.ttl_seconds,
+        )?
+    };
     // Publish complete bytes without ever replacing a concurrently created output.
     // If interrupted before publication, the orphaned short-lived invitation expires;
     // no grant has been minted and running this command again cannot broaden it.
@@ -184,4 +200,44 @@ pub fn audit(args: ConnectionAuditArgs) -> Result<()> {
     );
     println!("{output}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        invite: PairInviteArgs,
+    }
+    #[test]
+    fn full_access_needs_no_resource_selection_and_rejects_mixed_scope() {
+        let principal = Uuid::new_v4().to_string();
+        let base = [
+            "pair-invite",
+            "--directory",
+            "/private",
+            "--endpoint",
+            "http://127.0.0.1:1",
+            "--principal",
+            principal.as_str(),
+            "--output",
+            "/private/invite",
+        ];
+        let mut args = base.to_vec();
+        args.push("--full-access");
+        assert!(Cli::try_parse_from(&args).unwrap().invite.full_access);
+        for extra in [
+            vec!["--workspace", "/workspace"],
+            vec!["--rights", "observe"],
+            vec!["--accounts", principal.as_str()],
+            vec!["--enrollment-connections", principal.as_str()],
+        ] {
+            let mut mixed = args.clone();
+            mixed.extend(extra);
+            assert!(Cli::try_parse_from(mixed).is_err());
+        }
+        assert!(Cli::try_parse_from(base).is_err());
+    }
 }

@@ -1,11 +1,16 @@
 //! Local-owner lifecycle projection. No credentials, paths, free text or cleanup claims.
 use super::*;
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 use sha2::{Digest, Sha256};
 
 const RETAIN: usize = 4096;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Event {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub full_access: bool,
     pub sequence: u64,
     pub observed_at_ms: u64,
     pub kind: Kind,
@@ -103,6 +108,7 @@ pub(super) fn event(
     grant: Option<&ConnectionGrant>,
 ) -> Event {
     Event {
+        full_access: grant.is_some_and(|g| g.full_access),
         sequence: 0,
         observed_at_ms: now,
         kind,
@@ -218,10 +224,14 @@ pub(super) fn page(journal: Option<&Journal>, limit: usize, cursor: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn is_false(value: &bool) -> bool {
+        !*value
+    }
     #[test]
     fn current_account_scope_is_retained_without_secrets() {
         let vessel = Uuid::new_v4();
         let grant = ConnectionGrant {
+            full_access: false,
             schema_version: 1,
             grant_id: Uuid::new_v4(),
             principal_id: Uuid::new_v4(),

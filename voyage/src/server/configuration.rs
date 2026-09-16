@@ -15,7 +15,7 @@ async fn configure_inner(
     mut authorization: super::authorization::Authorization,
 ) -> Result<serde_json::Value> {
     ensure!(
-        authorization.grant.is_none()
+        (authorization.grant.is_none() || authorization.owner_connection)
             || matches!(command, RuntimeCommand::SetAccountInference { .. }),
         "configuration requires executing-account owner authority"
     );

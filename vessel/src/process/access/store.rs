@@ -114,6 +114,13 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
     Ok(grant)
 }
 pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {
+    ensure!(
+        !grant.full_access
+            || (grant.connection_binding.is_some()
+                && grant.parent_grant.is_none()
+                && grant.participant_binding.is_none()),
+        "invalid owner authority"
+    );
     ensure!(!grant.revoked, "access revoked");
     ensure!(grant.expires_at_ms > now()?, "access expired");
     Ok(())
@@ -148,6 +155,7 @@ pub(super) fn authenticate_connection(
 }
 
 pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result<()> {
+    ensure!(grant.valid_owner_scope(), "contradictory owner authority");
     ensure!(
         grant.schema_version == 1
             && !grant.grant_id.is_nil()
@@ -162,7 +170,7 @@ pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result
         "Vessel identity changed"
     );
     ensure!(
-        !grant.workspaces.is_empty() && grant.workspaces.len() <= 32,
+        (grant.full_access || !grant.workspaces.is_empty()) && grant.workspaces.len() <= 32,
         "invalid workspace scope"
     );
     let latest: ConnectionGrant = load(&connection_path(root, grant.grant_id))?;
@@ -170,6 +178,7 @@ pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result
     ensure!(latest.expires_at_ms > now()?, "access expired");
     ensure!(
         latest.schema_version == 1
+            && latest.full_access == grant.full_access
             && latest.grant_id == grant.grant_id
             && latest.principal_id == grant.principal_id
             && latest.vessel_id == grant.vessel_id

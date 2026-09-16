@@ -14,6 +14,7 @@ pub(super) struct Authorization {
     pub authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     pub actor: LocalActor,
     pub grant: Option<GrantBinding>,
+    pub owner_connection: bool,
 }
 
 #[derive(Debug)]
@@ -58,6 +59,7 @@ pub(super) fn authorize_parts(
 ) -> Result<Authorization> {
     let Some(binding) = &request.authorization else {
         return Ok(Authorization {
+            owner_connection: false,
             authority: None,
             actor,
             grant: None,
@@ -87,6 +89,12 @@ pub(super) fn authorize_parts(
         "session grant workspace mismatch"
     );
     let right = required_process_right(&request.command)
+        .or_else(|| {
+            grant
+                .full_access
+                .then(|| voyage_protocol::process::owner_connection_right(&request.command))
+                .flatten()
+        })
         .ok_or_else(|| anyhow::anyhow!("operation unavailable to scoped clients"))?;
     ensure!(grant.rights.contains(&right), "session permission denied");
     let browser_history = request.command.requires_browser_history();
@@ -115,6 +123,7 @@ pub(super) fn authorize_parts(
     let mut actor = actor;
     actor.principal_id = grant.principal_id;
     Ok(Authorization {
+        owner_connection: grant.full_access,
         authority: Some(Arc::new(GrantAuthority {
             path,
             binding: binding.clone(),
@@ -143,6 +152,13 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
             && grant.expires_at_ms > now,
         "session authority revoked, stale or expired"
     );
+    ensure!(
+        !grant.full_access
+            || (grant.connection_binding.is_some()
+                && grant.parent_grant.is_none()
+                && grant.participant_binding.is_none()),
+        "invalid owner authority"
+    );
     if let Some(connection) = &grant.connection_binding {
         let root = path
             .parent()
@@ -161,6 +177,8 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
         let identity: Identity = load_private(&root.join("identity/key.json"))?;
         ensure!(
             original.schema_version == 1
+                && original.valid_owner_scope()
+                && original.full_access == grant.full_access
                 && original.grant_id == connection.grant_id
                 && original.principal_id == connection.principal_id
                 && original.principal_id == grant.principal_id
@@ -177,10 +195,11 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
                     .enrollment_connections
                     .iter()
                     .all(|id| original.enrollment_connections.contains(id))
-                && original
-                    .workspaces
-                    .iter()
-                    .any(|w| w.path == grant.workspace)
+                && (original.full_access
+                    || original
+                        .workspaces
+                        .iter()
+                        .any(|w| w.path == grant.workspace))
                 && std::fs::canonicalize(&grant.workspace)? == grant.workspace
                 && grant
                     .rights
@@ -294,7 +313,7 @@ fn check_account(
         });
     ensure!(
         grant.rights.contains(&ProcessRight::AccountUse)
-            && (grant.accounts.contains(&account.account_id) || enrolled),
+            && (grant.full_access || grant.accounts.contains(&account.account_id) || enrolled),
         "account use denied"
     );
     Ok(())

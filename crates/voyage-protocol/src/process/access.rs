@@ -35,6 +35,9 @@ pub struct GrantBinding {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessGrant {
+    /// Explicit owner connection authority; valid only with a current owner connection binding.
+    #[serde(default)]
+    pub full_access: bool,
     pub grant_id: Uuid,
     pub principal_id: Uuid,
     pub session_id: Uuid,
@@ -159,6 +162,9 @@ pub struct ApprovedWorkspace {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionGrant {
+    /// Missing in legacy grants means scoped, never owner.
+    #[serde(default)]
+    pub full_access: bool,
     pub schema_version: u32,
     pub grant_id: Uuid,
     pub principal_id: Uuid,
@@ -173,4 +179,51 @@ pub struct ConnectionGrant {
     pub revoked: bool,
     pub token_hash: String,
     pub workspaces: Vec<ApprovedWorkspace>,
+}
+
+impl ProcessRight {
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::Catalogue,
+            Self::AccountUse,
+            Self::AccountEnroll,
+            Self::Create,
+            Self::Observe,
+            Self::History,
+            Self::Execute,
+            Self::Steer,
+            Self::Decide,
+            Self::Cancel,
+            Self::Lifecycle,
+            Self::Terminal,
+        ]
+    }
+}
+
+/// Additional human owner operations; unknown and internal commands remain denied.
+pub fn owner_connection_right(command: &RuntimeCommand) -> Option<ProcessRight> {
+    match command {
+        RuntimeCommand::Resolve {
+            command_id,
+            original: Some(original),
+        } if original.mutation_id() == Some(*command_id) => owner_connection_right(original),
+        RuntimeCommand::Configure { .. }
+        | RuntimeCommand::SetAccess { .. }
+        | RuntimeCommand::SetInference { .. } => Some(ProcessRight::Execute),
+        RuntimeCommand::Controls { section, .. } if section == "host_resources" => {
+            Some(ProcessRight::History)
+        }
+        _ => required_process_right(command),
+    }
+}
+
+impl ConnectionGrant {
+    /// Owner and scoped allowlists cannot be combined. Empty legacy scopes do not confer ownership.
+    pub fn valid_owner_scope(&self) -> bool {
+        !self.full_access
+            || (self.workspaces.is_empty()
+                && self.accounts.is_empty()
+                && self.enrollment_connections.is_empty()
+                && self.rights == ProcessRight::all())
+    }
 }
