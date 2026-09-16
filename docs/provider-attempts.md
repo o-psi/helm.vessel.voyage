@@ -62,6 +62,15 @@ retry. Explicit context rejections use bounded working-context recovery without
 replaying completed tools; a rejection after partial output cannot use that path
 to replay the interrupted request.
 
+Native ChatGPT has one narrow authentication recovery path (#320): an HTTP 401
+with the exact `token_expired` code triggers a fenced, identity-preserving OAuth
+refresh even when the saved expiry is still in the future. After successful
+refresh, inference returns to the normal recorded retry/admission loop; the
+adapter does not resend inference internally. A second expiry rejection on that
+provider instance stops, as do other authentication rejections and failed refreshes.
+Model and usage GETs may repeat once after successful refresh. No account switch,
+tool replay or uncertain token-exchange replay is authorized by this path.
+
 Recovery uses native HTTP/SSE adapters. There is no provider WebSocket transport or
 WebSocket-to-SSE fallback. Helm's control connection to Vessel is separate from
 Voyage's provider connection. The independent Voyage process owns recovery and

@@ -1003,7 +1003,10 @@ interrupted segment, and continuation stays within the same run. Partial tool
 arguments are never executed, completed tool results remain in context, and
 uncertain effects are not automatically replayed. Restart marks pending recovery
 interrupted and requires an explicit later turn to execute again. Authentication,
-quota and malformed responses do not trigger automatic retry. Provider WebSockets
+quota and malformed responses do not trigger automatic retry, except that native
+ChatGPT can refresh an explicitly rejected expired token once and return to the
+recorded inference retry loop after successful same-account refresh (#320).
+Provider WebSockets
 are not implemented. See [provider failures and recovery](provider-attempts.md) for
 exact classifications, limits, retained lineage and Helm `/attempts` inspection.
 

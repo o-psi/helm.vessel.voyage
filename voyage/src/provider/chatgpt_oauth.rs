@@ -51,18 +51,20 @@ pub struct OAuthEndpoints {
 impl Provider for ChatGptOAuth {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         super::validate_native_endpoint(&self.endpoints.models)?;
-        let tokens = self.valid_tokens().await?;
-        let response = super::endpoint_http_client(&self.client, &self.endpoints.models)
-            .get(&self.endpoints.models)
-            // OpenAI's own catalog-refresh workflow uses this sentinel so new
-            // models are not hidden behind an unrelated client release number.
-            .query(&[("client_version", "99.99.99")])
-            .bearer_auth(&tokens.access_token)
-            .header("ChatGPT-Account-Id", &tokens.account_id)
-            .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-            .send()
-            .await
-            .map_err(super::catalog::transport)?;
+        let (response, tokens) = self
+            .send_read_authenticated(|tokens| {
+                Ok(
+                    super::endpoint_http_client(&self.client, &self.endpoints.models)
+                        .get(&self.endpoints.models)
+                        // OpenAI's own catalog-refresh workflow uses this sentinel so new
+                        // models are not hidden behind an unrelated client release number.
+                        .query(&[("client_version", "99.99.99")])
+                        .bearer_auth(&tokens.access_token)
+                        .header("ChatGPT-Account-Id", &tokens.account_id)
+                        .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION"))),
+                )
+            })
+            .await?;
         let mut remaining = super::catalog::MAX_BYTES;
         let value = super::catalog::json(response, &mut remaining).await?;
         let entries = value
@@ -149,12 +151,14 @@ impl Provider for ChatGptOAuth {
                 body.as_object_mut()
                     .map(|value| value.remove("max_output_tokens"));
                 super::multimodal::check_body(&body)?;
-                let (request, tokens) = self.responses_request_with_tokens(&body).await?;
-                let response = request
-                    .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-                    .send()
-                    .await
-                    .map_err(map_request)?;
+                let (response, tokens) = self
+                    .send_authenticated(|tokens| {
+                        self.response_builder(&body, tokens).map(|request| {
+                            request
+                                .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
+                        })
+                    })
+                    .await?;
                 let mut response =
                     super::openai_responses::decode_response(checked_json(response).await?)?;
                 filter_response_tier(&mut response, &tokens);
@@ -182,12 +186,14 @@ impl Provider for ChatGptOAuth {
                 body.as_object_mut()
                     .map(|value| value.remove("max_output_tokens"));
                 super::multimodal::check_body(&body)?;
-                let (request, tokens) = self.responses_request_with_tokens(&body).await?;
-                let response = request
-                    .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-                    .send()
-                    .await
-                    .map_err(map_request)?;
+                let (response, tokens) = self
+                    .send_authenticated(|tokens| {
+                        self.response_builder(&body, tokens).map(|request| {
+                            request
+                                .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
+                        })
+                    })
+                    .await?;
                 let response = checked_stream_response(response).await?;
                 use futures_util::StreamExt;
                 Ok(Box::pin(
@@ -557,6 +563,7 @@ impl TokenStore {
 }
 
 pub struct ChatGptOAuth {
+    expiry_recovered: std::sync::atomic::AtomicBool,
     redactor: Option<Arc<crate::tools::Redactor>>,
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     client: reqwest::Client,
@@ -571,6 +578,7 @@ pub type ChatGptOauthProvider = ChatGptOAuth;
 impl ChatGptOAuth {
     pub fn from_store(store: TokenStore, endpoints: OAuthEndpoints) -> Self {
         Self {
+            expiry_recovered: std::sync::atomic::AtomicBool::new(false),
             authority: None,
             redactor: None,
             client: super::native_http_client(),
@@ -609,6 +617,7 @@ impl ChatGptOAuth {
     pub async fn new(store: TokenStore, endpoints: OAuthEndpoints) -> Result<Self, ProviderError> {
         let tokens = store.load().await?;
         Ok(Self {
+            expiry_recovered: std::sync::atomic::AtomicBool::new(false),
             authority: None,
             redactor: None,
             client: super::native_http_client(),
@@ -863,16 +872,16 @@ impl ChatGptOAuth {
                 "usage observation unsupported for this endpoint".into(),
             ));
         }
-        let tokens = self.valid_tokens().await?;
         super::check_provider_authority(&self.authority)?;
-        let response = super::endpoint_http_client(&self.client, url)
-            .get(url)
-            .bearer_auth(&tokens.access_token)
-            .header("ChatGPT-Account-Id", &tokens.account_id)
-            .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-            .send()
-            .await
-            .map_err(super::catalog::transport)?;
+        let (response, _) = self
+            .send_read_authenticated(|tokens| {
+                Ok(super::endpoint_http_client(&self.client, url)
+                    .get(url)
+                    .bearer_auth(&tokens.access_token)
+                    .header("ChatGPT-Account-Id", &tokens.account_id)
+                    .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION"))))
+            })
+            .await?;
         let value = super::catalog::json(response, &mut 65_536).await?;
         crate::accounts::usage::parse(&value, now_secs() as i64)
             .map_err(|_| ProviderError::InvalidResponse("invalid usage observation".into()))
@@ -903,8 +912,16 @@ impl ChatGptOAuth {
         &self,
         body: &Value,
     ) -> Result<(reqwest::RequestBuilder, OAuthTokens), ProviderError> {
-        super::validate_native_endpoint(&self.endpoints.responses)?;
         let tokens = self.valid_tokens().await?;
+        Ok((self.response_builder(body, &tokens)?, tokens))
+    }
+
+    fn response_builder(
+        &self,
+        body: &Value,
+        tokens: &OAuthTokens,
+    ) -> Result<reqwest::RequestBuilder, ProviderError> {
+        super::validate_native_endpoint(&self.endpoints.responses)?;
         let request = super::request_accounting::body(
             super::endpoint_http_client(&self.client, &self.endpoints.responses)
                 .post(&self.endpoints.responses)
@@ -914,10 +931,59 @@ impl ChatGptOAuth {
                 .header("OpenAI-Beta", "responses=experimental"),
             body,
         )?;
-        Ok((request, tokens))
+        Ok(request)
+    }
+
+    async fn send_read_authenticated(
+        &self,
+        build: impl Fn(&OAuthTokens) -> Result<reqwest::RequestBuilder, ProviderError>,
+    ) -> Result<(reqwest::Response, OAuthTokens), ProviderError> {
+        match self.send_authenticated(&build).await {
+            Err(error) if error.category() == "authentication" && error.is_retryable() => {
+                self.send_authenticated(build).await
+            }
+            result => result,
+        }
+    }
+
+    /// Refresh once on an explicit expiry rejection. Inference redispatch belongs
+    /// to the agent's recorded admission loop, never to the transport adapter.
+    async fn send_authenticated(
+        &self,
+        build: impl Fn(&OAuthTokens) -> Result<reqwest::RequestBuilder, ProviderError>,
+    ) -> Result<(reqwest::Response, OAuthTokens), ProviderError> {
+        let tokens = self.valid_tokens().await?;
+        super::check_provider_authority(&self.authority)?;
+        let response = build(&tokens)?.send().await.map_err(map_request)?;
+        if response.status().as_u16() != 401 {
+            return Ok((response, tokens));
+        }
+        let request_id = super::upstream_request_id(&response);
+        let expired = auth_json::<Value>(response).await.ok().is_some_and(|body| {
+            body.pointer("/error/code").and_then(Value::as_str) == Some("token_expired")
+        });
+        if !expired
+            || self
+                .expiry_recovered
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(ProviderError::Authentication(
+                "ChatGPT rejected account credentials".into(),
+            )
+            .with_http_status(401)
+            .with_upstream_id(request_id));
+        }
+        self.resolve_tokens(Some(&tokens.access_token)).await?;
+        Err(ProviderError::AuthenticationRefreshed
+            .with_http_status(401)
+            .with_upstream_id(request_id))
     }
 
     async fn valid_tokens(&self) -> Result<OAuthTokens, ProviderError> {
+        self.resolve_tokens(None).await
+    }
+
+    async fn resolve_tokens(&self, rejected: Option<&str>) -> Result<OAuthTokens, ProviderError> {
         super::check_provider_authority(&self.authority)?;
         let mut guard = self.tokens.lock().await;
         *guard = self.store.load().await?;
@@ -926,7 +992,9 @@ impl ChatGptOAuth {
             .clone()
             .ok_or_else(|| ProviderError::Authentication("ChatGPT login required".into()))?;
         self.remember_tokens(&current)?;
-        if current.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
+        if rejected != Some(current.access_token.as_str())
+            && current.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS)
+        {
             return Ok(current);
         }
         let claim = if let Some((registry, binding)) = &self.store.binding {
@@ -947,7 +1015,9 @@ impl ChatGptOAuth {
                 // Another process may have rotated since our read. Never replay its effect.
                 if let Some(latest) = self.store.load().await? {
                     super::check_provider_authority(&self.authority)?;
-                    if latest.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
+                    if rejected != Some(latest.access_token.as_str())
+                        && latest.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS)
+                    {
                         self.remember_tokens(&latest)?;
                         *guard = Some(latest.clone());
                         return Ok(latest);

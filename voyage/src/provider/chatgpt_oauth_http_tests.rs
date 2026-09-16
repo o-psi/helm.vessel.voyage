@@ -53,6 +53,117 @@ fn request() -> ModelRequest {
 fn response() -> Value {
     json!({"status":"completed","service_tier":"fixture-access","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]}],"usage":{"input_tokens":3,"output_tokens":1}})
 }
+
+fn rotated() -> Value {
+    json!({"access_token":"rotated-access","refresh_token":"rotated-refresh",
+        "account_id":"fixture-owner","id_token":identity(),"expires_in":7200})
+}
+
+#[tokio::test]
+async fn upstream_expiry_refreshes_future_dated_token_for_each_native_request() {
+    for mode in 0..3 {
+        let success = match mode {
+            0 => response().to_string(),
+            1 => format!(
+                "data: {}\n\n",
+                json!({"type":"response.completed","response":response()})
+            ),
+            _ => json!({"models":[{"slug":"fixture-model"}]}).to_string(),
+        };
+        let (url, task) = server(vec![
+            (401, json!({"error":{"code":"token_expired"}}).to_string()),
+            (200, rotated().to_string()),
+            (200, success),
+        ])
+        .await;
+        let (_dir, p) = local(&url);
+        p.replace(tokens()).await.unwrap();
+        match mode {
+            0 => {
+                assert!(p.complete(request()).await.unwrap_err().is_retryable());
+                assert_eq!(
+                    p.complete(request()).await.unwrap().message.content,
+                    "answer"
+                );
+            }
+            1 => {
+                let error = p.stream(request()).await.err().unwrap();
+                assert!(error.is_retryable());
+                let events = p.stream(request()).await.unwrap().collect::<Vec<_>>().await;
+                assert!(events.iter().all(Result::is_ok));
+            }
+            _ => {
+                assert_eq!(p.models().await.unwrap()[0].id, "fixture-model");
+            }
+        }
+        let requests = task.await.unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].contains("Bearer fixture-access"));
+        assert!(requests[1].contains("grant_type=refresh_token"));
+        assert!(requests[2].contains("Bearer rotated-access"));
+        assert_eq!(
+            p.store.load().await.unwrap().unwrap().access_token,
+            "rotated-access"
+        );
+    }
+}
+
+#[tokio::test]
+async fn upstream_auth_recovery_is_bounded_and_expiry_specific() {
+    for code in ["invalid_token", "token_expired"] {
+        let rejection = (401, json!({"error":{"code":code}}).to_string());
+        let responses = if code == "token_expired" {
+            vec![rejection.clone(), (200, rotated().to_string()), rejection]
+        } else {
+            vec![rejection]
+        };
+        let (url, task) = server(responses).await;
+        let (_dir, p) = local(&url);
+        p.replace(tokens()).await.unwrap();
+        let error = p.complete(request()).await.unwrap_err();
+        assert_eq!(error.category(), "authentication");
+        assert_eq!(error.http_status(), Some(401));
+        if code == "token_expired" {
+            assert!(error.is_retryable());
+            assert!(!p.complete(request()).await.unwrap_err().is_retryable());
+        } else {
+            assert!(!error.is_retryable());
+        }
+        assert_eq!(
+            task.await.unwrap().len(),
+            if code == "token_expired" { 3 } else { 1 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn rejected_token_refresh_failure_retains_durable_fence() {
+    let (url, task) = server(vec![
+        (401, json!({"error":{"code":"token_expired"}}).to_string()),
+        (401, json!({"error":"invalid_grant"}).to_string()),
+    ])
+    .await;
+    let (_dir, p) = local(&url);
+    p.replace(tokens()).await.unwrap();
+    assert!(p.complete(request()).await.is_err());
+    assert_eq!(task.await.unwrap().len(), 2);
+    assert!(p.store.load().await.is_err());
+}
+
+#[tokio::test]
+async fn rejection_of_old_token_uses_already_rotated_credentials() {
+    let (_dir, p) = local("http://127.0.0.1:1");
+    let mut newer = tokens();
+    newer.access_token = "already-rotated".into();
+    p.replace(newer).await.unwrap();
+    assert_eq!(
+        p.resolve_tokens(Some("fixture-access"))
+            .await
+            .unwrap()
+            .access_token,
+        "already-rotated"
+    );
+}
 #[tokio::test]
 async fn oauth_native_dispatch_filters_tiers_and_builds_subscription_requests() {
     let (url,task) = server(vec![(200,response().to_string()),(200,format!("data: {}\n\n",json!({"type":"response.completed","response":response()}))),(200,json!({"models":[{"slug":"z","supported_reasoning_levels":[{"effort":"low"}],"default_reasoning_level":"low","service_tiers":[{"id":"default"}],"default_service_tier":"default","is_default":true},{"id":"hidden","visibility":"hide"},{"id":"not-api","supported_in_api":false},{"id":"a"}]}).to_string())]).await;

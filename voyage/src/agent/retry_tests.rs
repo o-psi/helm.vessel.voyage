@@ -10,6 +10,7 @@ use voyage_protocol::provider_attempt::{AttemptPhase, ProviderAttempt, RetryDeci
 
 #[derive(Clone, Copy)]
 enum Failure {
+    RefreshedAuthentication,
     Timeout,
     SilentStart,
     Idle,
@@ -38,6 +39,9 @@ impl Provider for ProviderFixture {
     async fn stream(&self, _: ModelRequest) -> Result<ProviderStream, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match self.failure {
+            Failure::RefreshedAuthentication => {
+                Err(ProviderError::AuthenticationRefreshed.with_http_status(401))
+            }
             Failure::SilentStart => futures_util::future::pending().await,
             Failure::Idle => Ok(Box::pin(futures_util::stream::pending())),
             Failure::Activity => Ok(Box::pin(futures_util::stream::repeat_with(|| {
@@ -251,6 +255,28 @@ async fn execute(
             &mut provider_attempts::RecoveryState::new(&agent.retry),
         )
         .await
+}
+
+#[tokio::test]
+async fn refreshed_authentication_uses_recorded_bounded_retry_admission() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, calls, checkpoint, _, _) = fixture(root.path(), Failure::RefreshedAuthentication);
+    assert!(
+        execute(&agent, &checkpoint, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    let records = checkpoint.attempts.lock().unwrap();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0].decision, RetryDecision::RetryScheduled);
+    assert_eq!(records[2].decision, RetryDecision::AttemptsExhausted);
+    assert!(
+        records
+            .iter()
+            .all(|r| r.http_status == Some(401) && r.category.as_deref() == Some("authentication"))
+    );
+    assert_ne!(records[0].attempt_id, records[1].attempt_id);
 }
 
 #[tokio::test]

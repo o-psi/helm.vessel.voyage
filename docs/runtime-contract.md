@@ -121,7 +121,10 @@ window includes request and wait time: no further retry starts after it expires.
 This is a retry-admission bound, not a new deadline on an in-flight response.
 Cancellation interrupts retry waits; policy freshness and execution authority are
 rechecked while waiting and again before dispatch. Account
-exhaustion and authentication failures do not retry. These bounds apply to retry
+exhaustion and authentication failures do not retry. Native ChatGPT's explicit
+`token_expired` rejection is the narrow exception: successful fenced same-account
+refresh permits a newly admitted retry, within these same bounds; a repeated
+expiry rejection stops. These bounds apply to retry
 attempts, not ordinary successful model/tool cycles. Generic transport failures
 are conservatively non-retryable because remote completion is uncertain; a timeout
 before any response delta remains eligible under the configured attempt/window

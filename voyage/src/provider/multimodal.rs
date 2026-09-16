@@ -413,6 +413,7 @@ pub(crate) fn check_body(body: &Value) -> Result<(), ProviderError> {
 pub(crate) fn redact(error: ProviderError) -> ProviderError {
     const MESSAGE: &str = "image-bearing provider request failed; provider diagnostic omitted";
     match error {
+        ProviderError::AuthenticationRefreshed => ProviderError::AuthenticationRefreshed,
         ProviderError::Code { source, code } => ProviderError::Code {
             source: Box::new(redact(*source)),
             code,

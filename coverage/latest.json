@@ -1,15 +1,15 @@
 {
-  "source_commit": "bcc2837814b0204c1ed580c128837dd3b62ca29b",
-  "dirty": false,
-  "source_fingerprint_sha256": "d24dfcb05dbdb2040682c668caaef249f36f2aaa5101b1ea02f72116c9046772",
-  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes",
-  "measured_at_utc": "2026-09-16T19:36:16.840853+00:00",
-  "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
+  "source_commit": "2c72daa8ef2459938afd58871655f1e98d1083b6",
+  "dirty": true,
+  "source_fingerprint_sha256": "bb01d32f95f686718d98d94196ea2ccf59b4653ff36f4dcfe39431ceb0880c0e",
+  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes; missing paths marked MISSING",
+  "measured_at_utc": "2026-09-16T21:33:00.722Z",
+  "platform": "Linux 6.18.50-2-lts x86_64",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1677,
+    "passed": 1682,
     "failed": 0,
     "ignored": 1
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9812,
-      "covered": 7101,
-      "percent": 72.37056665307786
+      "count": 9826,
+      "covered": 7111,
+      "percent": 72.36922450641156
     },
     "instantiations": {
-      "count": 22360,
-      "covered": 8999,
-      "percent": 40.24597495527728
+      "count": 22426,
+      "covered": 9019,
+      "percent": 40.21671274413627
     },
     "lines": {
-      "count": 101783,
-      "covered": 77098,
-      "percent": 75.74742344006367
+      "count": 101864,
+      "covered": 77148,
+      "percent": 75.7362758187387
     },
     "mcdc": {
       "count": 0,
@@ -42,64 +42,65 @@
       "percent": 0
     },
     "regions": {
-      "count": 166653,
-      "covered": 120649,
-      "notcovered": 46004,
-      "percent": 72.39533641758624
+      "count": 166761,
+      "covered": 120707,
+      "notcovered": 46054,
+      "percent": 72.38323109120238
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/sidebar-actions -j 8",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/issue320-private -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET_DIR/sidebar-actions-integration.profdata",
+    "-instr-profile=$WORKSPACE/target/voyage.profdata",
     "-object",
-    "$TARGET_DIR/debug/deps/chatgpt_conversation-48ecc7ddc62a6aa9",
+    "$WORKSPACE/target/debug/deps/chatgpt_conversation-48ecc7ddc62a6aa9",
     "-object",
-    "$TARGET_DIR/debug/deps/completion_final_tests-768e85f327c06fea",
+    "$WORKSPACE/target/debug/deps/completion_final_tests-768e85f327c06fea",
     "-object",
-    "$TARGET_DIR/debug/deps/helm-b6c8e651e06d06b6",
+    "$WORKSPACE/target/debug/deps/helm-b6c8e651e06d06b6",
     "-object",
-    "$TARGET_DIR/debug/deps/helm-cad0f507950a0fcf",
+    "$WORKSPACE/target/debug/deps/helm-cad0f507950a0fcf",
     "-object",
-    "$TARGET_DIR/debug/deps/offline_auth_main_tests-9a4079a01d099c9f",
+    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-9a4079a01d099c9f",
     "-object",
-    "$TARGET_DIR/debug/deps/offline_main_cli_tests-e0ee3713a4c96ebe",
+    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-e0ee3713a4c96ebe",
     "-object",
-    "$TARGET_DIR/debug/deps/vessel-727133478e90bd4e",
+    "$WORKSPACE/target/debug/deps/vessel-727133478e90bd4e",
     "-object",
-    "$TARGET_DIR/debug/deps/vessel-a2cd78e698b1f12a",
+    "$WORKSPACE/target/debug/deps/vessel-a2cd78e698b1f12a",
     "-object",
-    "$TARGET_DIR/debug/deps/voyage-006786ad38bbf0a7",
+    "$WORKSPACE/target/debug/deps/voyage-006786ad38bbf0a7",
     "-object",
-    "$TARGET_DIR/debug/deps/voyage-2cfbdbb1662c93ea",
+    "$WORKSPACE/target/debug/deps/voyage-2cfbdbb1662c93ea",
     "-object",
-    "$TARGET_DIR/debug/deps/voyage_installer-9a46914642ce3f54",
+    "$WORKSPACE/target/debug/deps/voyage_installer-9a46914642ce3f54",
     "-object",
-    "$TARGET_DIR/debug/deps/voyage_protocol-f8fc648191e1e99e",
+    "$WORKSPACE/target/debug/deps/voyage_protocol-f8fc648191e1e99e",
     "-object",
-    "$TARGET_DIR/debug/deps/voyage_storage-cfc17778b9f3eaad",
+    "$WORKSPACE/target/debug/deps/voyage_storage-cfc17778b9f3eaad",
     "-object",
-    "$TARGET_DIR/debug/helm",
+    "$WORKSPACE/target/debug/helm",
     "-object",
-    "$TARGET_DIR/debug/vessel",
+    "$WORKSPACE/target/debug/vessel",
     "-object",
-    "$TARGET_DIR/debug/voyage",
+    "$WORKSPACE/target/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^($HOME/voyage/\\.worktrees/sidebar\\-actions\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests|examples|benches)/|^($HOME/voyage/\\.worktrees/sidebar\\-actions\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^($HOME/voyage/\\.worktrees/sidebar\\-actions\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
+    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/target/",
     "-summary-only"
   ],
   "exclusions": [
     "Ignored live-provider test",
     "Doctests",
-    "Python process and PTY checks",
+    "Python and manual checks",
     "Branch coverage",
-    "Historical shared-target executable artifacts outside the complete current Cargo artifact set",
-    "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
+    "Historical shared-target binaries outside the complete current Cargo executable set",
+    "Dependency and test-source exclusions"
   ],
   "notes": [
-    "Issues #313/#317: complete removal of shared draft persistence and authorized Web sidebar lifecycle actions. All workspace default-feature offline tests; no live-provider or native macOS/Windows claims.",
-    "Preserved default raw report. Corrected current Cargo artifact selection (#251), all executed test binaries included. Identical reused source verified against original measured commits; uniform exclusions, no export diagnostics or duplicate source identities. Initial incomplete shared-target report was retained; tracked Rust source mtimes were refreshed without content edits to rebuild every current package with instrumentation before the independent final measurement. Web/DOM and Python supervisor checks are separate."
+    "Issue #320: explicit token_expired recovery, same-account fenced refresh and recorded inference retry admission. Existing unrelated staged Helm render changes included in measured dirty-tree fingerprint.",
+    "Complete current Cargo executable set selected from instrumented cargo test --no-run metadata, with every executed test binary included. Reused installer/storage sources under the prior sidebar-actions worktree were byte-validated against prior measured commit bcc2837814b0204c1ed580c128837dd3b62ca29b and current source. No duplicate source identities or LLVM export diagnostics. Default mixed-artifact report retained locally.",
+    "Initial sandbox run failed on restricted sockets/processes; subsequent umask 022 run failed private-storage fixtures. Final independent measurement uses umask 077. Live read-only account refresh/model discovery succeeded separately, with profiles outside measurement. No live inference or native macOS/Windows claim."
   ]
 }

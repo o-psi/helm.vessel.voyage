@@ -56,6 +56,8 @@ pub(crate) const CONTEXT_LENGTH_MESSAGE: &str =
 pub enum ProviderError {
     #[error("authentication failed: {0}")]
     Authentication(String),
+    #[error("Provider rejected an expired token; same-account credentials were refreshed.")]
+    AuthenticationRefreshed,
     #[error("{USAGE_LIMIT_MESSAGE}")]
     UsageLimit,
     #[error("{CONTEXT_LENGTH_MESSAGE}")]
@@ -337,7 +339,7 @@ impl ProviderError {
             Self::Code { source, .. }
             | Self::HttpStatus { source, .. }
             | Self::RetryAfter { source, .. } => source.category(),
-            Self::Authentication(_) => "authentication",
+            Self::Authentication(_) | Self::AuthenticationRefreshed => "authentication",
             Self::UsageLimit => "usage_limit",
             Self::ContextLength => "context_length",
             Self::RateLimit { .. } => "rate_limit",
@@ -404,6 +406,7 @@ impl ProviderError {
                 | Self::TransportTimeout
                 | Self::StreamInterrupted
                 | Self::Connection
+                | Self::AuthenticationRefreshed
         )
     }
     pub fn retry_after(&self) -> Option<std::time::Duration> {
@@ -423,6 +426,7 @@ impl ProviderError {
             Self::Authentication(_) => {
                 "Provider authentication failed. Check credentials on the executing machine."
             }
+            Self::AuthenticationRefreshed => "Account sign-in refreshed. Send again to continue.",
             Self::UsageLimit => USAGE_LIMIT_MESSAGE,
             Self::ContextLength => CONTEXT_LENGTH_MESSAGE,
             Self::RateLimit { .. } => "Provider rate limit prevented completion.",
