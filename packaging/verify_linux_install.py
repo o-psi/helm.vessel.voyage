@@ -69,7 +69,7 @@ done
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--release-dir', required=True, type=Path)
-    parser.add_argument('--version', default='1.0.0')
+    parser.add_argument('--version', default='1.0.1')
     parser.add_argument('--hosted', action='store_true', help='Download published pinned/latest assets; network required')
     args = parser.parse_args()
     root = args.release_dir.resolve(strict=True)

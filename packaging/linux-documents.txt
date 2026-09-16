@@ -30,4 +30,4 @@ docs/private-terminal.md
 docs/local-browser.md
 docs/vessel-coordination.md
 packaging/linux-release.md
-docs/releases-v1.0.0.md
+docs/releases-v1.0.1.md

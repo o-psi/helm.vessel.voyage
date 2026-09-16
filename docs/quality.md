@@ -15,14 +15,14 @@ cargo clippy --workspace --locked --all-targets --all-features -j 8 -- -D warnin
 cargo build --workspace --release --locked -j 8
 python3 -m unittest discover -s packaging -p test_package_linux.py -v
 python3 voyage/tests/conversation_files.py --bin-dir target/release
-python3 packaging/package_linux.py --version v1.0.0 --bin-dir target/release --output dist/linux-release
+python3 packaging/package_linux.py --version v1.0.1 --bin-dir target/release --output dist/linux-release
 (cd dist/linux-release && sha256sum -c *.sha256)
 ```
 
 Also run the workspace coverage workflow in `AGENTS.md` after final Rust/test
 edits, and commit `coverage/latest.json`. Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
-[release guide](releases-v1.0.0.md#maintainer-install-check).
+[release guide](releases-v1.0.1.md#maintainer-install-check).
 Use `python3 voyage/tests/two_voyages.py --bin-dir target/release` for the
 current concurrent file-work check. The legacy `tests/concurrent_voyages.py`
 fixture below calls a retired endpoint and is not a current release gate. Missing/deleted historical
