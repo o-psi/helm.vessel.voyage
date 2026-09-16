@@ -47,8 +47,8 @@ function device(s,tenant){
  let now={vessel:'a',session_id:null,running:false};let composer;
  const select=(vessel,session_id,_title,retain)=>{now={vessel,session_id,running:false};$('#prompt').value='';if(!retain)composer.select();};
  composer=draftComposer(root,{fleet,current:()=>now,select,notice:message=>{$('#notice').textContent=message;}});
- voyageSettings(root,fleet,{current:()=>now,select,draft:(...args)=>composer.newChat(...args),created:(...args)=>composer.created(...args),captureDraft:()=>composer.capture()});
- return {root,$,composer,select,get now(){return now;},type(value){$('#prompt').value=value;$('#prompt').dispatchEvent(new Event('input'));},async choose(id){await composer.select();const picker=root.querySelector('select[aria-label="Shared draft"]');assert.ok(picker);picker.value=id;picker.dispatchEvent(new Event('change'));await until(()=>composer.active?.record?.draft_id===id);await pause();},dispose(){root.remove();}};
+ const settings=voyageSettings(root,fleet,{current:()=>now,select,draft:(...args)=>composer.newChat(...args),created:(...args)=>composer.created(...args),captureDraft:()=>composer.capture()});
+ return {root,$,composer,settings,select,get now(){return now;},type(value){$('#prompt').value=value;$('#prompt').dispatchEvent(new Event('input'));},async choose(id){await composer.select();const picker=root.querySelector('select[aria-label="Shared draft"]');assert.ok(picker);picker.value=id;picker.dispatchEvent(new Event('change'));await until(()=>composer.active?.record?.draft_id===id);await pause();},dispose(){root.remove();}};
 }
 test('rendered Flux DOM: two devices restore new-chat text/pictures, create through settings then send; clear lost ack + reload retains later edits',async()=>{
  localStorage.clear();const s=server(),a=device(s,'desktop'),b=device(s,'phone');
@@ -57,7 +57,7 @@ test('rendered Flux DOM: two devices restore new-chat text/pictures, create thro
  a.composer.active.edit([...a.composer.active.document.parts,{type:'image',attachment:s.attachment}]);await a.composer.active.save();
  await b.choose(id);assert.equal(b.$('#prompt').value,'desktop draft');await until(()=>b.$('[data-images] img')?.hidden===false);
  b.type('phone reply');await pause();await b.composer.active.save();await a.choose(id);assert.equal(a.$('#prompt').value,'phone reply');assert.equal(a.$('[data-image-name]').textContent,'phone.png');
- a.$('#new-voyage').click();await until(()=>!a.$('#settings-save').disabled);a.$('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>a.now.session_id);
+ a.$('#new-voyage').click();await until(()=>!a.$('#settings-save').disabled);a.$('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));await until(()=>a.settings.configuration());assert.equal(a.now.session_id,null);await a.settings.startDraft();await until(()=>a.now.session_id);
  assert.equal(a.$('#prompt').value,'phone reply');const sent=await a.composer.beforeSend();assert.equal(sent.record.draft_id,id);assert.equal((await a.composer.promote(sent,a.now.session_id))[1].attachment.id,'picture');
  // Merely reopening the composer is not execution admission.
  const revision=s.records.get(id).revision;await a.choose(id);assert.equal(a.$('#prompt').value,'phone reply');assert.equal(s.records.get(id).revision,revision);
