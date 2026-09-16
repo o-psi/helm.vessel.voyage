@@ -127,3 +127,26 @@ Focused fixtures: `node --test tests/composer.test.mjs tests/console.test.mjs`
 and `cd gateway && node --test test/*.test.js`. These do not establish a real phone
 journey, native TUI exchange, restart durability, or approved live-provider behavior;
 those require the integrated backend and manual/native evidence.
+
+### Sidebar voyage actions
+
+Each voyage card has a native Flux context menu (right-click, Shift+F10 / Menu
+key, or the visible ellipsis). Actions always capture that card's Vessel and
+voyage, not the selected conversation. Opening an action reads current public
+capabilities, process identity and snapshot; confirmation rechecks incarnation
+and revision. The server remains authoritative. Disabled menu items explain
+missing authority, active runs, archive state, cleanup and unresolved commands.
+
+Rename, access modes, archive/restore, branch, cancel, details, clear, compact and
+delete use the existing public operations. Branch offers full history or a saved
+user-message boundary and warns about independent provider costs. Clear/Delete
+require typed confirmation; Compact preserves canonical history and only reduces
+working context. Restoring a positively stopped archive restarts it before a
+fresh snapshot and unarchive command; unavailable processes are not inferred dead.
+
+Uncertain sidebar effects retain metadata-only local intents. Open Details and
+choose **Check pending receipt** to reconcile without replay. Branch requires the
+source's matching `snapshot_committed` receipt plus observation of its exact child
+ID; a missing child remains uncertain. A changed incarnation after an uncertain
+restart is reported as observed state, not exact acknowledgement; reopen Restore
+to finish unarchiving. Cancel admission does not establish completed cleanup.

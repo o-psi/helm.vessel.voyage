@@ -39,7 +39,7 @@ export class IntentJournal {
         if (this.entries().length >= 128) throw new Error('Command journal full. Reconcile outstanding receipts first.');
         // Each intent has its own key: other tabs cannot overwrite a shared array.
         // Prompts, answers and conversation text never enter persistent storage.
-        this.storage.setItem(this.key + command.command_id, JSON.stringify({session_id:command.session_id, command_id:command.command_id, op:command.op, created_at:Date.now()}));
+        this.storage.setItem(this.key + command.command_id, JSON.stringify({session_id:command.session_id, command_id:command.command_id, op:command.op, ...(command.sidebar_action ? {sidebar_action:true, incarnation:command.incarnation, ...(command.branch_id ? {branch_id:command.branch_id} : {})} : {}), created_at:Date.now()}));
     }
     settle(commandId) { this.storage.removeItem(this.key + commandId); }
 }

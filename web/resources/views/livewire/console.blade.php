@@ -97,6 +97,20 @@
             <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Continue</flux:button></div>
         </form>
     </flux:modal>
+    <flux:modal name="sidebar-action" class="w-full md:max-w-2xl" :dismissible="false">
+        <form id="sidebar-action-form" class="space-y-4">
+            <flux:heading id="sidebar-action-title" size="lg">Voyage action</flux:heading>
+            <flux:text id="sidebar-action-target" class="break-all" />
+            <flux:text id="sidebar-action-status" role="status" />
+            <pre id="sidebar-action-details" class="max-h-96 overflow-auto whitespace-pre-wrap break-words" hidden></pre>
+            <flux:field id="sidebar-name-field"><flux:label>Name</flux:label><flux:input id="sidebar-name" maxlength="256" /></flux:field>
+            <flux:field id="sidebar-access-field"><flux:label>Access mode</flux:label><flux:select id="sidebar-access"><option value="read-only">Read only</option><option value="approval">Approval</option><option value="unrestricted">Full access</option></flux:select></flux:field>
+            <flux:field id="sidebar-branch-field"><flux:label>Branch through</flux:label><flux:select id="sidebar-branch"><option value="">Full conversation</option></flux:select></flux:field>
+            <flux:field id="sidebar-retain-field"><flux:label>Recent messages to retain in working context</flux:label><flux:input id="sidebar-retain" type="number" min="0" max="4294967295" value="128" /></flux:field>
+            <flux:field id="sidebar-confirm-field"><flux:label id="sidebar-confirm-label">Confirmation</flux:label><flux:input id="sidebar-confirm" autocomplete="off" /></flux:field>
+            <div class="flex justify-end gap-3"><flux:button id="sidebar-reconcile" type="button" variant="ghost">Check pending receipt</flux:button><flux:button id="sidebar-dismiss" type="button" variant="ghost">Close</flux:button><flux:button id="sidebar-submit" type="submit" variant="primary" disabled>Confirm</flux:button></div>
+        </form>
+    </flux:modal>
     <flux:modal name="message-details" class="w-full md:max-w-3xl">
         <div class="space-y-4"><flux:heading size="lg">Tool / attachment details</flux:heading><pre class="overflow-auto"><flux:text inline id="message-details-content" class="whitespace-pre-wrap break-words font-mono" /></pre></div>
     </flux:modal>
@@ -111,8 +125,15 @@
         <template id="flux-action"><flux:button size="sm"><span data-label></span></flux:button></template>
         <template id="flux-option"><flux:select.option /></template>
         <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span></flux:select.option></template>
-        <template id="flux-voyage"><flux:sidebar.item as="button"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item></template>
+        <template id="flux-voyage"><flux:context class="block min-w-0">
+            <div data-voyage-row class="flex min-w-0 items-center gap-1">
+                <flux:sidebar.item as="button" class="min-w-0 flex-1"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item>
+                <flux:button data-voyage-actions type="button" size="sm" variant="ghost" icon="ellipsis-vertical" aria-label="Voyage actions" aria-haspopup="menu" />
+            </div>
+            <flux:menu aria-label="Voyage actions"><flux:menu.item data-voyage-action="access">Access modes</flux:menu.item><flux:menu.item data-voyage-action="rename">Rename</flux:menu.item><flux:menu.item data-voyage-action="archive">Archive / Restore</flux:menu.item><flux:menu.item data-voyage-action="branch">Branch</flux:menu.item><flux:menu.item data-voyage-action="cancel">Cancel run</flux:menu.item><flux:menu.item data-voyage-action="details">Details</flux:menu.item><flux:menu.item data-voyage-action="clear">Clear</flux:menu.item><flux:menu.item data-voyage-action="compact">Compact</flux:menu.item><flux:menu.item data-voyage-action="delete">Delete</flux:menu.item></flux:menu>
+        </flux:context></template>
         <template id="flux-attachment-panel"><div data-attachment-context class="col-span-4 min-w-0" hidden>
+
             <div class="flex gap-2 overflow-x-auto px-1 pb-2" data-images hidden></div>
             <div data-upload-errors class="space-y-1" hidden></div>
 

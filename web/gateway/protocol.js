@@ -28,6 +28,13 @@ const fields = {
   submit_content: ['command_id','expected_revision','expires_at_ms','content'],
   submit: ['command_id', 'expected_revision', 'expires_at_ms', 'prompt'],
   steer: ['command_id', 'expected_revision', 'expires_at_ms', 'run_id', 'prompt'],
+  rename: ['command_id','expected_revision','expires_at_ms','name'],
+  archive: ['command_id','expected_revision','expires_at_ms','archived'],
+  clear: ['command_id','expected_revision','expires_at_ms','confirm_session_id'],
+  delete: ['command_id','expected_revision','expires_at_ms','confirm_session_id'],
+  compact: ['command_id','expected_revision','expires_at_ms','retain','preserve_canonical'],
+  branch: ['command_id','session_id','incarnation','expected_revision','expires_at_ms','branch_id','name','through_message'],
+  restart: ['command_id','session_id','incarnation'],
   cancel: ['command_id', 'expected_revision', 'expires_at_ms', 'run_id'],
   respond: ['command_id', 'expected_revision', 'expires_at_ms', 'run_id', 'decision_id', 'response'],
 };
@@ -36,7 +43,7 @@ export function validCommand(f) {
   const c = f.request.command;
   if (object(c) && accountCommand(c)) return true;
   if (!object(c) || !Object.hasOwn(fields, c.op)) return false;
-  const vessel = ['capabilities', 'catalogue', 'inspect'].includes(c.op);
+  const vessel = ['capabilities', 'catalogue', 'inspect','branch','restart'].includes(c.op);
   const live = ['steer', 'cancel', 'respond'].includes(c.op);
   const required = ['op', ...fields[c.op], ...(!vessel ? ['session_id'] : []), ...(live ? ['incarnation'] : [])];
   const optional = [...(!vessel && !live ? ['incarnation'] : []), ...(c.op === 'history' ? ['expected_revision'] : [])];
@@ -46,7 +53,11 @@ export function validCommand(f) {
     if (k === 'incarnation' && !live && v === null) return true;
     if (k.endsWith('_id') || k === 'incarnation') return uuid(v);
     if (k === 'content') return validParts(v);
-    if (k === 'name') return text(v);
+    if (k === 'name') return c.op === 'branch' && v === null || text(v);
+    if (k === 'through_message') return v === null || uint(v);
+    if (k === 'archived') return typeof v === 'boolean';
+    if (k === 'preserve_canonical') return v === true;
+    if (k === 'retain') return uint(v) && v <= 4294967295;
     if (k === 'data_base64') return typeof v === 'string' && v.length <= 2796204 && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
     if (k === 'prompt') return typeof v === 'string' && v.length > 0;
     if (k === 'expected_revision' && c.op === 'history' && v === null) return true;

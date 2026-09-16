@@ -1,3 +1,4 @@
+import {sidebarActions} from './sidebar-actions.js';
 import {conversationScroll} from './conversation-scroll.js';
 import {ConversationStream, renderPreviews} from './conversation-stream.js';
 import {connectionDiagnostic as log} from './connection-diagnostics.js';
@@ -152,6 +153,7 @@ export function mount(root) {
         renderVoyages(); controls(); settings?.renderPending();
         if (selected && client && stale) refresh();
     }
+    const sidebar = sidebarActions(root, {changed: () => { voyageFingerprint = null; fleet.poll(); refresh(); }});
     function renderVoyages() {
         const query = $('voyage-search').value.toLowerCase();
         const voyages = [...fleet.connections.values()].flatMap(connection => connection.voyages.map(v => ({...v, connection})));
@@ -172,10 +174,12 @@ export function mount(root) {
             control.setAttribute('aria-label', description); control.title = description;
             const tooltip = node.querySelector('[data-flux-tooltip-content]');
             if (tooltip) tooltip.textContent = description;
+            sidebar.bind(node, connection, item);
             $('voyages').append(node);
         }
     }
     function select(vessel, id, title, retainDraft = false) {
+        sidebar.invalidate();
         if (busy) return notice('Wait for the current operation, then switch voyages.');
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
 
@@ -200,7 +204,7 @@ export function mount(root) {
         refreshing = true; const active = client, activeJournal = journal, mine = generation, id = selected;
         try {
             if (!id) return;
-            for (const entry of activeJournal.entries().filter(e => e.session_id === id).slice(0, 16)) {
+            for (const entry of activeJournal.entries().filter(e => e.session_id === id && !e.sidebar_action).slice(0, 16)) {
                 const response = await active.exchange(request('receipt', {session_id:id,command_id:entry.command_id}));
                 if (mine !== generation || active !== client) return;
                 if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued'].includes(response.result?.result?.status)){try {await composition.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; composer cleanup failed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
