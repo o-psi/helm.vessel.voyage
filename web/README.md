@@ -111,11 +111,16 @@ HTTP/runtime checks; no browser visual QA or agent execution was performed.
 
 ### Shared drafts and private pictures (#309)
 
-The composer discovers Vessel-owned drafts across separately paired owner clients;
-scoped credentials see only their authorized namespace. **New voyage → Compose
-shared draft** saves a workspace-targeted draft without creating a voyage. Select
-it on another device, then use New voyage to choose an account/model and create an
-empty voyage in the same workspace; sending remains a separate explicit action.
+The composer automatically saves/restores Vessel-owned drafts across separately
+paired owner clients; scoped credentials see only their authorized namespace.
+A quiet save indicator replaces the permanent draft form. Draft selection/discard
+is available in the composer overflow menu. The paperclip action opens a hidden
+file picker; thumbnails and conflict/retry controls appear only when needed.
+**New chat → Continue** prepares a workspace-targeted draft and reviewed local
+account/model choice without starting a Voyage. First Send creates the Voyage and
+submits the message with separate durable identities. A remotely restored draft
+requires account/model review on this device. Uncertain creation is reconciled,
+never replayed; its retained message requires explicit Send after reconciliation.
 Message drafts and steering drafts retain distinct targets, including run and
 incarnation for steering. Pictures cannot steer an active run: wait for completion
 or create an explicit text steering draft.

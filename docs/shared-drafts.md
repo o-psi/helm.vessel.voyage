@@ -52,14 +52,21 @@ requests revision-checked shared deletion; local recovery remains until it is
 confirmed. A conflict requires review rather than discarding the other device's
 newer text.
 
-In Helm Web, the composer draft picker discovers drafts on the selected Vessel.
-**Compose shared draft** creates only composition in the chosen workspace. To
-send a new-chat draft, create the empty voyage in that same workspace using the
-normal account/model dialog, then send from its composer. Selecting the shared
-draft on another device restores its text and pictures; provider/account selection
-is deliberately not copied as a credential-bearing client configuration. Existing
-message/steering drafts retain their target and require an explicit new draft when
-the run changes.
+In Helm Web, type in the normal composer: save/restore is automatic. A small
+Saved/Saving indicator sits beneath the composer; errors and conflicts are shown
+only when present. The paperclip button opens picture selection, and attachments
+appear as removable thumbnails inside the composer. The native file input is
+hidden. Draft discovery and discard live in the **Draft options** overflow menu,
+not a permanent form above every message.
+
+**New chat → Continue** reviews the Vessel, workspace, account and model and
+prepares a shared draft without starting a Voyage. The first **Send** creates the
+Voyage and submits the message, each with its own durable command identity.
+Uncertain creation uses Check creation and never repeats the start automatically;
+after reconciliation the retained message still needs an explicit Send. A draft
+opened on another device requires account/model review on that device, not copied
+credentials or an assumed provider choice. Existing message/steering drafts
+retain their target and require an explicit new draft when the run changes.
 
 ## Pictures
 
