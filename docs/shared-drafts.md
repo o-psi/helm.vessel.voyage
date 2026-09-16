@@ -142,3 +142,36 @@ a deployed TLS/OAuth journey, browser file-picker behavior on a physical phone o
 live-provider image quality. See [validation](quality.md),
 [Helm Web](helm-web.md), [process access](process-access.md) and
 [architecture](architecture.md) for the surrounding boundaries.
+
+## Delivery verification — #309
+
+Offline Linux verification on the delivered source:
+
+- Focused draft tests: 21 Helm tests, six Vessel tests and one protocol test pass.
+- Real supervisor fixture passes discovery without session allocation, concurrent
+  revision conflicts, exact retries, unauthorized access refusal, raster validation,
+  restart persistence, promotion without inference, post-clear edits and session
+  artifact survival after explicit draft deletion.
+- Web: 42 Node/DOM/PHP fixture tests pass, including two rendered clients exchanging
+  text/pictures, new-chat creation, navigation during upload/save, uncertain send
+  reconciliation after reload and exact-revision discard. Legacy gateway
+  compatibility: 22 tests pass. Production Vite build passes.
+- Affected-package Cargo check, Clippy with warnings denied, formatting, local
+  documentation links/source paths and manifest checks pass.
+- Workspace coverage: **1,687 passed, zero failed, one ignored**. Lines:
+  **78,008 / 103,364 (75.4692%)**, versus the prior 75.4029%. Functions:
+  7,167 / 9,936 (72.1316%); regions: 122,171 / 169,499 (72.0777%).
+  `coverage/latest.json` records source identity, tools and exclusions.
+
+The first coverage report lacked instrumentation from stale shared-target
+Vessel/protocol artifacts despite passing tests. That report was retained, not
+published as the measurement. Refreshing tracked Rust mtimes without changing
+source bytes forced current workspace instrumentation; a new independent test
+run and complete 16-object export passed source-completeness and duplicate checks.
+No packages or current test binaries were omitted. Detailed reports/logs remain
+under ignored `target/coverage-report/drafts-309/`.
+
+This is implementation and offline fixture evidence, not a completed live
+phone/TUI handoff, deployed public-browser journey, installation upgrade or
+live-provider image execution. Pictures in active-run steering remain unsupported
+and are explicitly refused without discarding the draft.
