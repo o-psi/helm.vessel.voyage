@@ -209,6 +209,27 @@ impl LiveControls {
         });
         Ok(())
     }
+    /// Automatic suspension may retire an empty manager, never terminate owned work.
+    /// Keep the retained lock across observation and retirement; admission/requests
+    /// are fenced by the suspension caller. Unknown ownership remains a blocker.
+    pub(crate) async fn retire_idle(&self, owner: &ManagedSessionOwner) -> Result<bool> {
+        let mut retained = self.retained.write().await;
+        if let Some(entry) = retained.as_ref() {
+            if entry.manager.has_owned_work() {
+                return Ok(false);
+            }
+            // No owned processes or pending cleanup: only close future admission.
+            let report = entry.manager.shutdown(std::time::Duration::ZERO).await;
+            ensure!(
+                report.observation_complete,
+                "empty terminal retirement unconfirmed"
+            );
+            owner.session_resource_closed(entry.id).await?;
+        }
+        *retained = None;
+        Ok(true)
+    }
+
     pub(crate) async fn shutdown_retained(&self, owner: &ManagedSessionOwner) -> Result<()> {
         let mut retained = self.retained.write().await;
         if let Some(entry) = retained.as_ref() {
