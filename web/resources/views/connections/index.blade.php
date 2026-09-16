@@ -1,5 +1,5 @@
 <x-layouts.console>
-    <main class="mx-auto max-w-4xl space-y-6 px-6 py-10">
+    <flux:main class="mx-auto w-full max-w-4xl space-y-6" role="main">
         <div class="flex items-center justify-between gap-4"><flux:heading size="xl">Your Vessels</flux:heading><flux:button href="{{ route('console') }}" variant="ghost" icon="arrow-left">Console</flux:button></div>
         <flux:modal.trigger name="connection-help"><flux:button variant="ghost" icon="question-mark-circle">Connection help</flux:button></flux:modal.trigger>
         @if(session('status')) <flux:callout role="status">{{ session('status') }}</flux:callout> @endif
@@ -46,12 +46,12 @@
                     <flux:heading>2. Create a pairing invitation</flux:heading>
             <flux:text>Your tenant's pairing principal: <code>{{ $tenant->principal_id }}</code></flux:text>
             <flux:text>On your Vessel host, create an invitation for this principal and its public HTTPS endpoint:</flux:text>
-            <pre class="overflow-x-auto rounded-lg bg-zinc-100 p-4 text-xs leading-6 dark:bg-zinc-900">vessel pair-invite --directory /path/to/vessel/state \
+            <flux:card size="sm"><pre class="overflow-x-auto"><flux:text inline class="font-mono">vessel pair-invite --directory /path/to/vessel/state \
   --endpoint https://your-vessel.example.com \
   --principal {{ $tenant->principal_id }} \
   --workspace /your/workspace \
   --rights catalogue,observe,history,execute,steer,decide,cancel \
-  --output /private/invitation.json</pre>
+  --output /private/invitation.json</flux:text></pre></flux:card>
                     <flux:text>Replace the example paths and hostname, then paste the generated invitation JSON into the pairing form.</flux:text>
                 </div>
                 <flux:separator />
@@ -63,5 +63,5 @@
                 <flux:modal.close><flux:button variant="primary">Got it</flux:button></flux:modal.close>
             </div>
         </flux:modal>
-    </main>
+    </flux:main>
 </x-layouts.console>

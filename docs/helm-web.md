@@ -226,3 +226,29 @@ third-party Vessel compatibility, real-browser IME/accessibility or native
 macOS/Windows gateway security. Live OAuth requires provisioned app credentials;
 provider-backed voyage actions require a separate approved execution budget.
 No Rust source changes or Rust coverage refresh belong to this web delivery.
+
+## Native Flux console presentation
+
+Console, sign-in and connection management use the installed free Flux v2 Blade
+components. Follow the official [sidebar](https://fluxui.dev/layouts/sidebar),
+[modal](https://fluxui.dev/components/modal),
+[callout](https://fluxui.dev/components/callout),
+[text](https://fluxui.dev/components/text) and
+[table](https://fluxui.dev/components/table) composition APIs. The responsive sidebar
+uses Flux's mobile collapse/toggle and native item truncation; no wrapped labels
+inside fixed-height navigation rows. Unchanged catalogue polls retain the controls.
+
+Socket-driven controls clone server-rendered Flux templates. Do not create raw
+interactive elements, copy vendor component markup/styles, or add another widget
+library. Use documented component slots for callout headings, text and actions.
+The existing message composer combines native Flux textarea/buttons; no unlicensed
+Pro components are substituted or imitated. Tool/attachment inspection uses a
+native Flux modal with its built-in dismissal and focus behavior.
+
+Semantic forms, layout containers and sanitized Markdown/code/list content remain
+HTML. Markdown is sanitized before being composed into rendered Flux heading,
+text, link, table, separator, card and callout templates. External content cannot
+supply Flux/Alpine attributes or controls. Shared CSS remains Flux/Tailwind imports
+and theme tokens; component appearance belongs to Flux, with utilities limited to
+layout and content formatting. Empty output and obsolete selection notices are
+hidden without changing receipt handling, canonical history or execution policy.
