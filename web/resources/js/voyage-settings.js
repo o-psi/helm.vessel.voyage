@@ -77,7 +77,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             }
             const items = workspaces.map(w => ({value:w.path,label:w.name === w.path ? w.path : `${w.name} · ${w.path}`}));
             if (mode === 'create' && caps.scope === 'owner') items.push({value:'__custom__',label:'Another folder…'});
-            options('settings-workspace',items);
+            const origin = mode === 'create' ? captureDraft?.() : null;
+            const preferred = origin?.vessel === c.id && origin.target?.type === 'new_chat' ? origin.workspace : null;
+            options('settings-workspace',items,preferred && items.some(item=>item.value===preferred) ? preferred : preferred && caps.scope === 'owner' ? '__custom__' : null);
+            if (preferred && !items.some(item=>item.value===preferred) && caps.scope === 'owner') $('settings-workspace-path').value=preferred;
             $('settings-workspace').disabled = mode === 'edit' || !items.length;
             if (!items.length) return status('No workspaces are available. Reconnect using the full-access setup instructions.');
             await workspaceChanged();
@@ -185,7 +188,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             } else {
                 const path = workspace();
                 let origin = captureDraft?.();
-                if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) {
+                if (origin?.target?.type === 'new_chat' && (origin.vessel !== c.id || origin.workspace !== path)) throw new Error('This draft belongs to another Vessel or workspace. Restore its settings to keep this draft; discard it explicitly before preparing a different chat.');
+                if (!origin || origin.target?.type !== 'new_chat') {
                     await draft?.(c.id,path);
                     origin = captureDraft?.();
                 }
@@ -310,5 +314,5 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
     window.addEventListener('storage',renderPending);
-    return {renderPending, configuration, startDraft, review: () => open(false)};
+    return {renderPending, configuration, startDraft, review: () => raw('new-voyage').click()};
 }
