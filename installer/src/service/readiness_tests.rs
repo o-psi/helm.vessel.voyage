@@ -85,3 +85,23 @@ fn readiness_retries_transition_pid_and_stale_invocation() {
     wait(&bin, &f.root.join("state"), &[], Some("same")).unwrap();
     f.done();
 }
+
+#[test]
+fn readiness_waits_for_retained_owner_catalogue_warmup() {
+    let f = Fixture::new();
+    let bin = f.root.join("bin");
+    f.script("bin/helm", "if [ -f \"$0.seen\" ]; then state=live; else touch \"$0.seen\"; state=unavailable; fi\nprintf '[{\"session_id\":\"one\",\"incarnation\":\"original\",\"state\":\"%s\"}]' \"$state\"");
+    symlink(bin.join("vessel"), f.root.join("pid-42")).unwrap();
+    for _ in 0..2 {
+        f.query("ActiveState", "active");
+        f.query("MainPID", "42");
+    }
+    wait(
+        &bin,
+        &f.root.join("state"),
+        &[json!({"session_id":"one", "incarnation":"original", "state":"live"})],
+        None,
+    )
+    .unwrap();
+    f.done();
+}

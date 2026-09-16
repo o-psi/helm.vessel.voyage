@@ -59,7 +59,16 @@ pub(super) fn wait(
             })
             && let Ok(current) = catalogue(bin, state)
         {
+            let mut warming = false;
             for previous in prior.iter().filter(|v| v["state"] == "live") {
+                if current.iter().any(|now| {
+                    now["session_id"] == previous["session_id"]
+                        && now["incarnation"] == previous["incarnation"]
+                        && now["state"] == "unavailable"
+                }) {
+                    warming = true;
+                    continue;
+                }
                 ensure!(
                     current
                         .iter()
@@ -69,7 +78,9 @@ pub(super) fn wait(
                     "A previously live voyage did not confirm its original incarnation live or cleanly suspended after supervisor upgrade; no voyage restart was attempted"
                 );
             }
-            return Ok(());
+            if !warming {
+                return Ok(());
+            }
         }
         ensure!(
             Instant::now() < deadline,
