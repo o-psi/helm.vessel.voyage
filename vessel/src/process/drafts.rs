@@ -369,6 +369,8 @@ impl Supervisor {
                     "Vessel draft identity quota reached"
                 );
                 validate(&tx, &key, *draft_id, document)?;
+                // Start the orphan grace period when references are removed, not at upload.
+                tx.execute("UPDATE composer_images SET created=?3 WHERE scope=?1 AND draft=?2 AND id IN (SELECT json_extract(value,'$.attachment.id') FROM composer_drafts d,json_each(json_extract(d.document,'$.parts')) WHERE d.scope=?1 AND d.id=?2)",params![key,draft_id.to_string(),now])?;
                 let document_bytes = serde_json::to_string(document)?;
                 let aggregate:u64=tx.query_row("SELECT coalesce(sum(length(document)),0) FROM composer_drafts WHERE scope=?1 AND id!=?2",params![key,draft_id.to_string()],|r|r.get(0))?;
                 ensure!(
