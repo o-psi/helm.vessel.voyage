@@ -57,14 +57,16 @@
         </section>
         <section class="grid gap-8 border-t border-zinc-200 py-12 md:grid-cols-2 dark:border-zinc-700">
             <div class="space-y-4">
-                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">AVAILABLE FIRST</flux:text>
+                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">LINUX TERMINAL</flux:text>
                 <flux:heading level="2" size="xl">Fast by keyboard.</flux:heading>
-                <flux:text class="text-base leading-relaxed">The Linux CLI and TUI are the first Helm experience, built for people who live in the terminal.</flux:text>
+                <flux:text class="text-base leading-relaxed">Use the Linux CLI and TUI to connect to local and remote Vessels. The v1.0.0 download includes Helm, Vessel, Voyage, and the installer.</flux:text>
             </div>
             <div class="space-y-4">
-                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">COMING NEXT / PLANNED</flux:text>
-                <flux:heading level="2" size="xl">Ready when you leave it.</flux:heading>
-                <flux:text class="text-base leading-relaxed">Planned web and mobile interfaces will let you check progress and steer the same voyages away from your desk.</flux:text>
+                <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">HELM WEB</flux:text>
+                <flux:heading level="2" size="xl">Your browser is a Helm, too.</flux:heading>
+                <flux:text class="text-base leading-relaxed">Sign in to Helm Web to start voyages, follow progress, and steer work on your connected Vessels. Install Vessel and Voyage on a machine you control first, expose its authenticated HTTPS/WSS endpoint, then pair it with your web account. Helm Web does not supply agent compute.</flux:text>
+                <flux:button href="{{ route('console') }}" variant="primary">Open Helm Web</flux:button>
+                <flux:link href="https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/helm-web.md#connect-your-vessels">Web connection setup</flux:link>
             </div>
         </section>
         <section class="flex flex-wrap items-center justify-between gap-4 border-t border-zinc-200 py-8 dark:border-zinc-700">

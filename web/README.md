@@ -3,9 +3,12 @@
 Laravel 13, Livewire 4 and licensed Flux Pro UI 2 product website for
 https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
 as a product suite for running coding agents across machines the user controls.
-Product copy leads with customer outcomes while accurately distinguishing current
-Linux behavior from planned web, mobile, and cross-voyage collaboration. The
-homepage is intentionally compact and links to focused `/helm`, `/vessel`, and
+Product copy presents Helm Web and the Linux terminal client as two interfaces
+to operator-controlled Vessels and independent Voyages. Web use requires Vessel
+and Voyage installed on a machine with an authenticated public HTTPS/WSS endpoint;
+it does not include hosted agent compute. The
+public landing page announces v1.0.0 with pinned Linux x86-64 archive/checksum
+links, glibc 2.39+ requirements and review-first installation instructions. It links to focused `/helm`, `/vessel`, and
 `/voyage` product pages. The public pages do not execute agents, enroll users or collect email addresses.
 An opt-in authenticated **Helm Web console** at `/` gives each OAuth identity a
 personal tenant with its own publicly reachable Vessel connections through a
