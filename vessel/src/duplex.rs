@@ -20,6 +20,14 @@ pub trait Backend: Send + Sync + 'static {
     /// Called after upgrade; implementations may associate the metadata-only
     /// notification handle with their browser routing state. Must not block.
     fn connected(&self, _connection: Connection) {}
+    /// Optional hard transport deadline; admitted work remains detached.
+    fn deadline(&self) -> Option<tokio::time::Instant> {
+        None
+    }
+    /// Extra transport-specific restriction, never a replacement for grant checks.
+    fn accepts(&self, _frame: &ClientFrame) -> bool {
+        true
+    }
     /// Lifecycle notification only: never use this to cancel admitted work.
     fn disconnected(&self, _socket_id: Uuid) {}
     fn command(&self, request: VesselRequest) -> BackendFuture<VesselResponse>;
@@ -152,6 +160,14 @@ pub async fn serve(
     vessel_id: Uuid,
     permit: OwnedSemaphorePermit,
 ) {
+    let deadline = backend.deadline();
+    let expiry = async move {
+        match deadline {
+            Some(at) => tokio::time::sleep_until(at).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(expiry);
     let permit = Arc::new(permit);
     let socket_id = Uuid::new_v4();
     let (reverse_tx, mut reverse_rx) = mpsc::channel::<Reverse>(MAX_IN_FLIGHT);
@@ -236,6 +252,7 @@ pub async fn serve(
     let mut last_incoming = tokio::time::Instant::now();
     loop {
         tokio::select! {
+            _ = &mut expiry => break,
             _ = closed_rx.changed() => break,
             _ = heartbeat.tick() => {
                 if last_incoming.elapsed() > Duration::from_secs(DEADLINE_SECONDS) || !authorized(&backend, None).await { break; }
@@ -267,6 +284,7 @@ pub async fn serve(
                     _ => break,
                 };
                 let Ok(frame) = serde_json::from_str::<ClientFrame>(&text) else { break; };
+                if !backend.accepts(&frame) { break; }
                 match frame {
                     ClientFrame::Command { request_id, request } => {
                         if request_id.is_nil() || request.protocol != VESSEL_API_VERSION || seen.len() >= MAX_CORRELATIONS || !seen.insert(request_id) { break; }

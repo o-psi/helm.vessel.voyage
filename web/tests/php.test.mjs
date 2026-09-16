@@ -1,20 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import net from 'node:net';
-import {once} from 'node:events';
-import {WebSocket,WebSocketServer} from '../gateway/node_modules/ws/wrapper.mjs';
-import {createGateway} from '../gateway/gateway.js';
-import {transport} from '../gateway/transport.js';
 const cwd=resolve(import.meta.dirname,'..');
 async function port(){const s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const p=s.address().port;await new Promise(r=>s.close(r));return p;}
-test('personal tenants: HTTP session, connection isolation, one-use tickets, deletion and logout', {timeout:60000},async()=>{
- const dir=mkdtempSync(join(tmpdir(),'helm-tenant-test-'));const database=join(dir,'db.sqlite');writeFileSync(database,'');const p=await port(),secret=randomBytes(32).toString('hex');
- const env={...process.env,APP_ENV:'local',APP_DEBUG:'false',APP_KEY:`base64:${randomBytes(32).toString('base64')}`,APP_URL:`http://127.0.0.1:${p}`,DB_CONNECTION:'sqlite',DB_DATABASE:database,SESSION_DRIVER:'database',CACHE_STORE:'database',SESSION_SECURE_COOKIE:'false',SESSION_COOKIE:'helm_tenant_test',HELM_WEB_ENABLED:'true',HELM_WEB_GATEWAY_SECRET:secret,GOOGLE_CLIENT_ID:'',GOOGLE_CLIENT_SECRET:'',X_CLIENT_ID:'',X_CLIENT_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''};
+test('personal tenants: HTTP session, connection isolation, direct browser credentials, deletion and logout', {timeout:60000},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'helm-tenant-test-'));const database=join(dir,'db.sqlite');writeFileSync(database,'');const p=await port();
+ const views=join(dir,'views');mkdirSync(views);
+ const pairingSecret=randomBytes(32).toString('hex');
+ const env={...process.env,APP_ENV:'local',APP_DEBUG:'false',APP_KEY:`base64:${randomBytes(32).toString('base64')}`,APP_URL:'https://helm.example',VIEW_COMPILED_PATH:views,DB_CONNECTION:'sqlite',DB_DATABASE:database,SESSION_DRIVER:'database',CACHE_STORE:'database',SESSION_SECURE_COOKIE:'false',SESSION_COOKIE:'helm_tenant_test',HELM_WEB_ENABLED:'true',HELM_WEB_GATEWAY_SECRET:'',HELM_WEB_LEGACY_GATEWAY_ENABLED:'false',GOOGLE_CLIENT_ID:'',GOOGLE_CLIENT_SECRET:'',X_CLIENT_ID:'',X_CLIENT_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''};
  const php=code=>{const r=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); ${code}`],{cwd,env,encoding:'utf8'});assert.equal(r.status,0,r.stderr+r.stdout);return r.stdout;};
  const migrate=spawnSync('php',['artisan','migrate','--force'],{cwd,env,encoding:'utf8'});assert.equal(migrate.status,0,migrate.stdout+migrate.stderr);
  const seed=JSON.parse(php(`
@@ -23,13 +21,35 @@ test('personal tenants: HTTP session, connection isolation, one-use tickets, del
   $tenant=App\\Models\\Tenant::create(['id'=>(string)Illuminate\\Support\\Str::uuid(),'principal_id'=>(string)Illuminate\\Support\\Str::uuid(),'name'=>$name]);
   $user=App\\Models\\User::create(['name'=>$name,'email'=>$name.'@example.test','tenant_id'=>$tenant->id,'password'=>null]);
   $connection=App\\Models\\VesselConnection::create(['tenant_id'=>$tenant->id,'name'=>$name.' vessel','endpoint'=>'https://'.$name.'.example.com','vessel_id'=>(string)Illuminate\\Support\\Str::uuid(),'credential'=>['token'=>str_repeat('a',64),'grant_id'=>(string)Illuminate\\Support\\Str::uuid()]]);
+  App\\Models\\VesselPairing::create(['tenant_id'=>$tenant->id,'name'=>$name.' pending pairing','request'=>['code'=>'${pairingSecret}']]);
   $session=$app->make('session')->driver();$session->flush();$session->regenerate();Illuminate\\Support\\Facades\\Auth::login($user);$session->put('helm_operator_until',time()+3600);$session->save();
   $cookie=encrypt(Illuminate\\Cookie\\CookieValuePrefix::create('helm_tenant_test',$app['encrypter']->getKey()).$session->getId(),false);
   $out[$name]=['cookie'=>$cookie,'connection'=>$connection->id,'tenant'=>$tenant->id,'vessel_id'=>$connection->vessel_id];
  }
  echo json_encode($out);
  `));
- const server=spawn('php',['-S',`127.0.0.1:${p}`,'-t','public','public/index.php'],{cwd,env,stdio:'ignore'});
+ // Only the CLI test server installs this fake; production bootstrap stays untouched.
+ // APP_ENV=local preserves real CSRF enforcement while HTTP carries fixture cookies.
+ const router=join(dir,'router.php');
+ writeFileSync(router,`<?php
+ define('LARAVEL_START', microtime(true));
+ require ${JSON.stringify(join(cwd,'vendor/autoload.php'))};
+ $app=require ${JSON.stringify(join(cwd,'bootstrap/app.php'))};
+ $app->instance(App\\Services\\PublicVesselHttp::class,new class extends App\\Services\\PublicVesselHttp {
+  public function post(string $origin,string $path,array $body,array $headers=[]): array {
+   if (!in_array($origin,['https://alice.example.com','https://bob.example.com'],true)
+    || ($headers['Authorization'] ?? '') !== 'Bearer '.str_repeat('a',64)
+    || !Illuminate\\Support\\Str::isUuid($headers['x-voyage-grant'] ?? '')
+    || !Illuminate\\Support\\Str::isUuid($headers['x-voyage-vessel'] ?? '')) throw new RuntimeException('Unexpected fixture request');
+   if ($path === '/v1/vessel/command' && $body === ['protocol'=>1,'command'=>['op'=>'capabilities']])
+    return ['protocol'=>1,'error'=>null,'outcome_unknown'=>false,'result'=>['protocol'=>1,'vessel_id'=>$headers['x-voyage-vessel'],'features'=>[]]];
+   if ($path !== '/v1/vessel/browser-credentials' || $body !== ['origin'=>'https://helm.example']) throw new RuntimeException('Unexpected mint request');
+   return ['token'=>bin2hex(random_bytes(32)),'expires_at_ms'=>(int)floor(microtime(true)*1000)+119000,'vessel_id'=>$headers['x-voyage-vessel']];
+  }
+ });
+ $app->handleRequest(Illuminate\\Http\\Request::capture());
+ `);
+ const server=spawn('php',['-S',`127.0.0.1:${p}`,'-t','public',router],{cwd,env,stdio:'ignore'});
  const jar={}; const call=async(path,options={},who=null)=>{
   const cookies=who?(jar[who]||`helm_tenant_test=${encodeURIComponent(seed[who].cookie)}`):'';
   const response=await fetch(`http://127.0.0.1:${p}${path}`,{redirect:'manual',...options,headers:{Cookie:cookies,...options.headers}});
@@ -41,32 +61,49 @@ test('personal tenants: HTTP session, connection isolation, one-use tickets, del
   const login=await call('/console/login');assert.equal(login.status,200);assert.match(await login.text(),/being configured/);
   assert.equal((await call('/console/login',{method:'POST'})).status,405);
   assert.equal((await call('/auth/google')).status,404);
-  const a=await call('/',{},'alice');const html=await a.text();assert.equal(a.status,200);assert.match(html,/alice vessel/);assert.ok(!html.includes('bob vessel'));assert.ok(!html.includes('a'.repeat(64)));
+  const a=await call('/',{},'alice');const html=await a.text();assert.equal(a.status,200);assert.match(html,/alice vessel/);assert.ok(!html.includes('bob vessel'));assert.ok(!html.includes('a'.repeat(64)));assert.ok(!html.includes(pairingSecret));
   const csrf=html.match(/name="csrf-token" content="([^"]+)"/)[1];
-  const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token},body:JSON.stringify(body)},who);
+  const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token,Origin:'https://helm.example'},body:JSON.stringify(body)},who);
   assert.equal((await post('/console/ticket',{vessel:seed.bob.connection})).status,404);
   assert.equal((await call('/connections/'+seed.bob.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice')).status,404);
-  const connections=await call('/connections',{},'alice');const list=await connections.text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));
-  const issue=async()=>{const r=await post('/console/ticket',{vessel:seed.alice.connection});assert.equal(r.status,200,await r.clone().text());return (await r.json()).ticket;};
-  const redeem=ticket=>call('/console/gateway/authorize',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json',Authorization:`Bearer ${secret}`},body:JSON.stringify({ticket})});
-  let ticket=await issue();assert.match(ticket,/^[A-Za-z0-9_-]{43}$/);
-  assert.equal((await call('/console/gateway/authorize',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({ticket})})).status,403);
-  const redemption=await redeem(ticket);assert.equal(redemption.status,200,await redemption.clone().text());const grant=await redemption.json();assert.equal(grant.tenant,seed.alice.tenant);assert.equal(grant.vessel,seed.alice.connection);assert.equal(grant.connection.url,'wss://alice.example.com/v1/vessel/socket');assert.equal((await redeem(ticket)).status,403);
-  // Real PHP-issued opaque ticket -> Node redemption -> fixture Vessel socket.
-  const upstream=new WebSocketServer({port:0,host:'127.0.0.1',handleProtocols:()=> 'voyage.vessel.v1'});await once(upstream,'listening');
-  upstream.on('connection',ws=>{ws.send(JSON.stringify({type:'hello',protocol:1,socket_id:'10000000-0000-4000-8000-000000000001',vessel_id:seed.alice.vessel_id}));ws.on('message',raw=>{const frame=JSON.parse(raw);ws.send(JSON.stringify({type:'reply',request_id:frame.request_id,response:{protocol:1,error:null,outcome_unknown:false,result:[]}}));});});
-  const gateway=createGateway({secret,origin:`http://127.0.0.1:${p}`,authUrl:`http://127.0.0.1:${p}/console/gateway/authorize`},undefined,{
-   ...transport,publicTarget:async url=>({url:new URL(url),options:{}}),openSocket:()=>new WebSocket(`ws://127.0.0.1:${upstream.address().port}`,'voyage.vessel.v1')
-  });gateway.server.listen(0,'127.0.0.1');await once(gateway.server,'listening');
-  try {
-   ticket=await issue();const socket=new WebSocket(`ws://127.0.0.1:${gateway.server.address().port}/socket`,{origin:`http://127.0.0.1:${p}`});await once(socket,'open');let next=once(socket,'message');socket.send(JSON.stringify({type:'authenticate',ticket}));assert.equal(JSON.parse((await next)[0]).vessel_id,seed.alice.vessel_id);
-   next=once(socket,'message');socket.send(JSON.stringify({type:'command',request_id:'10000000-0000-4000-8000-000000000002',request:{protocol:1,command:{op:'catalogue'}}}));assert.deepEqual(JSON.parse((await next)[0]).response.result,[]);socket.close();await once(socket,'close');
-  }finally{await gateway.close();for(const ws of upstream.clients)ws.terminate();await new Promise(r=>upstream.close(r));}
-  ticket=await issue();const deleted=await call('/connections/'+seed.alice.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice');assert.equal(deleted.status,302);assert.equal((await redeem(ticket)).status,403);
-  // Logout revokes issued tickets before redemption.
+  const connections=await call('/connections',{},'alice');const list=await connections.text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
+  const mintBody={vessel:seed.alice.connection};
+  const mintHeaders={Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf};
+  for(const origin of [null,'https://evil.example',`http://127.0.0.1:${p}`,'https://helm.example/']) {
+   const headers={...mintHeaders,...(origin === null ? {} : {Origin:origin})};
+   const denied=await call('/console/ticket',{method:'POST',headers,body:JSON.stringify(mintBody)},'alice');
+   assert.equal(denied.status,403,`origin ${origin}: ${await denied.text()}`);
+  }
+  const noCsrf=await call('/console/ticket',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json',Origin:'https://helm.example'},body:JSON.stringify(mintBody)},'alice');
+  assert.equal(noCsrf.status,419);
+  const issue=async(who='alice',token=csrf)=>{
+   const before=Date.now();const r=await post('/console/ticket',{vessel:seed[who].connection},who,token);
+   assert.equal(r.status,200,await r.clone().text());assert.match(r.headers.get('cache-control'),/no-store/);
+   const text=await r.text();assert.ok(!text.includes('a'.repeat(64)));assert.ok(!text.includes(pairingSecret));
+   const grant=JSON.parse(text);assert.deepEqual(Object.keys(grant).sort(),['expires_at_ms','token','url','vessel_id']);
+   assert.match(grant.token,/^[a-f0-9]{64}$/);assert.equal(grant.vessel_id,seed[who].vessel_id);
+   assert.equal(grant.url,`wss://${who}.example.com/v1/vessel/browser-socket`);
+   assert.ok(Number.isInteger(grant.expires_at_ms));assert.ok(grant.expires_at_ms>before && grant.expires_at_ms<=Date.now()+120000);
+   return grant;
+  };
+  const first=await issue();assert.notEqual((await issue()).token,first.token);
+  // Direct credentials are not legacy gateway tickets, and no redemption service is needed.
+  assert.equal((await call('/console/gateway/authorize',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({ticket:first.token})})).status,403);
+  assert.equal(php("echo Illuminate\\Support\\Facades\\DB::table('web_gateway_tickets')->count();"),'0');
+  const deleted=await call('/connections/'+seed.alice.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice');assert.equal(deleted.status,302);
+  assert.equal((await post('/console/ticket',mintBody)).status,404);
+  assert.ok(!(await (await call('/connections',{},'alice')).text()).includes('alice vessel'));
+  // Removal/logout prevent new minting, not immediate revocation of credentials already issued.
   const bobPage=await call('/',{},'bob');const bobHtml=await bobPage.text();const bobCsrf=bobHtml.match(/name="csrf-token" content="([^"]+)"/)[1];
-  const bobTicketResponse=await post('/console/ticket',{vessel:seed.bob.connection},'bob',bobCsrf);const bobTicket=(await bobTicketResponse.json()).ticket;
-  await post('/console/logout',{},'bob',bobCsrf);assert.equal((await redeem(bobTicket)).status,403);
+  await issue('bob',bobCsrf);
+  const oldBobCookie=jar.bob;
+  assert.equal((await post('/console/logout',{},'bob',bobCsrf)).status,302);
+  // Fresh signed-out session has a new CSRF token; reach authentication rather than failing CSRF.
+  const bobLogin=await call('/console/login',{},'bob');
+  const loggedOutCsrf=(await bobLogin.text()).match(/name="csrf-token" content="([^"]+)"/)[1];
+  assert.equal((await post('/console/ticket',{vessel:seed.bob.connection},'bob',loggedOutCsrf)).status,401);
+  const replay=await call('/console/ticket',{method:'POST',headers:{...mintHeaders,'X-CSRF-TOKEN':bobCsrf,Origin:'https://helm.example',Cookie:oldBobCookie},body:JSON.stringify({vessel:seed.bob.connection})});
+  assert.equal(replay.status,419);
   const logout=await post('/console/logout',{});assert.equal(logout.status,302);assert.match(logout.headers.get('location'),/landing$/);assert.equal((await call('/',{},'alice')).status,302);
   const b=await call('/',{},'bob');assert.equal(b.status,302);
  }finally{server.kill('SIGTERM');await new Promise(r=>server.once('exit',r));rmSync(dir,{recursive:true,force:true});}

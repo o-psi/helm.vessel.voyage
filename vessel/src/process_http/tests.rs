@@ -1,8 +1,9 @@
 use super::*;
-fn state(directory: Option<PathBuf>) -> AppState {
+pub(super) fn state(directory: Option<PathBuf>) -> AppState {
     AppState {
         process_directory: directory,
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        browser_credentials: Default::default(),
         operator_token_hash: None,
         public_origin: Some("https://fixture.invalid".into()),
     }

@@ -15,7 +15,7 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
     assert.doesNotMatch(html,/<script|<img|javascript:|<iframe/);
 });
 test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:15000}, async () => {
-    const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';root.dataset.socketPath='/console/socket';
+    const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
     const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8'});
     assert.equal(rendered.status,0,rendered.stderr);
     const fixture = document.createElement('div'); fixture.innerHTML = rendered.stdout;
@@ -23,13 +23,16 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
-    let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
-    globalThis.fetch=async()=>({ok:true,json:async()=>({ticket:'synthetic.ticket'})});
+    let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
+    globalThis.fetch=async()=>({ok:true,json:async()=>({token:'a'.repeat(64),expires_at_ms:Date.now()+120000,vessel_id:vessel,url:'wss://vessel.example/v1/vessel/browser-socket'})});
     const sharedRecords=new Map();
+
     class Socket extends dom.window.EventTarget {
         readyState=0;
-        constructor(){super();sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
-        send(text){const frame=JSON.parse(text);if(frame.type==='authenticate'){setTimeout(()=>this.receive({type:'ready',vessel_id:vessel}),0);return;}
+        constructor(url,protocol){super();assert.equal(url.href,'wss://vessel.example/v1/vessel/browser-socket');assert.equal(protocol,'voyage.vessel.v1');this.protocol=protocol;sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
+        send(text){const frame=JSON.parse(text);if(frame.type==='authenticate'){setTimeout(()=>this.receive({type:'hello',protocol:1,socket_id:incarnation,vessel_id:vessel}),0);return;}
+            if(frame.type==='subscribe'){this.subscription=frame.request_id;this.after=frame.request.subscriptions[0].after;return;}
+            if(frame.type==='unsubscribe'){this.subscription=null;return;}
             const command=frame.request.command;requests.push(command);
             let result;
             if(command.op==='drafts') {
@@ -44,7 +47,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
@@ -64,6 +67,36 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     try {
         assert.equal($('#cancel').hidden,true,'cancel is hidden before selection');
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();await until(()=>!$('#send').disabled);
+        const observe = (options={}) => {
+            const socket=sockets.at(-1); const previous=socket.subscription;
+            cursor++;
+            socket.receive({type:'event',subscription_id:previous,event:{protocol:1,session_id:id,incarnation,result:{projection:'public-v1',cursor,latest_cursor:cursor,replay_gap:false,has_more:false,events:[{cursor,session_id:id,kind:'run',revision,run_id:run}],...options},error:null,outcome_unknown:false}});
+        };
+        running=true;
+        previews=[{attempt_id:'attempt',index:0,call_id:'fragment',name:'shell',arguments:'{"command":"ec',truncated:false}];
+        reasoning=[{attempt_id:'attempt',index:0,kind:'summary',text:'Disclosed rationale',finalized:false}];
+        observe(); await until(()=>$('#live-previews').textContent.includes('Disclosed rationale'));
+        assert.match($('#live-previews').textContent,/command/);
+        $('#live-previews details').open=true;
+        liveText='Streamed response delta'; previews[0].arguments='{"command":"echo hello"}';
+        observe(); await until(()=>$('#output-text').textContent.includes('delta'));
+        assert.equal($('#live-previews details').open,true,'stable provisional identity preserves disclosure');
+        assert.match($('#live-previews').textContent,/echo hello/);
+        previews[0].call_id='call-1'; reasoning[0].finalized=true;
+        observe(); await until(()=>$('#live-previews').textContent.includes('finalized disclosure'));
+        assert.equal($('#live-previews [data-preview-key^="tool:"]'),null,'canonical tool call removes provisional preview');
+        const before=requests.filter(r=>r.op==='snapshot').length;
+        const socket=sockets.at(-1);
+        socket.receive({type:'event',subscription_id:socket.subscription,event:{protocol:1,session_id:id,incarnation,result:{projection:'public-v1',cursor,latest_cursor:cursor,replay_gap:false,events:[]},error:null,outcome_unknown:false}});
+        await new Promise(r=>setTimeout(r,30));
+        assert.equal(requests.filter(r=>r.op==='snapshot').length,before,'duplicate cursor does not refetch or append');
+        observe({replay_gap:true,events:[]}); await until(()=>requests.filter(r=>r.op==='snapshot').length>before && !$('#send').disabled);
+        assert.equal(sockets.at(-1).after,cursor,'gap resubscribes at fresh snapshot cursor');
+        running=false; previews=[]; reasoning=[]; observe(); await until(()=>$('#live-output').hidden && $('#live-previews').hidden);
+        const quietSnapshots=requests.filter(c=>c.op==='snapshot').length;
+        await new Promise(r=>setTimeout(r,1100));
+        assert.equal(requests.filter(c=>c.op==='snapshot').length,quietSnapshots,'quiet subscriptions do not poll snapshots each second');
+
         assert.match($('#messages').textContent,/Hello Vessel/);
         await until(()=>$('#composer-account').textContent==='Personal account');
         assert.equal($('#composer-service').textContent,'Default tier');
@@ -101,17 +134,17 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
         assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
         delaySnapshot=true;
-        const snapshotsBefore=requests.filter(c=>c.op==='snapshot').length;
-        await until(()=>requests.filter(c=>c.op==='snapshot').length>snapshotsBefore);
+        const snapshotsBefore=requests.filter(c=>c.op==='snapshot').length; observe();
+        await until(()=>requests.filter(c=>c.op==='snapshot').length>snapshotsBefore && !$('#send').disabled);
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.some(c=>c.op==='submit')&&!$('#send').disabled);
         delaySnapshot=false;assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').getAttribute('aria-label'),'Steer run');
         assert.equal($('#cancel').hidden,false,'cancel is visible for active run');
-        decisionKind='approval';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
+        decisionKind='approval';observe();await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();
         await until(()=>requests.some(c=>c.op==='respond'&&c.response==='approved')&&!$('#send').disabled);
         const approval=requests.find(c=>c.op==='respond');assert.equal(approval.incarnation,incarnation);assert.equal(approval.run_id,run);assert.equal(approval.expected_revision,3);
-        decisionKind='question';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Second'));
+        decisionKind='question';observe();await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Second'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Second').click();
         await until(()=>requests.some(c=>c.response?.status==='selected')&&!$('#send').disabled);
         assert.deepEqual(requests.find(c=>c.response?.status==='selected').response,{status:'selected',index:1,answer:'Second'});

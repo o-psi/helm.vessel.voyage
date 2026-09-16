@@ -121,6 +121,7 @@ struct AppState {
     database: Arc<Mutex<Connection>>,
     operator_token_hash: Option<String>,
     public_origin: Option<String>,
+    browser_credentials: process_http::browser::Credentials,
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -230,6 +231,7 @@ async fn main() -> Result<()> {
         database: Arc::new(Mutex::new(database)),
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
         public_origin,
+        browser_credentials: Default::default(),
     };
     let app = Router::new()
         .route(
@@ -275,6 +277,22 @@ async fn main() -> Result<()> {
             get(process_http::socket).layer(middleware::from_fn_with_state(
                 state.clone(),
                 process_http::boundary,
+            )),
+        )
+        .route(
+            process_http::browser::CREDENTIALS_PATH,
+            axum::routing::post(process_http::browser::mint)
+                .layer(axum::extract::DefaultBodyLimit::max(4096))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    process_http::boundary,
+                )),
+        )
+        .route(
+            process_http::browser::SOCKET_PATH,
+            get(process_http::browser::socket).layer(middleware::from_fn_with_state(
+                state.clone(),
+                process_http::browser::boundary,
             )),
         )
         .route("/health", get(health))

@@ -17,7 +17,7 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_secs(10);
 fn body_limit(path: &str) -> usize {
     match path {
         COMMAND_PATH | EVENTS_PATH => MAX_VESSEL_BODY,
-        PAIR_PATH => 4096,
+        PAIR_PATH | super::process_http::browser::CREDENTIALS_PATH => 4096,
         _ => MAX_VESSEL_BODY,
     }
 }

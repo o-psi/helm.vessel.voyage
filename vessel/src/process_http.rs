@@ -1,5 +1,6 @@
 //! Authenticated scoped process gateway; runtime execution policy stays local.
 use super::*;
+pub(super) mod browser;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use voyage_protocol::vessel::{
     VESSEL_API_VERSION, VesselCommand, VesselEvent, VesselEventRequest, VesselRequest,
@@ -388,8 +389,7 @@ pub(super) async fn socket(
     upgrade: axum::extract::ws::WebSocketUpgrade,
 ) -> Response {
     use vessel::duplex::Backend;
-    static SOCKET_CAPACITY: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
-        std::sync::OnceLock::new();
+
     let Some(directory) = state.process_directory else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -422,11 +422,7 @@ pub(super) async fn socket(
     else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    let Ok(permit) = SOCKET_CAPACITY
-        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(64)))
-        .clone()
-        .try_acquire_owned()
-    else {
+    let Ok(permit) = socket_capacity().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let mut backend = SocketBackend {
@@ -475,3 +471,11 @@ pub(super) async fn socket(
 
 #[cfg(test)]
 mod tests;
+
+fn socket_capacity() -> std::sync::Arc<tokio::sync::Semaphore> {
+    static CAPACITY: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    CAPACITY
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(64)))
+        .clone()
+}
