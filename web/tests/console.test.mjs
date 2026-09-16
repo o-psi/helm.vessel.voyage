@@ -50,7 +50,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
                 if(loseCreate){loseCreate=false;this.close();return;}
             }
             else if(command.op==='resolve_start_account')result={command_id:command.command_id,session_id:command.session_id,status:'created',process:createdProcess};
-            else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account',state:'ready',availability:'available'}],connections:[{id,revision:1,transports:['openai_responses']}]};
+            else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account',state:'ready',availability:'available'},{id:'alternate-account',connection_id:id,identity_generation:2,label:'Work account',state:'ready',availability:'available'},{id:'unavailable-account',connection_id:id,identity_generation:1,label:'Unavailable account',state:'ready',availability:'unavailable'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
                 if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
@@ -124,7 +124,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         $('#change-account').click();
         assert.equal($('#edit-form').parentElement.id,'account-popover');
         assert.equal($('#edit-account-section').hidden,false);
-        assert.equal($('#edit-model-section').hidden,true);
+        assert.equal($('#edit-model-section').hidden,false,'account changes expose the selected model before applying');
         $('#change-inference').click();
         assert.equal($('#edit-form').parentElement.id,'edit-popover');
         assert.equal($('#edit-account-section').hidden,true);
@@ -192,11 +192,30 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             $('#prompt').value=text;$('#prompt').dispatchEvent(new Event('input'));
         }
         await prepareChat('First-send message');
+        assert.equal($('#change-account').disabled,false,'new chats allow account review before sending');
+        assert.equal($('#change-inference').disabled,false);
+        assert.match($('#composer-account').textContent,/Personal account/);
+        $('#change-account').click();
+        await until(()=>!$('#settings-save').disabled);
+        assert.equal($('#settings-account').value,'0');
+        assert.equal($('#settings-model').value,'fixture');
+        assert.ok($('#settings-account').querySelector('[value="2"]').hasAttribute('disabled'));
+        $('#settings-account').value='1';
+        $('#settings-account').dispatchEvent(new Event('change'));
+        await until(()=>!$('#settings-save').disabled);
+        $('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>$('#composer-account').textContent.includes('Work account'));
+        $('#change-account').click();
+        await until(()=>!$('#settings-save').disabled);
+        assert.equal($('#settings-account').value,'1','review retains the chosen account instead of resetting to the default');
+        assert.equal($('#prompt').value,'First-send message','review preserves the unsent message');
+        $('#settings-close').click();
         const submissions=requests.filter(c=>c.op==='submit').length;
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.filter(c=>c.op==='submit').length===submissions+1 && !$('#send').disabled);
         assert.equal(requests.filter(c=>c.op==='start_account').length,1);
+        assert.deepEqual(requests.find(c=>c.op==='start_account').account,{account_id:'alternate-account',connection_id:'10000000-0000-4000-8000-000000000001',identity_generation:2,connection_revision:1,transport:'openai_responses'});
         assert.equal(requests.filter(c=>c.op==='submit').at(-1).session_id,createdProcess.session_id);
         assert.equal(requests.filter(c=>c.op==='submit').at(-1).prompt,'First-send message');
         await prepareChat('Keep rejected creation text');rejectCreate=true;

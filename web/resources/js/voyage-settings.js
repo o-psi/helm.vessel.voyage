@@ -108,6 +108,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                     choices.push({binding,ready,label:`${account.label} · ${provider.label} · ${transport.replaceAll('_',' ')}${same(binding,catalogue.default_account) ? ' · Default' : ''}${ready ? '' : ` · ${account.availability.replaceAll('_',' ')}`}`});
                 }
             }
+            const reviewed = configuration();
+            if (mode === 'create' && reviewed?.vessel === c.id && reviewed.workspace === selectedWorkspace) defaults = reviewed.settings;
             const preferred = mode === 'edit' ? target.inference?.account : defaults.account;
             if (mode === 'edit' && editSection !== 'account' && !choices.some(c => c.ready && same(c.binding,preferred))) { reset(); return status('Current account unavailable. Choose an account from its own popover.'); }
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
@@ -156,7 +158,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         $('settings-close').disabled = false;
         $('settings-title').textContent = edit ? ({model:'Model',account:'Account',service:'Service tier'})[editSection] : 'New voyage';
         $('settings-save').textContent = edit ? 'Apply settings' : 'Continue';
-        $('settings-description').textContent = edit ? (editSection === 'account' ? 'Changing account selects its default model. Review the composer after applying.' : 'Choose settings for the next run.') : 'Choose where your voyage runs and which provider account it uses.';
+        $('settings-description').textContent = edit ? (editSection === 'account' ? 'Choose a provider account and review its model before applying. Credentials stay on the Vessel.' : 'Choose settings for the next run.') : 'Choose where your voyage runs and which provider account it uses.';
         options('settings-vessel',[...fleet.connections.values()].map(c => ({value:c.id,label:`${c.name}${c.client ? '' : ' · offline'}`})),target.vessel);
         $('settings-vessel').disabled = edit;
         loadVessel();
@@ -194,7 +196,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                     origin = captureDraft?.();
                 }
                 if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The new-chat composer could not be prepared.');
-                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,settings:structuredClone(settings)});
+                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,accountLabel:clean(selected.label),settings:structuredClone(settings)});
                 raw('settings-close').disabled = false;
                 raw('settings-close').click();
                 status('New chat ready. Write your message, then Send.');
@@ -266,16 +268,21 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
     raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
-    function openSection(section, host) {
+    function openSection(section, host, event) {
         if (saving) return;
+        if (!current().session_id) {
+            event.preventDefault(); event.stopPropagation();
+            raw('new-voyage').click();
+            return;
+        }
         editSection = section;
         raw(host).append(raw('edit-form'));
-        for (const name of ['model','account','service']) raw(`edit-${name}-section`).hidden = name !== section;
+        for (const name of ['model','account','service']) raw(`edit-${name}-section`).hidden = name !== section && !(section === 'account' && name === 'model');
         open(true);
     }
-    raw('change-inference').addEventListener('click',() => openSection('model','edit-popover'));
-    raw('change-account').addEventListener('click',() => openSection('account','account-popover'));
-    raw('change-service').addEventListener('click',() => openSection('service','service-popover'));
+    raw('change-inference').addEventListener('click',event => openSection('model','edit-popover',event));
+    raw('change-account').addEventListener('click',event => openSection('account','account-popover',event));
+    raw('change-service').addEventListener('click',event => openSection('service','service-popover',event));
     async function loadUsage(refresh) {
         const mine = ++usageVersion, c = connection, client = c?.client, selected = choice(), workspace = $('settings-workspace').value;
         const output = raw('account-usage'), button = raw('account-usage-refresh');

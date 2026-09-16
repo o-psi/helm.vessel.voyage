@@ -71,7 +71,7 @@ identities only, not prompts. They are persisted before dispatch. Reconnect read
 receipts only and never automatically resends uncertain mutations. An admission
 receipt is not execution completion. Storage failure blocks sending; clearing
 site storage loses local recovery evidence. Full-message expansion is capped at
-4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Uploads, private terminals, browser execution, account enrollment and the remaining native administration surfaces are still parity gaps.
+4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Use the composer’s Account or model button before the first Send to review the new chat’s Vessel-hosted provider account and model. Continue keeps that reviewed selection in memory without creating a voyage; reopening review preserves it. For an idle existing voyage, Account shows both the account and its model before Apply. Unavailable accounts are disabled, and active runs cannot switch accounts. Provider credentials stay on the Vessel; account enrollment is not part of this picker. Uploads, private terminals, browser execution, account enrollment and the remaining native administration surfaces are still parity gaps.
 
 ## Connect your Vessels
 

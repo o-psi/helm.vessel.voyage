@@ -105,12 +105,14 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
+            const newChatSettings = !selected && client && !busy && !newChatSending;
+            const reviewed = !selected ? settings?.configuration() : null;
             $('reconnect').disabled = busy; $('prompt').disabled = busy || newChatSending || !selectedVessel; $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
-            $('change-inference').disabled = !enabled || running();
-            $('change-account').disabled = !enabled || running();
+            $('change-inference').disabled = !newChatSettings && (!enabled || running());
+            $('change-account').disabled = !newChatSettings && (!enabled || running());
             $('change-service').disabled = !enabled || running();
             $('change-reasoning').disabled = !enabled || running() || !snapshot?.inference?.account;
             $('change-access').disabled = !enabled;
@@ -118,10 +120,10 @@ export function mount(root) {
             $('access-mode').disabled = !enabled;
             $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy || newChatSending;
-            $('composer-model').textContent = clean(snapshot?.inference?.model || snapshot?.model || 'Account & model');
+            $('composer-model').textContent = clean(reviewed?.settings.model || snapshot?.inference?.model || snapshot?.model || 'Account & model');
             $('composer-reasoning').textContent = clean(snapshot?.inference?.reasoning_effort || 'Default');
             $('composer-service').textContent = clean(snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
-            $('composer-account').textContent = accountLabel;
+            $('composer-account').textContent = reviewed?.accountLabel || accountLabel;
             $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
             for (const entry of pending()) $('pending').append(fluxTemplate('flux-text', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));
