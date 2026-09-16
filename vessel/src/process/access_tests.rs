@@ -457,14 +457,10 @@ async fn sidebar_branch_requires_full_owner_and_each_existing_right() {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("workspace permission denied")
+                .contains("contradictory owner authority")
         );
     }
-    g.rights = vec![
-        ProcessRight::Create,
-        ProcessRight::History,
-        ProcessRight::Lifecycle,
-    ];
+    g.rights = ProcessRight::all();
     f.save_connection(&g);
     let r = f.registration();
     database::save(&f.0, &r).await.unwrap();
