@@ -5,7 +5,8 @@ Helm, set up an account privately, ask one small question about a folder, inspec
 the result, and return to the same conversation. No remote server or project map
 is required.
 
-This is first-release development. These are source-verified instructions, not a
+The Linux x86-64 v1.0.0 binary release is described in the
+[release guide](releases-v1.0.0.md). These instructions are not a
 claim that a new user's live login or paid request has been tested. Subscription
 sign-in uses an experimental provider endpoint. Installation, authentication,
 account selection, and model access are different checks; none guarantees the next.
@@ -35,8 +36,8 @@ will work for it.
 
 ## 1. Install on Linux
 
-There is no released-asset promise in this guide. The reproducible starting point
-is the source tree. Install Git, a stable Rust toolchain (Cargo included), and your
+For prebuilt binaries, follow the [v1.0.0 release installation](releases-v1.0.0.md).
+To build from source instead, install Git, a stable Rust toolchain (Cargo included), and your
 Linux distribution's native compiler/linker build prerequisites first; see
 [development](development.md). Building executes project/dependency build code as
 your user and needs network access for uncached dependencies.

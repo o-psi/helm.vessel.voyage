@@ -1,40 +1,25 @@
 name: release
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
+
+permissions:
+  contents: read
 
 jobs:
-  archives:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
+  linux-x86_64:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - run: cargo build --workspace --release --locked --target ${{ matrix.target }}
-      - name: Package Unix archive
-        if: runner.os != 'Windows'
-        run: TARGET=${{ matrix.target }} ./scripts/package-release "${{ github.ref_name }}"
-      - name: Package standalone Unix installer
-        if: runner.os != 'Windows'
-        run: TARGET=${{ matrix.target }} ./scripts/package-installer "${{ github.ref_name }}"
-      - name: Package Windows archive
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/package-release.ps1 -Version "${{ github.ref_name }}" -Target "${{ matrix.target }}"
+      - name: Build Linux binaries
+        run: cargo build --workspace --release --locked
+      - name: Package Linux binaries
+        run: python3 packaging/package_linux.py --version "${{ github.ref_name }}" --bin-dir target/release --output dist/linux-release
       - uses: actions/upload-artifact@v4
         with:
-          name: voyage-${{ github.ref_name }}-${{ matrix.target }}
-          path: dist/*
+          name: voyage-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+          path: dist/linux-release/*
+          if-no-files-found: error
+# Product publication is an explicit maintainer action after local verification.
+# Workflow artifacts are independent builds, not replacements for published assets.

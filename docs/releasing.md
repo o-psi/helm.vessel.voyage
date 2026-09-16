@@ -1,44 +1,29 @@
 # Packaging and releases
 
-Voyage is developing its first release. The current packagers distribute `helm`,
+The first binary release is v1.0.0 for Linux x86-64 only. See the
+[release guide](releases-v1.0.0.md) for scope and installation. The current packagers distribute `helm`,
 `vessel`, the independent `voyage` runtime, and `voyage-installer`. The supported
 Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
 
 ## Build and package
 
-Use a unique label for each packaging attempt:
+The maintained Linux release packager is `packaging/package_linux.py`.
+See [Linux release packaging](../packaging/linux-release.md) for its exact CLI
+and failure handling. Build from a clean committed source checkout:
 
 ```sh
-cargo build --workspace --release --locked
-./scripts/package-release UNIQUE_VERSION
-./scripts/package-installer UNIQUE_VERSION
-(cd dist && sha256sum -c *.sha256)
+cargo build --workspace --release --locked -j 8
+python3 packaging/package_linux.py --version v1.0.0 --bin-dir target/release --output dist/linux-release
+(cd dist/linux-release && sha256sum -c *.sha256)
 ```
 
-The Unix full packager requires Python 3.11 or later for release metadata and uses
-`target/release`, or `target/TARGET/release` when the
-`TARGET` environment variable explicitly selects a platform build. The Windows
-packager is `scripts/package-release.ps1`; inspect its declared parameters before
-running it for a platform build. Do not infer native Windows execution from an
-archive assembled on Linux.
-
-Full archives contain binaries, generated Helm/Vessel/voyage manpages and shell
-completions, the example configuration, runtime prompt, agent instructions and the
-maintained guides. `scripts/release-documents.txt` is the explicit document allowlist
-for both full packagers. All listed paths must exist; reject unsafe/symlinked paths
-and keep relative links within the extracted archive valid. Unlisted local notes
-and credentials must never enter the archive.
-
-The full archive includes a versioned `release.json` with its label, platform and
-all four executable hashes. The standalone installer package contains only the
-installer. It can resolve a published full release with `upgrade`, build GitHub
-main with explicit `upgrade --dev`, or use local full-release binaries via
-`--bin-dir`. `install.sh`
-downloads a complete pinned release and opens its real installation wizard; its
-assets must be published first. Local builds can be installed before publication.
-See [installation, upgrade and rollback](../installer/README.md). Reboot/logout
-persistence and non-Linux deployment still require actual native evidence.
+Use a new output directory for every attempt. The packager validates binary versions,
+generates CLI documentation, and packages only explicitly selected public documents.
+Full archives carry `release.json` with the release identity, target and executable
+hashes. The standalone installer contains only the installer, not runtime binaries.
+Legacy commands under `scripts/` are not required by this workflow; their presence
+in historical commits does not justify restoring deleted files in a working tree.
 
 ## Artifact integrity
 
@@ -55,8 +40,7 @@ Do not claim native runtime or clean-install validation from checksum success.
 ## Release workflow
 
 Run the applicable clean-checkout quality gates and retain exact evidence before
-publication. The tag-driven GitHub and Forgejo workflows build Linux x86-64, macOS
-x86-64/ARM64 and Windows x86-64 archives. They upload artifacts; they do not
+publication. The tag-driven GitHub and Forgejo workflows build Linux x86-64 archives only. They upload artifacts; they do not
 implicitly sign or publish a product release. Normal quality runs create no tags.
 
 Product release tags use `vMAJOR.MINOR.PATCH` and are immutable. Before a release,

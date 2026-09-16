@@ -1,5 +1,9 @@
 # Voyage
 
+**Linux x86-64 binaries:** [v1.0.0 release and installation](docs/releases-v1.0.0.md).
+Other platforms are not included in this binary release.
+
+
 Use AI assistance for work in a folder, keep the conversation, and return to it
 later. **Helm** is the terminal interface you use; a **Vessel** supervises work on
 a machine; each **voyage** is an independent process with its own conversation.
