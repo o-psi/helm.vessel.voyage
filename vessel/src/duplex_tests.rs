@@ -147,3 +147,26 @@ async fn registration_drop_removes_only_its_socket_and_notifies_backend_once() {
     assert!(response.result.is_null());
     assert!(response.error.unwrap().contains("do not replay"));
 }
+
+#[tokio::test]
+async fn control_burst_coalesces_without_disconnect_and_shutdown_is_independent() {
+    let (control, mut receiver) = watch::channel(None::<Message>);
+    let (stop, mut stopped) = watch::channel(false);
+    for n in 0..64u8 {
+        control.send_replace(Some(Message::Pong(vec![n].into())));
+    }
+    receiver.changed().await.unwrap();
+    assert!(
+        matches!(receiver.borrow_and_update().as_ref(), Some(Message::Pong(bytes)) if bytes.as_ref() == [63])
+    );
+    assert!(!receiver.has_changed().unwrap());
+    stop.send_replace(true);
+    stopped.changed().await.unwrap();
+    assert!(*stopped.borrow());
+    control.send_replace(Some(Message::Ping(Vec::new().into())));
+    receiver.changed().await.unwrap();
+    assert!(matches!(
+        receiver.borrow_and_update().as_ref(),
+        Some(Message::Ping(_))
+    ));
+}

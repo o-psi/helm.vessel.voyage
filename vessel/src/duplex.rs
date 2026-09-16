@@ -167,17 +167,25 @@ pub async fn serve(
     let (tx, mut rx) = mpsc::channel::<Outgoing>(MAX_IN_FLIGHT);
     let (event_tx, mut event_rx) = mpsc::channel::<Outgoing>(MAX_IN_FLIGHT);
     let (mut sink, mut source) = socket.split();
-    let (control_tx, mut control_rx) = mpsc::channel::<Message>(4);
+    // WebSocket permits coalescing unanswered pings to the latest pong.
+    // A burst must not turn bounded control backpressure into a disconnect.
+    let (control_tx, mut control_rx) = watch::channel(None::<Message>);
+    let (stop_tx, mut stop_rx) = watch::channel(false);
     let (closed_tx, mut closed_rx) = watch::channel(false);
     let failure = closed_tx.clone();
     let writer_backend = backend.clone();
-    let writer = tokio::spawn(async move {
+    let mut writer = tokio::spawn(async move {
         loop {
             // Control/replies do not queue behind an event flood. Keep the byte
             // charge until the write completes, not merely until dequeue.
             let (message, _charge) = tokio::select! {
                 biased;
-                Some(message) = control_rx.recv() => (message, None),
+                _ = stop_rx.changed() => break,
+                changed = control_rx.changed() => {
+                    if changed.is_err() { break; }
+                    let Some(message) = control_rx.borrow_and_update().clone() else { continue; };
+                    (message, None)
+                },
                 out = rx.recv() => {
                     let Some(out) = out else { break; };
                     if !authorized(&writer_backend, out.session).await { break; }
@@ -231,7 +239,7 @@ pub async fn serve(
             _ = closed_rx.changed() => break,
             _ = heartbeat.tick() => {
                 if last_incoming.elapsed() > Duration::from_secs(DEADLINE_SECONDS) || !authorized(&backend, None).await { break; }
-                if control_tx.try_send(Message::Ping(Vec::new().into())).is_err() { break; }
+                control_tx.send_replace(Some(Message::Ping(Vec::new().into())));
                 let now = tokio::time::Instant::now();
                 expired_reverse.retain(|_, at| at.elapsed() < Duration::from_secs(DEADLINE_SECONDS * 2));
                 pending_reverse.retain(|id, (at, _)| {
@@ -254,7 +262,7 @@ pub async fn serve(
                 last_incoming = tokio::time::Instant::now();
                 let text = match message {
                     Message::Text(text) if text.len() <= MAX_FRAME_BYTES => text,
-                    Message::Ping(bytes) => { if control_tx.try_send(Message::Pong(bytes)).is_err() { break; } continue; },
+                    Message::Ping(bytes) => { control_tx.send_replace(Some(Message::Pong(bytes))); continue; },
                     Message::Pong(_) => continue,
                     _ => break,
                 };
@@ -303,8 +311,15 @@ pub async fn serve(
         }
     }
     observations.abort_all();
-    writer.abort();
-    let _ = writer.await;
+    stop_tx.send_replace(true);
+    // Allow an in-flight bounded write and the close handshake to finish.
+    if tokio::time::timeout(IO_TIMEOUT * 3, &mut writer)
+        .await
+        .is_err()
+    {
+        writer.abort();
+        let _ = writer.await;
+    }
 }
 
 async fn observe(
