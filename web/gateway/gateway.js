@@ -48,7 +48,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
     const authTimer = setTimeout(() => stop(1008, 'authentication required'), limits.authMs);
     function stop(code = 1008, reason = 'gateway refused') {
       if (stopped) return;
-      log('socket_close',{code,reason,elapsed_ms:Date.now()-started,pending:pending.size,expired:expired.size});
+      log('socket_close',{code,reason,elapsed_ms:Date.now()-started,pending:pending.size,expired:expired.size,requests:[...pending].map(([request_id,e])=>({request_id,op:e.op,elapsed_ms:Date.now()-e.started}))});
       stopped = true;
       clearTimeout(authTimer); clearTimeout(leaseTimer); clearTimeout(helloTimer); clearInterval(heartbeat);
       for (const entry of pending.values()) clearTimeout(entry.timer);
@@ -94,7 +94,11 @@ export function createGateway(config, limits = LIMITS, io = transport) {
       authenticating = false;
       clearTimeout(helloTimer);
       helloTimer = setTimeout(() => stop(1011, 'upstream unavailable'), limits.helloMs);
-      upstream.on('error', () => stop(1011, 'upstream unavailable'));
+      upstream.on('error', error => {
+        const allowed = ['WS_ERR_UNSUPPORTED_MESSAGE_LENGTH','WS_ERR_INVALID_UTF8','ECONNRESET','ETIMEDOUT','EPIPE'];
+        log('upstream_error',{code:allowed.includes(error.code) ? error.code : 'other'});
+        stop(1011, 'upstream unavailable');
+      });
       upstream.on('close', code => { log('upstream_close',{code}); stop(1011, 'upstream closed'); });
       upstream.on('message', (data, binary) => {
         try {
@@ -109,6 +113,11 @@ export function createGateway(config, limits = LIMITS, io = transport) {
           if (expired.delete(frame.request_id)) return;
           if (!pending.has(frame.request_id)) throw Error();
           const entry = pending.get(frame.request_id);
+          if (entry.op === 'snapshot') {
+            const run = frame.response.result?.result?.run;
+            const state = ['starting','running','cancelling','completed','failed','cancelled','idle'].includes(run?.state) ? run.state : 'other';
+            log('snapshot_reply',{request_id:frame.request_id,elapsed_ms:Date.now()-entry.started,bytes:data.length,state,error:frame.response.error !== null,unknown:frame.response.outcome_unknown});
+          }
           clearTimeout(entry.timer); pending.delete(frame.request_id);
           if (entry.op === 'capabilities' && frame.response.error === null) {
             frame.response.result = restrictCapabilities(frame.response.result, v.vessel_id);
@@ -136,7 +145,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
         if (!ready || !validCommand(frame) || seen.has(frame.request_id)) throw Error();
         if (pending.size + expired.size >= limits.inflight || seen.size >= limits.seen) { stop(1013, 'gateway capacity'); return; }
         seen.add(frame.request_id);
-        pending.set(frame.request_id, { op: frame.request.command.op, timer: setTimeout(() => {
+        pending.set(frame.request_id, { op: frame.request.command.op, started:Date.now(), timer: setTimeout(() => {
           log('request_timeout',{request_id:frame.request_id,op:frame.request.command.op});
           pending.delete(frame.request_id); expired.add(frame.request_id);
           send(browser,{type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'Request timed out; outcome unknown. Check receipts before another action.',outcome_unknown:true}});
