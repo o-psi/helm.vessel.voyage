@@ -349,3 +349,15 @@ leaves mutations in the receipt journal; neither renewal nor reconnect resends
 them. Connection diagnostics (`[Helm connection]` in the browser console) contain
 fixed metadata only, never token, prompt or result bodies. The legacy Node gateway
 is no longer a source of diagnostics for the current conversation path.
+
+## Large-display conversation density
+
+The Web log and composer use a shared responsive width: up to 80rem on desktop
+viewports from 1024 CSS pixels, and 96rem from 1920 CSS pixels. Smaller viewports
+retain their existing mobile layout. This follows usable viewport size, not raw
+panel resolution or device-pixel ratio; browser zoom still behaves normally.
+Conversation paragraphs, lists, tables/code and live output use 14px-equivalent
+text with 1.6 line height. Heading hierarchy, navigation, controls and composer
+input sizes are unchanged. Styling is scoped to the conversation, not global Flux
+components. `conversation-density.test.mjs` checks these layout/style contracts;
+that is not a rendered high-DPI screenshot certification.

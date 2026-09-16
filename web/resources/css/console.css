@@ -1,2 +1,28 @@
 /* Shared Flux theme. Kept as an entry point for the console asset manifest. */
 @import './app.css';
+
+/* Conversation density follows CSS viewport width, not device pixel ratio.
+   Keep the composer and every stream surface on the same responsive measure. */
+@media (min-width: 1024px) {
+    #helm-client :is(#messages, #live-previews, #live-output, #conversation-empty, #composer) {
+        width: 100%;
+        max-width: 80rem;
+    }
+}
+@media (min-width: 1920px) {
+    #helm-client :is(#messages, #live-previews, #live-output, #conversation-empty, #composer) {
+        max-width: 96rem;
+    }
+}
+
+/* Flux paragraphs set their own size/leading, so style the actual prose nodes,
+   not just their parent. Do not shrink navigation, controls or input text. */
+#helm-client #messages article > div:has(> p),
+#helm-client #messages :is(p, li, blockquote, td, th, [data-code], [data-quote]),
+#helm-client #output-text {
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+#helm-client #messages article > div:has(> p) > :not(:last-child) {
+    margin-block-end: 0.75rem;
+}
