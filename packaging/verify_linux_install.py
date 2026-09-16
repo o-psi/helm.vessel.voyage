@@ -87,7 +87,12 @@ def main():
                    '--tmpfs', '/run', '--tmpfs', '/tmp', '--tmpfs', '/h', '--chmod', '0700', '/h',
                    '--ro-bind', str(root), '/r', '--perms', '0755', '--ro-bind-data', str(fd), '/usr/bin/systemctl']
         if args.hosted:
-            command += ['--ro-bind', '/etc/ssl', '/etc/ssl', '--ro-bind', '/etc/resolv.conf', '/etc/resolv.conf',
+            # Arch exposes the CA bundle through a symlink outside /etc/ssl.
+            # Bind its public target too; keep the installer's cleared environment.
+            ca_bundle = str(Path('/etc/ssl/certs/ca-certificates.crt').resolve(strict=True))
+            command += ['--ro-bind', '/etc/ssl', '/etc/ssl',
+                        '--ro-bind', ca_bundle, ca_bundle,
+                        '--ro-bind', '/etc/resolv.conf', '/etc/resolv.conf',
                         '--ro-bind', str(Path(__file__).resolve().parent.parent / 'install.sh'), '/bootstrap']
         else:
             command += ['--unshare-net']
