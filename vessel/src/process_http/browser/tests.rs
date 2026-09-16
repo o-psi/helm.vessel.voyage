@@ -77,6 +77,9 @@ fn first_frame_is_only_exact_authentication() {
 fn browser_allowlist_excludes_executor_and_native_management() {
     assert!(allowed(&VesselCommand::Capabilities));
     assert!(allowed(&VesselCommand::Catalogue));
+    assert!(allowed(&VesselCommand::Drafts {
+        operation: voyage_protocol::drafts::DraftOperation::List {},
+    }));
     assert!(!allowed(&VesselCommand::Granted {
         expected_vessel_id: None,
         grant_id: Uuid::new_v4(),
