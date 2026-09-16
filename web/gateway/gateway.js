@@ -6,7 +6,7 @@ import { exact, UUID, validCommand, validHello, validReply, restrictCapabilities
 import { validateConfig } from './config.js';
 
 export const LIMITS = Object.freeze({ bytes: 4 * 1024 * 1024, connections: 64, perSubject: 64, perVessel: 4, inflight: 32,
-  rate: 60, authMs: 5000, helloMs: 5000, requestMs: 15000, heartbeatMs: 5000, seen: 10000 });
+  rate: 60, authMs: 5000, helloMs: 5000, requestMs: 25000, heartbeatMs: 5000, seen: 10000 });
 
 export function verifyTicket(ticket) {
   if (typeof ticket !== 'string' || ticket.length > 512 || !/^[A-Za-z0-9_-]+$/.test(ticket) ||
@@ -40,7 +40,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
     let authenticating = false;
     let upstream, claims, subjectKey, vesselKey, leaseTimer, helloTimer, heartbeat, ready = false, stopped = false;
     let budget = limits.rate, budgetAt = Date.now();
-    const pending = new Map(), seen = new Set();
+    const pending = new Map(), seen = new Set(), expired = new Set();
     const authTimer = setTimeout(() => stop(1008, 'authentication required'), limits.authMs);
     function stop(code = 1008, reason = 'gateway refused') {
       if (stopped) return;
@@ -98,7 +98,10 @@ export function createGateway(config, limits = LIMITS, io = transport) {
             if (upstream.protocol !== 'voyage.vessel.v1' || !validHello(frame, v.vessel_id)) throw Error();
             clearTimeout(helloTimer); ready = true; send(browser, { type: 'ready', vessel_id: claims.connection.vessel_id }); return;
           }
-          if (!validReply(frame) || !pending.has(frame.request_id)) throw Error();
+          if (!validReply(frame)) throw Error();
+          // A timed-out request may still complete. Consume its single late reply, never replay it.
+          if (expired.delete(frame.request_id)) return;
+          if (!pending.has(frame.request_id)) throw Error();
           const entry = pending.get(frame.request_id);
           clearTimeout(entry.timer); pending.delete(frame.request_id);
           if (entry.op === 'capabilities' && frame.response.error === null) {
@@ -125,9 +128,12 @@ export function createGateway(config, limits = LIMITS, io = transport) {
         const frame = JSON.parse(data.toString());
         if (frame.type === 'authenticate') { void authenticate(frame).catch(() => stop(1008, 'gateway refused')); return; }
         if (!ready || !validCommand(frame) || seen.has(frame.request_id)) throw Error();
-        if (pending.size >= limits.inflight || seen.size >= limits.seen) { stop(1013, 'gateway capacity'); return; }
+        if (pending.size + expired.size >= limits.inflight || seen.size >= limits.seen) { stop(1013, 'gateway capacity'); return; }
         seen.add(frame.request_id);
-        pending.set(frame.request_id, { op: frame.request.command.op, timer: setTimeout(() => stop(1011, 'request outcome unknown'), limits.requestMs) });
+        pending.set(frame.request_id, { op: frame.request.command.op, timer: setTimeout(() => {
+          pending.delete(frame.request_id); expired.add(frame.request_id);
+          send(browser,{type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'Request timed out; outcome unknown. Check receipts before another action.',outcome_unknown:true}});
+        }, limits.requestMs) });
         send(upstream, data.toString());
       } catch { stop(1008, 'gateway refused'); }
     });

@@ -79,6 +79,8 @@ test('strict public operation shapes and forbidden execution surfaces', () => {
     {op:'steer',session_id,incarnation,run_id,...mutation,prompt:'hello'}, {op:'cancel',session_id,incarnation,run_id,...mutation},
     {op:'respond',session_id,incarnation,run_id,...mutation,decision_id:randomUUID(),response:{answer:'yes'}}];
   for (const c of allowed) assert.ok(validCommand(command(c)), c.op);
+  assert.ok(validCommand(command({op:'set_access',session_id,incarnation,...mutation,access:'approval'})));
+  assert.equal(validCommand(command({op:'set_access',session_id,incarnation,...mutation,access:'invalid'})),false);
   const account = {account_id:randomUUID(),connection_id:randomUUID(),identity_generation:1,connection_revision:1,transport:'chatgpt_oauth'};
   const settings = {account,model:'host-model',reasoning_effort:null,service_tier:null};
   const start = {op:'start_account',command_id:randomUUID(),session_id,workspace:'/approved/project',...settings};
@@ -147,7 +149,7 @@ test('lease expiry closes both; changed renewal identity is refused', async t =>
 });
 
 test('bounded pending timeout, inflight, rate, payload, subject and global connections', async t => {
-  for (const opts of [{limits:{requestMs:40},onCommand(){}},{limits:{inflight:1},onCommand(){}},{limits:{rate:2}}]) {
+  for (const opts of [{limits:{inflight:1},onCommand(){}},{limits:{rate:2}}]) {
     const f = await fixture(t,opts); const {ws,next} = await f.connect(); await next(); const closed = once(ws,'close');
     ws.send(JSON.stringify(command({op:'catalogue'})));
     if (!opts.limits.requestMs) ws.send(JSON.stringify(command({op:'catalogue'})));
@@ -242,3 +244,20 @@ test('one session aggregates more than four Vessels while each connection remain
   const frame = command({op:'catalogue'}); same[0].ws.send(JSON.stringify(frame));
   assert.equal((await same[0].next()).request_id,frame.request_id);
 });
+
+ test('slow request yields uncertainty without disconnect or replay; late reply is consumed', async t => {
+  let calls=0;
+  const f=await fixture(t,{limits:{requestMs:40},onCommand(ws,frame){
+    calls++;
+    const reply=()=>ws.send(JSON.stringify({type:'reply',request_id:frame.request_id,response:{protocol:1,result:[],error:null,outcome_unknown:false}}));
+    if(calls===1)setTimeout(reply,70);else reply();
+  }});
+  const {ws,next}=await f.connect();await next();
+  ws.send(JSON.stringify(command({op:'catalogue'})));
+  assert.equal((await next()).response.outcome_unknown,true);
+  await new Promise(r=>setTimeout(r,90));
+  assert.equal(ws.readyState,WebSocket.OPEN);
+  ws.send(JSON.stringify(command({op:'catalogue'})));
+  assert.equal((await next()).response.outcome_unknown,false);
+  assert.equal(calls,2,'no automatic replay');
+ });

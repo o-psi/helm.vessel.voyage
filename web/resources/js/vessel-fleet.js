@@ -46,9 +46,9 @@ export class VesselFleet {
             } catch {
                 connection.stopped = true; socket.close(); throw new Error('Command journal unavailable');
             }
-            connection.client = new VesselSocket(socket, () => {
+            connection.client = new VesselSocket(socket, reason => {
                 if (!current()) return;
-                connection.client = null; connection.status = 'Offline';
+                connection.client = null; connection.status = `Offline · ${reason}`;
                 clearInterval(connection.renewal); this.changed(); this.schedule(connection);
             });
             connection.retry = 1000; connection.lastCatalogue = 0; connection.status = 'Connected';

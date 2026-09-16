@@ -53,16 +53,18 @@ export class VesselSocket {
                 if (pending) { clearTimeout(pending.timer); this.pending.delete(frame.request_id); pending.resolve(frame.response); }
             } catch { socket.close(); }
         });
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', event => {
             for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Connection lost; command outcome may be unknown.')); }
-            this.pending.clear(); this.onDisconnect();
+            this.pending.clear();
+            const reasons = ['lease expired','heartbeat timeout','upstream closed','upstream unavailable','gateway refused','gateway capacity','rate exceeded','invalid upstream frame'];
+            this.onDisconnect(reasons.includes(event.reason) ? event.reason : 'connection closed');
         });
     }
     exchange(value) {
         return new Promise((resolve, reject) => {
             if (this.socket.readyState !== 1 || this.pending.size >= 16) return reject(new Error('Connection unavailable.'));
             const id = uuid();
-            const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Reply timed out; command outcome may be unknown.')); }, 15000);
+            const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Reply timed out; command outcome may be unknown.')); }, 30000);
             this.pending.set(id, {resolve, reject, timer});
             try { this.socket.send(JSON.stringify({type: 'command', request_id: id, request: value})); }
             catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }

@@ -8,6 +8,7 @@ const text = v => typeof v === 'string' && v.length > 0 && v.length <= 4096 && !
 const nullableText = v => v === null || text(v);
 const account = v => exact(v, ['account_id','connection_id','identity_generation','connection_revision','transport']) && uuid(v.account_id) && uuid(v.connection_id) && uint(v.identity_generation) && uint(v.connection_revision) && ['openai_responses','openai_chat','chatgpt_oauth','anthropic'].includes(v.transport);
 function accountCommand(c) {
+  if (c.op === 'set_access') return exact(c,['op','session_id','incarnation','command_id','expected_revision','expires_at_ms','access']) && uuid(c.session_id) && uuid(c.incarnation) && uuid(c.command_id) && uint(c.expected_revision) && uint(c.expires_at_ms) && ['read-only','approval','unrestricted'].includes(c.access);
   if (c.op === 'accounts') return exact(c,['op','workspace','transport']) && text(c.workspace) && c.transport === null;
   if (c.op === 'account_defaults') return exact(c,['op','workspace']) && text(c.workspace);
   if (c.op === 'account_usage') return exact(c,['op','workspace','account','refresh']) && text(c.workspace) && account(c.account) && typeof c.refresh === 'boolean';
