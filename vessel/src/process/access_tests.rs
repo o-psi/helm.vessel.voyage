@@ -437,6 +437,9 @@ async fn sidebar_branch_requires_full_owner_and_each_existing_right() {
             .contains("branch requires local account-owner authority")
     );
     g.full_access = true;
+    g.workspaces.clear();
+    g.accounts.clear();
+    g.enrollment_connections.clear();
     for missing in [
         ProcessRight::Create,
         ProcessRight::History,
