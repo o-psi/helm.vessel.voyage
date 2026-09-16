@@ -57,7 +57,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
         const prefix=`helm-web:draft:${root.dataset.tenantId}:${c()?.vessel_id}:`;
         for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(!key?.startsWith(prefix))continue;try{const recovery=JSON.parse(localStorage.getItem(key));if(recovery?.record && (recovery.dirty || recovery.pending || recovery.deletion) && !listing.some(r=>r.draft_id===recovery.record.draft_id))listing.push({...recovery.record,document:recovery.document});}catch{}}
 
-        picker.replaceChildren(option('Choose a draft…',''),...listing.map(r=>option(`${r.document.target.type} · ${r.document.parts.filter(p=>p.type==='text').map(p=>p.text).join(' ').slice(0,50) || 'Pictures / empty draft'}`,r.draft_id)));
+        picker.replaceChildren(option('Choose a draft…',''),...listing.map(r=>option(`${r.document.parts.filter(p=>p.type==='text').map(p=>p.text).join(' ').slice(0,50) || (r.document.parts.some(p=>p.type==='image') ? 'Picture draft' : 'Empty draft')}`,r.draft_id)));
         picker.value=active?.record?.draft_id || '';
     }
     async function ensure(target=null) {

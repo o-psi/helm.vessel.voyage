@@ -94,7 +94,7 @@
     </flux:main>
     <flux:modal name="voyage-settings" class="w-full md:max-w-xl" :dismissible="false">
         <form id="voyage-settings-form" class="space-y-5">
-            <div><flux:heading id="settings-title" size="lg">New voyage</flux:heading><flux:text id="settings-description" class="mt-2">Choose where your voyage runs and which provider account it uses.</flux:text></div>
+            <div><flux:heading id="settings-title" size="lg">New chat</flux:heading><flux:text id="settings-description" class="mt-2">Choose where your voyage runs and which provider account it uses.</flux:text></div>
             <flux:select id="settings-vessel" label="Vessel" />
             <flux:select id="settings-workspace" label="Workspace" />
             <div id="settings-custom-workspace" hidden><flux:input id="settings-workspace-path" label="Folder on this Vessel" placeholder="/home/you/project" description="Enter an existing absolute folder path on the Vessel, not on your browser’s computer." /></div>
@@ -102,7 +102,7 @@
             <flux:select id="settings-model" variant="listbox" searchable label="Model" placeholder="Choose a model" />
             <div class="grid gap-4 sm:grid-cols-2"><div class="space-y-3"><flux:slider id="settings-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="settings-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div><flux:radio.group id="settings-service" label="Service tier" variant="pills" /></div>
             <flux:callout id="settings-notice" role="status"><flux:callout.text id="settings-status">Loading…</flux:callout.text></flux:callout>
-            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
+            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Continue</flux:button></div>
         </form>
     </flux:modal>
     <flux:modal name="message-details" class="w-full md:max-w-3xl">
