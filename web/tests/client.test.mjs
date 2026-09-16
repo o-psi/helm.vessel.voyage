@@ -63,3 +63,19 @@ test('independent tabs retain both write-ahead intents', () => {
     a.prepare(first); b.prepare(second); a.settle(first.command_id);
     assert.equal(b.entries().length,1);assert.equal(b.entries()[0].command_id,second.command_id);
 });
+
+test('native subscriptions correlate events and unsubscribe without command replay', () => {
+    const socket = new Socket(), client = new VesselSocket(socket,()=>{}), seen=[];
+    const stop = client.subscribe(session,incarnation,42,event=>seen.push(event));
+    const frame=socket.frames[0];
+    assert.deepEqual(frame.request,{protocol:1,subscriptions:[{session_id:session,incarnation,after:42}]});
+    assert.equal(frame.type,'subscribe');
+    socket.receive({type:'event',subscription_id:'other',event:{cursor:43}});
+    socket.receive({type:'event',subscription_id:frame.request_id,event:{cursor:43}});
+    assert.deepEqual(seen,[{cursor:43}]);stop();stop();
+    assert.deepEqual(socket.frames[1],{type:'unsubscribe',subscription_id:frame.request_id});
+    socket.receive({type:'event',subscription_id:frame.request_id,event:{cursor:44}});
+    assert.equal(seen.length,1);assert.equal(socket.frames.length,2);
+    assert.throws(()=>client.subscribe(session,incarnation,-1,()=>{}));
+    client.close();assert.equal(client.subscriptions.size,0);
+});

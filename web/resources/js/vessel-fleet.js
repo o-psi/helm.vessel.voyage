@@ -3,8 +3,8 @@ import {request, IntentJournal, VesselSocket} from './vessel-client.js';
 
 // Every configured connection owns its own socket, catalogue, lease and journal.
 export class VesselFleet {
-    constructor(vessels, {tenantId, socketPath, ticket, changed}) {
-        Object.assign(this, {tenantId, socketPath, ticket, changed});
+    constructor(vessels, {tenantId, ticket, changed}) {
+        Object.assign(this, {tenantId, ticket, changed});
         this.connections = new Map(vessels.map(vessel => [vessel.id, {
             ...vessel, client: null, journal: null, voyages: [], status: 'Connecting…',
             generation: 0, retry: 1000, lastCatalogue: 0, polling: false, stopped: false,
@@ -12,70 +12,80 @@ export class VesselFleet {
         this.closed = false;
     }
     start() { for (const connection of this.connections.values()) this.connect(connection); }
-    async connect(connection) {
-        if (this.closed) return;
-        const generation = ++connection.generation;
-        log('connect_start',{connection:connection.id,generation});
-        clearTimeout(connection.reconnect); clearInterval(connection.renewal);
-        connection.socket?.close(); connection.client = null; connection.polling = false;
-        connection.status = 'Connecting…'; this.changed();
+    async connect(connection, renewing = false) {
+        if (this.closed || connection.connecting) return;
+        connection.connecting = true;
+        const generation = connection.generation;
+        const previous = connection.client;
         const current = () => !this.closed && generation === connection.generation;
+        clearTimeout(connection.reconnect); clearTimeout(connection.renewal);
+        if (!previous) { connection.status = 'Connecting…'; this.changed(); }
+        let socket;
         try {
             const auth = await this.ticket(connection.id);
             if (!current()) return;
-            const url = new URL(this.socketPath, location.href);
-            url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const socket = new WebSocket(url); connection.socket = socket;
-            const ready = await new Promise((resolve, reject) => {
-                const timer = setTimeout(() => { socket.close(); reject(new Error('Connection timed out')); }, 10000);
-                socket.addEventListener('open', () => socket.send(JSON.stringify({type:'authenticate', ticket:auth})));
-                socket.addEventListener('message', function receive(event) {
+            const url = new URL(auth.url);
+            if (url.protocol !== 'wss:' || url.username || url.password || url.search || url.hash
+                || url.pathname !== '/v1/vessel/browser-socket' || (url.port && url.port !== '443')
+                || auth.vessel_id !== connection.vessel_id || typeof auth.token !== 'string'
+                || !/^[a-f0-9]{64}$/i.test(auth.token) || !Number.isSafeInteger(auth.expires_at_ms)
+                || auth.expires_at_ms <= Date.now() + 10000 || auth.expires_at_ms > Date.now() + 125000) {
+                throw Object.assign(new Error('Invalid Vessel authorization'), {permanent:true});
+            }
+            socket = new WebSocket(url, 'voyage.vessel.v1');
+            connection.opening = socket;
+            await new Promise((resolve, reject) => {
+                const finish = error => {
+                    clearTimeout(timer); socket.removeEventListener('message', receive);
+                    socket.removeEventListener('close', closed);
+                    error ? reject(error) : resolve();
+                };
+                const closed = () => finish(new Error('Vessel unavailable'));
+                const receive = event => {
                     try {
                         const frame = JSON.parse(event.data);
-                        if (frame.type === 'ready') { clearTimeout(timer); socket.removeEventListener('message', receive); resolve(frame); }
-                    } catch { socket.close(); }
-                });
-                socket.addEventListener('close', () => { clearTimeout(timer); reject(new Error('Unavailable')); }, {once:true});
+                        if (socket.protocol !== 'voyage.vessel.v1' || frame.type !== 'hello' || frame.protocol !== 1
+                            || frame.vessel_id !== connection.vessel_id || typeof frame.socket_id !== 'string') throw Error();
+                        finish();
+                    } catch { finish(new Error('Vessel authentication failed')); socket.close(); }
+                };
+                const timer = setTimeout(() => { finish(new Error('Connection timed out')); socket.close(); }, 10000);
+                socket.addEventListener('open', () => socket.send(JSON.stringify({type:'authenticate', token:auth.token})), {once:true});
+                socket.addEventListener('message', receive);
+                socket.addEventListener('close', closed, {once:true});
                 socket.addEventListener('error', () => socket.close());
             });
             if (!current()) { socket.close(); return; }
-            if (ready.vessel_id !== connection.vessel_id) {
-                connection.stopped = true; socket.close(); throw new Error('Vessel identity changed');
-            }
             try {
-                connection.journal = new IntentJournal(localStorage, `${this.tenantId}:${connection.id}:${ready.vessel_id}`);
+                connection.journal ||= new IntentJournal(localStorage, `${this.tenantId}:${connection.id}:${auth.vessel_id}`);
                 connection.journal.entries();
-            } catch {
-                connection.stopped = true; socket.close(); throw new Error('Command journal unavailable');
-            }
-            connection.client = new VesselSocket(socket, reason => {
-                if (!current()) return;
+            } catch { throw Object.assign(new Error('Command journal unavailable'), {permanent:true}); }
+            const client = new VesselSocket(socket, reason => {
+                if (!current() || connection.client !== client) return;
                 connection.client = null; connection.status = `Offline · ${reason}`;
-                clearInterval(connection.renewal); this.changed(); this.schedule(connection);
+                clearTimeout(connection.renewal); this.changed(); this.schedule(connection);
             });
-            log('connected',{connection:connection.id,generation});
-            let renewalStarted = 0;
-            socket.addEventListener('message',event => {
-                try { if (JSON.parse(event.data).type === 'ready' && renewalStarted) { log('renewal_ack',{connection:connection.id,elapsed_ms:Date.now()-renewalStarted}); renewalStarted = 0; } } catch {}
-            });
-            connection.retry = 1000; connection.lastCatalogue = 0; connection.status = 'Connected';
-            connection.renewal = setInterval(async () => {
-                try {
-                    renewalStarted = Date.now(); log('renewal_start',{connection:connection.id});
-                    const ticket = await this.ticket(connection.id);
-                    if (current() && socket.readyState === 1) socket.send(JSON.stringify({type:'authenticate', ticket}));
-                } catch (error) {
-                    if (!current()) return;
-                    log('renewal_failed',{connection:connection.id,elapsed_ms:Date.now()-renewalStarted});
-                    connection.stopped = Boolean(error.permanent); socket.close();
-                }
-            }, 30000);
+            connection.socket = socket; connection.client = client; connection.opening = null;
+            // New reads/commands use the replacement. Already dispatched commands
+            // keep receiving replies on the old socket; nothing is replayed.
+            if (previous) {
+                connection.draining ||= new Set(); connection.draining.add(previous);
+                previous.drain().finally(() => connection.draining.delete(previous));
+            }
+            connection.retry = 1000; connection.lastCatalogue = 0; connection.polling = false;
+            connection.status = 'Connected';
+            connection.renewal = setTimeout(() => this.connect(connection, true), Math.max(1000, auth.expires_at_ms - Date.now() - 30000));
+            log(renewing ? 'renewal_ack' : 'connected',{connection:connection.id,generation});
             this.changed(); await this.catalogue(connection);
         } catch (error) {
+            socket?.close();
             if (!current()) return;
-            connection.client = null; connection.status = error.message;
             connection.stopped ||= Boolean(error.permanent);
-            this.changed(); this.schedule(connection);
+            if (connection.stopped) { connection.client?.close(); connection.client = null; }
+            connection.status = error.message; this.changed(); this.schedule(connection);
+        } finally {
+            connection.connecting = false;
+            if (connection.opening === socket) connection.opening = null;
         }
     }
     schedule(connection) {
@@ -111,7 +121,8 @@ export class VesselFleet {
     close() {
         this.closed = true;
         for (const connection of this.connections.values()) {
-            connection.generation++; clearTimeout(connection.reconnect); clearInterval(connection.renewal); connection.socket?.close();
+            connection.generation++; clearTimeout(connection.reconnect); clearTimeout(connection.renewal); connection.opening?.close(); connection.socket?.close();
+            for (const client of connection.draining || []) client.close();
         }
     }
 }

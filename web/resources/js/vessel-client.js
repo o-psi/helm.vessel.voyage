@@ -45,10 +45,15 @@ export class IntentJournal {
 }
 export class VesselSocket {
     constructor(socket, onDisconnect) {
-        this.socket = socket; this.pending = new Map(); this.onDisconnect = onDisconnect;
+        this.socket = socket; this.pending = new Map(); this.subscriptions = new Map(); this.onDisconnect = onDisconnect;
         socket.addEventListener('message', event => {
             try {
                 const frame = JSON.parse(event.data);
+                if (frame.type === 'event') {
+                    const listener = this.subscriptions.get(frame.subscription_id);
+                    if (listener) listener(frame.event);
+                    return;
+                }
                 if (frame.type !== 'reply') return;
                 const pending = this.pending.get(frame.request_id);
                 if (pending) { log('reply',{request_id:frame.request_id,op:pending.op,elapsed_ms:Date.now()-pending.started,unknown:frame.response?.outcome_unknown === true,error:frame.response?.error != null}); clearTimeout(pending.timer); this.pending.delete(frame.request_id); pending.resolve(frame.response); }
@@ -56,7 +61,7 @@ export class VesselSocket {
         });
         socket.addEventListener('close', event => {
             for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Connection lost; command outcome may be unknown.')); }
-            this.pending.clear();
+            this.pending.clear(); this.subscriptions.clear();
             const reasons = ['lease expired','heartbeat timeout','upstream closed','upstream unavailable','gateway refused','gateway capacity','rate exceeded','invalid upstream frame'];
             const reason = reasons.includes(event.reason) ? event.reason : 'connection closed';
             log('socket_closed',{code:event.code,reason}); this.onDisconnect(reason);
@@ -71,6 +76,29 @@ export class VesselSocket {
             log('request',{request_id:id,op:value.command.op,pending:this.pending.size});
             try { this.socket.send(JSON.stringify({type: 'command', request_id: id, request: value})); }
             catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
+        });
+    }
+    subscribe(session, incarnation, after, onEvent) {
+        if (this.socket.readyState !== 1 || this.subscriptions.size >= 16 || !Number.isSafeInteger(after) || after < 0) throw new Error('Observation unavailable.');
+        const id = uuid();
+        this.subscriptions.set(id, onEvent);
+        try {
+            this.socket.send(JSON.stringify({type:'subscribe', request_id:id, request:{protocol:1, subscriptions:[{session_id:session,incarnation,after}]}}));
+        } catch (error) { this.subscriptions.delete(id); throw error; }
+        return () => {
+            if (!this.subscriptions.delete(id) || this.socket.readyState !== 1) return;
+            this.socket.send(JSON.stringify({type:'unsubscribe',subscription_id:id}));
+        };
+    }
+    drain() {
+        return new Promise(resolve => {
+            const deadline = Date.now() + 30000;
+            const check = () => {
+                if (!this.pending.size || this.socket.readyState !== 1 || Date.now() >= deadline) {
+                    this.close(); resolve();
+                } else setTimeout(check, 25);
+            };
+            check();
         });
     }
     close() { this.socket.close(); }

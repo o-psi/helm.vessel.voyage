@@ -68,7 +68,7 @@ export function mount(root) {
     const drafts = new Map();
     let settings;
     let accountLabelKey = '', accountLabel = 'Account', accountLabelClient;
-    const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, socketPath:root.dataset.socketPath, ticket, changed:connectionsChanged});
+    const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, ticket, changed:connectionsChanged});
     let voyageFingerprint = '', messageFingerprint = '', decisionFingerprint = '', lastFresh = 0, outputFingerprint = '', outputOffset = null;
     const state = text => { $('connection-state').textContent = text; };
     const notice = text => { $('notice').textContent = clean(text); $('notice-panel').hidden = !text; };
@@ -104,7 +104,7 @@ export function mount(root) {
     async function ticket(alias) {
         const response = await fetch(root.dataset.ticketUrl, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type':'application/json','Accept':'application/json','X-CSRF-TOKEN':document.querySelector('meta[name="csrf-token"]').content}, body: JSON.stringify({vessel:alias})});
         if (!response.ok) { const error = new Error([401,403,419].includes(response.status) ? 'Sign-in required' : response.status === 404 ? 'Connection removed' : 'Authorization unavailable'); error.permanent = [401,403,404,419].includes(response.status); throw error; }
-        return (await response.json()).ticket;
+        return await response.json();
     }
     function connectionsChanged() {
         const connection = fleet.connections.get(selectedVessel);

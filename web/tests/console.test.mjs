@@ -15,7 +15,7 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
     assert.doesNotMatch(html,/<script|<img|javascript:|<iframe/);
 });
 test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:15000}, async () => {
-    const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';root.dataset.socketPath='/console/socket';
+    const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
     const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8'});
     assert.equal(rendered.status,0,rendered.stderr);
     const fixture = document.createElement('div'); fixture.innerHTML = rendered.stdout;
@@ -24,11 +24,11 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
     let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
-    globalThis.fetch=async()=>({ok:true,json:async()=>({ticket:'synthetic.ticket'})});
+    globalThis.fetch=async()=>({ok:true,json:async()=>({token:'a'.repeat(64),expires_at_ms:Date.now()+120000,vessel_id:vessel,url:'wss://vessel.example/v1/vessel/browser-socket'})});
     class Socket extends dom.window.EventTarget {
         readyState=0;
-        constructor(){super();sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
-        send(text){const frame=JSON.parse(text);if(frame.type==='authenticate'){setTimeout(()=>this.receive({type:'ready',vessel_id:vessel}),0);return;}
+        constructor(url,protocol){super();assert.equal(url.href,'wss://vessel.example/v1/vessel/browser-socket');assert.equal(protocol,'voyage.vessel.v1');this.protocol=protocol;sockets.push(this);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
+        send(text){const frame=JSON.parse(text);if(frame.type==='authenticate'){setTimeout(()=>this.receive({type:'hello',protocol:1,socket_id:incarnation,vessel_id:vessel}),0);return;}
             const command=frame.request.command;requests.push(command);
             let result;
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
