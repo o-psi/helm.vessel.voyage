@@ -6,10 +6,15 @@ use std::{
     path::Path,
 };
 
-fn root() -> Result<PathBuf> {
-    let root = super::super::super::cli::default_directory().with_file_name("helm-new-drafts");
+fn directory(name: &str) -> PathBuf {
+    let root = super::super::super::cli::default_directory().with_file_name(name);
     #[cfg(test)]
-    let root = crate::process_client::ui::account_test_support::root("helm-new-drafts", root);
+    let root = crate::process_client::ui::account_test_support::root(name, root);
+    root
+}
+
+fn root() -> Result<PathBuf> {
+    let root = directory("helm-first-send-receipts");
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
@@ -62,6 +67,10 @@ fn lock(root: &Path, id: Uuid) -> Result<Option<File>> {
 }
 
 pub(super) fn save(saved: &Saved) -> Result<()> {
+    ensure!(
+        saved.start.is_some(),
+        "Only explicit first-send executions may be persisted"
+    );
     saved.validate_identity()?;
     let root = root()?;
     let mut file = tempfile::NamedTempFile::new_in(&root)?;
@@ -75,20 +84,11 @@ pub(super) fn save(saved: &Saved) -> Result<()> {
     file.persist(root.join(format!("{}.json", saved.id)))?;
     #[cfg(unix)]
     File::open(&root)?.sync_all()?;
-    // Persist completion before cleanup so interruption cannot expose an unfinished
-    // record after the durable handoff. Keep the lock inode: unlinking it would
-    // let a second Helm acquire a different lock for the same draft.
-    if saved.finished {
-        retire(&root.join(format!("{}.json", saved.id)))?;
-    }
     Ok(())
 }
 
-fn retire(path: &Path) -> Result<()> {
-    std::fs::remove_file(path)?;
-    #[cfg(unix)]
-    File::open(path.parent().context("draft parent")?)?.sync_all()?;
-    Ok(())
+pub(super) fn lock_execution(id: Uuid) -> Result<File> {
+    lock(&root()?, id)?.context("execution is open in another Helm")
 }
 
 /// The terminal flag must be readable independently of evolving launch schemas.
@@ -96,38 +96,19 @@ fn retire(path: &Path) -> Result<()> {
 struct Header {
     id: Uuid,
     finished: bool,
+    #[serde(default)]
+    start: Option<serde_json::Value>,
 }
 
 fn read_saved(path: &Path, id: Uuid) -> Result<Option<Saved>> {
     let bytes =
-        super::super::drafts::read_private(path, 2 * voyage_protocol::vessel::MAX_VESSEL_BODY)?;
+        super::super::receipts::read_private(path, 2 * voyage_protocol::vessel::MAX_VESSEL_BODY)?;
     let invalid =
         || anyhow::anyhow!("Invalid saved new-voyage draft {id}; original file preserved");
     let header: Header = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     ensure!(header.id == id && !id.is_nil(), "draft identity mismatch");
-    if header.finished {
-        // Preserve legacy payloads byte-for-byte, but take them out of recovery.
-        // Never overwrite an existing archive with different contents.
-        let archive = path.with_extension("finished");
-        if archive.try_exists()? {
-            let original = super::super::drafts::read_private(
-                &archive,
-                2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
-            )?;
-            ensure!(
-                original == bytes,
-                "Finished draft archive conflict; original preserved"
-            );
-        } else {
-            let mut original =
-                tempfile::NamedTempFile::new_in(path.parent().context("draft parent")?)?;
-            original.write_all(&bytes)?;
-            original.as_file().sync_all()?;
-            original.persist_noclobber(&archive)?;
-            #[cfg(unix)]
-            File::open(path.parent().context("draft parent")?)?.sync_all()?;
-        }
-        retire(path)?;
+    // Legacy unsent drafts and completed records remain byte-for-byte untouched.
+    if header.finished || header.start.is_none() {
         return Ok(None);
     }
     let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -137,18 +118,12 @@ fn read_saved(path: &Path, id: Uuid) -> Result<Option<Saved>> {
 }
 
 pub(super) fn create(saved: Saved, route: Route) -> Result<Draft> {
-    let lock = lock(&root()?, saved.id)?.context("draft is open in another Helm")?;
-    // An untouched local composer is memory-only. Explicit remote workspace
-    // choices remain recoverable settings; edits/first-send transitions save later.
-    if saved.config.is_none() || !saved.text.is_empty() || !saved.images.is_empty() {
-        save(&saved)?;
-    }
     Ok(Draft {
         saved,
         route,
         composer: Default::default(),
         busy: false,
-        _lock: lock,
+        _lock: None,
     })
 }
 
@@ -173,8 +148,14 @@ pub(super) fn recover<'a>(
         })
         .collect::<Result<Vec<_>>>()?;
     let mut drafts = BTreeMap::new();
-    for entry in std::fs::read_dir(&root)? {
-        let path = entry?.path();
+    let mut entries = std::fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
+    let legacy = directory("helm-new-drafts");
+    if legacy.try_exists()? {
+        super::super::super::local::check_private_directory(&legacy)?;
+        entries.extend(std::fs::read_dir(&legacy)?.collect::<std::io::Result<Vec<_>>>()?);
+    }
+    for entry in entries {
+        let path = entry.path();
         if path.extension().is_none_or(|x| x != "json") {
             continue;
         }
@@ -188,6 +169,10 @@ pub(super) fn recover<'a>(
         let Some(lock) = lock(&root, id)? else {
             continue;
         };
+        let legacy_record = path.parent() == Some(legacy.as_path());
+        if legacy_record && root.join(format!("{id}.json")).try_exists()? {
+            continue;
+        }
         let Some(mut saved) = read_saved(&path, id)? else {
             continue;
         };
@@ -209,21 +194,8 @@ pub(super) fn recover<'a>(
         };
         let (route, stable, _, _) = *matched;
         let route = *route;
-        if saved.route != *stable {
-            // Migration changes ONLY the route key under the original lock.
-            // Original command IDs, envelopes, expiry and receipts are untouched.
-            // Retain byte-exact pre-migration input alongside the stable record.
-            let backup = root.join(format!("{id}.legacy"));
-            if !backup.try_exists()? {
-                let mut original = tempfile::NamedTempFile::new_in(&root)?;
-                let bytes = super::super::drafts::read_private(
-                    &path,
-                    2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
-                )?;
-                original.write_all(&bytes)?;
-                original.as_file().sync_all()?;
-                original.persist_noclobber(backup)?;
-            }
+        if legacy_record || saved.route != *stable {
+            // Copy only explicit execution intent; never rewrite the legacy file.
             saved.route = stable.clone();
             save(&saved)?;
         }
@@ -241,7 +213,7 @@ pub(super) fn recover<'a>(
                 route,
                 composer,
                 busy: false,
-                _lock: lock,
+                _lock: Some(lock),
             },
         );
     }

@@ -22,13 +22,6 @@ impl Supervisor {
         };
         let operation = command.clone();
         let mut response = match command {
-            VesselCommand::Drafts { operation } => {
-                self.drafts(
-                    operation,
-                    crate::process::drafts::Scope::Connection(grant.clone()),
-                )
-                .await
-            }
             VesselCommand::Notifications { operation } => {
                 self.notifications(
                     operation,
@@ -46,7 +39,7 @@ impl Supervisor {
                 "scope": if grant.full_access { "owner" } else { "workspaces" }, "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": self.connection_workspaces(&grant).await?,
-                "features": ["durable_drafts","staged_images","sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
+                "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
             })),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }

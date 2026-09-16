@@ -377,7 +377,7 @@ fn verify_upload(image: &Image, response: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// Only the original dispatch calls this after durably saving its complete draft.
+/// Only the original dispatch calls this after durably saving its execution command.
 /// Resolve/Receipt requests bypass uploads, even if they contain original refs.
 pub(super) async fn upload_then_submit(
     client: &Client,

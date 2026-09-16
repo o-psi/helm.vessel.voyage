@@ -231,7 +231,7 @@ impl App {
                         view.process = process;
                     } else {
                         let mut view = View::new(process);
-                        if let Err(error) = drafts::load(&self.clients[route], &mut view) {
+                        if let Err(error) = receipts::load(&self.clients[route], &mut view) {
                             view.error = Some(format!("Draft recovery: {error}"));
                         }
                         self.views.insert(target, view);
@@ -274,9 +274,9 @@ impl App {
                                 view.draft.take();
                             }
                             view.pending = None;
-                            if let Err(error) = drafts::save(&self.clients[route], view) {
+                            if let Err(error) = receipts::save(&self.clients[route], view) {
                                 self.status = format!(
-                                    "Lifecycle action confirmed; draft persistence failed: {error}"
+                                    "Lifecycle action confirmed; command receipt persistence failed: {error}"
                                 );
                             }
                         }
@@ -352,7 +352,7 @@ impl App {
                         }
                         view.snapshot = Some(snapshot);
                         if view.observe_settlement(chrono::Utc::now())
-                            && let Err(error) = drafts::save(&self.clients[target.route], view)
+                            && let Err(error) = receipts::save(&self.clients[target.route], view)
                         {
                             self.status = format!("Saving voyage status timing failed: {error}");
                         }
@@ -471,14 +471,14 @@ impl App {
                         if value.get("status").and_then(|status| status.as_str()) == Some("unknown")
                         {
                             self.status =
-                                "Not confirmed yet. Your draft is saved; Helm checks automatically."
+                                "Not confirmed yet. Your draft is retained in memory; Helm checks automatically."
                                     .into();
                             return;
                         }
                         if receipt_id != Some(command_id.to_string().as_str())
                             || value["status"].as_str().is_none_or(str::is_empty)
                         {
-                            self.status = "The response could not be matched. Your draft is saved; Helm checks automatically.".into();
+                            self.status = "The response could not be matched. Your draft is retained in memory; Helm checks automatically.".into();
                             return;
                         }
                         let inference_status = if value["status"] == "transferred" {
@@ -530,9 +530,6 @@ impl App {
                             } else if !pending.draft.trim_start().starts_with('/') {
                                 view.history.record(&pending.draft);
                             }
-                        }
-                        if !rejected && !pending.preserve_draft {
-                            view.shared.admitted_revision = view.shared.send_revision;
                         }
                         let same_image_draft = super::attachments::pending_matches(pending, view);
                         if !rejected
@@ -612,8 +609,8 @@ impl App {
                         // a positive receipt resolves this command's identity.
                     }
                 }
-                if let Err(error) = drafts::save(&self.clients[target.route], view) {
-                    self.status = format!("Draft persistence failed: {error}");
+                if let Err(error) = receipts::save(&self.clients[target.route], view) {
+                    self.status = format!("Command receipt persistence failed: {error}");
                 }
             }
         }

@@ -34,10 +34,9 @@ mod voyage_picker;
 mod workflows;
 mod workspace;
 use crate::composer;
-mod drafts;
 mod effects;
 mod new_draft;
-mod shared_drafts;
+mod receipts;
 pub(super) use new_draft::start_plain;
 mod notifications;
 mod observe;
@@ -118,7 +117,6 @@ pub(super) struct App {
     inference: inference::Controls,
     accounts: accounts::Controls,
     sidebar: sidebar::Sidebar,
-    shared_drafts: shared_drafts::State,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
 
@@ -256,7 +254,6 @@ pub async fn run_with_notice(
         inference: Default::default(),
         accounts: Default::default(),
         sidebar: Default::default(),
-        shared_drafts: Default::default(),
     };
     app.start_observers();
     app.recover_new_drafts()?;
@@ -264,8 +261,7 @@ pub async fn run_with_notice(
         if let Some(id) = app.new_drafts.keys().next().copied() {
             app.select_draft(id);
             app.status =
-                "Recovered your local draft. Pending first sends will recover automatically."
-                    .into();
+                "Recovered pending first-send receipts. Unsent composers are not restored.".into();
         } else {
             let workspace = app
                 .new_chat_config
@@ -283,7 +279,6 @@ pub async fn run_with_notice(
                 let next = app.selected.filter(|_| app.active_draft.is_none());
                 if *target == next { false } else { *target = next; true }
             });
-            app.poll_shared_drafts();
             app.poll_operator();
             app.poll_inspection();
             app.poll_workflows();
@@ -328,11 +323,10 @@ pub async fn run_with_notice(
                 app.status=match result {Ok(())=>"Back in Helm. Your program can keep running.".into(),Err(error)=>safe(&error.to_string())};
             }
         }
-        for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
+        for (target, view) in &app.views { receipts::save(&app.clients[target.route], view)?; }
         Ok(())
     }.await;
     app.close_inspection();
-    app.shared_drafts.finish().await;
     app.cancel_model_catalog();
     app.cancel_model_preload();
     app.cancel_chooser_accounts();

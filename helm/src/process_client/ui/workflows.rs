@@ -6,11 +6,12 @@
 //! paste/composer handling, `poll_workflows()` on repaint, and `draw` last.
 //! Gate ordinary paste destinations on `!workflows_open()`. Requests use an
 //! internal oneshot; no new Update variant is needed. Submission uses the
-//! existing Update::Command / Pending::resolution / drafts recovery contract.
+//! existing Update::Command / Pending::resolution / receipts recovery contract.
 //! No workflow-specific history insertion or new-process launch hook is needed.
 use super::{
-    App, drafts,
+    App,
     observe::Update,
+    receipts,
     state::{Pending, Target},
 };
 use crate::workflow::{Document, Parameter, ParameterType, Scope};
@@ -540,7 +541,7 @@ impl App {
         let incarnation = panel.incarnation;
         let view = self.views.get_mut(&target).expect("checked view");
         view.pending = Some(pending);
-        if drafts::save(&self.clients[target.route], view).is_err() {
+        if receipts::save(&self.clients[target.route], view).is_err() {
             view.pending = None;
             anyhow::bail!("Cannot persist exact workflow command identity; nothing sent");
         }

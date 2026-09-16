@@ -2,6 +2,17 @@
 use super::*;
 use anyhow::ensure;
 
+// Keep the exact execution envelope as a completed record before making the
+// unsent composer editable again. Never persist the resulting editable draft.
+fn reset_creation(saved: &mut Saved) -> Result<()> {
+    let mut completed = saved.clone();
+    completed.finished = true;
+    journal::save(&completed)?;
+    saved.start = None;
+    saved.start_attempted = false;
+    Ok(())
+}
+
 pub(super) async fn advance(
     client: &Client,
     saved: &mut Saved,
@@ -53,9 +64,7 @@ async fn advance_mode(
                     Some("not_admitted") => {
                         // The original ID is durably fenced. Only a subsequent
                         // explicit send may allocate another creation command.
-                        saved.start = None;
-                        saved.start_attempted = false;
-                        storage::save(saved)?;
+                        reset_creation(saved)?;
                         anyhow::bail!("Creation was not admitted; your draft is editable again")
                     }
                     Some("unknown") => return Ok(None),
@@ -77,12 +86,11 @@ async fn advance_mode(
             if let Err(error) = workspaces::validate_live(client, saved).await {
                 // Capabilities are read-only and no Start has been attempted.
                 // Keep text editable when scope or host readiness needs repair.
-                saved.start = None;
-                storage::save(saved)?;
+                reset_creation(saved)?;
                 return Err(error);
             }
             saved.start_attempted = true;
-            storage::save(saved)?;
+            journal::save(saved)?;
             let result = client
                 .request(saved.start.clone().context("start identity missing")?)
                 .await;
@@ -92,9 +100,7 @@ async fn advance_mode(
                     .is_some()
             }) {
                 // A definite first-attempt refusal is the only safe reset.
-                saved.start = None;
-                saved.start_attempted = false;
-                storage::save(saved)?;
+                reset_creation(saved)?;
             }
             result
         };
@@ -105,7 +111,7 @@ async fn advance_mode(
             "creation response identity mismatch"
         );
         saved.process = Some(process);
-        storage::save(saved)?;
+        journal::save(saved)?;
     }
     let process = saved.process.clone().context("process missing")?;
     if saved.attempted {
@@ -190,7 +196,7 @@ async fn advance_mode(
     }
     let recovering = saved.attempted;
     saved.attempted = true;
-    storage::save(saved)?;
+    journal::save(saved)?;
     // attempted + frozen command and bytes were saved before any upload. A crash
     // from here recovers with Receipt only; it never repeats this sequence.
     let receipt = super::super::attachments::upload_then_submit(
@@ -235,7 +241,7 @@ fn retain_receipt(
         "first-send receipt status missing"
     );
     saved.receipt = Some(receipt.clone());
-    storage::save(saved)?;
+    journal::save(saved)?;
     Ok(Some(receipt))
 }
 

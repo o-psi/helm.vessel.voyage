@@ -231,7 +231,6 @@ impl Pending {
 }
 
 pub struct View {
-    pub shared: super::shared_drafts::Link,
     pub process: ProcessInfo,
     pub snapshot: Option<Snapshot>,
     pub draft: Composer,
@@ -280,7 +279,6 @@ impl View {
     pub fn new(process: ProcessInfo) -> Self {
         Self {
             process,
-            shared: Default::default(),
             snapshot: None,
             draft: Composer::default(),
             images: Vec::new(),

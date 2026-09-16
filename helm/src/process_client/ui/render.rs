@@ -322,7 +322,7 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     let terminals_open = view.is_some_and(|v| v.terminals.open);
     let panel_open = view.is_some_and(|v| v.panel.is_some());
     let overlay = terminals_open || panel_open;
-    let status = presentation::notice(&format!("{} · {}", app.status, app.shared_drafts.notice));
+    let status = presentation::notice(&app.status);
     let status = if app.accounts.open()
         || status.starts_with("Your workspace is ready.")
         || status.starts_with("Overview ready.")
@@ -389,11 +389,11 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     if overlay || reviewing {
         frame.render_widget(
             Paragraph::new(if reviewing {
-                "Your conversation draft is saved."
+                "Your conversation draft is retained in memory."
             } else if rows[3].width >= 40 {
-                "Esc  Back to conversation · Draft saved"
+                "Esc  Back to conversation · Draft retained in memory"
             } else {
-                "Esc Back · Draft saved"
+                "Esc Back · Draft retained in memory"
             })
             .style(muted()),
             rows[3],

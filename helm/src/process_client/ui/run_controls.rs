@@ -1,6 +1,6 @@
 //! Stop is a reviewed exact-run request, never a synonym for detaching Helm.
 use super::{
-    App, drafts,
+    App, receipts,
     state::{Pending, Target},
 };
 use anyhow::{Context, Result, ensure};
@@ -125,7 +125,7 @@ impl App {
             original: Some(Box::new(command.clone())),
             receipt_only: false,
         });
-        if let Err(error) = drafts::save(&self.clients[review.target.route], view) {
+        if let Err(error) = receipts::save(&self.clients[review.target.route], view) {
             view.pending = None;
             return Err(error.context("Cannot retain Stop identity; nothing sent"));
         }

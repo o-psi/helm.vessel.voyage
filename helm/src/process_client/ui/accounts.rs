@@ -4,9 +4,9 @@ mod render;
 mod storage;
 mod usage;
 use super::{
-    App, Event, KeyCode, KeyModifiers, Result, drafts,
+    App, Event, KeyCode, KeyModifiers, Result,
     inference::{Destination, Settings},
-    safe,
+    receipts, safe,
     state::{Pending, Route},
 };
 use anyhow::{Context, ensure};
@@ -1244,7 +1244,7 @@ impl App {
                     original: Some(Box::new(command.clone())),
                     receipt_only: false,
                 });
-                if let Err(e) = drafts::save(&self.clients[t.route], v) {
+                if let Err(e) = receipts::save(&self.clients[t.route], v) {
                     v.pending = None;
                     return Err(e.context("Cannot retain exact account command; nothing sent"));
                 }

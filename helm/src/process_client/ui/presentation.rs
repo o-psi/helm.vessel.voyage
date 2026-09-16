@@ -105,7 +105,9 @@ pub(super) fn receipt(value: &Value) -> String {
         "accepted" => "Request received.",
         "applied" => "Update confirmed.",
         "completed" => "Done.",
-        "rejected" | "not_admitted" => "The request wasn't accepted. Your draft is saved.",
+        "rejected" | "not_admitted" => {
+            "The request wasn't accepted. Your draft is retained in memory."
+        }
         "unknown" => "Not confirmed yet. Helm checks its status automatically.",
         "failed" => "The request couldn't be completed.",
         _ => "Status updated.",

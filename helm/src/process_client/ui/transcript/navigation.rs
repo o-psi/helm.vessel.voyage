@@ -1,7 +1,8 @@
 //! Read-only sender navigation. Never restores archives or launches an executor.
 use super::super::{
-    App, Client, drafts,
+    App, Client,
     observe::Update,
+    receipts,
     state::{Message, Route, Snapshot, Target, View},
 };
 use anyhow::{Context, Result, ensure};
@@ -229,9 +230,9 @@ impl App {
         }
         if !self.views.contains_key(&target) {
             let mut view = View::new(process);
-            if drafts::load(&self.clients[target.route], &mut view).is_err() {
+            if receipts::load(&self.clients[target.route], &mut view).is_err() {
                 self.status =
-                    "Could not load the sender's saved draft; navigation cancelled".into();
+                    "Could not load the sender's command receipts; navigation cancelled".into();
                 return;
             }
             self.views.insert(target, view);

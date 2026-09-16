@@ -362,9 +362,6 @@ async fn local_command(
 impl Supervisor {
     pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
         match command {
-            VesselCommand::Drafts { operation } => {
-                self.drafts(operation, super::drafts::Scope::Owner).await
-            }
             VesselCommand::Notifications { operation } => self.notifications(operation, None).await,
             VesselCommand::DiscoverModels {
                 workspace,
@@ -407,7 +404,7 @@ impl Supervisor {
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["durable_drafts","staged_images","sqlite_catalogue","notifications","sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_settings","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sqlite_catalogue","notifications","sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_settings","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }

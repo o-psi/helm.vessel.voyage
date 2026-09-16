@@ -74,12 +74,19 @@ fn first_frame_is_only_exact_authentication() {
     );
 }
 #[test]
+fn removed_shared_draft_command_is_rejected() {
+    assert!(
+        serde_json::from_value::<VesselCommand>(serde_json::json!({
+            "op": "drafts",
+            "operation": { "op": "list" },
+        }))
+        .is_err()
+    );
+}
+#[test]
 fn browser_allowlist_excludes_executor_and_native_management() {
     assert!(allowed(&VesselCommand::Capabilities));
     assert!(allowed(&VesselCommand::Catalogue));
-    assert!(allowed(&VesselCommand::Drafts {
-        operation: voyage_protocol::drafts::DraftOperation::List {},
-    }));
     assert!(!allowed(&VesselCommand::Granted {
         expected_vessel_id: None,
         grant_id: Uuid::new_v4(),
@@ -93,6 +100,11 @@ fn browser_allowlist_excludes_executor_and_native_management() {
             command,
         })
     };
+    assert!(allowed(&command(VoyageCommand::UploadImage {
+        upload_id: Uuid::new_v4(),
+        name: "image.png".into(),
+        data_base64: "".into(),
+    })));
     assert!(!allowed(&command(VoyageCommand::PrepareBrowser)));
     assert!(!allowed(&command(VoyageCommand::OperatorTool {
         command_id: Uuid::new_v4(),

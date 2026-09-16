@@ -1,5 +1,5 @@
 //! Composer-only discovery. Completion edits drafts; Enter remains the dispatch boundary.
-use super::{App, drafts, observe::Update, safe, state::Target};
+use super::{App, observe::Update, safe, state::Target};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -369,7 +369,6 @@ impl App {
                     let target = self.selected.expect("completion target");
                     let view = self.views.get_mut(&target).expect("completion view");
                     view.draft.set_text(text.clone());
-                    drafts::save(&self.clients[target.route], view)?;
                 }
             }
             _ => return Ok(false),

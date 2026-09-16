@@ -51,9 +51,9 @@ impl App {
             rows[0],
         );
         let guidance = if self.clients[draft.route].is_local() {
-            "What would you like to work on?\n\nYour draft is saved here. Choose a model below, then send your first message.\nUse the Helm menu for settings and connections."
+            "What would you like to work on?\n\nYour draft stays in memory until you send. Choose a model below, then send your first message.\nUse the Helm menu for settings and connections."
         } else {
-            "Describe what you want to do in the selected remote workspace.\n\nYour draft is saved here; execution and credentials stay on that machine.\nUse the Helm menu for settings and connections."
+            "Describe what you want to do in the selected remote workspace.\n\nYour draft stays in memory until you send; execution and credentials stay on that machine.\nUse the Helm menu for settings and connections."
         };
         frame.render_widget(
             Paragraph::new(guidance).wrap(ratatui::widgets::Wrap { trim: false }),
@@ -114,12 +114,9 @@ impl App {
             footer.height.saturating_sub(1),
         );
         frame.render_widget(
-            Paragraph::new(safe(&format!(
-                "{} · {}",
-                self.status, self.shared_drafts.notice
-            )))
-            .style(crate::theme::Role::Focus.style())
-            .wrap(ratatui::widgets::Wrap { trim: false }),
+            Paragraph::new(safe(&self.status))
+                .style(crate::theme::Role::Focus.style())
+                .wrap(ratatui::widgets::Wrap { trim: false }),
             status,
         );
         if footer.height > 0 {

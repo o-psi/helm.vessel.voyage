@@ -1,5 +1,5 @@
 use super::super::{
-    App, drafts,
+    App, receipts,
     state::{Pending, Target},
 };
 use super::now_ms;
@@ -62,7 +62,7 @@ impl App {
             draft: String::new(),
             preserve_draft: true,
         });
-        if let Err(error) = drafts::save(&self.clients[target.route], view) {
+        if let Err(error) = receipts::save(&self.clients[target.route], view) {
             view.pending = None;
             return Err(error.context("cannot persist response identity; nothing sent"));
         }

@@ -53,5 +53,3 @@ pub mod start_settings;
 
 /// Safe model catalogue diagnostics; no provider bodies or credentials.
 pub mod model_discovery;
-
-pub mod drafts;

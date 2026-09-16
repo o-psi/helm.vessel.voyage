@@ -47,5 +47,3 @@ mod start_tests;
 
 #[cfg(test)]
 mod account_flows_tests;
-
-mod drafts;

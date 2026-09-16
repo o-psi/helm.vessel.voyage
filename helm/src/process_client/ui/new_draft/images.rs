@@ -52,7 +52,6 @@ impl App {
         saved.images = images;
         saved.text = composer.text.clone();
         saved.markers = (!saved.images.is_empty()).then(|| composer.markers.clone());
-        storage::save(&saved)?;
         draft.saved = saved;
         draft.composer = composer;
         Ok(())

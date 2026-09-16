@@ -6,9 +6,9 @@ mod chooser;
 mod preload;
 mod render;
 use super::{
-    App, Event, KeyCode, KeyModifiers, Result, drafts,
+    App, Event, KeyCode, KeyModifiers, Result,
     observe::Update,
-    safe,
+    receipts, safe,
     state::{Pending, Target},
 };
 use anyhow::{Context, ensure};
@@ -683,7 +683,7 @@ impl App {
         );
         match picker.destination {
             Destination::Draft(id) => {
-                self.save_draft_inference(
+                self.set_draft_inference(
                     id,
                     &settings,
                     (!picker.preserve_draft).then_some(picker.command_text.as_str()),
@@ -746,7 +746,7 @@ impl App {
                     original: Some(Box::new(command.clone())),
                     receipt_only: false,
                 });
-                if let Err(error) = drafts::save(&self.clients[target.route], view) {
+                if let Err(error) = receipts::save(&self.clients[target.route], view) {
                     view.pending = None;
                     return Err(
                         error.context("cannot persist inference command identity; nothing sent")

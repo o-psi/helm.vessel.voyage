@@ -44,9 +44,6 @@ fn private_file(path: &Path) -> Result<()> {
 fn open(root: &Path) -> Result<Connection> {
     open_file(root, FILE)
 }
-pub(super) fn open_drafts(root: &Path) -> Result<Connection> {
-    open_file(root, "composer.sqlite3")
-}
 fn open_file(root: &Path, file: &str) -> Result<Connection> {
     registry::private_directory(root)?;
     for name in [file.to_owned(), format!("{file}-journal")] {

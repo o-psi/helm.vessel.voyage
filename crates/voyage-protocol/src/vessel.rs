@@ -395,9 +395,6 @@ pub enum TerminalAction {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
-    Drafts {
-        operation: crate::drafts::DraftOperation,
-    },
     /// Metadata-only destination/inbox operations; never approval or execution.
     Notifications {
         operation: crate::notifications::NotificationOperation,

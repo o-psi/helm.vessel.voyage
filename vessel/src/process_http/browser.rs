@@ -206,8 +206,7 @@ impl Backend for BrowserBackend {
 // Deliberately mirror web/gateway/protocol.js, not the full native command surface.
 fn allowed(command: &VesselCommand) -> bool {
     match command {
-        VesselCommand::Drafts { .. }
-        | VesselCommand::Capabilities
+        VesselCommand::Capabilities
         | VesselCommand::Catalogue
         | VesselCommand::Inspect { .. }
         | VesselCommand::Accounts {

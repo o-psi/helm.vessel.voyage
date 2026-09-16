@@ -1,6 +1,7 @@
 use super::{
-    App, drafts,
+    App,
     observe::Update,
+    receipts,
     state::{Pending, Target},
 };
 use anyhow::{Context, Result, ensure};
@@ -52,7 +53,7 @@ impl App {
             draft: view.draft.text.clone(),
             preserve_draft,
         });
-        if let Err(error) = drafts::save(&self.clients[target.route], view) {
+        if let Err(error) = receipts::save(&self.clients[target.route], view) {
             view.pending = None;
             return Err(error.context("cannot persist branch identity; nothing sent"));
         }

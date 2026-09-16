@@ -184,14 +184,8 @@ impl App {
                     .views
                     .get_mut(&target)
                     .context("Paste destination unavailable")?;
-                let previous = (
-                    std::mem::replace(&mut view.draft, draft),
-                    std::mem::replace(&mut view.images, images),
-                );
-                if let Err(error) = drafts::save(&self.clients[target.route], view) {
-                    (view.draft, view.images) = previous;
-                    return Err(error.context("Paste could not be saved; previous draft preserved"));
-                }
+                view.draft = draft;
+                view.images = images;
             }
             Destination::Draft(id) => self.retain_new_draft_images(id, draft, images)?,
         }
@@ -540,7 +534,7 @@ impl App {
             receipt_only: false,
             original: Some(Box::new(command.clone())),
         });
-        if let Err(error) = drafts::save(&self.clients[target.route], view) {
+        if let Err(error) = receipts::save(&self.clients[target.route], view) {
             view.pending = None;
             return Err(error.context("Cannot persist image command; nothing sent"));
         }

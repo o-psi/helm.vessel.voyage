@@ -82,8 +82,8 @@ def clipboard(j):
     return mode
 
 
-def image_draft(f):
-    return [json.loads(p.read_text()) for p in f.root.rglob('helm-views/*.json')]
+def command_receipts(f):
+    return [json.loads(p.read_text()) for p in f.root.rglob('helm-command-receipts/*.json')]
 
 
 def images(j):
@@ -94,21 +94,21 @@ def images(j):
     u.paste(ui,'four-image-draft')
     for n in range(1,5):
         ui.send(b'\x16')
-        u.recovery.wait_for(lambda: any(len(d.get('images',[]))==n for d in image_draft(j.f)))
+        contains(ui, f'[Image {n}]')
     capture(j,ui,'four-images-acquired')
-    j.note('X02: four images acquired by explicit Ctrl+V via bounded local helper and persisted with draft')
+    j.note('X02: four images acquired by explicit Ctrl+V via bounded local helper and retained in memory')
     ui.send(b'\x16'); contains(ui,'At most four images')
-    assert any(len(d.get('images',[]))==4 for d in image_draft(j.f))
+    contains(ui, '[Image 4]')
     mode.write_text('fail'); ui.send(b'\x16')
     contains(ui,'Clipboard has no image or text'); capture(j,ui,'clipboard-failure')
-    assert any(len(d.get('images',[]))==4 and 'four-image-draft' in d['text'] for d in image_draft(j.f))
+    contains(ui, '[Image 4]'); contains(ui, 'four-image-draft')
     mode.write_text('hold'); (mode.parent/'started').unlink(missing_ok=True)
     ui.send(b'\x16')
     u.recovery.wait_for(lambda:(mode.parent/'started').exists())
     helper_pid=int((mode.parent/'started').read_text())
     ui.send(ESC); time.sleep(.2); u.settle(ui)
     u.recovery.wait_for(lambda:not Path(f'/proc/{helper_pid}').exists())
-    assert any(len(d.get('images',[]))==4 and 'four-image-draft' in d['text'] for d in image_draft(j.f))
+    contains(ui, '[Image 4]'); contains(ui, 'four-image-draft')
     capture(j,ui,'clipboard-cancel')
     j.note('X02: fifth-image rejection, helper failure and Escape acquisition cancellation retain authored text/four images; held helper reaped')
     mode.write_text('image')
@@ -131,15 +131,15 @@ def steering(j):
     u.recovery.wait_for(lambda:bool(j.f.provider.bodies))
     contains(ui,'Synthetic streaming started')
     u.paste(ui,'retained-image-steering'); ui.send(b'\x16')
-    u.recovery.wait_for(lambda:any(d.get('images') for d in image_draft(j.f)))
+    contains(ui, '[Image 1]')
     ui.send(b'\r'); contains(ui,'draft preserved')
-    assert any('retained-image-steering' in d['text'] and len(d.get('images',[]))==1 for d in image_draft(j.f))
+    contains(ui, 'retained-image-steering'); contains(ui, '[Image 1]')
     assert len(j.f.provider.bodies)==1
     capture(j,ui,'busy-image-draft-retained')
     j.note('X03: image-bearing steering refused while busy without dropping text/image or admitting another provider call')
     ui.send(b'\x01'); u.paste(ui,'unique-text-steer'); ui.send(b'\r')
     def admitted_draft():
-        return next((d for d in image_draft(j.f) if d.get('pending') and 'unique-text-steer' in json.dumps(d['pending'])),None)
+        return next((d for d in command_receipts(j.f) if d.get('pending') and 'unique-text-steer' in json.dumps(d['pending'])),None)
     # Admission receipt exists independently of canonical messages until applied.
     contains(ui,'Steering admitted')
     capture(j,ui,'steering-admitted')
@@ -167,8 +167,9 @@ def lifecycle(j):
     ui=j.connect(); select(j,ui,sid)
     contains(ui,'lifecycle-evidence-'+sid[:8])
     u.paste(ui,'unsent-lifecycle-draft'); u.settle(ui)
-    assert any(d.get('text')=='unsent-lifecycle-draft' for d in image_draft(j.f))
-    (j.output/'drafts-before-archive.json').write_text(json.dumps(image_draft(j.f),indent=2))
+    contains(ui, 'unsent-lifecycle-draft')
+    assert all('unsent-lifecycle-draft' not in json.dumps(d) for d in command_receipts(j.f))
+    (j.output/'receipts-before-archive.json').write_text(json.dumps(command_receipts(j.f),indent=2))
     menu(j,ui,1,'Archived')
     u.recovery.wait_for(lambda:j.f.snapshot(sid)['lifecycle']['archived'])
     u.recovery.wait_for(lambda:bool(j.f.request({'op':'inspect','session_id':sid}).get('archive')))
@@ -181,7 +182,7 @@ def lifecycle(j):
     j.picker_order=[peer,sid]
     u.recovery.wait_for(lambda:not j.f.snapshot(sid)['lifecycle']['archived'])
     capture(j,ui,'restored-exact-target')
-    (j.output/'drafts-after-restore.json').write_text(json.dumps(image_draft(j.f),indent=2))
+    (j.output/'receipts-after-restore.json').write_text(json.dumps(command_receipts(j.f),indent=2))
     contains(ui,'unsent-lifecycle-draft')
     contains(ui,'Enter Submit new turn'); time.sleep(.5); u.settle(ui)
     j.note('X10: F9 archives/restores only exact selected same-title voyage')

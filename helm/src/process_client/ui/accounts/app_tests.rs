@@ -66,7 +66,6 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
         inference: Default::default(),
         accounts: Default::default(),
         sidebar: Default::default(),
-        shared_drafts: Default::default(),
     }
 }
 fn settings() -> Settings {
@@ -277,7 +276,7 @@ async fn private_view_intercepts_paste_and_only_explicit_o_opens_verified_browse
         },
     )
     .unwrap();
-    drafts::save(&app.clients[t.route], &app.views[&t]).unwrap();
+    receipts::save(&app.clients[t.route], &app.views[&t]).unwrap();
     assert_clean(&app, t, fixture.0.path());
     key(&mut app, KeyCode::Esc);
     assert!(app.accounts.picker.is_none());

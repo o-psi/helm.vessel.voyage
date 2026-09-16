@@ -77,9 +77,8 @@ async fn peer(
 fn saved(client: &Client, workspace: &std::path::Path) -> Saved {
     let id = Uuid::new_v4();
     Saved {
-        shared: Default::default(),
         id,
-        route: storage::route(client).unwrap(),
+        route: journal::route(client).unwrap(),
         workspace: workspace.into(),
         config: None,
         account_host: None,

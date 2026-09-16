@@ -27,10 +27,6 @@ impl App {
         let Some(id) = self.active_draft else {
             return Ok(false);
         };
-        if self.new_drafts[&id].saved.shared.discard_requested {
-            self.status = "Shared discard pending; edits frozen until Vessel confirms or conflict is resolved".into();
-            return Ok(true);
-        }
         let key = match event {
             Event::Key(key) => Some(key),
             _ => None,
@@ -139,7 +135,6 @@ impl App {
         draft.saved.markers =
             (!draft.saved.images.is_empty()).then(|| draft.composer.markers.clone());
         draft.saved.text = draft.composer.text.clone();
-        storage::save(&draft.saved)?;
         Ok(true)
     }
 
@@ -169,18 +164,6 @@ impl App {
         if text == "/help" {
             self.status = "Draft commands: /vessels, /account, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
         } else {
-            if text == "/discard" && self.request_shared_discard(id)? {
-                let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
-                anyhow::ensure!(
-                    draft.saved.start.is_none() && !draft.busy,
-                    "First send pending; draft retained"
-                );
-                storage::save(&draft.saved)?;
-                self.status =
-                    "Discarding shared draft on Vessel; local recovery retained until confirmed"
-                        .into();
-                return Ok(());
-            }
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
                 draft.saved.start.is_none() && !draft.busy,
@@ -190,7 +173,6 @@ impl App {
                 draft.saved.finished = true;
                 draft.saved.text.clear();
                 draft.saved.images.clear();
-                storage::save(&draft.saved)?;
                 self.new_drafts.remove(&id);
                 self.active_draft = None;
                 self.status = "Local draft discarded.".into();
@@ -229,12 +211,11 @@ impl App {
                     "This is a Helm draft. /help lists commands available before first send"
                 );
             }
-            self.status = "Draft settings saved. Send a message to start the voyage.".into();
+            self.status = "Draft settings updated. Send a message to start the voyage.".into();
         }
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         draft.composer.take();
         draft.saved.text.clear();
-        storage::save(&draft.saved)?;
         if text == "/new" || text.starts_with("/new ") {
             self.create(text.strip_prefix("/new "))?;
         }
@@ -270,9 +251,8 @@ impl App {
             .context("Remote drafts use executing-host policy")?;
         config.access = Some(mode);
         saved.explicit.access = Some(mode);
-        storage::save(&saved)?;
         draft.saved = saved;
-        self.status = "Draft access saved · message preserved".into();
+        self.status = "Draft access updated · message preserved".into();
         Ok(())
     }
 }

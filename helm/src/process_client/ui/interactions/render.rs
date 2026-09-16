@@ -240,7 +240,10 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         Paragraph::new(controls).style(crate::theme::Role::Muted.style()),
         Rect::new(footer.x, footer.y, footer.width, 1),
     );
-    let scope = format!("{} · Draft saved", app.route_label(target.route));
+    let scope = format!(
+        "{} · Draft retained in memory",
+        app.route_label(target.route)
+    );
     frame.render_widget(
         Paragraph::new(scope).style(crate::theme::Role::Muted.style()),
         Rect::new(footer.x, footer.bottom().saturating_sub(1), footer.width, 1),

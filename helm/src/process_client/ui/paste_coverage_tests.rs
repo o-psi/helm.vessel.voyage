@@ -80,12 +80,14 @@ async fn modal_and_terminal_focus_never_steal_pastes() {
 }
 
 #[tokio::test]
-async fn plain_paste_is_saved_and_preserves_existing_composer() {
-    let (_fixture, mut app, target) = coverage_support::app();
+async fn plain_paste_stays_in_memory_and_preserves_existing_composer() {
+    let (fixture, mut app, target) = coverage_support::app();
     assert!(app.paste_input(&Event::Paste("\r\nnext".into())).unwrap());
     assert_eq!(app.views[&target].draft.text, "preserved draft\nnext");
     assert!(app.ensure_paste_finished(Destination::Live(target)).is_ok());
     assert!(app.clipboard_pending.is_none());
+    assert!(!fixture.0.path().join("helm-views").exists());
+    assert!(!fixture.0.path().join("helm-command-receipts").exists());
 }
 
 #[tokio::test]

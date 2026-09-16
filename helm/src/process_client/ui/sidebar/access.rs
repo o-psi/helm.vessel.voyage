@@ -167,7 +167,7 @@ impl App {
             draft: format!("/access {access}"),
             preserve_draft: true,
         });
-        if let Err(error) = super::super::drafts::save(&self.clients[menu.target.route], view) {
+        if let Err(error) = super::super::receipts::save(&self.clients[menu.target.route], view) {
             view.pending = None;
             return Err(error.context("cannot persist command identity; nothing sent"));
         }

@@ -1,7 +1,8 @@
-//! Capture identity before dispatch and retain uncertain drafts across reconnects.
+//! Capture execution identity before dispatch and retain uncertain receipts across reconnects.
 use super::{
-    App, drafts,
+    App,
     observe::Update,
+    receipts,
     state::{Pending, Target},
 };
 use anyhow::{Context, Result, ensure};
@@ -30,8 +31,6 @@ impl App {
         {
             view.history.record(&draft);
             view.draft.take();
-            drafts::save(&self.clients[target.route], view)
-                .context("The command ran, but the cleared draft could not be saved")?;
         }
         Ok(())
     }
@@ -228,12 +227,6 @@ impl App {
             self.views.get_mut(&target).expect("selected view").panel = None;
             return Ok(());
         }
-        if !preserve_draft
-            && !command_text.starts_with('/')
-            && self.views.get(&target).is_some_and(|v| v.pending.is_none())
-        {
-            self.shared_send_guard(target)?;
-        }
         let view = self.views.get_mut(&target).expect("selected view");
         if command_text == "/receipt" {
             let pending = view
@@ -376,7 +369,6 @@ impl App {
             "Vessel unavailable · Ctrl+G to manage / retry; draft retained"
         );
         let command = super::attachments::prepare(command, &view.draft, &view.images)?;
-        view.shared.send_revision = Some(view.shared.revision);
         view.pending = Some(Pending {
             account_host: None,
             command_id,
@@ -386,7 +378,7 @@ impl App {
             draft,
             preserve_draft,
         });
-        if let Err(error) = drafts::save(&self.clients[target.route], view) {
+        if let Err(error) = receipts::save(&self.clients[target.route], view) {
             view.pending = None;
             return Err(error.context("cannot persist command identity; nothing sent"));
         }

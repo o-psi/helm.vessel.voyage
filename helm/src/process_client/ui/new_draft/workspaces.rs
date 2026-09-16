@@ -213,15 +213,15 @@ impl App {
                 .transpose();
             self.status = if let Err(error) = preference {
                 format!(
-                    "Draft saved, but workspace preference was not saved: {}",
+                    "Draft retained in memory, but workspace preference was not saved: {}",
                     safe(&error.to_string())
                 )
             } else if workspace.provider_ready == Some(true) {
-                "Remote draft saved in Helm. Provider settings and credentials remain on the executing host.".into()
+                "Remote draft retained in memory. Provider settings and credentials remain on the executing host.".into()
             } else if workspace.provider_ready.is_none() {
-                "Remote draft saved. Provider readiness has not yet been checked on the executing host; credentials remain there.".into()
+                "Remote draft retained in memory. Provider readiness has not yet been checked on the executing host; credentials remain there.".into()
             } else {
-                "Remote draft saved. Provider sign-in is missing on the executing host; ask its owner to authorize that host. No local tokens are copied.".into()
+                "Remote draft retained in memory. Provider sign-in is missing on the executing host; ask its owner to authorize that host. No local tokens are copied.".into()
             };
         }
         Ok(true)
