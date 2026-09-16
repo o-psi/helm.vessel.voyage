@@ -23,7 +23,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
-    let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval';
+    let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
     globalThis.fetch=async()=>({ok:true,json:async()=>({ticket:'synthetic.ticket'})});
     class Socket extends dom.window.EventTarget {
         readyState=0;
@@ -47,7 +47,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
                 } else throw Error(`Unexpected operation ${command.op}`);
                 result={session_id:id,incarnation,result:value};
             }
-            setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result,error:null,outcome_unknown:false}}),0);
+            setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result,error:null,outcome_unknown:false}}),command.op==='snapshot' && delaySnapshot ? 120 : 0);
         }
         receive(frame){if(this.readyState===1)this.dispatchEvent(new dom.window.MessageEvent('message',{data:JSON.stringify(frame)}));}
         close(){if(this.readyState===3)return;this.readyState=3;this.dispatchEvent(new Event('close'));}
@@ -92,9 +92,12 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         $('#quick-reasoning').value='3';$('#reasoning-save').click();
         await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
         assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
+        delaySnapshot=true;
+        const snapshotsBefore=requests.filter(c=>c.op==='snapshot').length;
+        await until(()=>requests.filter(c=>c.op==='snapshot').length>snapshotsBefore);
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.some(c=>c.op==='submit')&&!$('#send').disabled);
-        assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').getAttribute('aria-label'),'Steer run');
+        delaySnapshot=false;assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').getAttribute('aria-label'),'Steer run');
         assert.equal($('#cancel').hidden,false,'cancel is visible for active run');
         decisionKind='approval';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();

@@ -1,3 +1,4 @@
+import {connectionDiagnostic as log} from './connection-diagnostics.js';
 import {actionDescription, actionStatus, actionDuration} from './tool-presentation.js';
 import {setReasoning, reasoningValue} from './inference-controls.js';
 import {marked} from 'marked';
@@ -181,7 +182,7 @@ export function mount(root) {
             snapshot = next; incarnation = envelope.incarnation;
             updateAccountLabel(); decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
             if (changed) { revision = next.revision; messages = next.messages || []; earliest = next.message_offset || 0; }
-            stale = false; lastFresh = Date.now(); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
+            stale = false; lastFresh = Date.now(); log('snapshot_fresh',{generation:mine}); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
             $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
             renderMessages(); renderDecisions(); renderOutput();
         } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
@@ -379,7 +380,13 @@ export function mount(root) {
         }
     }
     async function act(op, decision = null, answer = null, extra = {}) {
-        if (!actionable() || refreshing) return notice('Wait for a fresh connected snapshot before acting.');
+        if (!actionable()) {
+            log('action_blocked',{op,connected:Boolean(client),stale,busy,refreshing,fresh_age_ms:Date.now()-lastFresh,journal_pending:pending().length});
+            return notice('Wait for a fresh connected snapshot before acting.');
+        }
+        // A background poll must not reject a click against a still-fresh snapshot.
+        // Invalidate its read results before dispatch; owner revision checks still apply.
+        if (refreshing) { generation++; refreshing = false; log('poll_superseded_by_action',{op}); }
         const text = $('prompt').value;
         if (['submit','steer'].includes(op) && (!text.trim() || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
         if (decision && (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot.run?.run_id)) return notice('Decision expired. Refresh before responding.');

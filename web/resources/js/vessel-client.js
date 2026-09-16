@@ -1,3 +1,4 @@
+import {connectionDiagnostic as log} from './connection-diagnostics.js';
 // Socket correlation is ephemeral. Durable command IDs are separate and never replayed.
 export const uuid = () => crypto.randomUUID();
 export const request = (op, fields = {}) => ({protocol: 1, command: {op, ...fields}});
@@ -50,22 +51,24 @@ export class VesselSocket {
                 const frame = JSON.parse(event.data);
                 if (frame.type !== 'reply') return;
                 const pending = this.pending.get(frame.request_id);
-                if (pending) { clearTimeout(pending.timer); this.pending.delete(frame.request_id); pending.resolve(frame.response); }
+                if (pending) { log('reply',{request_id:frame.request_id,op:pending.op,elapsed_ms:Date.now()-pending.started,unknown:frame.response?.outcome_unknown === true,error:frame.response?.error != null}); clearTimeout(pending.timer); this.pending.delete(frame.request_id); pending.resolve(frame.response); }
             } catch { socket.close(); }
         });
         socket.addEventListener('close', event => {
             for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Connection lost; command outcome may be unknown.')); }
             this.pending.clear();
             const reasons = ['lease expired','heartbeat timeout','upstream closed','upstream unavailable','gateway refused','gateway capacity','rate exceeded','invalid upstream frame'];
-            this.onDisconnect(reasons.includes(event.reason) ? event.reason : 'connection closed');
+            const reason = reasons.includes(event.reason) ? event.reason : 'connection closed';
+            log('socket_closed',{code:event.code,reason}); this.onDisconnect(reason);
         });
     }
     exchange(value) {
         return new Promise((resolve, reject) => {
             if (this.socket.readyState !== 1 || this.pending.size >= 16) return reject(new Error('Connection unavailable.'));
             const id = uuid();
-            const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Reply timed out; command outcome may be unknown.')); }, 30000);
-            this.pending.set(id, {resolve, reject, timer});
+            const timer = setTimeout(() => { log('reply_timeout',{request_id:id,op:value.command.op,pending:this.pending.size}); this.pending.delete(id); reject(new Error('Reply timed out; command outcome may be unknown.')); }, 30000);
+            this.pending.set(id, {resolve, reject, timer,op:value.command.op,started:Date.now()});
+            log('request',{request_id:id,op:value.command.op,pending:this.pending.size});
             try { this.socket.send(JSON.stringify({type: 'command', request_id: id, request: value})); }
             catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
         });

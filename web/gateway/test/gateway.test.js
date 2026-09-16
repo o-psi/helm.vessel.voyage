@@ -261,3 +261,17 @@ test('one session aggregates more than four Vessels while each connection remain
   assert.equal((await next()).response.outcome_unknown,false);
   assert.equal(calls,2,'no automatic replay');
  });
+
+test('sustained polling and lease renewals retain one upstream socket', {timeout:12000}, async t => {
+ const f=await fixture(t,{limits:{heartbeatMs:40}});
+ const {ws,next}=await f.connect();await next();
+ for(let i=0;i<8;i++) {
+  ws.send(JSON.stringify({type:'authenticate',ticket:ticket()}));
+  assert.equal((await next()).type,'ready');
+  ws.send(JSON.stringify(command({op:'catalogue'})));
+  assert.equal((await next()).response.outcome_unknown,false);
+  await new Promise(r=>setTimeout(r,100));
+ }
+ assert.equal(ws.readyState,WebSocket.OPEN);
+ assert.equal(f.requests.length,1);
+});

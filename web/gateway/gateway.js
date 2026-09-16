@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {randomUUID} from 'node:crypto';
 import { transport, validateConnection } from './transport.js';
 import { localHandler } from './local.js';
 import { WebSocket, WebSocketServer } from 'ws';
@@ -37,6 +38,9 @@ export function createGateway(config, limits = LIMITS, io = transport) {
   });
   wss.on('connection', browser => {
     connections.add(browser);
+    const trace = randomUUID(), started = Date.now();
+    const log = (event, metadata = {}) => console.info('[Helm gateway]',JSON.stringify({at:new Date().toISOString(),trace,event,...metadata}));
+    log('socket_open');
     let authenticating = false;
     let upstream, claims, subjectKey, vesselKey, leaseTimer, helloTimer, heartbeat, ready = false, stopped = false;
     let budget = limits.rate, budgetAt = Date.now();
@@ -44,6 +48,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
     const authTimer = setTimeout(() => stop(1008, 'authentication required'), limits.authMs);
     function stop(code = 1008, reason = 'gateway refused') {
       if (stopped) return;
+      log('socket_close',{code,reason,elapsed_ms:Date.now()-started,pending:pending.size,expired:expired.size});
       stopped = true;
       clearTimeout(authTimer); clearTimeout(leaseTimer); clearTimeout(helloTimer); clearInterval(heartbeat);
       for (const entry of pending.values()) clearTimeout(entry.timer);
@@ -76,6 +81,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
         subjects.set(subjectKey, (subjects.get(subjectKey) ?? 0) + 1);
         vessels.set(vesselKey, (vessels.get(vesselKey) ?? 0) + 1);
       }
+      log(claims ? 'lease_renewed' : 'lease_started',{remaining_ms:next.exp*1000-now});
       claims = next;
       clearTimeout(authTimer); clearTimeout(leaseTimer);
       leaseTimer = setTimeout(() => stop(1008, 'lease expired'), next.exp * 1000 - now);
@@ -89,7 +95,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
       clearTimeout(helloTimer);
       helloTimer = setTimeout(() => stop(1011, 'upstream unavailable'), limits.helloMs);
       upstream.on('error', () => stop(1011, 'upstream unavailable'));
-      upstream.on('close', () => stop(1011, 'upstream closed'));
+      upstream.on('close', code => { log('upstream_close',{code}); stop(1011, 'upstream closed'); });
       upstream.on('message', (data, binary) => {
         try {
           if (binary || Date.now() >= claims.exp * 1000) throw Error();
@@ -131,6 +137,7 @@ export function createGateway(config, limits = LIMITS, io = transport) {
         if (pending.size + expired.size >= limits.inflight || seen.size >= limits.seen) { stop(1013, 'gateway capacity'); return; }
         seen.add(frame.request_id);
         pending.set(frame.request_id, { op: frame.request.command.op, timer: setTimeout(() => {
+          log('request_timeout',{request_id:frame.request_id,op:frame.request.command.op});
           pending.delete(frame.request_id); expired.add(frame.request_id);
           send(browser,{type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'Request timed out; outcome unknown. Check receipts before another action.',outcome_unknown:true}});
         }, limits.requestMs) });

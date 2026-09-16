@@ -1,3 +1,4 @@
+import {connectionDiagnostic as log} from './connection-diagnostics.js';
 import {request, IntentJournal, VesselSocket} from './vessel-client.js';
 
 // Every configured connection owns its own socket, catalogue, lease and journal.
@@ -14,6 +15,7 @@ export class VesselFleet {
     async connect(connection) {
         if (this.closed) return;
         const generation = ++connection.generation;
+        log('connect_start',{connection:connection.id,generation});
         clearTimeout(connection.reconnect); clearInterval(connection.renewal);
         connection.socket?.close(); connection.client = null; connection.polling = false;
         connection.status = 'Connecting…'; this.changed();
@@ -51,13 +53,20 @@ export class VesselFleet {
                 connection.client = null; connection.status = `Offline · ${reason}`;
                 clearInterval(connection.renewal); this.changed(); this.schedule(connection);
             });
+            log('connected',{connection:connection.id,generation});
+            let renewalStarted = 0;
+            socket.addEventListener('message',event => {
+                try { if (JSON.parse(event.data).type === 'ready' && renewalStarted) { log('renewal_ack',{connection:connection.id,elapsed_ms:Date.now()-renewalStarted}); renewalStarted = 0; } } catch {}
+            });
             connection.retry = 1000; connection.lastCatalogue = 0; connection.status = 'Connected';
             connection.renewal = setInterval(async () => {
                 try {
+                    renewalStarted = Date.now(); log('renewal_start',{connection:connection.id});
                     const ticket = await this.ticket(connection.id);
                     if (current() && socket.readyState === 1) socket.send(JSON.stringify({type:'authenticate', ticket}));
                 } catch (error) {
                     if (!current()) return;
+                    log('renewal_failed',{connection:connection.id,elapsed_ms:Date.now()-renewalStarted});
                     connection.stopped = Boolean(error.permanent); socket.close();
                 }
             }, 30000);
@@ -72,6 +81,7 @@ export class VesselFleet {
     schedule(connection) {
         if (this.closed || connection.stopped) return;
         clearTimeout(connection.reconnect);
+        log('reconnect_scheduled',{connection:connection.id,delay_ms:connection.retry});
         connection.reconnect = setTimeout(() => this.connect(connection), connection.retry);
         connection.retry = Math.min(connection.retry * 2, 15000);
     }
