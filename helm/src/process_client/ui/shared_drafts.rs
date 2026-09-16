@@ -358,7 +358,9 @@ impl App {
                                 Destination::Live(target) => {
                                     if let Some(view) = self.views.get_mut(&target) {
                                         if view.pending.is_some()
-                                            || (view.shared.id != entry.link.id && view.shared.fork)
+                                            || (!entry.clearing
+                                                && view.shared.id != entry.link.id
+                                                && view.shared.fork)
                                         {
                                             continue;
                                         }
