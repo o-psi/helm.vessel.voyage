@@ -46,7 +46,7 @@ test('personal tenants: HTTP session, connection isolation, one-use tickets, del
   const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token},body:JSON.stringify(body)},who);
   assert.equal((await post('/console/ticket',{vessel:seed.bob.connection})).status,404);
   assert.equal((await call('/connections/'+seed.bob.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice')).status,404);
-  const connections=await call('/connections',{},'alice');const list=await connections.text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.ok(!list.includes('a'.repeat(64)));
+  const connections=await call('/connections',{},'alice');const list=await connections.text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));
   const issue=async()=>{const r=await post('/console/ticket',{vessel:seed.alice.connection});assert.equal(r.status,200,await r.clone().text());return (await r.json()).ticket;};
   const redeem=ticket=>call('/console/gateway/authorize',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json',Authorization:`Bearer ${secret}`},body:JSON.stringify({ticket})});
   let ticket=await issue();assert.match(ticket,/^[A-Za-z0-9_-]{43}$/);
