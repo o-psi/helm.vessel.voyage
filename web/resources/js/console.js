@@ -1,3 +1,4 @@
+import {actionDescription, actionStatus, actionDuration} from './tool-presentation.js';
 import {setReasoning, reasoningValue} from './inference-controls.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
@@ -216,13 +217,14 @@ export function mount(root) {
         const fingerprint = JSON.stringify(messages); if (fingerprint === messageFingerprint) return; messageFingerprint = fingerprint;
         const scroll = $('conversation'), atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
         const opened = new Set([...$('messages').querySelectorAll('[data-tool-entry][open]')].map(node => node.dataset.key));
+        const olderOpen = new Set([...$('messages').querySelectorAll('[data-tool-group][data-older-open]')].map(n=>n.dataset.key));
         const focused = document.activeElement?.closest('[data-tool-entry]')?.dataset.key;
         $('messages').replaceChildren();
         let group = null, groupMessages = [];
         const calls = new Map(messages.flatMap(m => (m.tool_calls || []).map(call => [call.id,call])));
         const stamp = (element, message) => {
             const date = message.created_at ? new Date(message.created_at) : null;
-            if (!date || !Number.isFinite(date.getTime())) { element.textContent = 'Time unavailable'; return; }
+            if (!date || !Number.isFinite(date.getTime())) { element.hidden = true; return; }
             element.dateTime = date.toISOString(); element.title = date.toLocaleString();
             element.textContent = date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
         };
@@ -246,26 +248,28 @@ export function mount(root) {
         for (const message of messages) {
             if (message.role === 'system') continue;
             const tool = message.role === 'tool' || message.role === 'function' || (message.tool_calls?.length && !String(message.content || '').trim());
-            if (!tool) { group = null; renderOne(message,$('messages')); continue; }
+            if (!tool) { group = null; renderOne(message,$('messages')); if (!message.tool_calls?.length) continue; }
+            if ((message.role === 'tool' || message.role === 'function') && calls.has(message.tool_call_id)) continue;
             if (!group) {
                 group = fluxTemplate('thread-tools'); group.dataset.key = String(message.message_index);
                 groupMessages = []; const current = group;
-                current.querySelector('[data-expand-tools]').addEventListener('click', event => {
-                    const entries = [...current.querySelectorAll('[data-tool-entry]')];
-                    const expand = entries.some(entry => !entry.open);
-                    for (const entry of entries) { entry.open = expand; entry.renderTool(); }
-                    event.currentTarget.textContent = expand ? 'Collapse all' : 'Expand all';
+                current.querySelector('[data-expand-tools]').addEventListener('click', () => {
+                    current.toggleAttribute('data-older-open'); current.updateOlder();
                 });
                 $('messages').append(current);
             }
             groupMessages.push(message);
             const entries = message.tool_calls?.length ? message.tool_calls.map(call => ({call, request:true})) : [{call:calls.get(message.tool_call_id),request:false}];
             for (const [index,item] of entries.entries()) {
-                const entry = fluxTemplate('thread-tool-entry'); entry.dataset.key = `${message.message_index}:${index}`;
+                const entry = fluxTemplate('thread-tool-entry'); entry.dataset.key = item.call?.id || `${message.message_index}:${index}`;
+                const result = item.request ? messages.find(m => m.tool_call_id === item.call.id) : message;
+                entry.dataset.finished = String(Boolean(result));
+                const active = running() && Number.isSafeInteger(snapshot?.run?.message_start) && message.message_index >= snapshot.run.message_start;
                 const name = clean(item.call?.function?.name || item.call?.name || message.name || 'Tool');
-                const status = item.request ? 'Request' : message.tool_success === false ? 'Failed' : message.tool_success === true ? 'Completed' : 'Result';
-                entry.querySelector('[data-entry-label]').textContent = `${name} · ${status}${message.interrupted_attempt ? ' · interrupted' : ''}`;
-                stamp(entry.querySelector('[data-entry-time]'),message);
+                const status = actionStatus(item.call || {},result,active,decisions.length > 0);
+                entry.dataset.failed = String(result && !['Done','Received'].includes(status));
+                entry.querySelector('[data-entry-label]').textContent = clean([status,actionDuration(result),item.call ? actionDescription(item.call) : name].filter(Boolean).join(' · '));
+                entry.querySelector('[data-entry-time]').hidden = true;
                 let rendered = false;
                 entry.renderTool = () => {
                     if (rendered || !entry.open) return; rendered = true;
@@ -274,7 +278,8 @@ export function mount(root) {
                         const code = fluxTemplate('flux-code');
                         code.querySelector('[data-code]').textContent = clean(JSON.stringify(item.call.function?.arguments ?? item.call.arguments ?? {},null,2)); body.append(code);
                         if (message.projection_truncated) body.append(button('Read complete message',() => expand(message.message_index)));
-                    } else renderOne(message,body,true);
+                    }
+                    if (result) renderOne(result,body,true);
                 };
                 entry.addEventListener('toggle',entry.renderTool);
                 entry.open = opened.has(entry.dataset.key); entry.renderTool();
@@ -282,7 +287,19 @@ export function mount(root) {
                 if (focused === entry.dataset.key) entry.querySelector('summary').focus({preventScroll:true});
             }
             const count = group.querySelectorAll('[data-tool-entry]').length;
-            group.querySelector('[data-tool-label]').textContent = `${count} tool ${count === 1 ? 'entry' : 'entries'}`;
+            group.querySelector('[data-tool-label]').textContent = `${count} ${count === 1 ? 'action' : 'actions'}`;
+        }
+        for (const group of $('messages').querySelectorAll('[data-tool-group]')) {
+            if (olderOpen.has(group.dataset.key)) group.setAttribute('data-older-open','');
+            group.updateOlder = () => {
+                const entries = [...group.querySelectorAll('[data-tool-entry]')], older = entries.slice(0,-3);
+                const expanded = group.hasAttribute('data-older-open');
+                older.forEach(entry => { entry.hidden = !expanded; });
+                const button = group.querySelector('[data-expand-tools]'); button.hidden = older.length === 0;
+                button.textContent = expanded ? 'Hide older actions' : 'Show older actions';
+                if (older.length) group.querySelector('[data-tool-label]').textContent = `${older.length} older actions · ${older.filter(e=>e.dataset.finished==='true').length}/${older.length} finished${older.some(e=>e.dataset.failed==='true') ? ' · failures or incomplete outcomes' : ''}`;
+            };
+            group.updateOlder();
         }
         $('earlier').hidden = earliest <= 0;
         if (atBottom) scroll.scrollTop = scroll.scrollHeight;

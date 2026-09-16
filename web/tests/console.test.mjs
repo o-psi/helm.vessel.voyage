@@ -62,13 +62,11 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#composer-reasoning').textContent,'medium');
         assert.equal(root.querySelector('[data-flux-header]'),null,'no top bar');
         const group=$('#messages [data-tool-group]');
-        const entries=group.querySelectorAll('[data-tool-entry]');assert.equal(entries.length,2);
-        const tools=entries[1];assert.equal(tools.open,false);
-        assert.match(group.textContent,/2 tool entries/);
-        assert.match(tools.textContent,/read_file · Completed/);
-        assert.equal(tools.querySelector('time').dateTime,'2026-09-16T12:34:00.000Z');
-        group.querySelector('[data-expand-tools]').click();assert.ok([...entries].every(e=>e.open));
-        group.querySelector('[data-expand-tools]').click();assert.ok([...entries].every(e=>!e.open));
+        const entries=group.querySelectorAll('[data-tool-entry]');assert.equal(entries.length,1);
+        const tools=entries[0];assert.equal(tools.open,false);
+        assert.match(group.textContent,/1 action/);
+        assert.match(tools.textContent,/Done · timing unavailable · Read/);
+        assert.equal(group.querySelector('[data-expand-tools]').hidden,true);
         assert.equal(tools.open,false,'tool details close without discarding content');
         tools.open=true;tools.dispatchEvent(new Event('toggle'));
         assert.match(tools.textContent,/Synthetic tool output/);
