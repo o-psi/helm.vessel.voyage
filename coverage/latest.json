@@ -1,9 +1,9 @@
 {
-  "source_commit": "a0ed979851e660bf73add0bd0684592d1ad68de3",
-  "source_fingerprint_sha256": "11a8ee7519c4fde395f330522466e84ee9cf5d6845c1b00f66acd21e97839b2d",
-  "dirty": true,
-  "source_fingerprint_method": "SHA-256 over sorted tracked and untracked implementation Rust/Cargo paths: path + NUL + file bytes; missing files marked MISSING; unrelated worktrees excluded",
-  "measured_at_utc": "2026-09-16T04:23:19.141314+00:00",
+  "source_commit": "5f8a87597b0952e31e04d46f45aafb82a2a23c4e",
+  "dirty": false,
+  "source_fingerprint_sha256": "e84a32c8709d237b10451a1c070c6426760efddf551a4b52bfaa7b6bf44f09bd",
+  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes",
+  "measured_at_utc": "2026-09-16T04:51:02.693950+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9775,
-      "covered": 6996,
-      "percent": 71.57033248081841
+      "count": 9773,
+      "covered": 6995,
+      "percent": 71.57474675125344
     },
     "instantiations": {
-      "count": 22289,
-      "covered": 8872,
-      "percent": 39.80438781461707
+      "count": 22282,
+      "covered": 8871,
+      "percent": 39.812404631541156
     },
     "lines": {
-      "count": 101377,
-      "covered": 76118,
-      "percent": 75.08409205243794
+      "count": 101369,
+      "covered": 76123,
+      "percent": 75.09495013268356
     },
     "mcdc": {
       "count": 0,
@@ -42,50 +42,50 @@
       "percent": 0
     },
     "regions": {
-      "count": 166010,
-      "covered": 118970,
-      "notcovered": 47040,
-      "percent": 71.66435756882116
+      "count": 165959,
+      "covered": 118949,
+      "notcovered": 47010,
+      "percent": 71.67372664332757
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/coordination-replies -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/release-v1-final -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$WORKSPACE/target/voyage.profdata",
+    "-instr-profile=$TARGET_DIR/release-v1.profdata",
     "-object",
-    "$WORKSPACE/target/debug/deps/chatgpt_conversation-510f26700af57366",
+    "$TARGET_DIR/debug/deps/chatgpt_conversation-48ecc7ddc62a6aa9",
     "-object",
-    "$WORKSPACE/target/debug/deps/completion_final_tests-b1fa9b3c69d39b46",
+    "$TARGET_DIR/debug/deps/completion_final_tests-768e85f327c06fea",
     "-object",
-    "$WORKSPACE/target/debug/deps/helm-bd0d73b89d82cb63",
+    "$TARGET_DIR/debug/deps/helm-b6c8e651e06d06b6",
     "-object",
-    "$WORKSPACE/target/debug/deps/helm-dfb5737733ce418b",
+    "$TARGET_DIR/debug/deps/helm-cad0f507950a0fcf",
     "-object",
-    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-ac0f0a586a5b6ee1",
+    "$TARGET_DIR/debug/deps/offline_auth_main_tests-9a4079a01d099c9f",
     "-object",
-    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-44a730b53bd98151",
+    "$TARGET_DIR/debug/deps/offline_main_cli_tests-e0ee3713a4c96ebe",
     "-object",
-    "$WORKSPACE/target/debug/deps/vessel-039942951e1867b6",
+    "$TARGET_DIR/debug/deps/vessel-727133478e90bd4e",
     "-object",
-    "$WORKSPACE/target/debug/deps/vessel-3a4d7b51155730f3",
+    "$TARGET_DIR/debug/deps/vessel-a2cd78e698b1f12a",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage-e775d9c5a0730146",
+    "$TARGET_DIR/debug/deps/voyage-006786ad38bbf0a7",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage-f88b1dd8ee2a3a15",
+    "$TARGET_DIR/debug/deps/voyage-2cfbdbb1662c93ea",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage_installer-6aff51ec451d3a11",
+    "$TARGET_DIR/debug/deps/voyage_installer-9a46914642ce3f54",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage_protocol-f609f3347f10b305",
+    "$TARGET_DIR/debug/deps/voyage_protocol-f8fc648191e1e99e",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage_storage-dc5f9f5a94045436",
+    "$TARGET_DIR/debug/deps/voyage_storage-cfc17778b9f3eaad",
     "-object",
-    "$WORKSPACE/target/debug/helm",
+    "$TARGET_DIR/debug/helm",
     "-object",
-    "$WORKSPACE/target/debug/vessel",
+    "$TARGET_DIR/debug/vessel",
     "-object",
-    "$WORKSPACE/target/debug/voyage",
+    "$TARGET_DIR/debug/voyage",
     "-ignore-filename-regex",
     "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
     "-summary-only"
@@ -99,7 +99,7 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Issue #303: workspace default-feature Linux offline tests; no live-provider or native macOS/Windows claims. Includes existing unrelated staged Helm source in dirty source fingerprint.",
-    "Preserved default report; corrected artifact selection from complete current Cargo workspace executable inventory (#251), with all executed test binaries included and no export diagnostics. No changed exclusion patterns."
+    "Issue #305: clean Linux v1.0.0 source, all workspace default-feature offline tests. No live-provider or native macOS/Windows claims.",
+    "Shared existing target directory; preserved default report. Corrected artifact selection uses every current Cargo workspace executable and every executed test binary (#251). No export diagnostics, duplicate file paths, stale-worktree files or changed exclusion patterns."
   ]
 }
