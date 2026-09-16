@@ -29,7 +29,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
             rendered=fingerprint; urls.forEach(URL.revokeObjectURL);urls=[];images.replaceChildren();
             for(const [index,part] of parts.entries()) if(part.type==='image') {
                 const card=template('flux-draft-image'), label=card.querySelector('[data-image-name]'), remove=card.querySelector('button'), img=card.querySelector('img');
-                label.textContent=part.attachment.name; remove.type='button';remove.textContent='Remove';img.alt=part.attachment.name;img.hidden=true;
+                label.textContent=part.attachment.name; remove.type='button';remove.setAttribute('aria-label',`Remove ${part.attachment.name}`);img.alt=part.attachment.name;img.hidden=true;
                 remove.onclick=()=>{draft.edit(draft.document.parts.filter(p=>p.type!=='image' || p.attachment.id!==part.attachment.id));schedule();};images.append(card);
                 imageBytes(draft.client(),part.attachment,{draft_id:draft.record.draft_id}).then(blob=>{if(rendered!==fingerprint)return;const url=URL.createObjectURL(blob);urls.push(url);img.src=url;img.hidden=false;}).catch(()=>{label.textContent+= ' — preview unavailable; reconnect to retry';});
             }
@@ -114,7 +114,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     const poll=setInterval(()=>{if(!root.isConnected){clearInterval(poll);urls.forEach(URL.revokeObjectURL);return;} discover().catch(()=>{});const draft=active;draft?.poll().then(()=>{if(active===draft && !draft.dirty && document.activeElement!==prompt)prompt.value=text(draft);}).catch(e=>{status.textContent='Not synced';status.title=e.message;});},3000);
     return {
         get active(){return active;},
-        capture(){return {opening,vessel:current().vessel,session_id:current().session_id,key:active?.key};},
+        capture(){return {opening,vessel:current().vessel,session_id:current().session_id,key:active?.key,workspace:active?.document?.target?.workspace,target:active?.document?.target ? structuredClone(active.document.target) : null};},
         async select(){clearTimeout(timer);const previous=active;if(previous?.dirty && !previous.conflict)previous.save().catch(()=>{});const mine=++opening;active=null;rendered='';await discover();if(mine!==opening)return;const now=current();const record=now.session_id && (listing.find(r=>r.document.target.session_id===now.session_id && r.document.parts.some(p=>p.type==='image' || p.text?.length)) || listing.find(r=>r.document.target.session_id===now.session_id));if(record)await open(record);else render();},
         async newChat(vessel,workspace){select(vessel,null,'New-chat draft',true);++opening;active=null;prompt.value='';const draft=await ensure({type:'new_chat',workspace});await draft.save();await discover();},
         async created(vessel,session_id,workspace,origin){if(origin && (origin.opening!==opening || origin.vessel!==current().vessel || origin.session_id!==current().session_id || origin.key!==active?.key))return true;if(active?.document?.target.type!=='new_chat' || current().vessel!==vessel)return false;if(active.document.target.workspace!==workspace)throw new Error('Created voyage workspace differs from the draft; draft retained.');select(vessel,session_id,'New voyage',true);prompt.value=text();return true;},
