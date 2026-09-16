@@ -100,8 +100,10 @@ async fn request_builds_headers_and_body_but_never_sends() {
     let store = store(&root, "request");
     let tokens = tokens();
     store.save(&tokens).await.unwrap();
-    let mut endpoints = OAuthEndpoints::default();
-    endpoints.responses = "https://offline.invalid/responses".into();
+    let endpoints = OAuthEndpoints {
+        responses: "https://offline.invalid/responses".into(),
+        ..OAuthEndpoints::default()
+    };
     let provider = ChatGptOAuth::new(store.clone(), endpoints).await.unwrap();
     let body = json!({"model":"offline-model","input":[],"stream":true});
     let request = provider

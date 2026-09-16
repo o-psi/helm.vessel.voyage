@@ -7,7 +7,7 @@ fn archive(text: &str) -> Vec<u8> {
             format: 1,
             id: "offline-guide".into(),
             version: "1.0.0".into(),
-            helm: "0.1".into(),
+            helm: env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0.into(),
             capabilities: vec!["model_context".into()],
             contents: vec![
                 Content {

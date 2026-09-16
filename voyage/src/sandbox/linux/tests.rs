@@ -47,7 +47,10 @@ fn syscall_filter_denies_escape_foreign_abi_and_terminal_injection() {
                 0x7fff0000
             );
             let mut args = [0; 6];
-            args[1] = libc::TIOCSTI as u64;
+            #[allow(clippy::unnecessary_cast)] // ioctl constant width is target-dependent.
+            {
+                args[1] = libc::TIOCSTI as u64;
+            }
             assert_eq!(
                 decision(&p, 0xc000003e, libc::SYS_ioctl as u32, args) & 0xffff0000,
                 0x50000
@@ -77,7 +80,11 @@ fn roots_are_pinned_normalized_and_reject_reserved_or_symlinked_paths() {
     std::fs::create_dir(&child).unwrap();
     let file = child.join("file");
     std::fs::write(&file, b"fixture").unwrap();
-    let pinned = roots(&[file.clone(), root.path().into()], &[child.clone()]).unwrap();
+    let pinned = roots(
+        &[file.clone(), root.path().into()],
+        std::slice::from_ref(&child),
+    )
+    .unwrap();
     assert_eq!(pinned[0].path, root.path());
     assert!(pinned.iter().any(|r| r.path == child && r.writable));
     assert!(pin(std::path::Path::new("relative")).is_err());

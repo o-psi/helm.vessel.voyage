@@ -24,7 +24,7 @@ async fn cleanup_components_retry_only_finished_failures_and_never_duplicate_liv
     component.advance().await;
     assert_eq!(count.load(Ordering::SeqCst), 2);
     assert!(!component.blocked());
-    let mut hanging = Component::new("pending", || std::future::pending());
+    let mut hanging = Component::new("pending", std::future::pending);
     hanging.advance().await;
     hanging.next = Instant::now();
     assert!(hanging.blocked());

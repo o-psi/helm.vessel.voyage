@@ -24,7 +24,7 @@ impl EventSink for Observed {
     }
 }
 enum Step {
-    Answer(Message),
+    Answer(Box<Message>),
     Events(Vec<Result<ProviderStreamEvent, ProviderError>>),
     Fail,
     Pending,
@@ -46,7 +46,7 @@ fn response(message: Message) -> ModelResponse {
     }
 }
 fn answer(text: &str) -> Step {
-    Step::Answer(Message::new(Role::Assistant, text))
+    Step::Answer(Box::new(Message::new(Role::Assistant, text)))
 }
 fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
     ToolCall {
@@ -58,7 +58,7 @@ fn call(id: &str, name: &str, arguments: serde_json::Value) -> ToolCall {
 fn calls(calls: Vec<ToolCall>) -> Step {
     let mut message = Message::new(Role::Assistant, "dispatch");
     message.tool_calls = calls;
-    Step::Answer(message)
+    Step::Answer(Box::new(message))
 }
 #[async_trait]
 impl Provider for Script {
@@ -88,7 +88,7 @@ impl Provider for Script {
             .expect("unexpected request");
         let events = match step {
             Step::Answer(message) => vec![Ok(ProviderStreamEvent::Completed(Box::new(response(
-                message,
+                *message,
             ))))],
             Step::Events(events) => events,
             Step::Fail => return Err(ProviderError::Request("scripted refusal".into())),

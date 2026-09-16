@@ -93,7 +93,7 @@ impl Fixture {
         });
         Self { address, task }
     }
-    pub fn client(&self) -> Client {
+    pub(super) fn client(&self) -> Client {
         Client::for_test(self.address)
     }
     pub async fn finish(mut self) -> Vec<Vec<u8>> {

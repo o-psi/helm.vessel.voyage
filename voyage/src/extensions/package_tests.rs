@@ -10,7 +10,7 @@ pub(super) fn package() -> executable::Archive {
             format: 2,
             id: "example".into(),
             version: "1.0.0".into(),
-            voyage: "0.1".into(),
+            voyage: env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0.into(),
             protocol: 1,
             platform: "linux-x86_64".into(),
             runtime: "static-elf".into(),
@@ -59,7 +59,7 @@ fn declarative_format_does_not_gain_executable_grants_or_size() -> Result<()> {
             format: 1,
             id: "guide".into(),
             version: "1.0.0".into(),
-            helm: "0.1".into(),
+            helm: env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0.into(),
             capabilities: vec!["model_context".into()],
             contents: vec![Content {
                 path: "guide.md".into(),

@@ -251,7 +251,7 @@ enum Action {
         workspace: PathBuf,
         config_path: Option<PathBuf>,
         #[serde(default)]
-        settings: voyage_protocol::start_settings::StartSettings,
+        settings: Box<voyage_protocol::start_settings::StartSettings>,
         #[serde(default)]
         account: Option<voyage_protocol::accounts::AccountBinding>,
         task: String,

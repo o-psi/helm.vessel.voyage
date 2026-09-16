@@ -242,17 +242,19 @@ impl Agent {
                 ))
                 .await;
             record.retry.request_bytes = request_bytes.clone();
-            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref()) {
-                if accounting
+            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref())
+                && accounting
                     .request_bytes(permit, request_bytes)
                     .await
                     .is_err()
-                {
-                    record.decision = RetryDecision::LocalFailure;
-                    record.duration_ms = millis(started.elapsed());
-                    self.record_provider_attempt(checkpoint, &record).await?;
-                    return Err(AgentError::Policy("request accounting persistence failed; recorded provider observation retained".into()));
-                }
+            {
+                record.decision = RetryDecision::LocalFailure;
+                record.duration_ms = millis(started.elapsed());
+                self.record_provider_attempt(checkpoint, &record).await?;
+                return Err(AgentError::Policy(
+                    "request accounting persistence failed; recorded provider observation retained"
+                        .into(),
+                ));
             }
             record.duration_ms = millis(started.elapsed());
             match outcome {

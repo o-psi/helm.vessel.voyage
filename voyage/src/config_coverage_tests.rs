@@ -3,7 +3,8 @@ use super::*;
 fn validation_rejects_independent_invalid_limits_without_environment_access() {
     let valid = Config::default();
     valid.validate().unwrap();
-    let mutations: Vec<Box<dyn Fn(&mut Config)>> = vec![
+    type Mutation = Box<dyn Fn(&mut Config)>;
+    let mutations: Vec<Mutation> = vec![
         Box::new(|c| c.model = "  ".into()),
         Box::new(|c| c.max_output_bytes = 1023),
         Box::new(|c| c.terminal_max_count = 0),

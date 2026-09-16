@@ -76,7 +76,7 @@ async fn remote_diagnostics_are_classified_not_disclosed_or_replayed() {
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
             let mut buffer = [0; 4096];
-            socket.read(&mut buffer).await.unwrap();
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
             let body=json!({"protocol":VESSEL_API_VERSION,"result":null,"error":error,"outcome_unknown":true}).to_string();
             let reply = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

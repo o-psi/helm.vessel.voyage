@@ -150,8 +150,7 @@ async fn ipc_rejects_bad_status_json_and_protocol() {
         let (access, task) = response(status, body).await;
         let error = request(&access, VesselCommand::Capabilities)
             .await
-            .err()
-            .expect("request must fail")
+            .expect_err("request must fail")
             .to_string();
         assert!(error.contains(expected), "{error}");
         task.await.unwrap();

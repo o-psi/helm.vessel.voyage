@@ -302,7 +302,7 @@ async fn completion_with_evidence_survives_archiving() {
         .await
         .unwrap();
     assert!(!value["archived_at"].is_null());
-    let decision = f
+    let _decision = f
         .run
         .readiness_lease(&f.todos, &f.agents, 0)
         .await
@@ -553,7 +553,7 @@ async fn interrupted_and_failed_outcomes_require_reasons_but_do_not_erase_work()
                 .readiness_lease(&f.todos, &f.agents, 10)
                 .await
                 .unwrap()
-                .seal(outcome.clone(), None)
+                .seal(outcome, None)
                 .await
                 .is_err()
         );
@@ -564,7 +564,7 @@ async fn interrupted_and_failed_outcomes_require_reasons_but_do_not_erase_work()
             .await
             .unwrap()
             .seal(
-                outcome.clone(),
+                outcome,
                 Some("provider-free fixture interruption; task remains unfinished".into()),
             )
             .await

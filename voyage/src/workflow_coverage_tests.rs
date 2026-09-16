@@ -69,7 +69,8 @@ fn parameter_types_defaults_choices_and_template_rendering() {
 #[test]
 fn document_and_template_validation_fail_closed() {
     let valid = parse(source("offline-review").as_bytes()).unwrap();
-    let mutations: Vec<Box<dyn Fn(&mut Document)>> = vec![
+    type Mutation = Box<dyn Fn(&mut Document)>;
+    let mutations: Vec<Mutation> = vec![
         Box::new(|d| d.schema_version = 2),
         Box::new(|d| d.id = "../escape".into()),
         Box::new(|d| d.version = String::new()),

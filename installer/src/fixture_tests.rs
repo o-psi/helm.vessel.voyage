@@ -1,11 +1,12 @@
 //! Thread-local boundaries: no tests can invoke the real user service manager.
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::{cell::RefCell, collections::VecDeque, fs, path::PathBuf};
+type ServiceCall = (Vec<String>, Result<String, String>);
 thread_local! {
     static ARGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static ACQUIRE: RefCell<String> = RefCell::new(String::from("raise RuntimeError('unexpected source acquisition')"));
     static ROOT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-    static CALLS: RefCell<VecDeque<(Vec<String>, Result<String, String>)>> = const { RefCell::new(VecDeque::new()) };
+    static CALLS: RefCell<VecDeque<ServiceCall>> = const { RefCell::new(VecDeque::new()) };
 }
 pub fn root() -> Option<PathBuf> {
     ROOT.with(|r| r.borrow().clone())

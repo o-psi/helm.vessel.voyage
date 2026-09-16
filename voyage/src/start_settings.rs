@@ -82,9 +82,11 @@ mod tests {
     use super::*;
     #[test]
     fn inherited_live_access_and_explicit_null_override() {
-        let mut config = Config::default();
-        config.access = Some(AccessMode::Approval);
-        config.reasoning_effort = Some("high".into());
+        let mut config = Config {
+            access: Some(AccessMode::Approval),
+            reasoning_effort: Some("high".into()),
+            ..Config::default()
+        };
         let mut inherited = portable(&config, AccessMode::Unrestricted);
         assert_eq!(inherited.access_mode, Some(StartAccessMode::Unrestricted));
         let settings: StartSettings = serde_json::from_value(

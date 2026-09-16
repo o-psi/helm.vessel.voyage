@@ -14,7 +14,7 @@ fn binaries(f: &Fixture, name: &str) -> std::path::PathBuf {
     }
     f.root.join(name)
 }
-fn setup(f: &Fixture, bin: &Path, active: bool, enabled: bool, start: bool) -> Plan {
+fn setup(_f: &Fixture, bin: &Path, active: bool, enabled: bool, start: bool) -> Plan {
     let layout = unit::Layout::discover().unwrap();
     fs::create_dir_all(&layout.units).unwrap();
     let content = unit::render(bin, &layout.state).unwrap();

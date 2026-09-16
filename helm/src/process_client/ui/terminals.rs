@@ -104,6 +104,7 @@ impl Browser {
                 .observed
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(5))
     }
+    #[cfg(test)]
     pub fn summary(&self) -> String {
         // Do not advertise an inventory the user has never opened. Errors remain
         // visible in Open terminal, and previously observed programs keep status.

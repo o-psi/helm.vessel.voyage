@@ -65,7 +65,7 @@ def archive(fixture, binary, definitions, name="conformance", version="1.0.0"):
     package.mkdir()
     shutil.copyfile(binary, package / "tool")
     capabilities = ["execute"] + (["host.file.read"] if name == "reader" else [])
-    manifest = {"format": 2, "id": name, "version": version, "voyage": "0.1", "protocol": 1,
+    manifest = {"format": 2, "id": name, "version": version, "voyage": "1.0", "protocol": 1,
         "platform": "linux-x86_64", "runtime": "static-elf", "entrypoint": "tool",
         "contents": [{"path": "tool", "sha256": hashlib.sha256((package / "tool").read_bytes()).hexdigest()}],
         "capabilities": capabilities, "definitions": json.loads(definitions.read_text())}
