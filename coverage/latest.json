@@ -1,15 +1,15 @@
 {
-  "source_commit": "db190542a7d1544913547e484cff690003dd3839",
+  "source_commit": "2d3fe8612310fedee1f26e875e278e68603e570a",
   "dirty": false,
-  "source_fingerprint_sha256": "755e9c5ab7d4cf7618162e9deaa29dff559fdcfdb11d8f98f6032d73730f7c9f",
+  "source_fingerprint_sha256": "4d22439fc1771bb0639e2105adcf17ec656a794b7c3ef1ba733019a3193e735f",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes",
-  "measured_at_utc": "2026-09-16T14:26:02.113273+00:00",
+  "measured_at_utc": "2026-09-16T15:39:16.579826+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1687,
+    "passed": 1688,
     "failed": 0,
     "ignored": 1
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9936,
-      "covered": 7167,
-      "percent": 72.13164251207729
+      "count": 9938,
+      "covered": 7169,
+      "percent": 72.13725095592675
     },
     "instantiations": {
-      "count": 22595,
-      "covered": 9062,
-      "percent": 40.10621818986501
+      "count": 22597,
+      "covered": 9064,
+      "percent": 40.11151922821614
     },
     "lines": {
-      "count": 103364,
-      "covered": 78008,
-      "percent": 75.46921558763205
+      "count": 103379,
+      "covered": 78017,
+      "percent": 75.46697104827867
     },
     "mcdc": {
       "count": 0,
@@ -42,18 +42,18 @@
       "percent": 0
     },
     "regions": {
-      "count": 169499,
-      "covered": 122171,
-      "notcovered": 47328,
-      "percent": 72.07771137292845
+      "count": 169513,
+      "covered": 122179,
+      "notcovered": 47334,
+      "percent": 72.07647791024877
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/drafts-309 -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/upgrade-readiness -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET_DIR/drafts-309-integration.profdata",
+    "-instr-profile=$TARGET_DIR/upgrade-readiness.profdata",
     "-object",
     "$TARGET_DIR/debug/deps/chatgpt_conversation-48ecc7ddc62a6aa9",
     "-object",
@@ -87,7 +87,7 @@
     "-object",
     "$TARGET_DIR/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^($HOME/voyage/\\.worktrees/drafts\\-309\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests|examples|benches)/|^($HOME/voyage/\\.worktrees/drafts\\-309\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^($HOME/voyage/\\.worktrees/drafts\\-309\\-integration|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
+    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^($HOME/voyage/\\.worktrees/upgrade\\-readiness|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests|examples|benches)/|^($HOME/voyage/\\.worktrees/upgrade\\-readiness|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^($HOME/voyage/\\.worktrees/upgrade\\-readiness|$HOME/voyage/\\.worktrees/idle\\-resources|$HOME/voyage/\\.worktrees/direct\\-wss\\-307)/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
     "-summary-only"
   ],
   "exclusions": [
@@ -99,7 +99,7 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Issue #309: Vessel durable drafts/staged pictures, TUI synchronization, authorized image history, including integrated #307 and #310. All workspace default-feature offline tests; no live-provider or native macOS/Windows claims.",
+    "Issue #311: bounded readiness retry while retained-owner catalogue warms; installed #307/#309 upgrade. All workspace default-feature offline tests; no live-provider or native macOS/Windows claims.",
     "Preserved default raw report. Corrected current Cargo artifact selection (#251), all executed test binaries included. Identical reused source verified against original measured commits; uniform exclusions, no export diagnostics or duplicate source identities. Initial incomplete shared-target report was retained; tracked Rust source mtimes were refreshed without content edits to rebuild every current package with instrumentation before the independent final measurement. Web/DOM and Python supervisor checks are separate."
   ]
 }
