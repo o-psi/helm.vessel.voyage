@@ -322,7 +322,7 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     let terminals_open = view.is_some_and(|v| v.terminals.open);
     let panel_open = view.is_some_and(|v| v.panel.is_some());
     let overlay = terminals_open || panel_open;
-    let status = presentation::notice(&app.status);
+    let status = presentation::notice(&format!("{} · {}", app.status, app.shared_drafts.notice));
     let status = if app.accounts.open()
         || status.starts_with("Your workspace is ready.")
         || status.starts_with("Overview ready.")

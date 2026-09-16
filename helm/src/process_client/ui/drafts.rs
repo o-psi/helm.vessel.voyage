@@ -11,6 +11,8 @@ const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::vessel::MAX_VESSEL_BODY;
 
 #[derive(Serialize, Deserialize)]
 struct Draft {
+    #[serde(default)]
+    shared: super::shared_drafts::Link,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<super::attachments::Image>,
@@ -129,6 +131,7 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
     let draft: Draft = serde_json::from_slice(&bytes)
         .map_err(|_| anyhow::anyhow!("Invalid saved interface draft; original file preserved"))?;
     super::attachments::validate_set(&draft.images)?;
+    view.shared = draft.shared;
     view.images = draft.images;
     view.draft = super::attachments::restore_draft(draft.text, draft.markers, &view.images)?;
     view.pending = draft.pending;
@@ -139,6 +142,7 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
 pub fn save(client: &Client, view: &View) -> Result<()> {
     let path = path(client, view)?;
     let draft = Draft {
+        shared: view.shared.clone(),
         text: view.draft.text.clone(),
         images: view.images.clone(),
         markers: (!view.images.is_empty()).then(|| view.draft.markers.clone()),

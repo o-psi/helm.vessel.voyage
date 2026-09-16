@@ -2,6 +2,44 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if let Event::Key(key) = &event {
+            if key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                && matches!(key.code, KeyCode::Char('l' | 'r'))
+            {
+                let remote = key.code == KeyCode::Char('r');
+                if self.active_draft.is_some() {
+                    self.resolve_shared_new(remote)?;
+                } else if let Some(target) = self.selected {
+                    let view = self.views.get_mut(&target).context("view unavailable")?;
+                    anyhow::ensure!(
+                        view.pending.is_none(),
+                        "Delivery pending; cannot replace recovery draft"
+                    );
+                    if remote {
+                        view.draft.take();
+                        view.images.clear();
+                        view.shared.base = None;
+                        view.shared.revision = 0;
+                        view.shared.conflict = false;
+                    } else {
+                        view.shared = shared_drafts::Link {
+                            fork: true,
+                            ..Default::default()
+                        };
+                    }
+                    drafts::save(&self.clients[target.route], view)?;
+                }
+                self.status = if remote {
+                    "Restoring Vessel draft; nothing sent"
+                } else {
+                    "Local copy retained as a separate draft; nothing sent"
+                }
+                .into();
+                return Ok(());
+            }
+        }
         if self.guard_small_layout(&event) {
             return Ok(());
         }

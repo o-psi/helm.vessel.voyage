@@ -531,6 +531,9 @@ impl App {
                                 view.history.record(&pending.draft);
                             }
                         }
+                        if !rejected && !pending.preserve_draft {
+                            view.shared.admitted_revision = view.shared.send_revision;
+                        }
                         let same_image_draft = super::attachments::pending_matches(pending, view);
                         if !rejected
                             && !pending.preserve_draft

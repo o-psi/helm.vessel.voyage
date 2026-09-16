@@ -37,6 +37,7 @@ use crate::composer;
 mod drafts;
 mod effects;
 mod new_draft;
+mod shared_drafts;
 pub(super) use new_draft::start_plain;
 mod notifications;
 mod observe;
@@ -117,6 +118,7 @@ pub(super) struct App {
     inference: inference::Controls,
     accounts: accounts::Controls,
     sidebar: sidebar::Sidebar,
+    shared_drafts: shared_drafts::State,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
 
@@ -254,6 +256,7 @@ pub async fn run_with_notice(
         inference: Default::default(),
         accounts: Default::default(),
         sidebar: Default::default(),
+        shared_drafts: Default::default(),
     };
     app.start_observers();
     app.recover_new_drafts()?;
@@ -280,6 +283,7 @@ pub async fn run_with_notice(
                 let next = app.selected.filter(|_| app.active_draft.is_none());
                 if *target == next { false } else { *target = next; true }
             });
+            app.poll_shared_drafts();
             app.poll_operator();
             app.poll_inspection();
             app.poll_workflows();
@@ -328,6 +332,7 @@ pub async fn run_with_notice(
         Ok(())
     }.await;
     app.close_inspection();
+    app.shared_drafts.finish().await;
     app.cancel_model_catalog();
     app.cancel_model_preload();
     app.cancel_chooser_accounts();

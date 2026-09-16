@@ -66,6 +66,7 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
         inference: Default::default(),
         accounts: Default::default(),
         sidebar: Default::default(),
+        shared_drafts: Default::default(),
     }
 }
 fn settings() -> Settings {

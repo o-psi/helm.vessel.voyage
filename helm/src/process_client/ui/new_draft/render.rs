@@ -114,9 +114,12 @@ impl App {
             footer.height.saturating_sub(1),
         );
         frame.render_widget(
-            Paragraph::new(safe(&self.status))
-                .style(crate::theme::Role::Focus.style())
-                .wrap(ratatui::widgets::Wrap { trim: false }),
+            Paragraph::new(safe(&format!(
+                "{} · {}",
+                self.status, self.shared_drafts.notice
+            )))
+            .style(crate::theme::Role::Focus.style())
+            .wrap(ratatui::widgets::Wrap { trim: false }),
             status,
         );
         if footer.height > 0 {

@@ -228,6 +228,12 @@ impl App {
             self.views.get_mut(&target).expect("selected view").panel = None;
             return Ok(());
         }
+        if !preserve_draft
+            && !command_text.starts_with('/')
+            && self.views.get(&target).is_some_and(|v| v.pending.is_none())
+        {
+            self.shared_send_guard(target)?;
+        }
         let view = self.views.get_mut(&target).expect("selected view");
         if command_text == "/receipt" {
             let pending = view
@@ -370,6 +376,7 @@ impl App {
             "Vessel unavailable · Ctrl+G to manage / retry; draft retained"
         );
         let command = super::attachments::prepare(command, &view.draft, &view.images)?;
+        view.shared.send_revision = Some(view.shared.revision);
         view.pending = Some(Pending {
             account_host: None,
             command_id,

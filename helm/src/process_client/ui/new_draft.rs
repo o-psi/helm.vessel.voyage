@@ -16,6 +16,8 @@ use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Saved {
+    #[serde(default)]
+    pub(super) shared: super::shared_drafts::Link,
     pub(super) id: Uuid,
     route: String,
     pub(super) workspace: PathBuf,
@@ -374,6 +376,7 @@ impl App {
             return Ok(());
         }
         let mut saved = Saved {
+            shared: Default::default(),
             id: Uuid::new_v4(),
             account_host: None,
             account_settings: None,
@@ -431,6 +434,29 @@ impl App {
     }
 
     fn drive_draft(&mut self, id: Uuid, observe_only: bool) -> Result<()> {
+        if !observe_only {
+            let draft = self.new_drafts.get(&id).context("draft unavailable")?;
+            anyhow::ensure!(
+                !draft.saved.shared.conflict,
+                "Draft conflict: Ctrl+Alt+L keeps local; Ctrl+Alt+R restores Vessel"
+            );
+            if draft.saved.start.is_none() && draft.saved.shared.id.is_some() {
+                let doc = super::shared_drafts::document(
+                    serde_json::json!({"type":"new_chat","workspace":draft.saved.workspace}),
+                    &draft.composer,
+                    &draft.saved.images,
+                )?;
+                anyhow::ensure!(
+                    draft
+                        .saved
+                        .shared
+                        .base
+                        .as_ref()
+                        .is_some_and(|base| super::shared_drafts::same(base, &doc)),
+                    "Draft autosave pending; wait before sending"
+                );
+            }
+        }
         self.ensure_paste_finished(super::paste::Destination::Draft(id))?;
         let draft = self.new_drafts.get(&id).context("draft unavailable")?;
         if !observe_only
@@ -461,6 +487,7 @@ impl App {
             "This draft belongs to an inactive connection. Reconnect its original Vessel access to recover; no command was redirected"
         );
         let client = self.clients[draft.route].clone();
+        draft.saved.shared.send_revision = Some(draft.saved.shared.revision);
         if draft.saved.start.is_none() {
             if observe_only {
                 return Ok(());
@@ -542,6 +569,7 @@ impl App {
                 // owner. A failed finished-record save must not make this view
                 // editable and then overwrite it on the next recovery attempt.
                 let mut handoff = View::new(process.clone());
+                handoff.shared = draft.saved.shared.clone();
                 if let Some(view) = self.views.get(&target) {
                     handoff.draft = view.draft.clone();
                     handoff.images = view.images.clone();
@@ -576,6 +604,7 @@ impl App {
                     return;
                 }
                 let view = self.views.entry(target).or_insert_with(|| View::new(process.clone()));
+                view.shared = draft.saved.shared.clone();
                 view.process = process;
                 view.draft = handoff.draft;
                 view.images = handoff.images;
@@ -605,6 +634,7 @@ pub(in crate::process_client) async fn start_plain(
     );
     let workspace = config.resolve_workspace(None)?;
     let mut saved = Saved {
+        shared: Default::default(),
         id: Uuid::new_v4(),
         account_host: None,
         account_settings: None,
@@ -752,3 +782,131 @@ impl App {
 
 #[cfg(test)]
 mod coverage_tests;
+
+impl App {
+    pub(super) fn shared_new_entries(&self, route: Route) -> Vec<super::shared_drafts::Entry> {
+        use super::shared_drafts::{Destination, Entry, document};
+        self.new_drafts
+            .iter()
+            .filter(|(_, draft)| draft.route == route)
+            .filter_map(|(id, draft)| {
+                let doc = document(
+                    serde_json::json!({"type":"new_chat","workspace":draft.saved.workspace}),
+                    &draft.composer,
+                    &draft.saved.images,
+                )
+                .ok()?;
+                Some(Entry {
+                    local: Destination::New(*id),
+                    link: draft.saved.shared.clone(),
+                    clearing: false,
+                    authored: doc.clone(),
+                    document: doc,
+                    composer: draft.composer.clone(),
+                    images: draft.saved.images.clone(),
+                    frozen: draft.busy || draft.saved.start.is_some(),
+                })
+            })
+            .collect()
+    }
+    pub(super) fn apply_shared_new(
+        &mut self,
+        id: Uuid,
+        route: Route,
+        mut entry: super::shared_drafts::Entry,
+    ) -> Result<()> {
+        use super::shared_drafts::{document, same};
+        if let Some(draft) = self.new_drafts.get_mut(&id) {
+            if draft.busy
+                || draft.saved.start.is_some()
+                || (draft.saved.shared.fork && draft.saved.shared.id != entry.link.id)
+            {
+                return Ok(());
+            }
+            let current = document(
+                entry.authored["target"].clone(),
+                &draft.composer,
+                &draft.saved.images,
+            )?;
+            let clean = same(&current, &entry.authored);
+            if !clean && !same(&entry.authored, &entry.document) {
+                entry.link.conflict = true;
+            }
+            if clean && !entry.link.conflict {
+                draft.composer = entry.composer;
+                draft.saved.images = entry.images;
+            }
+            draft.saved.shared = entry.link;
+            draft.saved.text = draft.composer.text.clone();
+            draft.saved.markers =
+                (!draft.saved.images.is_empty()).then(|| draft.composer.markers.clone());
+            storage::save(&draft.saved)?;
+        } else {
+            // Fresh private execution identities, never a foreign client's pending launch.
+            let saved = Saved {
+                shared: entry.link,
+                id,
+                route: storage::route(&self.clients[route])?,
+                workspace: serde_json::from_value(entry.document["target"]["workspace"].clone())?,
+                config: None,
+                account_host: None,
+                account_settings: None,
+                explicit: Default::default(),
+                selection: None,
+                confirmation: None,
+                text: entry.composer.text.clone(),
+                markers: (!entry.images.is_empty()).then(|| entry.composer.markers.clone()),
+                images: entry.images,
+                start: None,
+                start_attempted: false,
+                process: None,
+                turn: Uuid::new_v4(),
+                submit: None,
+                attempted: false,
+                finished: false,
+                receipt: None,
+            };
+            let mut draft = storage::create(saved, route)?;
+            draft.composer = entry.composer;
+            self.new_drafts.insert(id, draft);
+        }
+        Ok(())
+    }
+}
+
+impl App {
+    pub(super) fn prepare_shared_new(&mut self) {
+        for draft in self.new_drafts.values_mut() {
+            if draft.saved.shared.id.is_none()
+                && (!draft.saved.text.is_empty() || !draft.saved.images.is_empty())
+            {
+                draft.saved.shared.id = Some(Uuid::new_v4());
+                let _ = storage::save(&draft.saved);
+            }
+        }
+    }
+    pub(super) fn resolve_shared_new(&mut self, remote: bool) -> Result<()> {
+        let id = self.active_draft.context("no draft selected")?;
+        let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+        anyhow::ensure!(
+            !draft.busy && draft.saved.start.is_none(),
+            "Send pending; cannot replace recovery draft"
+        );
+        if remote {
+            draft.composer.take();
+            draft.saved.images.clear();
+            draft.saved.shared.base = None;
+            draft.saved.shared.revision = 0;
+            draft.saved.shared.conflict = false;
+        } else {
+            draft.saved.shared = super::shared_drafts::Link {
+                fork: true,
+                ..Default::default()
+            };
+        }
+        draft.saved.text = draft.composer.text.clone();
+        draft.saved.markers =
+            (!draft.saved.images.is_empty()).then(|| draft.composer.markers.clone());
+        storage::save(&draft.saved)
+    }
+}
