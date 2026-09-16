@@ -36,7 +36,12 @@ fn key(root: &Path) -> Result<(VesselIdentity, Ed25519KeyPair)> {
         vessel_id: saved.vessel_id,
         public_key: STANDARD.encode(key.public_key().as_ref()),
     };
-    store::save(&directory.join("public.json"), &public)?;
+    // Existing identity reads must not rewrite public metadata: concurrent
+    // replacements race private-file link-count validation in authorization.
+    let public_path = directory.join("public.json");
+    if !public_path.exists() {
+        store::save(&public_path, &public)?;
+    }
     Ok((public, key))
 }
 pub(super) fn public(root: &Path) -> Result<VesselIdentity> {
@@ -86,4 +91,32 @@ pub(super) fn verify<T: Serialize>(
 pub(super) fn digest<T: Serialize>(value: &T) -> Result<String> {
     use sha2::{Digest, Sha256};
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+    use std::os::unix::fs::MetadataExt;
+
+    #[test]
+    fn concurrent_identity_reads_do_not_replace_public_metadata() {
+        let root = std::env::temp_dir().join(format!("identity-read-{}", Uuid::new_v4()));
+        registry::private_directory(&root).unwrap();
+        let expected = public(&root).unwrap();
+        let path = root.join("identity/public.json");
+        let inode = std::fs::metadata(&path).unwrap().ino();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let root = &root;
+                let expected = &expected;
+                scope.spawn(move || {
+                    for _ in 0..32 {
+                        assert_eq!(&public(root).unwrap(), expected);
+                    }
+                });
+            }
+        });
+        assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

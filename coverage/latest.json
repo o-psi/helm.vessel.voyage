@@ -1,15 +1,15 @@
 {
-  "source_commit": "14b3d896a8646303d07b53a5a7614c09b7e2aa2a",
-  "source_fingerprint_sha256": "364fbcd4534b6f4eababe5e99ec2782ae914f28d8e382213c50725c3de35321e",
+  "source_commit": "6fab65a0e988bf759355f64cd9b92d4a4b18755e",
+  "source_fingerprint_sha256": "152d6320dba0608392456d9098bc424d5ce773ccdbf5e56e58f36f1c91b1c951",
   "dirty": true,
   "source_fingerprint_method": "SHA-256 over sorted tracked and untracked implementation Rust/Cargo paths: path + NUL + file bytes; missing files marked MISSING; unrelated worktrees excluded",
-  "measured_at_utc": "2026-09-16T03:45:17.398374+00:00",
+  "measured_at_utc": "2026-09-16T04:14:50.310246+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1640,
+    "passed": 1641,
     "failed": 0,
     "ignored": 1
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9766,
-      "covered": 6987,
-      "percent": 71.54413270530412
+      "count": 9769,
+      "covered": 6990,
+      "percent": 71.55287132766915
     },
     "instantiations": {
-      "count": 22278,
-      "covered": 8865,
-      "percent": 39.792620522488555
+      "count": 22281,
+      "covered": 8868,
+      "percent": 39.80072707688165
     },
     "lines": {
-      "count": 101162,
-      "covered": 75900,
-      "percent": 75.02817263399301
+      "count": 101185,
+      "covered": 75923,
+      "percent": 75.03384889064584
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 165716,
-      "covered": 118665,
+      "count": 165762,
+      "covered": 118711,
       "notcovered": 47051,
-      "percent": 71.60744888845979
+      "percent": 71.61532800038609
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/duplex-control -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/identity-read -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
