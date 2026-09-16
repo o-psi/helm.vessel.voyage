@@ -289,3 +289,7 @@ Creation needs `create` and `account_use` rights and explicit account UUIDs in t
 Creation stores only its immutable request metadata under tenant/connection/Vessel identity before dispatch. An unconfirmed reply leaves a Check creation action which sends `resolve_start_account` for that exact request; it never repeats start or submits a prompt. Confirmed created/not-admitted outcomes settle the record. A pending creation blocks another creation on that connection. Connection replacement does not erase recovery records.
 
 Full native-client parity remains open: account enrollment/usage, attachments, private terminals, browser sharing, lifecycle and other native administration are not implemented by these controls.
+
+## Composer keyboard and access controls
+
+The Flux composer sends (or steers an active run) on Enter; Shift+Enter inserts a newline. IME composition Enter does not send. The access selector shows the selected voyage’s observed read-only, approval or unrestricted mode. Changing it sends `set_access` through the same revision-bound command journal as other actions; only a refreshed owner snapshot confirms the mode. Stale, disconnected or unconfirmed-command state disables changes. Executing-host policy and connection grants remain authoritative; unrestricted is not an OS sandbox bypass.

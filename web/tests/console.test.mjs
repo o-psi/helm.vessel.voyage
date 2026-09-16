@@ -23,7 +23,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
-    let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[];
+    let revision=1, running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval';
     globalThis.fetch=async()=>({ok:true,json:async()=>({ticket:'synthetic.ticket'})});
     class Socket extends dom.window.EventTarget {
         readyState=0;
@@ -34,7 +34,8 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                if(command.op==='snapshot')value={session_id:id,revision,access,name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
                 else if(command.op==='receipt'){value={command_id:command.command_id,status:uncertain?'accepted':'unknown'};}
                 else if(['submit','steer','respond','cancel'].includes(command.op)){
@@ -50,11 +51,15 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     }
     globalThis.WebSocket=Socket;
     try {
+        assert.equal($('#cancel').hidden,true,'cancel is hidden before selection');
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();await until(()=>!$('#send').disabled);
         assert.match($('#messages').textContent,/Hello Vessel/);
+        assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
+        assert.equal($('#prompt').getAttribute('submit'),'enter');
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.some(c=>c.op==='submit')&&!$('#send').disabled);
         assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').textContent,'Steer run');
+        assert.equal($('#cancel').hidden,false,'cancel is visible for active run');
         decisionKind='approval';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();
         await until(()=>requests.some(c=>c.op==='respond'&&c.response==='approved')&&!$('#send').disabled);
@@ -64,6 +69,13 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         await until(()=>requests.some(c=>c.response?.status==='selected')&&!$('#send').disabled);
         assert.deepEqual(requests.find(c=>c.response?.status==='selected').response,{status:'selected',index:1,answer:'Second'});
         $('#cancel').click();await until(()=>requests.some(c=>c.op==='cancel')&&!$('#send').disabled);assert.equal($('#send').textContent,'Send');
+        assert.equal($('#cancel').hidden,true,'cancel hides after run ends');
+        assert.equal($('#access-mode').value,'approval');
+        $('#access-mode').value='read-only';$('#access-mode').dispatchEvent(new Event('change'));
+        await until(()=>requests.some(c=>c.op==='set_access')&&!$('#send').disabled);
+        assert.equal($('#access-mode').value,'read-only');
+        const accessCommand=requests.find(c=>c.op==='set_access');
+        assert.equal(accessCommand.incarnation,incarnation);assert.equal(accessCommand.access,'read-only');
         dropNext=true;$('#prompt').value='Uncertain dispatch';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>uncertain);assert.ok($('#send').disabled);assert.match($('#pending').textContent,/outcome not confirmed/);
         await until(()=>requests.some(c=>c.op==='receipt')&&!$('#send').disabled);

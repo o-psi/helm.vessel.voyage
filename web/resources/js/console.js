@@ -75,8 +75,11 @@ export function mount(root) {
         try {
             const enabled = actionable();
             $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
+            $('cancel').hidden = !running();
             $('send').textContent = running() ? 'Steer run' : 'Send';
             $('change-inference').disabled = !enabled || running();
+            $('access-mode').disabled = !enabled;
+            $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy;
             $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
@@ -286,6 +289,15 @@ export function mount(root) {
         finally { busy = false; stale = true; controls(); refresh(); }
     }
     $('composer').addEventListener('submit', event => { event.preventDefault(); act(running() ? 'steer' : 'submit'); });
+    // Flux handles Enter; suppress its handler while an IME is committing text.
+    $('prompt').addEventListener('keydown', event => {
+        if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) event.stopImmediatePropagation();
+    }, {capture:true});
+    $('access-mode').addEventListener('change', () => {
+        const access = $('access-mode').value;
+        if (['read-only','approval','unrestricted'].includes(access) && access !== snapshot?.access) act('set_access',null,null,{access});
+        controls(); // Only a refreshed owner snapshot confirms the new mode.
+    });
     $('cancel').addEventListener('click',() => act('cancel'));
     $('earlier').addEventListener('click',earlier); $('more-output').addEventListener('click',moreOutput);
     $('voyage-search').addEventListener('input',renderVoyages);
