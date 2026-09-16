@@ -10,6 +10,7 @@ const account = v => exact(v, ['account_id','connection_id','identity_generation
 function accountCommand(c) {
   if (c.op === 'accounts') return exact(c,['op','workspace','transport']) && text(c.workspace) && c.transport === null;
   if (c.op === 'account_defaults') return exact(c,['op','workspace']) && text(c.workspace);
+  if (c.op === 'account_usage') return exact(c,['op','workspace','account','refresh']) && text(c.workspace) && account(c.account) && typeof c.refresh === 'boolean';
   if (c.op === 'account_models') return exact(c,['op','workspace','account']) && text(c.workspace) && account(c.account);
   const inference = ['account','model','reasoning_effort','service_tier'];
   if (['start_account','resolve_start_account'].includes(c.op)) return exact(c,['op','workspace','command_id','session_id',...inference]) && text(c.workspace) && uuid(c.command_id) && uuid(c.session_id) && account(c.account) && text(c.model) && nullableText(c.reasoning_effort) && nullableText(c.service_tier);

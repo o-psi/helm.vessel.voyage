@@ -57,7 +57,16 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages').textContent,/Hello Vessel/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
-        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,3);
+        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,5);
+        $('#change-account').click();
+        assert.equal($('#edit-form').parentElement.id,'account-popover');
+        assert.equal($('#edit-account-section').hidden,false);
+        assert.equal($('#edit-model-section').hidden,true);
+        $('#change-inference').click();
+        assert.equal($('#edit-form').parentElement.id,'edit-popover');
+        assert.equal($('#edit-account-section').hidden,true);
+        assert.equal($('#edit-model-section').hidden,false);
+        assert.equal($('#edit-service-section').hidden,true);
         assert.equal($('#edit-form').tagName,'DIV','no nested form inside message composer');
         assert.equal($('#change-inference').closest('[data-flux-modal-trigger]'),null);
         $('#change-reasoning').click();

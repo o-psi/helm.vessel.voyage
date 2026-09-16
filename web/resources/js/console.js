@@ -80,6 +80,8 @@ export function mount(root) {
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
             $('change-inference').disabled = !enabled || running();
+            $('change-account').disabled = !enabled || running();
+            $('change-service').disabled = !enabled || running();
             $('change-reasoning').disabled = !enabled || running() || !snapshot?.inference?.account;
             $('change-access').disabled = !enabled;
             $('composer-access').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[snapshot?.access] || 'Access unknown';

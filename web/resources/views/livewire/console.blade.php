@@ -44,20 +44,28 @@
                     <x-slot name="actionsLeading">
                         <div class="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
                             <flux:dropdown position="top" align="start">
-                                <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change account and model" disabled><span id="composer-model" class="max-w-48 truncate">Account &amp; model</span></flux:button>
+                                <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change model" disabled><span id="composer-model" class="max-w-48 truncate">Account &amp; model</span></flux:button>
                                 <flux:popover id="edit-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto">
                                     <div id="edit-form" class="space-y-4">
-                                        <flux:heading id="edit-title">Account &amp; model</flux:heading>
+                                        <flux:heading id="edit-title">Model</flux:heading>
                                         <flux:text id="edit-description" />
                                         <div hidden><flux:select id="edit-vessel" /><flux:select id="edit-workspace" /></div>
-                                        <flux:select id="edit-account" variant="listbox" searchable label="Provider account" />
-                                        <flux:select id="edit-model" variant="listbox" searchable label="Model" />
-                                        <div class="space-y-3"><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
-                                        <flux:radio.group id="edit-service" label="Service tier" variant="pills" />
+                                        <div id="edit-account-section" hidden><flux:select id="edit-account" variant="listbox" searchable label="Provider account" /><div class="mt-3 space-y-2"><flux:heading size="sm">Account usage</flux:heading><flux:text id="account-usage" class="whitespace-pre-line" role="status">Not loaded</flux:text><flux:button id="account-usage-refresh" type="button" size="sm" variant="ghost" icon="arrow-path">Refresh usage</flux:button></div></div>
+                                        <div id="edit-model-section"><flux:select id="edit-model" variant="listbox" searchable label="Model" /></div>
+                                        <div hidden><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
+                                        <div id="edit-service-section" hidden><flux:radio.group id="edit-service" label="Service tier" variant="pills" /></div>
                                         <flux:text id="edit-status" role="status" />
                                         <div class="flex flex-wrap gap-2"><flux:button id="edit-retry" type="button" size="sm">Reload</flux:button><flux:button id="edit-close" type="button" size="sm" variant="ghost">Cancel</flux:button><flux:button id="edit-save" type="button" size="sm" variant="primary" disabled>Apply</flux:button></div>
                                     </div>
                                 </flux:popover>
+                            </flux:dropdown>
+                            <flux:dropdown position="top" align="start">
+                                <flux:button id="change-account" type="button" size="sm" variant="ghost" icon="user-circle" icon:trailing="chevron-down" disabled>Account</flux:button>
+                                <flux:popover id="account-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" />
+                            </flux:dropdown>
+                            <flux:dropdown position="top" align="start">
+                                <flux:button id="change-service" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled>Service</flux:button>
+                                <flux:popover id="service-popover" class="w-72 max-w-[calc(100vw-2rem)]" />
                             </flux:dropdown>
                             <flux:dropdown position="top" align="start">
                                 <flux:button id="change-reasoning" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled><span id="composer-reasoning">Default</span></flux:button>

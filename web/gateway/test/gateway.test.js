@@ -83,6 +83,9 @@ test('strict public operation shapes and forbidden execution surfaces', () => {
   const settings = {account,model:'host-model',reasoning_effort:null,service_tier:null};
   const start = {op:'start_account',command_id:randomUUID(),session_id,workspace:'/approved/project',...settings};
   for (const c of [start,{...start,op:'resolve_start_account'}, {op:'accounts',workspace:start.workspace,transport:null}, {op:'account_defaults',workspace:start.workspace}, {op:'account_models',workspace:start.workspace,account}, {op:'set_account_inference',session_id,incarnation,...mutation,...settings}]) assert.ok(validCommand(command(c)),c.op);
+  assert.ok(validCommand(command({op:'account_usage',workspace:start.workspace,account,refresh:false})));
+  assert.equal(validCommand(command({op:'account_usage',workspace:start.workspace,account,refresh:'true'})),false);
+  assert.equal(validCommand(command({op:'account_usage',workspace:start.workspace,account,refresh:true,token:'secret'})),false);
   for (const extra of [{config_path:'/owner/private.toml'},{token:'secret'},{account:{...account,credential:'secret'}},{account:{...account,identity_generation:-1}}]) assert.equal(validCommand(command({...start,...extra})),false);
   for (const op of ['browser','execute_tool','terminal','configure','grant','start','resolve','notifications','__proto__']) assert.equal(validCommand(command({op,session_id})), false);
   assert.equal(validCommand(command({op:'capabilities',token:'leak'})),false);
@@ -175,7 +178,8 @@ test('capabilities projection strips unallowlisted features and metadata', async
   }});
   const {ws,next} = await f.connect(); await next(); ws.send(JSON.stringify(command({op:'capabilities'})));
   const {response} = await next(); assert.deepEqual(response.result.features,['duplex_socket','scoped_catalogue']);
-  for (const key of ['rights','token','future']) assert.equal(Object.hasOwn(response.result,key),false);
+  assert.deepEqual(response.result.rights,['execute']);
+  for (const key of ['token','future']) assert.equal(Object.hasOwn(response.result,key),false);
 });
 
 test('renewal refuses tenant, connection and credential changes', async t => {
@@ -193,7 +197,7 @@ test('local secret endpoints pair exact protocol and probe only filtered capabil
   }});
   const url = f.url.replace('ws:','http:').replace('/socket','/probe');
   const response = await fetch(url,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({connection})});
-  assert.equal(response.status,200);assert.deepEqual(await response.json(),{protocol:1,vessel_id:vesselId,features:['duplex_socket']});
+  assert.equal(response.status,200);assert.deepEqual(await response.json(),{protocol:1,vessel_id:vesselId,features:['duplex_socket'],rights:[],workspaces:[]});
   for (const [path,headers,body,status] of [['/probe',{}, {connection},403],['/probe',{origin}, {connection},403],['/probe?x=1',{}, {},404],['/probe',{}, {connection,command:'catalogue'},502]]) {
     const res = await fetch(url.replace('/probe',path),{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json',...headers,...(status===403&&!headers.origin?{authorization:'Bearer wrong'}:{})},body:JSON.stringify(body)});
     assert.equal(res.status,status);await res.text();

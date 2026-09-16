@@ -12,6 +12,7 @@ async function read(client, op, fields = {}) {
 export function voyageSettings(root, fleet, {current, select, apply}) {
     const raw = id => root.querySelector(`#${id}`);
     const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
+    let editSection = 'model', usageVersion = 0;
     let mode = 'create', target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
     const status = message => { $('settings-status').textContent = clean(message); };
@@ -94,7 +95,9 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
                 }
             }
             const preferred = mode === 'edit' ? target.inference?.account : defaults.account;
+            if (mode === 'edit' && editSection !== 'account' && !choices.some(c => c.ready && same(c.binding,preferred))) { reset(); return status('Current account unavailable. Choose an account from its own popover.'); }
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
+            if (mode === 'edit' && editSection === 'account') loadUsage(false);
             if (!choices.some(c => c.ready)) return status('No ready provider account is authorized here. Sign in or grant account access on this Vessel, then reload choices.');
             await loadModels();
         } catch (error) { if (still(mine,c,client)) status(error.message); }
@@ -133,12 +136,13 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
     function open(edit) {
         if (saving) return;
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
+        ++usageVersion;
         mode = edit ? 'edit' : 'create'; target = current();
         $('settings-retry').disabled = false;
         $('settings-close').disabled = false;
-        $('settings-title').textContent = edit ? 'Account & model' : 'New voyage';
+        $('settings-title').textContent = edit ? ({model:'Model',account:'Account',service:'Service tier'})[editSection] : 'New voyage';
         $('settings-save').textContent = edit ? 'Apply settings' : 'Create voyage';
-        $('settings-description').textContent = edit ? 'Choose the provider account and model for the next run.' : 'Choose where your voyage runs and which provider account it uses.';
+        $('settings-description').textContent = edit ? (editSection === 'account' ? 'Changing account selects its default model. Review the composer after applying.' : 'Choose settings for the next run.') : 'Choose where your voyage runs and which provider account it uses.';
         options('settings-vessel',[...fleet.connections.values()].map(c => ({value:c.id,label:`${c.name}${c.client ? '' : ' · offline'}`})),target.vessel);
         $('settings-vessel').disabled = edit;
         loadVessel();
@@ -212,17 +216,49 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
     raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
-    $('change-inference').addEventListener('click',() => { $('settings-retry').disabled = false; open(true); });
+    function openSection(section, host) {
+        if (saving) return;
+        editSection = section;
+        raw(host).append(raw('edit-form'));
+        for (const name of ['model','account','service']) raw(`edit-${name}-section`).hidden = name !== section;
+        open(true);
+    }
+    raw('change-inference').addEventListener('click',() => openSection('model','edit-popover'));
+    raw('change-account').addEventListener('click',() => openSection('account','account-popover'));
+    raw('change-service').addEventListener('click',() => openSection('service','service-popover'));
+    async function loadUsage(refresh) {
+        const mine = ++usageVersion, c = connection, client = c?.client, selected = choice(), workspace = $('settings-workspace').value;
+        const output = raw('account-usage'), button = raw('account-usage-refresh');
+        output.textContent = refresh ? 'Refreshing usage…' : 'Reading cached usage…'; button.disabled = true;
+        if (!client || !selected?.ready) { output.textContent = 'Usage unavailable for this account.'; return; }
+        try {
+            const observation = await read(client,'account_usage',{workspace,account:selected.binding,refresh});
+            if (mine !== usageVersion || mode !== 'edit' || editSection !== 'account' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
+            if (!same(observation.account,selected.binding)) throw new Error('Account usage identity changed. Reopen the account picker.');
+            const snapshot = observation.snapshot;
+            const lines = [`Status: ${String(observation.refresh_status || 'unavailable').replaceAll('_',' ')}`];
+            if (snapshot) {
+                lines.push(`Observed: ${new Date(snapshot.fetched_at * 1000).toLocaleString()}`);
+                for (const window of snapshot.windows || []) {
+                    if (!Number.isFinite(window.used_percent)) continue;
+                    lines.push(`${window.kind}: ${window.used_percent}% used${window.resets_at ? ` · resets ${new Date(window.resets_at * 1000).toLocaleString()}` : ''}`);
+                }
+            } else lines.push('No usage observation available. This is not zero usage.');
+            output.textContent = lines.map(clean).join('\n');
+        } catch (error) { if (mine === usageVersion) output.textContent = clean(error.message); }
+        finally { if (mine === usageVersion) button.disabled = false; }
+    }
+    raw('account-usage-refresh').addEventListener('click',() => loadUsage(true));
     for (const prefix of ['settings','edit']) {
         raw(`${prefix}-vessel`).addEventListener('change',loadVessel);
         raw(`${prefix}-workspace`).addEventListener('change',loadAccounts);
-        raw(`${prefix}-account`).addEventListener('change',loadModels);
+        raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (mode === 'edit' && editSection === 'account') loadUsage(false); });
         raw(`${prefix}-model`).addEventListener('change',updateModel);
         raw(`${prefix}-retry`).addEventListener('click',loadVessel);
     }
     raw('voyage-settings-form').addEventListener('submit',save);
     raw('edit-save').addEventListener('click',save);
-    raw('edit-close').addEventListener('click', () => raw('edit-popover').hidePopover?.());
+    raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
     window.addEventListener('storage',renderPending);
     return {renderPending};
 }
