@@ -15,8 +15,9 @@ owns tool admission, task execution and canonical results. This does not expose 
 general tool executor in Helm. See [local browser](local-browser.md).
 
 **Helm Web is a separate, browser-native client.** Its Laravel/Livewire shell
-and JavaScript conversation pane connect through a narrowly scoped authenticated
-WebSocket gateway. The web host is trusted with explicitly owner-authorized
+and JavaScript conversation pane connect directly to public Vessels over authenticated
+WSS. Laravel owns login, tenant connections and temporary credential bootstrap,
+not the ongoing conversation data path. The web host is trusted with explicitly owner-authorized
 full-access Vessel connections, not provider credentials. Existing scoped
 connections remain scoped. It does not own voyages or execute agents.
 This opt-in client is distinct from the `helm` TUI executable; see

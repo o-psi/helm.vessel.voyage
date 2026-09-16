@@ -2,6 +2,9 @@
     <x-site-header />
 
     <main id="main" tabindex="-1" class="mx-auto max-w-7xl px-6 lg:px-8">
+        @if(session('status'))
+            <flux:callout class="mt-6" role="status">{{ session('status') }}</flux:callout>
+        @endif
         <section class="grid gap-12 py-12 sm:py-20 lg:grid-cols-2 lg:items-center">
             <div class="space-y-6">
                 <flux:text class="font-medium text-emerald-700! dark:text-emerald-400!">Helm on the web and in your terminal</flux:text>
