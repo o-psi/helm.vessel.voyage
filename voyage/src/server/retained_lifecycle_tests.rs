@@ -742,3 +742,112 @@ async fn durable_receipt_short_circuits_teardown_even_when_live_terminal_exists(
     assert!(fixture.manager.has_owned_work());
     fixture.finish().await;
 }
+
+#[tokio::test]
+async fn automatic_suspension_preserves_background_terminal_until_explicit_close() {
+    let mut fixture = RetainedFixture::new(crate::config::AccessMode::Unrestricted).await;
+    let id = fixture.start().await;
+    // Terminalize the synthetic turn without dispatching inference; the PTY is
+    // separately session-owned and must survive both model and human detachment.
+    fixture._run_owner.fail_before_execution().await.unwrap();
+    assert!(fixture.state.controls.close().await);
+    fixture
+        .terminal(id, TerminalOperation::Attach)
+        .await
+        .unwrap();
+    super::suspension::suspend(&fixture.state).await.unwrap();
+    assert!(!fixture.state.shutdown.is_cancelled());
+    assert!(
+        !fixture
+            .state
+            .suspend_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert!(fixture.manager.has_owned_work());
+    assert!(
+        !fixture
+            .state
+            .owner
+            .session_resources()
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    fixture
+        .terminal(id, TerminalOperation::Snapshot)
+        .await
+        .unwrap();
+    use crate::tools::Tool;
+    fixture
+        .manager
+        .execute(json!({"action":"terminate", "id":id}), &fixture.context)
+        .await
+        .unwrap();
+    super::suspension::suspend(&fixture.state).await.unwrap();
+    assert!(fixture.state.shutdown.is_cancelled());
+    assert!(
+        fixture
+            .state
+            .suspend_requested
+            .load(std::sync::atomic::Ordering::Acquire)
+    );
+    assert!(!fixture.manager.has_owned_work());
+    assert_eq!(
+        fixture.state.owner.session_resources().await.unwrap(),
+        json!([])
+    );
+    assert!(fixture.state.controls.retained_tool().await.is_none());
+}
+
+#[tokio::test]
+async fn automatic_suspension_retires_empty_terminal_manager() {
+    let mut fixture = RetainedFixture::new(crate::config::AccessMode::Unrestricted).await;
+    fixture._run_owner.fail_before_execution().await.unwrap();
+    assert!(fixture.state.controls.close().await);
+    super::suspension::suspend(&fixture.state).await.unwrap();
+    assert!(fixture.state.shutdown.is_cancelled());
+    assert!(!fixture.manager.has_owned_work());
+    assert_eq!(
+        fixture.state.owner.session_resources().await.unwrap(),
+        json!([])
+    );
+    assert!(fixture.state.controls.retained_tool().await.is_none());
+}
+
+#[tokio::test]
+async fn automatic_suspension_preserves_unresolved_other_session_resources() {
+    let mut fixture = RetainedFixture::new(crate::config::AccessMode::Unrestricted).await;
+    let resource = Uuid::new_v4();
+    fixture
+        .state
+        .owner
+        .session_resource_adopt(resource, fixture.run, "background-fixture".into())
+        .await
+        .unwrap();
+    fixture._run_owner.fail_before_execution().await.unwrap();
+    assert!(fixture.state.controls.close().await);
+    assert!(super::suspension::suspend(&fixture.state).await.is_err());
+    assert!(!fixture.state.shutdown.is_cancelled());
+    assert_eq!(
+        fixture
+            .state
+            .owner
+            .session_resources()
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    fixture
+        .state
+        .owner
+        .session_resource_closed(resource)
+        .await
+        .unwrap();
+    super::suspension::suspend(&fixture.state).await.unwrap();
+    assert!(fixture.state.shutdown.is_cancelled());
+}
