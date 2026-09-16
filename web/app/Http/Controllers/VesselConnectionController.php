@@ -68,6 +68,6 @@ class VesselConnectionController extends Controller {
     public function destroy(Request $request,string $id) {
         $connection = VesselConnection::where('tenant_id',$request->user()->tenant_id)->findOrFail($id);
         $connection->delete();
-        return back()->with('status','Connection removed. Open sockets expire within 60 seconds. Revoke this connection on the Vessel if it is no longer needed.');
+        return back()->with('status','Connection removed. Existing direct Vessel credentials expire within 120 seconds; socket closure may take up to 3 additional seconds. Already admitted work is not cancelled. The underlying grant is preserved for other clients; revoke it on the Vessel if no longer needed.');
     }
 }

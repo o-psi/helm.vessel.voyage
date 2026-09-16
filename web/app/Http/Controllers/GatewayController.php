@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 class GatewayController extends Controller {
     public function authorizeTicket(Request $request) {
-        abort_unless(ConsoleAccess::enabled() && in_array($request->server('REMOTE_ADDR'), ['127.0.0.1', '::1'], true)
+        abort_unless(config('helm.legacy_gateway_enabled') && strlen(config('helm.gateway_secret', '')) >= 32 && ConsoleAccess::enabled() && in_array($request->server('REMOTE_ADDR'), ['127.0.0.1', '::1'], true)
             && is_string($request->bearerToken()) && hash_equals(config('helm.gateway_secret'), $request->bearerToken()), 403);
         $token = $request->input('ticket');
         abort_unless(is_string($token) && preg_match('/^[A-Za-z0-9_-]{43}$/D', $token), 403);
