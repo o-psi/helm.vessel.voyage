@@ -24,7 +24,7 @@ final class VesselGateway {
                 if ($operation === 'browser-credentials') {
                     $response = $this->http->post($origin, '/v1/vessel/browser-credentials', ['origin'=>self::endpoint(config('app.url'))], $headers);
                     if (array_diff(array_keys($response), ['token','expires_at_ms','vessel_id']) || count($response)!==3
-                        || !is_string($response['token'] ?? null) || !preg_match('/^[\x21-\x7e]{1,4096}$/D', $response['token'])
+                        || !is_string($response['token'] ?? null) || !preg_match('/^[a-f0-9]{64}$/D', $response['token'])
                         || ($response['vessel_id'] ?? null) !== $v['vessel_id'] || !is_int($response['expires_at_ms'] ?? null)
                         || $response['expires_at_ms'] <= now()->getTimestampMs() || $response['expires_at_ms'] > now()->getTimestampMs()+120000) throw new RuntimeException();
                     return $response + ['url'=>preg_replace('/^https:/', 'wss:', $origin).'/v1/vessel/browser-socket'];

@@ -78,8 +78,9 @@ export function mount(root) {
                 if (epoch !== streamEpoch || active !== client) return;
                 const action = stream.accept(event);
                 if (action === 'duplicate') return;
-                if (action === 'resync') stopStream();
-                stale = true; controls();
+                if (action === 'resync') { stopStream(); stale = true; controls(); }
+                // Streaming invalidations refresh promptly without disabling a
+                // click against a still-fresh revision on every token.
                 if (refreshing || busy) refreshQueued = true; else refresh();
             });
         } catch { stopStream(); stale = true; }
@@ -469,7 +470,7 @@ export function mount(root) {
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
     const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
-    window.addEventListener('pagehide',() => { generation++;clearInterval(timer);fleet.close(); });
+    window.addEventListener('pagehide',() => { stopStream(); generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
     settings = voyageSettings(root,fleet,{
         current:() => ({vessel:selectedVessel,session_id:selected,incarnation,revision:snapshot?.revision,inference:snapshot?.inference}),

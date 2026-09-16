@@ -57,7 +57,7 @@ check($http->calls[0]['headers']['Authorization']==='Bearer '.str_repeat('a',64)
 $pair=['endpoint'=>'https://vessel.example','principal_id'=>(string)Str::uuid(),'invitation_id'=>(string)Str::uuid(),'command_id'=>(string)Str::uuid(),'vessel_id'=>$vessel,'code'=>'secret'];
 $gateway->call('pair',$pair); check($http->calls[1]['body']['command_id']===$pair['command_id'] && !isset($http->calls[1]['body']['endpoint']),'pair identity');
 $http->response['outcome_unknown']=true; refuses(fn()=>$gateway->call('pair',$pair),'uncertain pair');
-$http->response=['token'=>'short-lived','expires_at_ms'=>now()->getTimestampMs()+119000,'vessel_id'=>$vessel];
+$http->response=['token'=>str_repeat('b',64),'expires_at_ms'=>now()->getTimestampMs()+119000,'vessel_id'=>$vessel];
 $mint=$gateway->call('browser-credentials',['connection'=>$connection]);
 check($mint['url']==='wss://vessel.example/v1/vessel/browser-socket','socket URL');
 check(end($http->calls)['body']===['origin'=>'https://helm.example'],'trusted configured origin');
@@ -81,8 +81,8 @@ $request=Request::create('https://spoofed.example/console/ticket','POST',['vesse
 $request->setLaravelSession($app['session']->driver()); $request->session()->start();
 $app->instance('request',$request); Auth::login($user); $request->setUserResolver(fn()=>$user);
 $request->session()->put('helm_operator_until',time()+3600); $request->session()->save();
-$http->response=['token'=>'short-lived','expires_at_ms'=>now()->getTimestampMs()+119000,'vessel_id'=>$vessel];
-check(ConsoleAccess::ticket($request,$stored->id)['token']==='short-lived','tenant mint');
+$http->response=['token'=>str_repeat('b',64),'expires_at_ms'=>now()->getTimestampMs()+119000,'vessel_id'=>$vessel];
+check(ConsoleAccess::ticket($request,$stored->id)['token']===str_repeat('b',64),'tenant mint');
 check(end($http->calls)['body']['origin']==='https://helm.example','request host ignored');
 $request->headers->set('Origin','https://helm.example');
 $response=$controller->ticket($request);
