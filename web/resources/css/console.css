@@ -8,4 +8,3 @@
 .message a{color:#b5dfff;text-decoration:underline}.message p{margin:.6rem 0}.message pre{background:#111916;padding:.8rem;overflow:auto}.message code{font-family:ui-monospace,monospace}.message ul,.message ol{padding-left:1.5rem;list-style:revert}.message blockquote{border-left:3px solid #607d68;padding-left:1rem}.message table{border-collapse:collapse}.message td,.message th{border:1px solid #42544b;padding:.4rem}
 
 .connections-page{max-width:960px;margin:2rem auto;padding:1rem}.connections-page header{display:flex;justify-content:space-between}.connections-page pre{white-space:pre-wrap;overflow-wrap:anywhere}.connections-page form{display:grid;gap:.7rem}.connections-page input{display:block;width:100%}.connections-page a,.console-header a{color:#b5dfff;text-decoration:underline}
-
