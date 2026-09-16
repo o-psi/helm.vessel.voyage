@@ -307,3 +307,5 @@ The model popover now contains only model selection. Account has its own picker 
 ## Conversation presentation
 
 Conversation chrome is moved to the sidebar; mobile keeps a navigation toggle. User messages are compact right-aligned surfaces; assistant responses are open, readable text rather than repeated bordered cards. Consecutive tool request/result entries collapse into one activity disclosure, with bodies rendered only when opened. Complete-message expansion and structured details remain available inside it; expanded groups survive history refreshes. Tool content is never discarded or interpreted as trusted HTML. Streaming output remains explicitly provisional, and approvals/errors stay outside collapsed history.
+
+Composer triggers display observed settings: model, account label, service tier, reasoning and access. Account labels load from the selected Vessel’s scoped catalogue, checked against the full account binding and voyage incarnation; late replies cannot replace another voyage’s label. Missing metadata is shown as unavailable, never guessed from another account. Null service tier is displayed as Default tier.

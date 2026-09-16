@@ -32,6 +32,8 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             const command=frame.request.command;requests.push(command);
             let result;
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
+            else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
+            else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
                 if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
@@ -55,6 +57,9 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#cancel').hidden,true,'cancel is hidden before selection');
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();await until(()=>!$('#send').disabled);
         assert.match($('#messages').textContent,/Hello Vessel/);
+        await until(()=>$('#composer-account').textContent==='Personal account');
+        assert.equal($('#composer-service').textContent,'Default tier');
+        assert.equal($('#composer-reasoning').textContent,'medium');
         assert.equal(root.querySelector('[data-flux-header]'),null,'no top bar');
         const tools=$('#messages details');assert.ok(tools);assert.equal(tools.open,false);
         assert.match(tools.textContent,/2 tool entries.*read_file/);

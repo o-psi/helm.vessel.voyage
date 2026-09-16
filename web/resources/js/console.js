@@ -65,6 +65,7 @@ export function mount(root) {
     let messages = [], decisions = [], earliest = 0, revision = null;
     const drafts = new Map();
     let settings;
+    let accountLabelKey = '', accountLabel = 'Account', accountLabelClient;
     const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, socketPath:root.dataset.socketPath, ticket, changed:connectionsChanged});
     let voyageFingerprint = '', messageFingerprint = '', decisionFingerprint = '', lastFresh = 0, outputFingerprint = '', outputOffset = null;
     const state = text => { $('connection-state').textContent = text; };
@@ -90,6 +91,8 @@ export function mount(root) {
             $('new-voyage').disabled = busy;
             $('composer-model').textContent = clean(snapshot?.inference?.model || snapshot?.model || 'Account & model');
             $('composer-reasoning').textContent = clean(snapshot?.inference?.reasoning_effort || 'Default');
+            $('composer-service').textContent = clean(snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
+            $('composer-account').textContent = accountLabel;
             $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
             for (const entry of pending()) $('pending').append(fluxTemplate('flux-text', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));
@@ -151,6 +154,7 @@ export function mount(root) {
         $('prompt').value = drafts.get(JSON.stringify([vessel, id])) || '';
         $('voyage-title').textContent = title;
         $('voyage-vessel').textContent = clean(fleet.connections.get(vessel).name); $('voyage-vessel').hidden = false;
+        accountLabelKey = ''; accountLabel = 'Account';
         snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
         messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); $('live-output').hidden = true; $('earlier').hidden = true;
         $('conversation-empty').hidden = false;
@@ -173,13 +177,40 @@ export function mount(root) {
             const decisionReply = voyageResult(await active.exchange(request('decisions', {session_id:id})), id, envelope.incarnation);
             if (mine !== generation || selected !== id || active !== client) return;
             const changed = next.revision !== revision || envelope.incarnation !== incarnation;
-            snapshot = next; incarnation = envelope.incarnation; decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
+            snapshot = next; incarnation = envelope.incarnation;
+            updateAccountLabel(); decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
             if (changed) { revision = next.revision; messages = next.messages || []; earliest = next.message_offset || 0; }
             stale = false; lastFresh = Date.now(); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
             $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
             renderMessages(); renderDecisions(); renderOutput();
         } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
         finally { if (mine === generation) { refreshing = false; controls(); } }
+    }
+    async function updateAccountLabel() {
+        const binding = snapshot?.inference?.account;
+        const key = JSON.stringify([selectedVessel,selected,incarnation,binding]);
+        if (key === accountLabelKey && accountLabelClient === client) return;
+        accountLabelKey = key; accountLabelClient = client;
+        accountLabel = binding ? 'Loading account…' : 'No account';
+        if (!binding) return;
+        const active = client, id = selected, expectedIncarnation = incarnation;
+        const current = () => accountLabelKey === key && client === active;
+        try {
+            const read = async (op, fields) => {
+                const reply = await active.exchange(request(op,fields));
+                if (reply.protocol !== 1 || reply.error != null || reply.outcome_unknown !== false) throw new Error('Account unavailable');
+                return reply.result;
+            };
+            const process = await read('inspect',{session_id:id});
+            if (!current()) return;
+            if (process.session_id !== id || process.incarnation !== expectedIncarnation || !process.workspace) throw new Error('Account context changed');
+            const catalogue = await read('accounts',{workspace:process.workspace,transport:null});
+            if (!current()) return;
+            const account = catalogue.accounts?.find(a => a.id === binding.account_id && a.connection_id === binding.connection_id && a.identity_generation === binding.identity_generation);
+            const connection = catalogue.connections?.find(c => c.id === binding.connection_id && c.revision === binding.connection_revision && c.transports?.includes(binding.transport));
+            accountLabel = account && connection ? clean(account.label) || 'Unnamed account' : 'Account unavailable';
+        } catch { if (current()) accountLabel = 'Account unavailable'; }
+        if (current()) controls();
     }
     function renderMessages() {
         const fingerprint = JSON.stringify(messages); if (fingerprint === messageFingerprint) return; messageFingerprint = fingerprint;

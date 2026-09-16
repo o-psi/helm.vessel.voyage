@@ -52,11 +52,11 @@
                                 </flux:popover>
                             </flux:dropdown>
                             <flux:dropdown position="top" align="start">
-                                <flux:button id="change-account" type="button" size="sm" variant="ghost" icon="user-circle" icon:trailing="chevron-down" disabled>Account</flux:button>
+                                <flux:button id="change-account" type="button" size="sm" variant="ghost" icon="user-circle" icon:trailing="chevron-down" aria-label="Change account" disabled><span id="composer-account" class="max-w-40 truncate">Account</span></flux:button>
                                 <flux:popover id="account-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" />
                             </flux:dropdown>
                             <flux:dropdown position="top" align="start">
-                                <flux:button id="change-service" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled>Service</flux:button>
+                                <flux:button id="change-service" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change service tier" disabled><span id="composer-service">Service</span></flux:button>
                                 <flux:popover id="service-popover" class="w-72 max-w-[calc(100vw-2rem)]" />
                             </flux:dropdown>
                             <flux:dropdown position="top" align="start">
