@@ -9,7 +9,7 @@ async function read(client, op, fields = {}) {
     return response.result;
 }
 
-export function voyageSettings(root, fleet, {current, select, apply, draft, created}) {
+export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft}) {
     const raw = id => root.querySelector(`#${id}`);
     const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
     let editSection = 'model', usageVersion = 0;
@@ -156,12 +156,12 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         $('settings-vessel').disabled = edit;
         loadVessel();
     }
-    async function accept(c, command, process, storageKey) {
+    async function accept(c, command, process, storageKey, origin) {
         if (process?.session_id !== command.session_id || process.workspace !== command.workspace || typeof process.incarnation !== 'string') throw new Error('Creation identity could not be confirmed. Use Check creation.');
         localStorage.removeItem(storageKey);
         if (!c.voyages.some(v => v.session_id === process.session_id)) c.voyages.unshift(process);
         c.lastCatalogue = 0;
-        const retained = await created?.(c.id,process.session_id,command.workspace);
+        const retained = await created?.(c.id,process.session_id,command.workspace,origin);
         if (!retained) select(c.id,process.session_id,process.name || 'New voyage');
         raw('settings-close').click();
         renderPending();
@@ -182,14 +182,14 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                 $('settings-close').disabled = false; $('settings-close').click();
             } else {
                 const command = request('start_account',{command_id:uuid(),session_id:uuid(),workspace:workspace(),...settings}).command;
-                const storageKey = key(c,command);
+                const storageKey = key(c,command), origin = captureDraft?.();
                 // Store only immutable routing/account metadata, never credentials or message text.
-                localStorage.setItem(storageKey,JSON.stringify({vessel:c.id,vessel_id:c.vessel_id,command})); recorded = true;
+                localStorage.setItem(storageKey,JSON.stringify({vessel:c.id,vessel_id:c.vessel_id,command,origin})); recorded = true;
                 const result = await client.exchange({protocol:1,command});
                 if (result.protocol !== 1 || result.outcome_unknown !== false) throw new Error('Creation is unconfirmed. Close this form and use Check creation in the sidebar.');
                 if (result.error != null) throw new Error('The Vessel did not confirm creation. Use Check creation to resolve this exact request before creating another voyage.');
                 $('settings-close').disabled = false;
-                await accept(c,command,result.result,storageKey);
+                await accept(c,command,result.result,storageKey,origin);
             }
         } catch (error) { status(error.message); }
         finally {

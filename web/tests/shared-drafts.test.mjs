@@ -66,3 +66,10 @@ test('uncertain clear resumes same CAS identity after browser reload',async()=>{
  const f=fixture(),a=f.make();await a.open(f.record);const sent=structuredClone(a.record);f.unknown=true;await assert.rejects(a.sent(sent));const identity=a.deletion.command_id;
  const b=new SharedDraft({client:()=>f.client,storage:a.storage,key:a.key});await b.open(sent);assert.equal(b.deletion.command_id,identity);assert.equal(await b.sent(sent),true);assert.equal(f.record.revision,2);assert.deepEqual(f.record.document.parts,[]);
 });
+test('late poll cannot roll saved revision back; lost clear receipt cannot erase subsequent saved text',async()=>{
+ const f=fixture(),a=f.make();await a.open(f.record);
+ let release,entered;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r),original=f.client.exchange.bind(f.client);let delay=true;
+ f.client.exchange=async request=>{const result=await original(request);if(request.command.operation.op==='get' && delay){delay=false;entered();await gate;}return result;};
+ const poll=a.poll();await started;a.edit([{type:'text',text:'new revision'}]);await a.save();release();await poll;assert.equal(a.record.revision,2);assert.equal(a.document.parts[0].text,'new revision');
+ const sent=structuredClone(a.record);f.unknown=true;await assert.rejects(a.sent(sent));a.edit([{type:'text',text:'after admission'}]);await a.save();assert.equal(a.record.revision,4);assert.equal(await a.sent(sent),false);assert.equal(a.document.parts[0].text,'after admission');
+});

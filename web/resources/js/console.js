@@ -435,7 +435,7 @@ export function mount(root) {
         busy = true; controls();
         const fields = ['submit','steer'].includes(op) ? {prompt:text} : decision ? {decision_id:decision.decision_id,response:answer,expires_at_ms:Math.min(Date.now()+60000,decision.expires_at_ms)} : extra;
         let command, sent;
-        const active = client, activeJournal = journal, id = selected;
+        const active = client, activeJournal = journal, id = selected, vessel = selectedVessel, mine = generation, originSnapshot = structuredClone(snapshot), originIncarnation = incarnation;
         try {
             if (['submit','steer'].includes(op)) {
                 sent = await shared.beforeSend();
@@ -443,8 +443,10 @@ export function mount(root) {
                     const content = await shared.promote(sent,id); op = 'submit_content'; delete fields.prompt; fields.content = content;
                 }
             }
-            command = mutation(op,snapshot,incarnation,fields); activeJournal.prepare(command.command);
-            if(sent) { admittedDrafts.set(command.command.command_id,sent); localStorage.setItem(sentKey(command.command.command_id),JSON.stringify({record:sent.record,vessel:selectedVessel})); }
+            if (mine !== generation || active !== client || id !== selected || vessel !== selectedVessel) throw new Error('Selection changed while preparing the action; nothing sent.');
+            if (sent && op !== 'submit_content') fields.prompt = sent.record.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('');
+            command = mutation(op,originSnapshot,originIncarnation,fields); activeJournal.prepare(command.command);
+            if(sent) { admittedDrafts.set(command.command.command_id,sent); localStorage.setItem(sentKey(command.command.command_id),JSON.stringify({record:sent.record,vessel})); }
             const response = await active.exchange(command);
 
             if (response.error != null) notice(`Vessel refused the action: ${clean(response.error)}. Draft retained; review model support and attachments.`);
@@ -505,6 +507,7 @@ export function mount(root) {
         select,
         draft: (vessel,workspace)=>shared.newChat(vessel,workspace),
         created: (...args)=>shared.created(...args),
+        captureDraft: ()=>shared.capture(),
         apply:async (target,fields) => {
             if (target.vessel !== selectedVessel || target.session_id !== selected || target.incarnation !== incarnation || target.revision !== snapshot?.revision || !actionable() || running()) return false;
             return act('set_account_inference',null,null,fields);

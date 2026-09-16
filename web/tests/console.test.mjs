@@ -23,8 +23,9 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
-    let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false;
+    let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false, rejectNext=false, receiptKnown=true;
     globalThis.fetch=async()=>({ok:true,json:async()=>({token:'a'.repeat(64),expires_at_ms:Date.now()+120000,vessel_id:vessel,url:'wss://vessel.example/v1/vessel/browser-socket'})});
+
     const sharedRecords=new Map();
 
     class Socket extends dom.window.EventTarget {
@@ -35,6 +36,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             if(frame.type==='unsubscribe'){this.subscription=null;return;}
             const command=frame.request.command;requests.push(command);
             let result;
+            if(command.op==='submit' && rejectNext){rejectNext=false;setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'rejected fixture',outcome_unknown:false}}),0);return;}
             if(command.op==='drafts') {
                 const operation=command.operation; this.drafts ||= sharedRecords;
                 if(operation.op==='list')result={drafts:[...this.drafts.values()]};
@@ -51,7 +53,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
-                else if(command.op==='receipt'){value={command_id:command.command_id,status:uncertain?'accepted':'unknown'};}
+                else if(command.op==='receipt'){value={command_id:command.command_id,status:uncertain && receiptKnown?'accepted':'unknown'};}
                 else if(['submit','steer','respond','cancel'].includes(command.op)){
                     if(dropNext){dropNext=false;uncertain=true;this.close();return;}
                     revision++;running=command.op!=='cancel';if(command.op==='respond')decisionKind=null;value={command_id:command.command_id,status:'accepted'};
@@ -156,10 +158,19 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#access-mode').value,'read-only');
         const accessCommand=requests.find(c=>c.op==='set_access');
         assert.equal(accessCommand.incarnation,incarnation);assert.equal(accessCommand.access,'read-only');
-        dropNext=true;$('#prompt').value='Uncertain dispatch';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        rejectNext=true;$('#prompt').value='Rejected dispatch';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>!rejectNext&&!$('#send').disabled);assert.equal($('#prompt').value,'Rejected dispatch');
+        assert.match($('#notice').textContent,/refused/);
+        dropNext=true;receiptKnown=false;$('#prompt').value='Uncertain dispatch';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>uncertain);assert.ok($('#send').disabled);assert.match($('#pending').textContent,/outcome not confirmed/);
-        await until(()=>requests.some(c=>c.op==='receipt')&&!$('#send').disabled);
-        assert.equal(requests.filter(c=>c.op==='submit').length,2,'reconnect must not replay the uncertain submit');
+        await until(()=>requests.some(c=>c.op==='receipt'));
+        window.dispatchEvent(new Event('pagehide'));root.remove();
+        const replacement=root.cloneNode(false);replacement.innerHTML=fixture.querySelector('#helm-client').innerHTML;root.replaceChildren(...replacement.childNodes);document.body.append(root);
+        mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();
+        await until(()=>$('#prompt').value==='Uncertain dispatch');assert.ok($('#send').disabled);
+        receiptKnown=true;
+        await until(()=>!$('#send').disabled);
+        assert.equal(requests.filter(c=>c.op==='submit').length,3,'reconnect must not replay the uncertain submit');
         assert.equal($('#pending').textContent,'');assert.equal($('#prompt').value,'','accepted receipt safely clears the sent revision');
         assert.ok(sockets.length>=2);assert.match($('#notice').textContent,/Receipt/);
     } finally {window.dispatchEvent(new Event('pagehide'));root.remove();}

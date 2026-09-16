@@ -13,14 +13,16 @@ export class SharedDraft {
     persist() { if(this.record) this.storage.setItem(this.key,JSON.stringify({record:this.record,document:this.document,pending:this.pending,dirty:this.dirty,deletion:this.deletion})); this.changed(this); }
     async open(record) {
         this.record=copy(record); this.document=copy(record.document); this.dirty=false; this.pending=null; this.conflict=null; this.deletion=null;
-        try { const local=JSON.parse(this.storage.getItem(this.key)); if(local?.record?.draft_id===record.draft_id && (local.dirty || local.pending || local.deletion)) { Object.assign(this,local); if(record.revision!==local.record.revision && !local.pending) this.conflict=record; } } catch {}
+        try { const local=JSON.parse(this.storage.getItem(this.key)); if(local?.record?.draft_id===record.draft_id && (local.dirty || local.pending || local.deletion)) { Object.assign(this,local); if(record.revision!==local.record.revision && !local.pending && !local.deletion) this.conflict=record; } } catch {}
         this.persist();
     }
     edit(parts) { this.document.parts=copy(parts); this.dirty=true; this.persist(); }
     async poll() {
         if(!this.record || this.saving) return;
-        if(this.pending) return this.save();
-        const remote=await draftRequest(this.client(),{op:'get',draft_id:this.record.draft_id});
+        if(this.pending || this.deletion) return this.save();
+        const base=this.record;
+        const remote=await draftRequest(this.client(),{op:'get',draft_id:base.draft_id});
+        if(this.record!==base || this.saving || this.pending || this.deletion)return;
         if(!remote || remote.revision!==this.record.revision) {
             if(this.dirty) {this.conflict=remote || {deleted:true}; this.changed(this);}
             else if(remote) await this.open(remote);
@@ -30,6 +32,7 @@ export class SharedDraft {
     }
     async save() {
         if(this.saving) {await this.saving; return this.save();}
+        if(this.deletion) await this.clearSent();
         if(this.conflict) throw new Error('Draft changed on another device. Choose the shared version or save your edits as a separate draft.');
         if(!this.dirty && !this.pending) return this.record;
         if(!this.pending) this.pending={op:'put',command_id:uuid(),draft_id:this.record.draft_id,expected_revision:this.record.revision,document:copy(this.document)};
@@ -52,15 +55,30 @@ export class SharedDraft {
         for(const part of document.parts) if(part.type==='image') images.push([part,await imageBytes(this.client(),part.attachment,{draft_id:original})]);
         const created=await draftRequest(this.client(),{op:'put',command_id:uuid(),draft_id:id,expected_revision:0,document:{...document,parts:document.parts.filter(p=>p.type!=='image')}});
         for(const [part,blob] of images){const bytes=new Uint8Array(await blob.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));part.attachment=await draftRequest(this.client(),{op:'upload_image',command_id:uuid(),draft_id:id,name:part.attachment.name,data_base64:btoa(binary)});}
-        this.key=this.key.replace(original,id);this.record=created;this.document=document;this.pending=null;this.conflict=null;this.dirty=true;this.persist();return this.save();
+        const fork=new SharedDraft({client:this.client,storage:this.storage,key:this.key.replace(original,id),changed:this.changed});
+        await fork.open(created);fork.document=document;fork.dirty=true;fork.persist();await fork.save();return fork;
     }
     async sent(record) {
+        if(this.saving) await this.saving;
+        if(this.deletion) return this.deletion.draft_id===record.draft_id && this.deletion.expected_revision===record.revision ? this.clearSent() : false;
         if(this.record?.draft_id!==record.draft_id || this.dirty || this.pending || this.record.revision!==record.revision) return false;
         this.deletion ||= {op:'put',command_id:uuid(),draft_id:record.draft_id,expected_revision:record.revision,document:{target:record.document.target,parts:[]}};this.persist();
-        const cleared=await draftRequest(this.client(),this.deletion);
-        this.deletion=null;this.record=cleared;
-        if(this.dirty){this.persist();return false;}
-        this.document=copy(cleared.document);this.persist();return true;
+        return this.clearSent();
+    }
+    async clearSent() {
+        const operation=copy(this.deletion), base=copy(this.record), document=JSON.stringify(this.document);
+        // Serialize with saves so a delayed clear receipt cannot roll back a newer revision.
+        this.saving=(async()=>{
+            try {
+                const cleared=await draftRequest(this.client(),operation);
+                this.deletion=null;
+                if(this.record?.draft_id!==base.draft_id || this.record.revision!==base.revision) {this.persist();return false;}
+                this.record=cleared;
+                if(this.dirty || this.pending || JSON.stringify(this.document)!==document){this.persist();return false;}
+                this.document=copy(cleared.document);this.persist();return true;
+            } finally {this.saving=null;}
+        })();
+        return this.saving;
     }
 
 }
