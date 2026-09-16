@@ -21,9 +21,18 @@ export function installButtonTooltips(doc = document) {
     function show(event) {
         const button = event.target.closest?.('button, [role="button"], a[data-flux-button]');
         if (!button || button.closest('[data-flux-tooltip]')) return;
-        const clone = button.cloneNode(true);
-        clone.querySelectorAll('svg, [aria-hidden="true"], .sr-only').forEach(node => node.remove());
-        if (clone.textContent.trim() && !button.matches('[data-flux-profile]')) return;
+        // Inspect text in place: cloning Flux children runs custom-element
+        // constructors without their required parent picker.
+        const walker = doc.createTreeWalker(button, doc.defaultView.NodeFilter.SHOW_TEXT);
+        let hasVisibleText = false;
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.textContent.trim() && !node.parentElement.closest('svg, [aria-hidden="true"], .sr-only')) {
+                hasVisibleText = true;
+                break;
+            }
+        }
+        if (hasVisibleText && !button.matches('[data-flux-profile]')) return;
         const label = button.getAttribute('title') || button.getAttribute('aria-label');
         if (!label) return;
         hide();
