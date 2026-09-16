@@ -42,18 +42,24 @@ fn private_file(path: &Path) -> Result<()> {
     Ok(())
 }
 fn open(root: &Path) -> Result<Connection> {
+    open_file(root, FILE)
+}
+pub(super) fn open_drafts(root: &Path) -> Result<Connection> {
+    open_file(root, "composer.sqlite3")
+}
+fn open_file(root: &Path, file: &str) -> Result<Connection> {
     registry::private_directory(root)?;
-    for name in [FILE, "catalogue.sqlite3-journal"] {
+    for name in [file.to_owned(), format!("{file}-journal")] {
         private_file(&root.join(name))?;
     }
-    for name in ["catalogue.sqlite3-wal", "catalogue.sqlite3-shm"] {
+    for name in [format!("{file}-wal"), format!("{file}-shm")] {
         ensure!(
             !root.join(name).try_exists()?,
             "unexpected supervisor WAL state"
         );
     }
     let mut db = Connection::open_with_flags(
-        root.join(FILE),
+        root.join(file),
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     db.busy_timeout(Duration::from_secs(2))?;
