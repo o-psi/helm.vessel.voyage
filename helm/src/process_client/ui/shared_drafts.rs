@@ -168,7 +168,12 @@ async fn sync(client: Client, route: state::Route, mut entries: Vec<Entry>) -> R
                     } else {
                         !entry.link.fork
                             && !matches!(entry.local, Destination::New(_))
-                            && record["document"]["target"] == entry.document["target"]
+                            && record["document"]["target"]["session_id"]
+                                == entry.document["target"]["session_id"]
+                            && (record["document"]["target"] == entry.document["target"]
+                                || (entry.link.target.is_none()
+                                    && entry.composer.text.is_empty()
+                                    && entry.images.is_empty()))
                     }
                 })
             });

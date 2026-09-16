@@ -334,8 +334,8 @@ async fn steering_intents_match_exact_run_and_guard_rejects_changed_run_or_incar
         )],
     )
     .await;
-    // A fresh message editor must not bind to an old steering intent for the same session.
-    let message_batch = exchange(
+    // An untouched second device restores the pinned steering target, not a new run.
+    let restored = exchange(
         &server,
         vec![entry(
             Destination::Live(server.target),
@@ -344,6 +344,12 @@ async fn steering_intents_match_exact_run_and_guard_rejects_changed_run_or_incar
         )],
     )
     .await;
+    assert_eq!(restored.entries[0].link.target, Some(intent.clone()));
+    assert_eq!(restored.entries[0].composer.text, "steer");
+    // An explicitly selected message intent must not bind to a steering draft.
+    let mut explicit_message = entry(Destination::Live(server.target), message(server.target), "");
+    explicit_message.link.target = Some(message(server.target));
+    let message_batch = exchange(&server, vec![explicit_message]).await;
     assert!(message_batch.entries[0].link.id.is_none());
     assert!(message_batch.entries[0].composer.text.is_empty());
     let mut ui = app(&server, fixture.0.path());
