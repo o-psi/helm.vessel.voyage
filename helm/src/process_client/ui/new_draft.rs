@@ -784,6 +784,25 @@ impl App {
 mod coverage_tests;
 
 impl App {
+    pub(super) fn finish_shared_discard(&mut self, id: Uuid) -> Result<()> {
+        let Some(draft) = self.new_drafts.get_mut(&id) else {
+            return Ok(());
+        };
+        anyhow::ensure!(
+            draft.saved.shared.discard_requested && draft.saved.start.is_none() && !draft.busy,
+            "draft changed while discard was pending"
+        );
+        draft.saved.finished = true;
+        draft.saved.text.clear();
+        draft.saved.images.clear();
+        storage::save(&draft.saved)?;
+        self.new_drafts.remove(&id);
+        if self.active_draft == Some(id) {
+            self.active_draft = None;
+        }
+        self.status = "Shared draft discarded".into();
+        Ok(())
+    }
     pub(super) fn shared_new_entries(&self, route: Route) -> Vec<super::shared_drafts::Entry> {
         use super::shared_drafts::{Destination, Entry, document};
         self.new_drafts
@@ -898,6 +917,8 @@ impl App {
             draft.saved.shared.base = None;
             draft.saved.shared.revision = 0;
             draft.saved.shared.conflict = false;
+            draft.saved.shared.discard_requested = false;
+            draft.saved.shared.discarded = false;
         } else {
             draft.saved.shared = super::shared_drafts::Link {
                 fork: true,

@@ -27,6 +27,10 @@ impl App {
         let Some(id) = self.active_draft else {
             return Ok(false);
         };
+        if self.new_drafts[&id].saved.shared.discard_requested {
+            self.status = "Shared discard pending; edits frozen until Vessel confirms or conflict is resolved".into();
+            return Ok(true);
+        }
         let key = match event {
             Event::Key(key) => Some(key),
             _ => None,
@@ -165,6 +169,18 @@ impl App {
         if text == "/help" {
             self.status = "Draft commands: /vessels, /account, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
         } else {
+            if text == "/discard" && self.request_shared_discard(id)? {
+                let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+                anyhow::ensure!(
+                    draft.saved.start.is_none() && !draft.busy,
+                    "First send pending; draft retained"
+                );
+                storage::save(&draft.saved)?;
+                self.status =
+                    "Discarding shared draft on Vessel; local recovery retained until confirmed"
+                        .into();
+                return Ok(());
+            }
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
                 draft.saved.start.is_none() && !draft.busy,

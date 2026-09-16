@@ -17,6 +17,10 @@ pub(super) struct Link {
     #[serde(default)]
     pub send_revision: Option<u64>,
     pub admitted_revision: Option<u64>,
+    #[serde(default)]
+    pub discard_requested: bool,
+    #[serde(default)]
+    pub discarded: bool,
 }
 #[derive(Default)]
 pub(super) struct State {
@@ -180,6 +184,16 @@ async fn sync(client: Client, route: state::Route, mut entries: Vec<Entry>) -> R
         if let Some(remote) = remote {
             used.insert(remote["draft_id"].as_str().unwrap_or_default().to_owned());
         }
+        if entry.link.discard_requested {
+            if let Some(id) = entry.link.id {
+                let op = serde_json::json!({"op":"delete","command_id":mutation_id(id,"discard",&serde_json::json!(entry.link.revision)),"draft_id":id,"expected_revision":entry.link.revision});
+                match request(&client, op).await {
+                    Ok(_) => entry.link.discarded = true,
+                    Err(_) => entry.link.conflict = true,
+                }
+            }
+            continue;
+        }
         if let (Some(id), Some(revision)) = (entry.link.id, entry.link.admitted_revision) {
             let cleared = serde_json::json!({"target":entry.link.target,"parts":[]});
             match request(&client, serde_json::json!({"op":"put","command_id":mutation_id(id,"clear",&serde_json::json!([revision,cleared])),"draft_id":id,"expected_revision":revision,"document":cleared})).await {
@@ -309,6 +323,27 @@ async fn sync(client: Client, route: state::Route, mut entries: Vec<Entry>) -> R
 }
 
 impl App {
+    pub(super) fn request_shared_discard(&mut self, id: Uuid) -> Result<bool> {
+        anyhow::ensure!(
+            !self.shared_drafts.busy,
+            "Draft synchronization pending; retry discard after it settles"
+        );
+        let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+        anyhow::ensure!(
+            draft.saved.start.is_none() && !draft.busy,
+            "First send pending; draft retained"
+        );
+        if draft.saved.shared.id.is_none() {
+            return Ok(false);
+        }
+        anyhow::ensure!(
+            draft.saved.shared.revision > 0 && !draft.saved.shared.conflict,
+            "Resolve the shared draft synchronization before discarding"
+        );
+        draft.saved.shared.discard_requested = true;
+        self.shared_drafts.next = None;
+        Ok(true)
+    }
     pub(super) fn poll_shared_drafts(&mut self) {
         // Capture intention as soon as authored content exists, not at delayed network save.
         for (target, view) in &mut self.views {
@@ -396,6 +431,14 @@ impl App {
                                     }
                                 }
                                 Destination::New(id) => {
+                                    if entry.link.discarded {
+                                        if self.finish_shared_discard(id).is_err() {
+                                            self.shared_drafts.notice =
+                                                "Vessel draft discarded; local cleanup needs retry"
+                                                    .into();
+                                        }
+                                        continue;
+                                    }
                                     if self.apply_shared_new(id, batch.route, entry).is_err() {
                                         self.shared_drafts.notice = "Shared draft restore could not be persisted · local recovery retained".into();
                                     }

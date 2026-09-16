@@ -31,6 +31,12 @@ async fn server(store: Arc<Mutex<Store>>) -> Server {
                 else { store.records.push(record.clone()); }
                 Ok(record)
             }
+            "delete" => {
+                let index = store.records.iter().position(|r| r["draft_id"] == op["draft_id"]).ok_or("missing draft")?;
+                if store.records[index]["revision"] != op["expected_revision"] { return Err("revision conflict".into()); }
+                store.records.remove(index);
+                Ok(json!({"deleted":true}))
+            }
             unexpected => panic!("unexpected draft operation {unexpected}"),
         }
     }).await
@@ -538,4 +544,28 @@ async fn remote_restore_racing_local_typing_retains_both_versions_as_conflict() 
         "remote edit"
     );
     assert!(ui.shared_send_guard(server.target).is_err());
+}
+
+#[tokio::test]
+async fn explicit_discard_requires_exact_revision_and_retains_conflicts() {
+    let store = Arc::new(Mutex::new(Store::default()));
+    let server = server(store.clone()).await;
+    let mut local = entry(
+        Destination::New(Uuid::new_v4()),
+        json!({"type":"new_chat","workspace":"/synthetic-workspace"}),
+        "discard me",
+    );
+    let id = Uuid::new_v4();
+    local.link.id = Some(id);
+    local.link.revision = 1;
+    local.link.discard_requested = true;
+    store.lock().unwrap().records.push(record(id, 2, &local));
+    let failed = exchange(&server, vec![local.clone()]).await;
+    assert!(failed.entries[0].link.conflict);
+    assert!(!failed.entries[0].link.discarded);
+    assert_eq!(store.lock().unwrap().records.len(), 1);
+    local.link.revision = 2;
+    let removed = exchange(&server, vec![local]).await;
+    assert!(removed.entries[0].link.discarded);
+    assert!(store.lock().unwrap().records.is_empty());
 }
