@@ -2,6 +2,33 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if self.guard_small_layout(&event) {
+            return Ok(());
+        }
+        if self.discovery_input(&event) {
+            return Ok(());
+        }
+        // Private enrollment consumes every event before clipboard/composer/history handlers.
+        if self.account_input(&event)? {
+            return Ok(());
+        }
+        self.cancel_panel_paste_on_input(&event);
+        if matches!(event, Event::Resize(..)) {
+            self.resize_previews()?;
+        }
+        if self.workflow_input(&event)? {
+            return Ok(());
+        }
+        if self.stop_input(&event) {
+            return Ok(());
+        }
+        // Private connection input (especially paste) precedes every composer path.
+        if self.vessel_input(&event)? {
+            return Ok(());
+        }
+        if self.workspace_picker_input(&event)? {
+            return Ok(());
+        }
         if let Event::Key(key) = &event {
             if key
                 .modifiers
@@ -39,33 +66,6 @@ impl App {
                 .into();
                 return Ok(());
             }
-        }
-        if self.guard_small_layout(&event) {
-            return Ok(());
-        }
-        if self.discovery_input(&event) {
-            return Ok(());
-        }
-        // Private enrollment consumes every event before clipboard/composer/history handlers.
-        if self.account_input(&event)? {
-            return Ok(());
-        }
-        self.cancel_panel_paste_on_input(&event);
-        if matches!(event, Event::Resize(..)) {
-            self.resize_previews()?;
-        }
-        if self.workflow_input(&event)? {
-            return Ok(());
-        }
-        if self.stop_input(&event) {
-            return Ok(());
-        }
-        // Private connection input (especially paste) precedes every composer path.
-        if self.vessel_input(&event)? {
-            return Ok(());
-        }
-        if self.workspace_picker_input(&event)? {
-            return Ok(());
         }
         self.sync_interactions();
         if self.model_options_input(&event)? {
