@@ -1,3 +1,4 @@
+import {accountEnrollment} from './account-enrollment.js';
 import {setReasoning, reasoningValue} from './inference-controls.js';
 import {request, uuid} from './vessel-client.js';
 
@@ -12,10 +13,11 @@ async function read(client, op, fields = {}) {
 export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft, prepared = () => {}}) {
     const raw = id => root.querySelector(`#${id}`);
     const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
-    let editSection = 'model', usageVersion = 0;
+    let editSection = 'model', usageVersion = 0, enrolledAccount = null;
     const configurations = new Map();
     let starting = false;
     let mode = 'create', target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
+    const enrollment = accountEnrollment(root, {context: () => ({connection, workspace: workspace()}), refreshed: async account => { enrolledAccount = account; await loadAccounts(); }});
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
     const status = message => { $('settings-status').textContent = clean(message); };
     function options(id, items, selected = null) {
@@ -46,6 +48,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     const model = () => models.find(m => m.id === $('settings-model').value);
     const key = (c, command) => `${prefix}${c.id}:${c.vessel_id}:${command.command_id}`;
     function reset() {
+        enrollment.hide();
         choices = []; models = []; defaults = {};
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
         $('settings-save').disabled = true;
@@ -110,7 +113,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             }
             const reviewed = configuration();
             if (mode === 'create' && reviewed?.vessel === c.id && reviewed.workspace === selectedWorkspace) defaults = reviewed.settings;
-            const preferred = mode === 'edit' ? target.inference?.account : defaults.account;
+            const preferred = choices.find(c => c.binding.account_id === enrolledAccount)?.binding || (mode === 'edit' ? target.inference?.account : defaults.account);
+            enrolledAccount = null;
             if (mode === 'edit' && editSection !== 'account' && !choices.some(c => c.ready && same(c.binding,preferred))) { reset(); return status('Current account unavailable. Choose an account from its own popover.'); }
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
             if (mode === 'edit' && editSection === 'account') loadUsage(false);
@@ -150,6 +154,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         status(selected ? mode === 'create' ? 'Continue prepares a new chat. Your first Send creates the chat and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
     }
     function open(edit) {
+        enrollment.hide();
         if (saving) return;
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
         ++usageVersion;
@@ -267,8 +272,17 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             }
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
+    for (const id of ['account-popover','edit-popover','service-popover']) raw(id)?.addEventListener('toggle', event => { if (event.newState === 'closed') enrollment.hide(); });
+    for (const prefix of ['settings','edit']) {
+        raw(`${prefix}-enroll`).addEventListener('click', () => {
+            raw(`${prefix}-enrollment-host`).append(raw('enrollment-panel'));
+            enrollment.open();
+        });
+        raw(`${prefix}-close`).addEventListener('click', () => enrollment.hide());
+    }
     raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
     function openSection(section, host, event) {
+        enrollment.hide();
         if (saving) return;
         if (!current().session_id) {
             event.preventDefault(); event.stopPropagation();
@@ -320,5 +334,5 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
     window.addEventListener('storage',renderPending);
-    return {renderPending, configuration, startDraft, review: () => raw('new-voyage').click()};
+    return {renderPending: () => { enrollment.changed(); renderPending(); }, configuration, startDraft, review: () => raw('new-voyage').click()};
 }

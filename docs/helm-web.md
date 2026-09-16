@@ -71,7 +71,7 @@ identities only, not prompts. They are persisted before dispatch. Reconnect read
 receipts only and never automatically resends uncertain mutations. An admission
 receipt is not execution completion. Storage failure blocks sending; clearing
 site storage loses local recovery evidence. Full-message expansion is capped at
-4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Use the composer’s Account or model button before the first Send to review the new chat’s Vessel-hosted provider account and model. Continue keeps that reviewed selection in memory without creating a voyage; reopening review preserves it. For an idle existing voyage, Account shows both the account and its model before Apply. Unavailable accounts are disabled, and active runs cannot switch accounts. Provider credentials stay on the Vessel; account enrollment is not part of this picker. Uploads, private terminals, browser execution, account enrollment and the remaining native administration surfaces are still parity gaps.
+4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Use the composer’s Account or model button before the first Send to review the new chat’s Vessel-hosted provider account and model. Continue keeps that reviewed selection in memory without creating a voyage; reopening review preserves it. For an idle existing voyage, Account shows both the account and its model before Apply. Unavailable accounts are disabled, and active runs cannot switch accounts. Provider credentials stay on the Vessel; use **Add ChatGPT account** for device sign-in. Uploads, private terminals, browser execution, API-key account enrollment and the remaining native administration surfaces are still parity gaps.
 
 ## Connect your Vessels
 
@@ -367,3 +367,27 @@ Right-click a voyage card, use its ellipsis, or press Shift+F10/Menu to open the
 native Flux context menu. [Voyage actions](web-voyage-actions.md) mirror the TUI's
 sidebar with fresh target checks, authority-aware disabled reasons, confirmations
 and explicit receipt reconciliation. Uncertain commands are never replayed.
+
+## Create a ChatGPT provider account
+
+In new-chat settings or an idle voyage’s Account picker, choose **Add ChatGPT
+account**, select the allowed provider connection, enter a unique alias and display
+name, then **Start sign-in**. Open the fixed OpenAI device-sign-in link and enter
+the displayed code on that provider page—not in chat. **Check sign-in** resolves
+and reads the original enrollment; it never starts it again. After success, the
+account catalogue reloads with the new account selected. Review the model and
+Continue/Apply before using it.
+
+This requires a secure browser with Web Locks support (to serialize same-workspace
+sign-in operations across tabs) and Vessel `account_enroll` authority (included with owner access) and
+an existing allowed ChatGPT provider connection. Enrollment uses the direct
+human-authenticated Vessel socket; credentials remain on the executing host.
+Only public enrollment/cancellation identities are retained in browser storage.
+Private device codes and links are view-only, removed on hide, close, disconnect,
+context change, expiry or terminal status. Closing hides rather than cancels:
+reopen on the same Vessel/workspace and Check or Cancel the retained sign-in.
+Uncertain outcomes stay blocked from automatic restart; cancellation does not
+prove upstream provider effects were undone. Losing browser storage loses these
+recovery identities. No provider effects run until the explicit Start action.
+API-key creation and provider-connection administration are not implemented here.
+Live provider sign-in is not established by the offline browser fixtures.
