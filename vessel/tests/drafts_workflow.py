@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import signal
 import subprocess
 import tempfile
 import time
@@ -72,6 +73,18 @@ def main(binaries):
         reply = request({'op': 'drafts', 'operation': operation}, allow_error)
         return reply if reply.get('error') else reply['result']
 
+    def owned_pids():
+        found = []
+        for entry in Path('/proc').iterdir():
+            if entry.name.isdigit():
+                try:
+                    argv = (entry / 'cmdline').read_bytes().split(b'\0')
+                    if argv[:3] == [os.fsencode(binaries / 'voyage'), b'serve', b'--directory'] and Path(os.fsdecode(argv[3])).parent == directory / 'sessions':
+                        found.append(int(entry.name))
+                except (OSError, IndexError):
+                    pass
+        return found
+
     def start():
         nonlocal supervisor
         supervisor = subprocess.Popen([str(binaries / 'vessel'), 'local-serve', '--directory', str(directory),
@@ -130,20 +143,53 @@ def main(binaries):
         assert request({'op': 'catalogue'})['result'] == []
         assert draft({'op': 'delete', 'command_id': uid(), 'draft_id': draft_id, 'expected_revision': 2}, True).get('error'), 'stale post-send clear erased newer edits'
         assert draft({'op': 'get', 'draft_id': draft_id}) == saved
-        delete = {'op': 'delete', 'command_id': uid(), 'draft_id': draft_id, 'expected_revision': 3}
+        # Explicit promotion copies to a separately owned session without running a provider.
+        config = root / 'config.toml'
+        config.write_text('provider = "openai-chat"\nmodel = "gpt-4o"\napi_key_required = false\nbase_url = "http://127.0.0.1:9/v1"\naccess = "read-only"\n')
+        config.chmod(0o600)
+        sid = uid()
+        request({'op': 'start_configured', 'session_id': sid, 'command_id': uid(), 'workspace': str(workspace), 'config_path': str(config)})
+        promotion = {'op': 'promote', 'command_id': uid(), 'draft_id': draft_id, 'expected_revision': 3, 'session_id': sid}
+        promoted = draft(promotion)
+        assert draft(promotion) == promoted, 'promotion retry changed session references'
+        assert [part['type'] for part in promoted['parts']] == ['text', 'image', 'text']
+        artifact = promoted['parts'][1]['attachment']
+        assert artifact['sha256'] == attachment['sha256'] and artifact['id'] != attachment['id']
+        snapshot = request({'op': 'snapshot', 'session_id': sid})['result']['result']
+        assert snapshot.get('run') is None, 'promotion started a run'
+        clear = {**put, 'command_id': uid(), 'expected_revision': 3, 'document': {**document, 'parts': []}}
+        cleared = draft(clear)
+        assert cleared['revision'] == 4
+        # Edits arriving during a send-clear can reuse retained staged references at the new revision.
+        restored = draft({**put, 'command_id': uid(), 'expected_revision': 4, 'document': {**document, 'parts': parts}})
+        assert restored['revision'] == 5
+        delete = {'op': 'delete', 'command_id': uid(), 'draft_id': draft_id, 'expected_revision': 5}
         deleted = draft(delete)
         assert draft(delete) == deleted
         assert not any(item['draft_id'] == draft_id for item in draft({'op': 'list'})['drafts'])
         assert draft({**put, 'command_id': uid()}, True).get('error'), 'stale device resurrected deleted identity'
+        retained = request({'op': 'read_artifact', 'session_id': sid, 'artifact_id': artifact['id'], 'offset': 0, 'limit': 262144})['result']['result']
+        assert base64.b64decode(retained['data_base64']) == png(), 'discarding draft removed session artifact'
         log.flush()
         assert image not in (root / 'vessel.log').read_text(errors='replace'), 'image bytes entered diagnostics'
         checks = ['new-chat discovery', 'no session allocation', 'exact mutation replay', 'changed-ID refusal',
                   'unauthorized reads', 'simultaneous CAS conflict', 'validated immutable image upload',
                   'ordered attachment persistence', 'supervisor restart', 'stale clear refusal', 'deletion tombstone',
-                  'image diagnostic privacy']
+                  'image diagnostic privacy', 'idempotent promotion without execution', 'post-clear edits', 'session artifacts survive draft deletion']
         (root / 'results.json').write_text(json.dumps({'status': 'passed', 'checks': checks}, indent=2) + '\n')
         print('PASS:', ', '.join(checks))
     finally:
+        for pid in owned_pids():
+            try:
+                fd = os.pidfd_open(pid)
+                try:
+                    if pid in owned_pids():
+                        signal.pidfd_send_signal(fd, signal.SIGTERM)
+                finally:
+                    os.close(fd)
+            except ProcessLookupError:
+                pass
+        wait_for(lambda: not owned_pids())
         if supervisor is not None and supervisor.poll() is None:
             supervisor.terminate()
             supervisor.wait(timeout=10)

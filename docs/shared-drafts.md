@@ -36,7 +36,9 @@ is tied to its reviewed run and must not silently become steering for a later ru
 Sending and saving are different operations. The client preserves the immutable
 send identity before dispatch and reconciles uncertain admission through its
 receipt. Only an observed accepted send permits clearing the sent draft revision;
-a concurrent newer edit must survive. Rejected or unresolved sends retain the
+a concurrent newer edit must survive. Routine send clearing uses a CAS update
+with empty parts, keeping the identity and staging available for edits made while
+the response is in flight; explicit discard alone tombstones the draft. Rejected or unresolved sends retain the
 draft. Pictures currently use multimodal **submission**, not text-only steering;
 clients must refuse picture steering without discarding its text or attachments.
 
@@ -61,6 +63,28 @@ Web previews and history use authorized bytes in local object URLs rather than
 public artifact URLs. Untrusted image labels are text, never HTML. Browser/mobile
 file selection, paste and drag/drop are UI entry points to the same validated
 upload path, not independent authority surfaces.
+
+## Retention and bounds
+
+Drafts live in private `composer.sqlite3` storage separate from the supervisor
+catalogue. Each namespace permits up to 64 active drafts and 1 MiB of aggregate
+draft JSON. A document permits 16 parts, 64 KiB of text, four pictures and 2 MiB of
+combined encoded image bytes, with the existing decoder's dimension/pixel bounds.
+Staging permits up to 16 images/8 MiB per draft and 64 MiB across the Vessel.
+Unreferenced staged bytes have a 24-hour retry grace period; removing references
+starts that period anew. Referenced staged images do not expire automatically.
+
+Exact mutation results are retained for up to seven days and can be compacted
+earlier under the result-cache bound. Permanent fingerprints prevent an evicted
+receipt from making an old effect executable again; such a retry refuses and the
+client must reconcile current draft state. Historical result bodies may retain
+prior draft text until compaction, including after explicit discard. Pending
+promotion plans retain their own bounded bytes until resolved. Explicit discard
+removes staged bytes, but never session-owned promoted artifacts.
+
+Finite database, identity and receipt quotas fail explicitly rather than deleting
+active composition or resetting deduplication. These are application storage
+limits, not an OS sandbox or a secure-erasure guarantee.
 
 ## Public contract
 
@@ -93,8 +117,8 @@ cargo build -p vessel -p voyage --locked -j 8
 python3 vessel/tests/drafts_workflow.py --bin-dir target/debug
 ```
 
-It uses synthetic pixels and independent local HTTP clients, not real phones or
-live providers. Fixture success does not establish native macOS/Windows security,
+It uses synthetic pixels and independent local HTTP clients, supervisor restart and explicit promotion into
+a session without starting a run—not real phones or live providers. Fixture success does not establish native macOS/Windows security,
 a deployed TLS/OAuth journey, browser file-picker behavior on a physical phone or
 live-provider image quality. See [validation](quality.md),
 [Helm Web](helm-web.md), [process access](process-access.md) and
