@@ -84,3 +84,14 @@
     background: var(--color-emerald-950);
     border-color: var(--color-emerald-500);
 }
+
+/* Keep the secondary action affordance inside the card's footprint. */
+#helm-client #voyages [data-voyage-row] { position: relative; }
+#helm-client #voyages [data-voyage-row] button[data-flux-sidebar-item] {
+    padding-inline-end: 2.75rem !important;
+}
+#helm-client #voyages [data-voyage-actions] {
+    position: absolute;
+    inset-inline-end: 0.5rem;
+    top: 0.75rem;
+}

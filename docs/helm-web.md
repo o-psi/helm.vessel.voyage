@@ -360,3 +360,10 @@ text with 1.6 line height. Heading hierarchy, navigation, controls and composer
 input sizes are unchanged. Styling is scoped to the conversation, not global Flux
 components. `conversation-density.test.mjs` checks these layout/style contracts;
 that is not a rendered high-DPI screenshot certification.
+
+## Voyage context actions
+
+Right-click a voyage card, use its ellipsis, or press Shift+F10/Menu to open the
+native Flux context menu. [Voyage actions](web-voyage-actions.md) mirror the TUI's
+sidebar with fresh target checks, authority-aware disabled reasons, confirmations
+and explicit receipt reconciliation. Uncertain commands are never replayed.
