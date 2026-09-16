@@ -1,16 +1,4 @@
 <div id="helm-client" class="h-dvh overflow-hidden" wire:ignore data-tenant-id="{{ $tenantId }}" data-vessels="{{ $vessels->map(fn ($vessel) => ['id' => $vessel->id, 'name' => $vessel->name, 'vessel_id' => $vessel->vessel_id])->values()->toJson() }}" data-ticket-url="{{ route('console.ticket', absolute: false) }}" data-socket-path="{{ config('helm.gateway_path') }}">
-    <flux:header class="border-b border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900">
-        <flux:sidebar.toggle class="lg:hidden" icon="bars-2" />
-        <flux:brand href="{{ route('console') }}" name="Helm" />
-        <flux:badge class="max-sm:hidden">Your workspace</flux:badge>
-        <flux:spacer />
-        <flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
-        <flux:dropdown>
-            <flux:button variant="ghost" icon="sun" aria-label="Appearance" />
-            <flux:menu><flux:menu.radio.group x-model="$flux.appearance"><flux:menu.radio value="light">Light</flux:menu.radio><flux:menu.radio value="dark">Dark</flux:menu.radio><flux:menu.radio value="system">System</flux:menu.radio></flux:menu.radio.group></flux:menu>
-        </flux:dropdown>
-        <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
-    </flux:header>
     <flux:sidebar collapsible="mobile" sticky class="min-h-0 border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900" aria-label="Voyages">
             <flux:sidebar.header><flux:heading>Voyages</flux:heading><flux:sidebar.collapse class="lg:hidden" /></flux:sidebar.header>
 
@@ -23,16 +11,23 @@
             <flux:sidebar.nav id="voyages" aria-label="Choose a voyage" />
             <flux:text id="voyage-empty" size="sm" hidden />
             <div id="pending-creations" class="space-y-2" aria-label="Unconfirmed voyage creation"></div>
+<div class="flex items-center justify-between">        <flux:dropdown>
+            <flux:button variant="ghost" icon="sun" aria-label="Appearance" />
+            <flux:menu><flux:menu.radio.group x-model="$flux.appearance"><flux:menu.radio value="light">Light</flux:menu.radio><flux:menu.radio value="dark">Dark</flux:menu.radio><flux:menu.radio value="system">System</flux:menu.radio></flux:menu.radio.group></flux:menu>
+        </flux:dropdown>
+        <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
+</div><flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text><flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
     </flux:sidebar>
     <flux:main class="flex min-h-0 min-w-0 flex-col p-0!" role="main" aria-label="Conversation">
-            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 p-4 dark:border-zinc-700"><div class="min-w-0 space-y-1"><flux:heading id="voyage-title" size="lg" level="1">Choose a voyage</flux:heading><flux:text id="voyage-vessel" size="sm" hidden /></div><flux:badge id="connection-state" role="status">Connecting…</flux:badge></div>
+            <div class="sr-only"><flux:heading id="voyage-title" level="1">Choose a voyage</flux:heading><flux:text id="voyage-vessel" hidden /></div>
+            <flux:sidebar.toggle class="fixed start-3 top-3 z-20 lg:hidden" icon="bars-2" aria-label="Open voyage navigation" />
             <flux:callout id="notice-panel" class="mx-4 mt-2" role="status" hidden><flux:callout.text id="notice" /></flux:callout>
             <div id="pending" class="space-y-2 px-4 pt-2 empty:hidden" aria-label="Unconfirmed commands"></div>
-            <div id="conversation" class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4" tabindex="0" aria-label="Conversation messages">
+            <div id="conversation" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-8 pt-14 sm:px-8 lg:pt-10" tabindex="0" aria-label="Conversation messages">
                 <flux:button id="earlier" class="mx-auto mb-4" hidden>Load earlier messages</flux:button>
                 <flux:text id="conversation-empty" class="mx-auto max-w-4xl">Choose a voyage from any connected Vessel.</flux:text>
-                <div id="messages" class="mx-auto max-w-4xl space-y-4"></div>
-                <flux:callout id="live-output" class="mx-auto mt-4 max-w-4xl" hidden>
+                <div id="messages" class="mx-auto max-w-3xl space-y-8"></div>
+                <flux:callout id="live-output" class="mx-auto mt-8 max-w-3xl border-0! bg-transparent! p-0! shadow-none!" hidden>
                     <flux:callout.heading id="output-title">Live output · provisional</flux:callout.heading>
                     <flux:callout.text id="output-text" class="whitespace-pre-wrap break-words" />
                     <x-slot name="actions"><flux:button id="more-output" hidden>Load more output</flux:button></x-slot>
@@ -106,7 +101,10 @@
     </flux:modal>
         {{-- Blade renders Flux controls once; JS clones these for socket-driven content. --}}
         <template id="flux-service-option"><flux:radio value=""><span data-option-label></span></flux:radio></template>
-        <template id="flux-card"><flux:card size="sm" class="space-y-3 break-words" /></template>
+        <template id="flux-card"><article class="min-w-0 space-y-3 break-words" /></template>
+        <template id="thread-user"><article class="ms-auto w-fit max-w-[92%] space-y-3 rounded-3xl rounded-br-lg bg-zinc-100 px-5 py-4 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100" aria-label="Your message" /></template>
+        <template id="thread-assistant"><article class="min-w-0 space-y-4 py-1" aria-label="Assistant message"><div class="flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400"><flux:icon.sparkles class="size-4" /><span>Helm</span><span data-interrupted class="text-amber-600" hidden>Interrupted attempt</span></div></article></template>
+        <template id="thread-tools"><details class="group rounded-xl border border-zinc-200/70 px-4 dark:border-zinc-800" data-tool-group><summary class="flex cursor-pointer list-none items-center gap-2 py-3 text-sm text-zinc-500 transition-colors hover:text-zinc-900 dark:hover:text-zinc-200"><flux:icon.command-line class="size-4 shrink-0" /><span data-tool-label class="min-w-0 flex-1 truncate"></span><flux:icon.chevron-right class="size-3 shrink-0 transition-transform group-open:rotate-90" /></summary><div data-tool-body class="max-h-[32rem] space-y-4 overflow-auto border-t border-zinc-200 py-4 dark:border-zinc-800"></div></details></template>
         <template id="flux-decision"><flux:callout variant="warning" class="decision"><flux:callout.heading data-decision-heading /><flux:callout.text data-decision-text class="whitespace-pre-wrap break-words" /><x-slot name="actions" class="flex-wrap"><div data-decision-actions class="flex flex-wrap items-center gap-2"></div></x-slot></flux:callout></template>
         <template id="flux-action"><flux:button size="sm"><span data-label></span></flux:button></template>
         <template id="flux-option"><flux:select.option /></template>

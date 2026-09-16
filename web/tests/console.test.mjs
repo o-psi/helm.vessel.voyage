@@ -34,7 +34,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
@@ -55,6 +55,13 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#cancel').hidden,true,'cancel is hidden before selection');
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();await until(()=>!$('#send').disabled);
         assert.match($('#messages').textContent,/Hello Vessel/);
+        assert.equal(root.querySelector('[data-flux-header]'),null,'no top bar');
+        const tools=$('#messages details');assert.ok(tools);assert.equal(tools.open,false);
+        assert.match(tools.textContent,/2 tool entries.*read_file/);
+        assert.doesNotMatch($('#messages').textContent,/Synthetic tool output/,'collapsed tool bodies render on demand');
+        tools.open=true;tools.dispatchEvent(new Event('toggle'));
+        assert.match(tools.textContent,/Synthetic tool output/);
+        assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
         assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,5);

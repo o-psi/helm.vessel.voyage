@@ -22,7 +22,7 @@ function button(label, action) { const node = fluxTemplate('flux-action', label)
 // Sanitization happens before presentation; untrusted HTML never creates Flux controls.
 export function messageContent(text) {
     const body = document.createElement('div');
-    body.className = 'space-y-3';
+    body.className = 'space-y-4 text-[15px] leading-7 [text-wrap:pretty] [&_p]:leading-7 [&_li]:my-1 [&_pre]:text-sm [&_table]:text-sm';
     body.innerHTML = markdown(text);
     for (const node of [...body.querySelectorAll('p,h1,h2,h3,h4,a,pre,blockquote,hr,table')].reverse()) {
         let replacement, target;
@@ -184,11 +184,15 @@ export function mount(root) {
     function renderMessages() {
         const fingerprint = JSON.stringify(messages); if (fingerprint === messageFingerprint) return; messageFingerprint = fingerprint;
         const scroll = $('conversation'), atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+        const opened = new Set([...$('messages').querySelectorAll('[data-tool-group][open]')].map(node => node.dataset.key));
+        const focused = document.activeElement?.closest('[data-tool-group]')?.dataset.key;
         $('messages').replaceChildren();
-        for (const message of messages) {
-            if (message.role === 'system') continue;
-            const node = fluxTemplate('flux-card');
-            node.append(fluxTemplate('flux-heading', `${message.role || 'message'}${message.interrupted_attempt ? ' · interrupted attempt' : ''}`));
+        let group = null, groupMessages = [];
+        const renderOne = (message, container, tool = false) => {
+            const node = fluxTemplate(tool ? 'flux-card' : message.role === 'user' ? 'thread-user' : 'thread-assistant');
+            if (tool) node.append(fluxTemplate('flux-text', message.role === 'tool' ? 'Tool result' : 'Tool request'));
+            const interrupted = node.querySelector('[data-interrupted]');
+            if (interrupted) interrupted.hidden = !message.interrupted_attempt;
             node.append(messageContent(message.content || ''));
             if (message.tool_calls?.length || message.tool_output || message.parts?.length) {
                 const details = fluxTemplate('flux-details');
@@ -198,7 +202,28 @@ export function mount(root) {
                 node.append(details);
             }
             if (message.projection_truncated) node.append(button('Read complete message', () => expand(message.message_index)));
-            $('messages').append(node);
+            container.append(node);
+        };
+        for (const message of messages) {
+            if (message.role === 'system') continue;
+            const tool = message.role === 'tool' || message.role === 'function' || (message.tool_calls?.length && !String(message.content || '').trim());
+            if (!tool) { group = null; renderOne(message,$('messages')); continue; }
+            if (!group) {
+                group = fluxTemplate('thread-tools'); group.dataset.key = String(message.message_index);
+                groupMessages = []; const members = groupMessages, current = group;
+                let rendered = false;
+                const show = () => { if (!rendered && current.open) { rendered = true; for (const member of members) renderOne(member,current.querySelector('[data-tool-body]'),true); } };
+                current.addEventListener('toggle',show);
+                current.renderTools = show;
+                $('messages').append(current);
+            }
+            groupMessages.push(message);
+            const names = [...new Set(groupMessages.flatMap(m => (m.tool_calls || []).map(call => clean(call.function?.name || call.name || 'Tool'))))];
+            group.querySelector('[data-tool-label]').textContent = `${groupMessages.length} tool ${groupMessages.length === 1 ? 'entry' : 'entries'}${names.length ? ` · ${names.join(', ')}` : ''}`;
+        }
+        for (const node of $('messages').querySelectorAll('[data-tool-group]')) {
+            node.open = opened.has(node.dataset.key); node.renderTools();
+            if (focused === node.dataset.key) node.querySelector('summary').focus({preventScroll:true});
         }
         $('earlier').hidden = earliest <= 0;
         if (atBottom) scroll.scrollTop = scroll.scrollHeight;
