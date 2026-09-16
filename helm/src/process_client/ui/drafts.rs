@@ -11,7 +11,10 @@ const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::vessel::MAX_VESSEL_BODY;
 
 #[derive(Serialize, Deserialize)]
 struct Draft {
-    #[serde(default)]
+    #[serde(
+        default,
+        skip_serializing_if = "super::shared_drafts::Link::is_default"
+    )]
     shared: super::shared_drafts::Link,
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

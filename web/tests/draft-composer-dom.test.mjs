@@ -31,7 +31,8 @@ function server(){
  else if(o.op==='put'){
  if(state.reject || o.expected_revision!==(records.get(o.draft_id)?.revision||0))return {protocol:1,error:'conflict',outcome_unknown:false};
  result={draft_id:o.draft_id,revision:o.expected_revision+1,document:structuredClone(o.document)};records.set(o.draft_id,result);receipts.set(o.command_id,result);
- }else if(o.op==='upload_image')result=attachment;
+ }else if(o.op==='delete'){if(o.expected_revision!==records.get(o.draft_id)?.revision)return {protocol:1,error:'conflict',outcome_unknown:false};records.delete(o.draft_id);result={deleted:true};receipts.set(o.command_id,result);}
+ else if(o.op==='upload_image')result=attachment;
  else if(o.op==='promote')result={parts:records.get(o.draft_id).document.parts};
  else throw Error(o.op);
  if(state.hold && o.op===state.hold.op){const h=state.hold;state.hold=null;h.entered.resolve();await h.wait.promise;}
@@ -87,4 +88,18 @@ test('DOM creation completion is bound to captured composer, not a newly selecte
  assert.equal(await a.composer.created('a','created-session','/repo',captured),true);
  assert.equal(a.now.session_id,null);assert.equal(a.composer.active,second);assert.equal(a.$('#prompt').value,'second');
  }finally{a.dispose();}
+});
+
+test('DOM explicit shared discard removes only reviewed revision and retains newer remote edit',async()=>{
+ localStorage.clear();const s=server(),a=device(s,'discard');const previous=window.confirm;window.confirm=()=>true;
+ try{
+ await a.composer.newChat('a','/repo');a.type('keep until confirmed');await pause();await a.composer.active.save();
+ const draft=a.composer.active,id=draft.record.draft_id;
+ s.records.set(id,{...s.records.get(id),revision:draft.record.revision+1});
+ a.$('[data-discard]').click();await until(()=>a.$('#notice').textContent.includes('retained'));
+ assert.equal(a.$('#prompt').value,'keep until confirmed');assert.ok(s.records.has(id));
+ // Explicitly restore the reviewed shared version before requesting its deletion.
+ localStorage.removeItem(`${draft.key}:discard`);await draft.open(s.records.get(id));
+ a.$('[data-discard]').click();await until(()=>!s.records.has(id) && a.composer.active===null);assert.equal(a.composer.active,null);
+ }finally{window.confirm=previous;a.dispose();}
 });

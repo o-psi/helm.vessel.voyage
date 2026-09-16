@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use voyage_protocol::{content::ContentPart, vessel::VesselCommand};
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(super) struct Link {
     pub id: Option<Uuid>,
     pub revision: u64,
@@ -21,6 +21,11 @@ pub(super) struct Link {
     pub discard_requested: bool,
     #[serde(default)]
     pub discarded: bool,
+}
+impl Link {
+    pub(super) fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 #[derive(Default)]
 pub(super) struct State {
