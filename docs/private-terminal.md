@@ -26,6 +26,14 @@ output (including echo/repeats after detach) remains unavailable to the model, a
 model writes are refused. Already disclosed output cannot be retracted. Start a
 new terminal for model-observed work. This boundary is not an OS sandbox.
 
+Automatic idle suspension never closes session-owned terminals to force the voyage
+idle. Open terminals (including exited entries whose cleanup has not been observed)
+keep the owner alive. Explicitly terminate/close those entries when finished;
+suspension can then retire the empty manager. Other session resources, pending
+cleanup, workflow preparation and browser leases also prevent idle suspension.
+Explicit stop, authority revocation and lifecycle teardown retain their cleanup
+behavior; this does not promise survival across a process or host restart.
+
 The supported plain-user route is a dedicated TTY attachment, not historical
 inline `/terminal` commands in plain chat:
 

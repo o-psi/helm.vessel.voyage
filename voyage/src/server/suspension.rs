@@ -29,7 +29,9 @@ pub(super) async fn suspend(state: &Arc<State>) -> Result<()> {
         ),
         "turn is still active"
     );
-    state.controls.shutdown_retained(&state.owner).await?;
+    if !state.controls.retire_idle(&state.owner).await? {
+        return Ok(());
+    }
     ensure!(
         state
             .owner
