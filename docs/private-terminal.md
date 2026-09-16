@@ -5,6 +5,18 @@ Vessel authenticates and routes the human-only operations. Neither Helm nor
 Vessel starts a substitute PTY. These operations are not conversation messages,
 journalled commands, or effects that reconnect may replay.
 
+## Password guidance
+
+Private terminal entry is strongly recommended: it keeps passwords out of
+model-visible conversation and tool history. This is a recommendation, not a
+blanket refusal rule for credentials explicitly supplied for an authorized task.
+Avoid repeating credentials in replies, diagnostics or persistent helper files;
+prefer existing authentication or private input when available. A credential
+already pasted into chat cannot be made private retroactively.
+
+This guidance does not relax execution policy, scope or approval checks. Human
+attachment still permanently fences model input and capture for that terminal.
+
 ## Access, including plain users
 
 In the TUI, press **F3**, choose a running named program, then Enter. **Ctrl+]**

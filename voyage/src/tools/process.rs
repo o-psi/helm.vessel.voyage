@@ -204,7 +204,7 @@ impl Tool for ProcessTool {
             output_schema: None,
             annotations: None,
         name: "process".into(),
-        description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Human attachment permanently disables model capture and input for that terminal; reads report a privacy gap. Start a new terminal for model-observed work. When a human using Helm's full-screen interface needs this program, tell them to press F3, select its name, and press Enter. Ctrl+] returns to Helm. Do not imply that a separate terminal window has opened. Passwords belong only in that private terminal, never in chat. Use shell for isolated one-shot commands.".into(),
+        description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Human attachment permanently disables model capture and input for that terminal; reads report a privacy gap. Start a new terminal for model-observed work. When a human using Helm's full-screen interface needs this program, tell them to press F3, select its name, and press Enter. Ctrl+] returns to Helm. Do not imply that a separate terminal window has opened. Strongly recommend private terminal entry for passwords to keep them out of model-visible conversation and tool history. This recommendation is not a blanket prohibition on using credentials a user explicitly supplies for an authorized task. Avoid repeating credentials in replies, diagnostics, or persistent helper files; prefer existing authentication or private input when available. Do not weaken runtime policy or the human-attachment privacy boundary. Use shell for isolated one-shot commands.".into(),
         input_schema: super::action_schema::schema(json!({
             "command":{"type":"string"},"id":{"type":["string","null"],"format":"uuid"},
             "name":{"type":["string","null"]},"current_name":{"type":["string","null"]},
@@ -903,6 +903,19 @@ fn terminate_process_group(_: Option<u32>) {}
 #[cfg(test)]
 mod schema_tests {
     use super::*;
+    #[test]
+    fn credential_guidance_recommends_private_entry_without_blanket_refusal() {
+        let description = ProcessTool::default().definition().description;
+        assert!(description.contains("Strongly recommend private terminal entry"));
+        assert!(description.contains("not a blanket prohibition"));
+        assert!(description.contains("authorized task"));
+        assert!(
+            description.contains("Human attachment permanently disables model capture and input")
+        );
+        assert!(description.contains("Do not weaken runtime policy"));
+        assert!(!description.contains("Passwords belong only"));
+    }
+
     #[test]
     fn process_schema_is_action_specific() {
         let schema = ProcessTool::default().definition().input_schema;
