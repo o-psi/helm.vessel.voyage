@@ -658,6 +658,7 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // Keep sidebar checks beside their renderer.
 mod sidebar_tests {
     use super::*;
     use crate::process_client::ui::state::View;

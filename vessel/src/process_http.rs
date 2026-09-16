@@ -347,10 +347,9 @@ fn socket_authority(mut capabilities: serde_json::Value) -> serde_json::Value {
         .get("scope")
         .and_then(serde_json::Value::as_str)
         == Some("owner")
+        && let Some(object) = capabilities.as_object_mut()
     {
-        if let Some(object) = capabilities.as_object_mut() {
-            object.remove("workspaces");
-        }
+        object.remove("workspaces");
     }
     capabilities
 }
