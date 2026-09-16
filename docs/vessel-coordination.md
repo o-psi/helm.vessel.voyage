@@ -306,3 +306,24 @@ original expanded call and activity group rather than a later duplicate. An arch
 sender was explicitly refused without restoration. The clicks issued no provider requests. All-target compilation also passed. These checks
 do not establish deployed remote-grant navigation or native macOS/Windows behavior;
 no general automated suite was recreated.
+
+## Incoming messages and replies
+
+Provider requests project structured coordination provenance as a separate text
+block before the sender's content. This applies to native Chat, Responses
+(including ChatGPT OAuth) and Anthropic encoders, for plain and multipart messages.
+Canonical conversation text is unchanged. Source UUIDs are routing context, not
+permission or proof of a human instruction; sender names are not interpolated
+into runtime guidance.
+
+The bundled skill requires responding to the source voyage with the Vessel tool
+when an answer or result is requested. A local final answer does not send a reply.
+The receiver must resolve an authorized route to the source Vessel, inspect the
+exact session, then steer an active run or submit to an idle voyage. Existing
+command journals and receipts retain outbound intent and uncertain-delivery state.
+Unavailable routes, permissions or cleanup must be reported as blockers. Replies
+and acknowledgements without new requests do not trigger acknowledgement loops.
+
+This is model-visible routing guidance, not automatic final-answer forwarding or
+a deterministic reply-completion gate. Delivery still requires an explicit tool
+call and remains subject to the receiver's policy and the target's authority.

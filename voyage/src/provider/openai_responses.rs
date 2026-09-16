@@ -918,3 +918,58 @@ mod offline_replay_tests;
 #[cfg(test)]
 #[path = "openai_responses_offline_continuation_tests.rs"]
 mod offline_continuation_tests;
+
+#[cfg(test)]
+mod coordination_projection_tests {
+    use super::*;
+    #[test]
+    fn incoming_sender_is_visible_for_plain_and_multipart_without_changing_history() {
+        let mut message = Message::new(Role::User, "sender request");
+        message.coordination = Some(voyage_protocol::coordination::CoordinationSource {
+            vessel_id: uuid::Uuid::new_v4(),
+            session_id: uuid::Uuid::new_v4(),
+            command_id: uuid::Uuid::new_v4(),
+            session_name: "sender".into(),
+            tool_call_id: "call".into(),
+        });
+        for multipart in [false, true] {
+            if multipart {
+                message.parts = vec![voyage_protocol::content::ContentPart::Text {
+                    text: "canonical multipart request".into(),
+                }];
+            }
+            let original = serde_json::to_value(&message).unwrap();
+            let wire = serde_json::to_value(encode_message(&message).unwrap())
+                .unwrap()
+                .to_string();
+            assert!(wire.contains("Incoming voyage coordination"));
+            assert!(
+                wire.contains(
+                    &message
+                        .coordination
+                        .as_ref()
+                        .unwrap()
+                        .session_id
+                        .to_string()
+                )
+            );
+            assert!(wire.contains("a final answer in this conversation does not deliver it"));
+            assert!(wire.contains(if multipart {
+                "canonical multipart request"
+            } else {
+                "sender request"
+            }));
+            if multipart {
+                assert!(!wire.contains("sender request"));
+            }
+            assert_eq!(original, serde_json::to_value(&message).unwrap());
+        }
+        message.coordination = None;
+        assert!(
+            !serde_json::to_value(encode_message(&message).unwrap())
+                .unwrap()
+                .to_string()
+                .contains("Incoming voyage coordination")
+        );
+    }
+}

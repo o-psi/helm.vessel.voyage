@@ -345,6 +345,7 @@ fn media_type_name(value: ImageMediaType) -> &'static str {
     }
 }
 /// Nonempty parts are canonical: never prepend the legacy content projection.
+/// Coordination attribution is ephemeral provider metadata, separate from those parts.
 pub(crate) fn content(message: &Message, wire: Wire) -> Result<Option<Value>, ProviderError> {
     validate_message(message)?;
     if tool_images(message) && matches!(wire, Wire::Chat) {
@@ -353,10 +354,21 @@ pub(crate) fn content(message: &Message, wire: Wire) -> Result<Option<Value>, Pr
         ));
     }
     let parts = parts(message)?;
-    if parts.is_empty() {
+    let notice = super::coordination::notice(message);
+    if parts.is_empty() && notice.is_none() {
         return Ok(None);
     }
-    let mut blocks = Vec::with_capacity(parts.len());
+    let text_block = |text: &str| match wire {
+        Wire::Chat | Wire::Anthropic => json!({"type":"text", "text":text}),
+        Wire::Responses => json!({"type":"input_text", "text":text}),
+    };
+    let mut blocks = Vec::with_capacity(parts.len() + 2);
+    if let Some(notice) = notice {
+        blocks.push(text_block(&notice));
+        if parts.is_empty() {
+            blocks.push(text_block(&message.content));
+        }
+    }
     for part in parts.iter() {
         blocks.push(match part {
             ContentPart::Text { text } => match wire {
