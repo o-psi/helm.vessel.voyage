@@ -50,7 +50,7 @@ def main(binaries):
     workspace = root / 'workspace'
     workspace.mkdir(mode=0o700)
     directory = root / 'vessel'
-    env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+    env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'PROVIDER_FIXTURE_KEY': 'synthetic-offline-only'}
     for key in ('HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
         path = root / key.lower()
         path.mkdir(mode=0o700)
@@ -145,10 +145,18 @@ def main(binaries):
         assert draft({'op': 'get', 'draft_id': draft_id}) == saved
         # Explicit promotion copies to a separately owned session without running a provider.
         config = root / 'config.toml'
-        config.write_text('provider = "openai-chat"\nmodel = "gpt-4o"\napi_key_required = false\nbase_url = "http://127.0.0.1:9/v1"\naccess = "read-only"\n')
+        config.write_text(json.dumps({'version': 1, 'workspace': str(workspace), 'config': {'provider': 'openai-chat', 'model': 'gpt-4o', 'api_key_required': False, 'base_url': 'http://127.0.0.1:9/v1', 'access': 'read-only'}, 'explicit': {'access': 'read-only'}, 'selection': None, 'confirmation': None}))
         config.chmod(0o600)
         sid = uid()
-        request({'op': 'start_configured', 'session_id': sid, 'command_id': uid(), 'workspace': str(workspace), 'config_path': str(config)})
+        def account_cli(*arguments):
+            reply = subprocess.run([str(binaries / 'vessel'), 'auth', 'accounts', *arguments], env=env, cwd=workspace, capture_output=True, text=True, timeout=15)
+            assert reply.returncode == 0, reply.stderr
+            return json.loads(reply.stdout)
+        connection = account_cli('connect', '--label', 'draft-fixture', '--endpoint', 'http://127.0.0.1:9/v1', '--transports', 'openai-chat')
+        account = account_cli('add', '--connection', connection['id'], '--account', 'fixture', '--env', 'PROVIDER_FIXTURE_KEY')
+        binding = {'account_id': account['id'], 'connection_id': connection['id'], 'identity_generation': account['identity_generation'], 'connection_revision': connection['revision'], 'transport': 'openai_chat'}
+        request({'op': 'account_set_default', 'command_id': uid(), 'workspace': str(workspace), 'account': binding, 'expected_revision': 0})
+        request({'op': 'start_settings', 'session_id': sid, 'command_id': uid(), 'workspace': str(workspace), 'config_path': str(config), 'binding': binding, 'settings': {}})
         promotion = {'op': 'promote', 'command_id': uid(), 'draft_id': draft_id, 'expected_revision': 3, 'session_id': sid}
         promoted = draft(promotion)
         assert draft(promotion) == promoted, 'promotion retry changed session references'
