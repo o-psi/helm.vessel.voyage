@@ -7,8 +7,8 @@ import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {request, voyageResult, mutation, resolved} from './vessel-client.js';
 import {VesselFleet} from './vessel-fleet.js';
-import {draftComposer} from './draft-composer.js';
-import {imageBytes} from './shared-drafts.js';
+import {composer} from './composer.js';
+import {imageBytes} from './attachments.js';
 import {voyageSettings} from './voyage-settings.js';
 
 const clean = value => String(value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
@@ -70,11 +70,10 @@ export function mount(root) {
     const scrolling = conversationScroll($('conversation'), fluxTemplate('flux-action', 'Jump to latest ↓'));
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
-    let shared, newChatSending = false;
+    let composition, newChatSending = false;
     const admittedDrafts = new Map();
-    const sentKey = command_id => `helm-web:sent-draft:${root.dataset.tenantId}:${selectedVessel}:${command_id}`;
-    function sentDraft(command_id) { try { return admittedDrafts.get(command_id) || JSON.parse(localStorage.getItem(sentKey(command_id))); } catch { return null; } }
-    function forgetSent(command_id) { admittedDrafts.delete(command_id); localStorage.removeItem(sentKey(command_id)); }
+    const sentDraft = command_id => admittedDrafts.get(command_id);
+    function forgetSent(command_id) { admittedDrafts.delete(command_id); }
     const stream = new ConversationStream();
     let unsubscribe = null, streamEpoch = 0, refreshQueued = false;
     function stopStream() { streamEpoch++; const stop = unsubscribe; unsubscribe = null; try { stop?.(); } catch { /* Closed sockets need no unsubscribe acknowledgement. */ } }
@@ -105,7 +104,7 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('reconnect').disabled = busy; $('prompt').disabled = busy || newChatSending || !selectedVessel; $('send').disabled = newChatSending || (!enabled && !(!selected && shared?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
+            $('reconnect').disabled = busy; $('prompt').disabled = busy || newChatSending || !selectedVessel; $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
@@ -140,7 +139,7 @@ export function mount(root) {
             stale = true; refreshing = false;
         }
         const connections = [...fleet.connections.values()];
-        if (!selectedVessel && connections.some(c=>c.client)) { const first=connections.find(c=>c.client); selectedVessel=first.id; client=first.client; journal=first.journal; shared?.select().catch(error=>notice(error.message)); }
+        if (!selectedVessel && connections.some(c=>c.client)) { const first=connections.find(c=>c.client); selectedVessel=first.id; client=first.client; journal=first.journal; composition?.select().catch(error=>notice(error.message)); }
         const connected = connections.filter(c => c.client).length;
         $('fleet-state').textContent = connections.length ? `${connected} of ${connections.length} Vessels connected` : 'No Vessels connected';
         $('vessel-statuses').replaceChildren();
@@ -180,19 +179,20 @@ export function mount(root) {
         if (busy) return notice('Wait for the current operation, then switch voyages.');
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
 
+        composition?.remember();
         stopStream(); refreshQueued = false;
         scrolling.reset();
         notice(''); generation++; refreshing = false; selectedVessel = vessel; selected = id;
         client = fleet.connections.get(vessel).client; journal = fleet.connections.get(vessel).journal;
-        $('prompt').value = '';
-        !retainDraft && shared?.select().catch(error => notice(error.message));
+        if (!retainDraft) $('prompt').value = '';
+        !retainDraft && composition?.select().catch(error => notice(error.message));
         $('voyage-title').textContent = title;
         $('voyage-vessel').textContent = clean(fleet.connections.get(vessel).name); $('voyage-vessel').hidden = false;
         accountLabelKey = ''; accountLabel = 'Account';
         snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
         messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); renderPreviews($('live-previews'), null); $('live-output').hidden = true; $('earlier').hidden = true;
         $('conversation-empty').hidden = false;
-        $('conversation-empty').textContent = client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
+        $('conversation-empty').textContent = !selected ? 'New chat ready. Write your first message below to begin.' : client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
         connectionsChanged(); refresh();
     }
     async function refresh() {
@@ -203,7 +203,7 @@ export function mount(root) {
             for (const entry of activeJournal.entries().filter(e => e.session_id === id).slice(0, 16)) {
                 const response = await active.exchange(request('receipt', {session_id:id,command_id:entry.command_id}));
                 if (mine !== generation || active !== client) return;
-                if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued'].includes(response.result?.result?.status)){try {await shared.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; draft cleanup unconfirmed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
+                if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued'].includes(response.result?.result?.status)){try {await composition.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; composer cleanup failed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
             }
             const envelope = voyageResult(await active.exchange(request('snapshot', {session_id:id})), id);
             const next = envelope.result;
@@ -423,17 +423,17 @@ export function mount(root) {
         }
     }
     function captureDraft() {
-        const origin = shared.capture();
-        return origin?.key && shared.active ? {...origin,workspace:shared.active.document.target.workspace,target:structuredClone(shared.active.document.target)} : null;
+        const origin = composition.capture();
+        return origin?.key && composition.active ? {...origin,workspace:composition.active.document.target.workspace,target:structuredClone(composition.active.document.target)} : null;
     }
     async function send() {
         if (newChatSending) return;
-        if (selected || shared?.active?.document?.target?.type !== 'new_chat') return act(running() ? 'steer' : 'submit');
-        if (!$('prompt').value.trim() && !shared.active.document.parts.some(p=>p.type==='image')) return notice('Write a message before sending.');
+        if (selected || composition?.active?.document?.target?.type !== 'new_chat') return act(running() ? 'steer' : 'submit');
+        if (!$('prompt').value.trim() && !composition.active.document.parts.some(p=>p.type==='image')) return notice('Write a message before sending.');
         if (!settings.configuration()) { settings.review(); return notice('Review the account and model on this device before sending this new chat.'); }
         newChatSending = true; controls();
         try {
-            const sent = await shared.beforeSend();
+            const sent = await composition.beforeSend();
             const origin = captureDraft();
             const process = await settings.startDraft(origin);
             // Creation and submission have separate immutable receipts. Do not submit
@@ -441,7 +441,7 @@ export function mount(root) {
             const deadline = Date.now()+35000;
             while (selected === process.session_id && selectedVessel === origin.vessel && !actionable() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
             if (selected !== process.session_id || selectedVessel !== origin.vessel || incarnation !== process.incarnation || !actionable()) throw new Error('Chat created; message retained. Wait for its connected snapshot before sending.');
-            if (shared.active !== sent.draft) throw new Error('Draft changed; review the composer before sending.');
+            if (composition.active !== sent.draft) throw new Error('Draft changed; review the composer before sending.');
             await act('submit');
         } catch (error) { notice(error.message); }
         finally { newChatSending=false; controls(); }
@@ -455,7 +455,7 @@ export function mount(root) {
         // Invalidate its read results before dispatch; owner revision checks still apply.
         if (refreshing) { generation++; refreshing = false; log('poll_superseded_by_action',{op}); }
         const text = $('prompt').value;
-        if (['submit','steer'].includes(op) && ((!text.trim() && !shared?.active?.document?.parts.some(p=>p.type==='image')) || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
+        if (['submit','steer'].includes(op) && ((!text.trim() && !composition?.active?.document?.parts.some(p=>p.type==='image')) || new TextEncoder().encode(text).length > 65536)) return notice('Message must contain 1–65536 UTF-8 bytes.');
         if (decision && (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot.run?.run_id)) return notice('Decision expired. Refresh before responding.');
         busy = true; controls();
         const fields = ['submit','steer'].includes(op) ? {prompt:text} : decision ? {decision_id:decision.decision_id,response:answer,expires_at_ms:Math.min(Date.now()+60000,decision.expires_at_ms)} : extra;
@@ -463,20 +463,20 @@ export function mount(root) {
         const active = client, activeJournal = journal, id = selected, vessel = selectedVessel, mine = generation, originSnapshot = structuredClone(snapshot), originIncarnation = incarnation;
         try {
             if (['submit','steer'].includes(op)) {
-                sent = await shared.beforeSend();
+                sent = await composition.beforeSend();
                 if (sent.record.document.parts.some(p=>p.type==='image')) {
-                    const content = await shared.promote(sent,id); op = 'submit_content'; delete fields.prompt; fields.content = content;
+                    const content = await composition.promote(sent,id); op = 'submit_content'; delete fields.prompt; fields.content = content;
                 }
             }
             if (mine !== generation || active !== client || id !== selected || vessel !== selectedVessel) throw new Error('Selection changed while preparing the action; nothing sent.');
             if (sent && op !== 'submit_content') fields.prompt = sent.record.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('');
             command = mutation(op,originSnapshot,originIncarnation,fields); activeJournal.prepare(command.command);
-            if(sent) { admittedDrafts.set(command.command.command_id,sent); localStorage.setItem(sentKey(command.command.command_id),JSON.stringify({record:sent.record,vessel})); }
+            if(sent) admittedDrafts.set(command.command.command_id,sent);
             const response = await active.exchange(command);
 
             if (response.error != null) notice(`Vessel refused the action: ${clean(response.error)}. Draft retained; review model support and attachments.`);
             else if (response.outcome_unknown || !resolved(response,command.command.command_id,id)) notice('Outcome uncertain. Checking receipts only; the action will not be resent.');
-            else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (sent && ['accepted','queued'].includes(response.result?.result?.status)) { await shared.admitted(sent); forgetSent(command.command.command_id); } }
+            else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (sent && ['accepted','queued'].includes(response.result?.result?.status)) { await composition.admitted(sent); forgetSent(command.command.command_id); } }
             if (resolved(response,command.command.command_id,id)) activeJournal.settle(command.command.command_id);
             return response.error == null && resolved(response,command.command.command_id,id);
         } catch (error) { notice(`${error.message || 'Action not confirmed.'} Draft retained. Any recorded command remains pending; reconnect checks receipts without resending.`); }
@@ -524,16 +524,27 @@ export function mount(root) {
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
     const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (pending().length || Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
-    window.addEventListener('pagehide',() => { scrolling.dispose(); stopStream(); generation++;clearInterval(timer);fleet.close(); });
+    window.addEventListener('pagehide',() => { scrolling.dispose(); composition?.dispose(); stopStream(); generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
-    shared = draftComposer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});
+    composition = composer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});
     settings = voyageSettings(root,fleet,{
         current:() => ({vessel:selectedVessel,session_id:selected,incarnation,revision:snapshot?.revision,inference:snapshot?.inference}),
         select,
-        draft: (vessel,workspace)=>shared.newChat(vessel,workspace),
-        created: (...args)=>shared.created(...args),
+        draft: (vessel,workspace)=>composition.newChat(vessel,workspace),
+        created: (...args)=>composition.created(...args),
         captureDraft,
-        prepared: ()=>{ notice(''); controls(); $('prompt').focus(); },
+        prepared: ()=>{
+            notice(''); controls();
+            // Flux propagates disabled state through a MutationObserver. Focus
+            // its actual input after that propagation, not the custom-element host.
+            queueMicrotask(() => {
+                if (!selected) {
+                    const prompt = $('prompt');
+                    if (typeof prompt.focusInput === 'function') prompt.focusInput();
+                    else (prompt.querySelector('textarea') || prompt).focus();
+                }
+            });
+        },
         apply:async (target,fields) => {
             if (target.vessel !== selectedVessel || target.session_id !== selected || target.incarnation !== incarnation || target.revision !== snapshot?.revision || !actionable() || running()) return false;
             return act('set_account_inference',null,null,fields);

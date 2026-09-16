@@ -24,8 +24,8 @@ The console is disabled by default. Offline HTTP, DOM and local WebSocket fixtur
 checks are recorded in the guide; live OAuth-provider journeys, real-provider voyage execution and native
 browser/mobile interaction certification require separate evidence.
 New voyage creation and provider-account/model selection are available in the web
-console. Picture attachments and Vessel-owned [shared composer drafts](shared-drafts.md)
-are available to the Web and TUI composers. Terminal/browser execution and account
+console. Web and TUI composers support picture attachments and memory-only unsent
+composition. Shared drafts and unsent-content persistence are removed. Terminal/browser execution and account
 enrollment remain native-client capabilities. The web client is not Ratzilla.
 
 ## Guided setup and daily interaction

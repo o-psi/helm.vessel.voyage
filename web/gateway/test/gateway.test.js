@@ -275,3 +275,9 @@ test('sustained polling and lease renewals retain one upstream socket', {timeout
  assert.equal(ws.readyState,WebSocket.OPEN);
  assert.equal(f.requests.length,1);
 });
+
+test('removed draft commands are rejected; direct session image uploads remain valid',()=>{
+  const frame=command=>({type:'command',request_id:randomUUID(),request:{protocol:1,command}});
+  assert.equal(validCommand(frame({op:'drafts',operation:{op:'list'}})),false);
+  assert.equal(validCommand(frame({op:'upload_image',session_id:randomUUID(),upload_id:randomUUID(),name:'picture.png',data_base64:'eA=='})),true);
+});

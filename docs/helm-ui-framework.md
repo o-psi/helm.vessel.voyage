@@ -1,3 +1,7 @@
+> Historical audit: unsent draft persistence and shared-draft synchronization
+> have since been removed. Findings and recommendations below about draft files
+> describe the old implementation, not current behavior.
+
 # Helm-specific UI framework: audit and replacement design
 
 Status: **target design, not implemented**. The audit was performed on the dirty

@@ -34,7 +34,6 @@ const fields = {
 export function validCommand(f) {
   if (!exact(f, ['type', 'request_id', 'request']) || f.type !== 'command' || !uuid(f.request_id) || !exact(f.request, ['protocol', 'command']) || f.request.protocol !== 1) return false;
   const c = f.request.command;
-  if (object(c) && c.op === 'drafts') return exact(c,['op','operation']) && validDraftOperation(c.operation);
   if (object(c) && accountCommand(c)) return true;
   if (!object(c) || !Object.hasOwn(fields, c.op)) return false;
   const vessel = ['capabilities', 'catalogue', 'inspect'].includes(c.op);
@@ -84,20 +83,4 @@ export function restrictCapabilities(value, vesselId) {
 
 function validParts(parts) {
   return Array.isArray(parts) && parts.length <= 16 && parts.every(p => exact(p,['type','text']) && p.type === 'text' && typeof p.text === 'string' && Buffer.byteLength(p.text) <= 65536 || exact(p,['type','attachment']) && p.type === 'image' && exact(p.attachment,['id','sha256','name','media_type','byte_size','width','height']) && uuid(p.attachment.id) && /^[a-f0-9]{64}$/.test(p.attachment.sha256) && text(p.attachment.name) && ['image/png','image/jpeg','image/webp'].includes(p.attachment.media_type) && ['byte_size','width','height'].every(k=>uint(p.attachment[k])) && p.attachment.byte_size<=2097152);
-}
-export function validDraftOperation(o) {
-  const fields={list:[],get:['draft_id'],put:['command_id','draft_id','expected_revision','document'],delete:['command_id','draft_id','expected_revision'],upload_image:['command_id','draft_id','name','data_base64'],read_image:['draft_id','attachment_id','offset','limit'],promote:['command_id','draft_id','expected_revision','session_id']};
-  if(!object(o) || !Object.hasOwn(fields,o.op) || !exact(o,['op',...fields[o.op]]))return false;
-  return Object.entries(o).every(([k,v])=>{
-    if(k==='op')return true;
-    if(k.endsWith('_id'))return uuid(v);
-    if(k==='document') {
-      if(!exact(v,['target','parts']) || !validParts(v.parts))return false;
-      const t=v.target;
-      return exact(t,['type','workspace']) && t.type==='new_chat' && text(t.workspace) || exact(t,['type','session_id']) && t.type==='message' && uuid(t.session_id) || exact(t,['type','session_id','run_id','incarnation']) && t.type==='steer' && uuid(t.session_id) && uuid(t.run_id) && uuid(t.incarnation);
-    }
-    if(k==='name')return text(v);
-    if(k==='data_base64')return typeof v==='string' && v.length<=2796204 && /^[A-Za-z0-9+/]*={0,2}$/.test(v);
-    return uint(v) && (k!=='limit' || v>0 && v<=65536);
-  });
 }

@@ -16,6 +16,7 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
 });
 test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:15000}, async () => {
     let id='10000000-0000-4000-8000-000000000001', rejectCreate=false, loseCreate=false, createdProcess;
+
     const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
     const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8'});
     assert.equal(rendered.status,0,rendered.stderr);
@@ -27,7 +28,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false, rejectNext=false, receiptKnown=true;
     globalThis.fetch=async()=>({ok:true,json:async()=>({token:'a'.repeat(64),expires_at_ms:Date.now()+120000,vessel_id:vessel,url:'wss://vessel.example/v1/vessel/browser-socket'})});
 
-    const sharedRecords=new Map();
+
 
     class Socket extends dom.window.EventTarget {
         readyState=0;
@@ -38,14 +39,8 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             const command=frame.request.command;requests.push(command);
             let result;
             if(command.op==='submit' && rejectNext){rejectNext=false;setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'rejected fixture',outcome_unknown:false}}),0);return;}
-            if(command.op==='drafts') {
-                const operation=command.operation; this.drafts ||= sharedRecords;
-                if(operation.op==='list')result={drafts:[...this.drafts.values()]};
-                else if(operation.op==='get')result=this.drafts.get(operation.draft_id)||null;
-                else if(operation.op==='put'){result={draft_id:operation.draft_id,revision:operation.expected_revision+1,document:operation.document};this.drafts.set(operation.draft_id,result);}
-                else if(operation.op==='delete'){this.drafts.delete(operation.draft_id);result={deleted:true};}
-            }
-            else if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
+            if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
+
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
             else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',workspaces:[{name:'Fixture',path:'/fixture'}]};
             else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true}]};
@@ -176,7 +171,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         window.dispatchEvent(new Event('pagehide'));root.remove();
         const replacement=root.cloneNode(false);replacement.innerHTML=fixture.querySelector('#helm-client').innerHTML;root.replaceChildren(...replacement.childNodes);document.body.append(root);
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();
-        await until(()=>$('#prompt').value==='Uncertain dispatch');assert.ok($('#send').disabled);
+        await until(()=>$('#pending').textContent.includes('outcome not confirmed'));assert.equal($('#prompt').value,'','unsent composition is not restored after reload');assert.ok($('#send').disabled);
         receiptKnown=true;
         await until(()=>!$('#send').disabled);
         assert.equal(requests.filter(c=>c.op==='submit').length,3,'reconnect must not replay the uncertain submit');
@@ -190,6 +185,10 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             $('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
             await until(()=>!$('#send').disabled && $('#settings-status').textContent.includes('New chat ready'));
             assert.equal(requests.filter(c=>c.op==='start_account').length,count,'Continue prepares a draft without starting a Voyage');
+            assert.match($('#conversation-empty').textContent,/New chat ready/);
+            assert.equal($('#conversation-empty').hidden,false);
+            assert.equal($('#prompt').disabled,false);
+            assert.equal(document.activeElement,$('#prompt').querySelector('textarea'));
             $('#prompt').value=text;$('#prompt').dispatchEvent(new Event('input'));
         }
         await prepareChat('First-send message');

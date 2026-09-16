@@ -7,8 +7,8 @@ for supported paths, verification and deployment limits.
 ## Three programs
 
 **Helm is the TUI.** It owns presentation, draft editing, navigation and client
-connections. Vessel owns durable [shared composer drafts](shared-drafts.md),
-including new-chat proposals that have no Voyage process. Helm connects to Vessels, whether local or remote. It does not own an
+connections. Unsent composition and new-chat proposals are memory-only;
+shared drafts and unsent-content persistence are removed. Helm connects to Vessels, whether local or remote. It does not own an
 agent loop, acknowledge canonical checkpoints or directly supervise voyage processes.
 Its explicitly shared local browser is a narrow execution exception: Helm owns a
 local browser adapter and independently enforces local consent while the Voyage

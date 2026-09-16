@@ -279,13 +279,12 @@ hidden without changing receipt handling, canonical history or execution policy.
 The console opens independent authenticated sockets to every configured Vessel,
 merges their catalogues and identifies each voyage with a native Flux Vessel badge.
 Search matches voyage titles, session IDs and Vessel names. Client selection and
-local recovery are connection-scoped; durable draft identities belong to the
-selected Vessel. Identical voyage IDs on two Vessels cannot share drafts or route
-commands through one another. The conversation
-header also names the selected Vessel. Unsent composition is autosaved on the selected Vessel; see
-[shared drafts](shared-drafts.md) for cross-device discovery, conflict handling
-and picture staging. Local pending-command records remain admission recovery,
-not a second authoritative draft store.
+in-memory composition are connection-scoped. Identical voyage IDs on two Vessels
+cannot share composers or route commands through one another. The conversation
+header also names the selected Vessel. Unsent text and attachments remain only in
+page memory and are lost on reload. There is no draft discovery, autosave, or
+cross-device synchronization. Local pending-command records retain only admission
+recovery metadata, not composer content.
 
 Each connection owns its lease renewal, reconnect backoff, catalogue and command
 journal. An unavailable Vessel retains its last known catalogue with offline status;
@@ -316,7 +315,7 @@ Older scoped connections are not upgraded automatically. Pair a new full-access 
 
 Creation stores only its immutable request metadata under tenant/connection/Vessel identity before dispatch. An unconfirmed reply leaves a Check creation action which sends `resolve_start_account` for that exact request; it never repeats start or submits a prompt. Confirmed created/not-admitted outcomes settle the record. A pending creation blocks another creation on that connection. Connection replacement does not erase recovery records.
 
-Full native-client parity remains open: account enrollment/usage, private terminals, browser sharing, lifecycle and other native administration are not implemented by these controls. Picture attachments use the shared draft staging and existing multimodal submission paths; they do not add terminal or browser execution authority.
+Full native-client parity remains open: account enrollment/usage, private terminals, browser sharing, lifecycle and other native administration are not implemented by these controls. Picture attachments remain in memory until uploaded directly to the destination Voyage through the existing multimodal submission path; they do not add terminal or browser execution authority.
 
 ## Composer keyboard and access controls
 

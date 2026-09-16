@@ -145,7 +145,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             options(id,items,preserve ? original || '' : '');
         }
         $('settings-save').disabled = !selected;
-        status(selected ? mode === 'create' ? 'Continue prepares your shared draft. Your first Send creates the chat and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
+        status(selected ? mode === 'create' ? 'Continue prepares a new chat. Your first Send creates the chat and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
     }
     function open(edit) {
         if (saving) return;
@@ -193,7 +193,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                     await draft?.(c.id,path);
                     origin = captureDraft?.();
                 }
-                if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The shared new-chat draft could not be prepared.');
+                if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The new-chat composer could not be prepared.');
                 configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,settings:structuredClone(settings)});
                 raw('settings-close').disabled = false;
                 raw('settings-close').click();
@@ -211,8 +211,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             if (!recorded) { $('settings-retry').disabled = false; }
         }
     }
-    // Configuration is device-local and explicitly reviewed. A remotely discovered draft
-    // has no account selection until this device completes the normal settings dialog.
+    // Configuration is in memory and explicitly reviewed before creating a chat.
     function configuration(origin = captureDraft?.()) {
         const value = origin && configurations.get(origin.key), c = value && fleet.connections.get(value.vessel);
         return value && c?.client && c.vessel_id === value.vessel_id && origin.vessel === value.vessel && origin.workspace === value.workspace && !origin.target?.session_id ? value : null;
