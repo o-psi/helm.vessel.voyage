@@ -4,6 +4,7 @@ fn operator_auth_and_bearer_are_exact_and_secret_safe() {
     let mut state = AppState {
         process_directory: None,
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        browser_credentials: Default::default(),
         operator_token_hash: Some(token_hash("fixture-token")),
         public_origin: Some("https://fixture.invalid".into()),
     };
@@ -25,6 +26,7 @@ async fn health_metrics_and_readiness_are_observations_not_execution() {
     let state = AppState {
         process_directory: None,
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        browser_credentials: Default::default(),
         operator_token_hash: None,
         public_origin: None,
     };
