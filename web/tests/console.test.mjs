@@ -58,7 +58,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#prompt').getAttribute('submit'),'enter');
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.some(c=>c.op==='submit')&&!$('#send').disabled);
-        assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').textContent,'Steer run');
+        assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').getAttribute('aria-label'),'Steer run');
         assert.equal($('#cancel').hidden,false,'cancel is visible for active run');
         decisionKind='approval';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();
@@ -68,7 +68,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Second').click();
         await until(()=>requests.some(c=>c.response?.status==='selected')&&!$('#send').disabled);
         assert.deepEqual(requests.find(c=>c.response?.status==='selected').response,{status:'selected',index:1,answer:'Second'});
-        $('#cancel').click();await until(()=>requests.some(c=>c.op==='cancel')&&!$('#send').disabled);assert.equal($('#send').textContent,'Send');
+        $('#cancel').click();await until(()=>requests.some(c=>c.op==='cancel')&&!$('#send').disabled);assert.equal($('#send').getAttribute('aria-label'),'Send');
         assert.equal($('#cancel').hidden,true,'cancel hides after run ends');
         assert.equal($('#access-mode').value,'approval');
         $('#access-mode').value='read-only';$('#access-mode').dispatchEvent(new Event('change'));

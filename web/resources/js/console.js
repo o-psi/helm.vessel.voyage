@@ -76,11 +76,14 @@ export function mount(root) {
             const enabled = actionable();
             $('reconnect').disabled = busy; $('prompt').disabled = !enabled; $('send').disabled = !enabled; $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
-            $('send').textContent = running() ? 'Steer run' : 'Send';
+            $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
+            $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
             $('change-inference').disabled = !enabled || running();
             $('access-mode').disabled = !enabled;
             $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy;
+            $('composer-model').textContent = clean(snapshot?.inference?.model || snapshot?.model || 'Account & model');
+            $('composer-reasoning').textContent = clean(snapshot?.inference?.reasoning_effort || 'Default');
             $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
             for (const entry of pending()) $('pending').append(fluxTemplate('flux-text', `${entry.op} · ${entry.command_id} · outcome not confirmed. Receipt checks only; never automatically resent.`));

@@ -293,3 +293,7 @@ Full native-client parity remains open: account enrollment/usage, attachments, p
 ## Composer keyboard and access controls
 
 The Flux composer sends (or steers an active run) on Enter; Shift+Enter inserts a newline. IME composition Enter does not send. The access selector shows the selected voyage’s observed read-only, approval or unrestricted mode. Changing it sends `set_access` through the same revision-bound command journal as other actions; only a refreshed owner snapshot confirms the mode. Stale, disconnected or unconfirmed-command state disables changes. Executing-host policy and connection grants remain authoritative; unrestricted is not an OS sandbox bypass.
+
+The composer uses a compact model/reasoning settings trigger, access selector, and icon-only send/cancel controls with accessible labels. Full access maps to `unrestricted`; host limits still apply. Cancel is hidden without an active run. Attachments and @/slash suggestions are not advertised because these web workflows are not implemented.
+
+When the checkout is also the served application, CLI-generated Blade views must remain readable by the PHP-FPM service user, which also needs write access to runtime view/cache/session/log directories. Use narrowly scoped service-user ACLs with directory inheritance, not world-writable permissions; preserve application keys and credentials. A passing CLI render does not prove the service user can render the authenticated console.

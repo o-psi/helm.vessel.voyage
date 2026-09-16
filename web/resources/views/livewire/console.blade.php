@@ -39,13 +39,17 @@
                 </flux:callout>
             </div>
             <section id="decisions" class="max-h-[32dvh] space-y-3 overflow-y-auto px-4" aria-label="Pending decisions"></section>
-            <form id="composer" class="space-y-3 border-t border-zinc-200 p-4 dark:border-zinc-700">
-                <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="3" max-rows="8" placeholder="Write a message…" disabled>
-                    <x-slot name="actionsLeading"><flux:select id="access-mode" size="sm" aria-label="Voyage access mode" class="w-auto!" disabled><flux:select.option value="">Access unknown</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Unrestricted</flux:select.option></flux:select><flux:modal.trigger name="voyage-settings"><flux:button id="change-inference" type="button" size="sm" variant="subtle" icon="adjustments-horizontal" disabled>Account &amp; model</flux:button></flux:modal.trigger></x-slot>
-                    <x-slot name="actionsTrailing"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" disabled>Cancel run</flux:button><flux:button id="send" type="submit" size="sm" variant="primary" icon="paper-airplane" disabled>Send</flux:button></x-slot>
+            <form id="composer" class="mx-auto w-full max-w-5xl px-4 pb-4 pt-2">
+                <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="3" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
+                    <x-slot name="actionsLeading">
+                        <div class="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
+                            <flux:modal.trigger name="voyage-settings"><flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change account, model and reasoning" class="max-w-64" disabled><span id="composer-model" class="truncate">Account &amp; model</span><span class="mx-1 text-zinc-300" aria-hidden="true">|</span><span id="composer-reasoning">Default</span></flux:button></flux:modal.trigger>
+                            <flux:select id="access-mode" size="sm" aria-label="Voyage access mode" class="w-auto!" disabled><flux:select.option value="">Access unknown</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
+                        </div>
+                    </x-slot>
+                    <x-slot name="actionsTrailing"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>
                 </flux:composer>
-                <flux:text size="sm">Enter to send · Shift+Enter for a newline. Access changes apply to this voyage within its configured limits.</flux:text>
-                <flux:text id="inference-summary" size="sm" />
+                <flux:text id="inference-summary" class="sr-only" />
             </form>
     </flux:main>
     <flux:modal name="voyage-settings" class="w-full md:max-w-xl" :dismissible="false">
