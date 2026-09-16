@@ -43,8 +43,37 @@
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="3" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
                     <x-slot name="actionsLeading">
                         <div class="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
-                            <flux:modal.trigger name="voyage-settings"><flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change account, model and reasoning" class="max-w-64" disabled><span id="composer-model" class="truncate">Account &amp; model</span><span class="mx-1 text-zinc-300" aria-hidden="true">|</span><span id="composer-reasoning">Default</span></flux:button></flux:modal.trigger>
-                            <flux:select id="access-mode" size="sm" aria-label="Voyage access mode" class="w-auto!" disabled><flux:select.option value="">Access unknown</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
+                            <flux:dropdown position="top" align="start">
+                                <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change account and model" disabled><span id="composer-model" class="max-w-48 truncate">Account &amp; model</span></flux:button>
+                                <flux:popover id="edit-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto">
+                                    <div id="edit-form" class="space-y-4">
+                                        <flux:heading id="edit-title">Account &amp; model</flux:heading>
+                                        <flux:text id="edit-description" />
+                                        <div hidden><flux:select id="edit-vessel" /><flux:select id="edit-workspace" /></div>
+                                        <flux:select id="edit-account" variant="listbox" searchable label="Provider account" />
+                                        <flux:select id="edit-model" variant="listbox" searchable label="Model" />
+                                        <flux:select id="edit-reasoning" label="Reasoning" />
+                                        <flux:select id="edit-service" label="Service tier" />
+                                        <flux:text id="edit-status" role="status" />
+                                        <div class="flex flex-wrap gap-2"><flux:button id="edit-retry" type="button" size="sm">Reload</flux:button><flux:button id="edit-close" type="button" size="sm" variant="ghost">Cancel</flux:button><flux:button id="edit-save" type="button" size="sm" variant="primary" disabled>Apply</flux:button></div>
+                                    </div>
+                                </flux:popover>
+                            </flux:dropdown>
+                            <flux:dropdown position="top" align="start">
+                                <flux:button id="change-reasoning" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled><span id="composer-reasoning">Default</span></flux:button>
+                                <flux:popover id="reasoning-popover" class="w-64 max-w-[calc(100vw-2rem)] space-y-3">
+                                    <flux:select id="quick-reasoning" label="Reasoning" />
+                                    <flux:text id="reasoning-status" role="status" />
+                                    <flux:button id="reasoning-save" type="button" size="sm" variant="primary">Apply</flux:button>
+                                </flux:popover>
+                            </flux:dropdown>
+                            <flux:dropdown position="top" align="start">
+                                <flux:button id="change-access" type="button" size="sm" variant="ghost" icon="lock-open" icon:trailing="chevron-down" disabled><span id="composer-access">Access unknown</span></flux:button>
+                                <flux:popover class="w-72 max-w-[calc(100vw-2rem)] space-y-3">
+                                    <flux:select id="access-mode" label="Voyage access mode" disabled><flux:select.option value="">Access unknown</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
+                                    <flux:text size="sm">Read only restricts changes. Approval asks before actions that need permission. Full access runs without asking, within the executing host’s configured limits.</flux:text>
+                                </flux:popover>
+                            </flux:dropdown>
                         </div>
                     </x-slot>
                     <x-slot name="actionsTrailing"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>

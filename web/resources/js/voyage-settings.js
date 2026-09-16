@@ -9,7 +9,8 @@ async function read(client, op, fields = {}) {
 }
 
 export function voyageSettings(root, fleet, {current, select, apply}) {
-    const $ = id => root.querySelector(`#${id}`);
+    const raw = id => root.querySelector(`#${id}`);
+    const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
     let mode = 'create', target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
     const status = message => { $('settings-status').textContent = clean(message); };
@@ -130,6 +131,8 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
         if (saving) return;
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
         mode = edit ? 'edit' : 'create'; target = current();
+        $('settings-retry').disabled = false;
+        $('settings-close').disabled = false;
         $('settings-title').textContent = edit ? 'Account & model' : 'New voyage';
         $('settings-save').textContent = edit ? 'Apply settings' : 'Create voyage';
         $('settings-description').textContent = edit ? 'Choose the provider account and model for the next run.' : 'Choose where your voyage runs and which provider account it uses.';
@@ -143,7 +146,7 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
         if (!c.voyages.some(v => v.session_id === process.session_id)) c.voyages.unshift(process);
         c.lastCatalogue = 0;
         select(c.id,process.session_id,process.name || 'New voyage');
-        $('settings-close').click();
+        raw('settings-close').click();
         renderPending();
     }
     async function save(event) {
@@ -205,14 +208,18 @@ export function voyageSettings(root, fleet, {current, select, apply}) {
             }
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
-    $('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
+    raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
     $('change-inference').addEventListener('click',() => { $('settings-retry').disabled = false; open(true); });
-    $('settings-vessel').addEventListener('change',loadVessel);
-    $('settings-workspace').addEventListener('change',loadAccounts);
-    $('settings-account').addEventListener('change',loadModels);
-    $('settings-model').addEventListener('change',updateModel);
-    $('settings-retry').addEventListener('click',loadVessel);
-    $('voyage-settings-form').addEventListener('submit',save);
+    for (const prefix of ['settings','edit']) {
+        raw(`${prefix}-vessel`).addEventListener('change',loadVessel);
+        raw(`${prefix}-workspace`).addEventListener('change',loadAccounts);
+        raw(`${prefix}-account`).addEventListener('change',loadModels);
+        raw(`${prefix}-model`).addEventListener('change',updateModel);
+        raw(`${prefix}-retry`).addEventListener('click',loadVessel);
+    }
+    raw('voyage-settings-form').addEventListener('submit',save);
+    raw('edit-save').addEventListener('click',save);
+    raw('edit-close').addEventListener('click', () => raw('edit-popover').hidePopover?.());
     window.addEventListener('storage',renderPending);
     return {renderPending};
 }

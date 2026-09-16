@@ -79,6 +79,9 @@ export function mount(root) {
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
             $('change-inference').disabled = !enabled || running();
+            $('change-reasoning').disabled = !enabled || running() || !snapshot?.inference?.account;
+            $('change-access').disabled = !enabled;
+            $('composer-access').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[snapshot?.access] || 'Access unknown';
             $('access-mode').disabled = !enabled;
             $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy;
@@ -300,6 +303,35 @@ export function mount(root) {
         const access = $('access-mode').value;
         if (['read-only','approval','unrestricted'].includes(access) && access !== snapshot?.access) act('set_access',null,null,{access});
         controls(); // Only a refreshed owner snapshot confirms the new mode.
+    });
+    // Popover form fields must not submit the enclosing message composer.
+    for (const popover of $('composer').querySelectorAll('[data-flux-popover]')) {
+        popover.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !event.target.closest('button')) event.preventDefault();
+        });
+    }
+    let reasoningTarget;
+    $('change-reasoning').addEventListener('click', () => {
+        reasoningTarget = {vessel:selectedVessel, session_id:selected, incarnation, revision:snapshot?.revision};
+        const field = $('quick-reasoning'); field.replaceChildren();
+        for (const value of ['', ...(snapshot?.inference?.reasoning_efforts || [])]) {
+            const option = $('flux-option').content.firstElementChild.cloneNode(true);
+            option.value = value; option.textContent = value || 'Provider default'; field.append(option);
+        }
+        field.value = snapshot?.inference?.reasoning_effort || '';
+        $('reasoning-status').textContent = 'Applies to the next run.';
+        $('reasoning-save').disabled = false;
+    });
+    $('reasoning-save').addEventListener('click', async () => {
+        const t = reasoningTarget;
+        if (!t || t.vessel !== selectedVessel || t.session_id !== selected || t.incarnation !== incarnation || t.revision !== snapshot?.revision || !actionable() || running()) {
+            $('reasoning-status').textContent = 'Voyage changed. Reopen this popover to reload choices.'; return;
+        }
+        $('reasoning-save').disabled = true;
+        const inference = snapshot.inference;
+        const ok = await act('set_account_inference',null,null,{account:inference.account,model:inference.model,reasoning_effort:$('quick-reasoning').value || null,service_tier:inference.service_tier || null});
+        $('reasoning-status').textContent = ok ? 'Settings confirmed.' : 'Not confirmed. Review the voyage status before trying again.';
+        if (ok) $('reasoning-popover').hidePopover?.();
     });
     $('cancel').addEventListener('click',() => act('cancel'));
     $('earlier').addEventListener('click',earlier); $('more-output').addEventListener('click',moreOutput);

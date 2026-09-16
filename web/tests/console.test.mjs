@@ -34,7 +34,8 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,access,name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                if(command.op==='snapshot')value={session_id:id,revision,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:'Streamed response',live_text_offset:0}:null};
+                else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
                 else if(command.op==='receipt'){value={command_id:command.command_id,status:uncertain?'accepted':'unknown'};}
@@ -56,6 +57,14 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages').textContent,/Hello Vessel/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
+        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,3);
+        assert.equal($('#edit-form').tagName,'DIV','no nested form inside message composer');
+        assert.equal($('#change-inference').closest('[data-flux-modal-trigger]'),null);
+        $('#change-reasoning').click();
+        assert.equal($('#quick-reasoning').value,'medium');
+        $('#quick-reasoning').value='high';$('#reasoning-save').click();
+        await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
+        assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
         $('#prompt').value='A new message';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>requests.some(c=>c.op==='submit')&&!$('#send').disabled);
         assert.equal($('#prompt').value,'');assert.match($('#live-output').textContent,/Streamed response/);assert.equal($('#send').getAttribute('aria-label'),'Steer run');
@@ -63,7 +72,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         decisionKind='approval';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Approve'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();
         await until(()=>requests.some(c=>c.op==='respond'&&c.response==='approved')&&!$('#send').disabled);
-        const approval=requests.find(c=>c.op==='respond');assert.equal(approval.incarnation,incarnation);assert.equal(approval.run_id,run);assert.equal(approval.expected_revision,2);
+        const approval=requests.find(c=>c.op==='respond');assert.equal(approval.incarnation,incarnation);assert.equal(approval.run_id,run);assert.equal(approval.expected_revision,3);
         decisionKind='question';await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Second'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Second').click();
         await until(()=>requests.some(c=>c.response?.status==='selected')&&!$('#send').disabled);
