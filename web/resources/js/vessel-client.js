@@ -15,12 +15,17 @@ export function mutation(op, snapshot, incarnation, fields = {}) {
     if (['steer','cancel','respond'].includes(op)) command.run_id = snapshot.run?.run_id;
     return request(op, {...command, ...fields});
 }
+// Steering acknowledgements wrap the durable receipt; receipt reads return it directly.
+export function receiptStatus(response) {
+    const value = response?.result?.result;
+    return value?.status ?? value?.record?.status;
+}
 export function resolved(response, commandId, sessionId, receipt = false) {
     if (response?.protocol !== 1 || response.outcome_unknown !== false) return false;
     if (response.error != null) return !receipt;
     const envelope = response.result, value = envelope?.result;
     const matches = envelope?.session_id === sessionId && (value?.command_id === commandId || value?.request?.receipt_id === commandId || value?.record?.request?.receipt_id === commandId);
-    return Boolean(matches && (!receipt || ['accepted', 'requested', 'already_terminal', 'applied', 'deleted', 'transferred', 'queued', 'not_applied', 'unknown_after_restart'].includes(value?.status)));
+    return Boolean(matches && (!receipt || ['accepted', 'requested', 'already_terminal', 'applied', 'deleted', 'transferred', 'queued', 'not_applied', 'unknown_after_restart'].includes(receiptStatus(response))));
 }
 export class IntentJournal {
     constructor(storage, vesselId) { this.storage = storage; this.key = `helm-web:intent:${vesselId}:`; }

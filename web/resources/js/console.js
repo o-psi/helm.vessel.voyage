@@ -6,7 +6,7 @@ import {actionDescription, actionStatus, actionDuration} from './tool-presentati
 import {setReasoning, reasoningValue} from './inference-controls.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
-import {request, voyageResult, mutation, resolved} from './vessel-client.js';
+import {request, voyageResult, mutation, resolved, receiptStatus} from './vessel-client.js';
 import {VesselFleet} from './vessel-fleet.js';
 import {composer} from './composer.js';
 import {imageBytes} from './attachments.js';
@@ -209,7 +209,7 @@ export function mount(root) {
             for (const entry of activeJournal.entries().filter(e => e.session_id === id && !e.sidebar_action).slice(0, 16)) {
                 const response = await active.exchange(request('receipt', {session_id:id,command_id:entry.command_id}));
                 if (mine !== generation || active !== client) return;
-                if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued'].includes(response.result?.result?.status)){try {await composition.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; composer cleanup failed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${response.result.result.status}. This is not a claim that execution completed.`); }
+                if (resolved(response, entry.command_id, id, true)) { const sent = sentDraft(entry.command_id); if(sent && ['accepted','queued','applied'].includes(receiptStatus(response))){try {await composition.admitted(sent);forgetSent(entry.command_id);}catch(error){notice(`Message admitted; composer cleanup failed: ${error.message}`);continue;}} activeJournal.settle(entry.command_id); notice(`Receipt ${entry.command_id}: ${receiptStatus(response)}. This is not a claim that execution completed.`); }
             }
             const envelope = voyageResult(await active.exchange(request('snapshot', {session_id:id})), id);
             const next = envelope.result;
@@ -482,7 +482,7 @@ export function mount(root) {
 
             if (response.error != null) notice(`Vessel refused the action: ${clean(response.error)}. Draft retained; review model support and attachments.`);
             else if (response.outcome_unknown || !resolved(response,command.command.command_id,id)) notice('Outcome uncertain. Checking receipts only; the action will not be resent.');
-            else { notice(`Acknowledged ${command.command.command_id}; execution may still be pending.`); if (sent && ['accepted','queued'].includes(response.result?.result?.status)) { await composition.admitted(sent); forgetSent(command.command.command_id); } }
+            else { notice(`Receipt ${command.command.command_id}: ${receiptStatus(response) || 'acknowledged'}. ${receiptStatus(response) === 'not_applied' ? 'Message was not applied; draft retained.' : 'Execution may still be pending.'}`); if (sent && ['accepted','queued','applied'].includes(receiptStatus(response))) { await composition.admitted(sent); forgetSent(command.command.command_id); } }
             if (resolved(response,command.command.command_id,id)) activeJournal.settle(command.command.command_id);
             return response.error == null && resolved(response,command.command.command_id,id);
         } catch (error) { notice(`${error.message || 'Action not confirmed.'} Draft retained. Any recorded command remains pending; reconnect checks receipts without resending.`); }
