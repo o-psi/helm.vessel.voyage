@@ -24,6 +24,7 @@
                 <flux:button id="earlier" class="mx-auto mb-4" hidden>Load earlier messages</flux:button>
                 <flux:text id="conversation-empty" class="mx-auto max-w-4xl">Choose a voyage from any connected Vessel.</flux:text>
                 <div id="messages" class="mx-auto max-w-3xl space-y-8"></div>
+                <div id="live-previews" class="mx-auto max-w-3xl" aria-label="Provisional tool calls and provider reasoning" hidden></div>
                 <flux:callout id="live-output" class="mx-auto mt-8 max-w-3xl border-0! bg-transparent! p-0! shadow-none!" hidden>
                     <flux:callout.heading id="output-title">Live output · provisional</flux:callout.heading>
                     <flux:callout.text id="output-text" class="whitespace-pre-wrap break-words" />

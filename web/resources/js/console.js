@@ -1,3 +1,4 @@
+import {ConversationStream, renderPreviews} from './conversation-stream.js';
 import {connectionDiagnostic as log} from './connection-diagnostics.js';
 import {actionDescription, actionStatus, actionDuration} from './tool-presentation.js';
 import {setReasoning, reasoningValue} from './inference-controls.js';
@@ -66,6 +67,23 @@ export function mount(root) {
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     const drafts = new Map();
+    const stream = new ConversationStream();
+    let unsubscribe = null, streamEpoch = 0, refreshQueued = false;
+    function stopStream() { streamEpoch++; const stop = unsubscribe; unsubscribe = null; try { stop?.(); } catch { /* Closed sockets need no unsubscribe acknowledgement. */ } }
+    function subscribe() {
+        if (unsubscribe || !client || !stream.valid || typeof client.subscribe !== 'function') return;
+        const epoch = streamEpoch, active = client;
+        try {
+            unsubscribe = active.subscribe(selected, incarnation, stream.cursor, event => {
+                if (epoch !== streamEpoch || active !== client) return;
+                const action = stream.accept(event);
+                if (action === 'duplicate') return;
+                if (action === 'resync') stopStream();
+                stale = true; controls();
+                if (refreshing || busy) refreshQueued = true; else refresh();
+            });
+        } catch { stopStream(); stale = true; }
+    }
     let settings;
     let accountLabelKey = '', accountLabel = 'Account', accountLabelClient;
     const fleet = new VesselFleet(JSON.parse(root.dataset.vessels || '[]'), {tenantId:root.dataset.tenantId, ticket, changed:connectionsChanged});
@@ -74,7 +92,7 @@ export function mount(root) {
     const notice = text => { $('notice').textContent = clean(text); $('notice-panel').hidden = !text; };
     const running = () => ['running','starting','cancelling'].includes(snapshot?.run?.state);
     const pending = () => journal?.entries().filter(e => e.session_id === selected) || [];
-    const actionable = () => client && snapshot && !stale && !busy && Date.now() - lastFresh < 5000 && !pending().length;
+    const actionable = () => client && snapshot && !stale && !busy && Date.now() - lastFresh < 35000 && !pending().length;
     function controls() {
         try {
             const enabled = actionable();
@@ -109,7 +127,7 @@ export function mount(root) {
     function connectionsChanged() {
         const connection = fleet.connections.get(selectedVessel);
         if (client !== connection?.client) {
-            generation++; client = connection?.client; journal = connection?.journal;
+            stopStream(); generation++; client = connection?.client; journal = connection?.journal;
             stale = true; refreshing = false;
         }
         const connections = [...fleet.connections.values()];
@@ -123,6 +141,7 @@ export function mount(root) {
         else if (!client) state(`${connection?.name || 'Vessel'} · ${connection?.status || 'Unavailable'}`);
         else if (stale) state('Loading voyage…');
         renderVoyages(); controls(); settings?.renderPending();
+        if (selected && client && stale) refresh();
     }
     function renderVoyages() {
         const query = $('voyage-search').value.toLowerCase();
@@ -151,6 +170,7 @@ export function mount(root) {
         if (busy) return notice('Wait for the current operation, then switch voyages.');
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
         if (selected) drafts.set(JSON.stringify([selectedVessel, selected]), $('prompt').value);
+        stopStream(); refreshQueued = false;
         notice(''); generation++; refreshing = false; selectedVessel = vessel; selected = id;
         client = fleet.connections.get(vessel).client; journal = fleet.connections.get(vessel).journal;
         $('prompt').value = drafts.get(JSON.stringify([vessel, id])) || '';
@@ -158,7 +178,7 @@ export function mount(root) {
         $('voyage-vessel').textContent = clean(fleet.connections.get(vessel).name); $('voyage-vessel').hidden = false;
         accountLabelKey = ''; accountLabel = 'Account';
         snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
-        messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); $('live-output').hidden = true; $('earlier').hidden = true;
+        messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); renderPreviews($('live-previews'), null); $('live-output').hidden = true; $('earlier').hidden = true;
         $('conversation-empty').hidden = false;
         $('conversation-empty').textContent = client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
         connectionsChanged(); refresh();
@@ -180,13 +200,14 @@ export function mount(root) {
             if (mine !== generation || selected !== id || active !== client) return;
             const changed = next.revision !== revision || envelope.incarnation !== incarnation;
             snapshot = next; incarnation = envelope.incarnation;
+            stream.seed(next, incarnation);
             updateAccountLabel(); decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
             if (changed) { revision = next.revision; messages = next.messages || []; earliest = next.message_offset || 0; }
             stale = false; lastFresh = Date.now(); log('snapshot_fresh',{generation:mine}); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
             $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
-            renderMessages(); renderDecisions(); renderOutput();
+            renderMessages(); renderDecisions(); renderOutput(); subscribe();
         } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
-        finally { if (mine === generation) { refreshing = false; controls(); } }
+        finally { if (mine === generation) { refreshing = false; controls(); if (refreshQueued) { refreshQueued = false; queueMicrotask(refresh); } } }
     }
     async function updateAccountLabel() {
         const binding = snapshot?.inference?.account;
@@ -342,6 +363,7 @@ export function mount(root) {
     }
     function renderOutput() {
         const run = snapshot?.run;
+        renderPreviews($('live-previews'), run, messages);
         const fingerprint = JSON.stringify([run?.run_id, run?.live_text, run?.partial_text, run?.stream_reconciled, run?.live_text_offset, run?.live_text_truncated, run?.partial_text_truncated]);
         if (fingerprint === outputFingerprint) return; outputFingerprint = fingerprint; outputOffset = null;
         const text = run?.stream_reconciled ? run.live_text || '' : run?.partial_text || '';
@@ -446,7 +468,7 @@ export function mount(root) {
     $('voyage-search').addEventListener('input',renderVoyages);
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
-    const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); refresh(); } },1000);
+    const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
     window.addEventListener('pagehide',() => { generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
     settings = voyageSettings(root,fleet,{
