@@ -69,7 +69,9 @@ This is not per-token PHP rendering. The sidebar aggregates permitted voyages fr
 Browser intent records are tenant/connection/Vessel scoped and contain command
 identities only, not prompts. They are persisted before dispatch. Reconnect reads
 receipts only and never automatically resends uncertain mutations. An admission
-receipt is not execution completion. Storage failure blocks sending; clearing
+receipt is not execution completion. Steering acknowledgements carry a nested durable
+receipt: queued or applied status clears the unchanged sent draft; not-applied or
+uncertain outcomes retain it. Reconnection reads the same receipt without resending. Storage failure blocks sending; clearing
 site storage loses local recovery evidence. Full-message expansion is capped at
 4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Use the composer’s Account or model button before the first Send to review the new chat’s Vessel-hosted provider account and model. Continue keeps that reviewed selection in memory without creating a voyage; reopening review preserves it. For an idle existing voyage, Account shows both the account and its model before Apply. Unavailable accounts are disabled, and active runs cannot switch accounts. Provider credentials stay on the Vessel; use **Add ChatGPT account** for device sign-in. Uploads, private terminals, browser execution, API-key account enrollment and the remaining native administration surfaces are still parity gaps.
 
@@ -371,9 +373,10 @@ and explicit receipt reconciliation. Uncertain commands are never replayed.
 ## Create a ChatGPT provider account
 
 In new-chat settings or an idle voyage’s Account picker, choose **Add ChatGPT
-account**, select the allowed provider connection, enter a unique alias and display
-name, then **Start sign-in**. Open the fixed OpenAI device-sign-in link and enter
-the displayed code on that provider page—not in chat. **Check sign-in** resolves
+account** to open a separate sign-in popover. Enter an account name, then choose
+**Continue with ChatGPT**. The provider choice appears only when multiple
+connections are available; Helm generates the internal alias. Open the fixed OpenAI device-sign-in link and enter
+the displayed code on that provider page—not in chat. **I’ve signed in** (or **Check sign-in** during recovery) resolves
 and reads the original enrollment; it never starts it again. After success, the
 account catalogue reloads with the new account selected. Review the model and
 Continue/Apply before using it.

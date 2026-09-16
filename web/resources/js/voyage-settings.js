@@ -278,6 +278,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             raw(`${prefix}-enrollment-host`).append(raw('enrollment-panel'));
             enrollment.open();
         });
+        raw(`${prefix}-enrollment-host`).addEventListener('toggle', event => {
+            if (event.newState === 'closed' && raw(`${prefix}-enrollment-host`).contains(raw('enrollment-panel'))) enrollment.hide();
+        });
         raw(`${prefix}-close`).addEventListener('click', () => enrollment.hide());
     }
     raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });

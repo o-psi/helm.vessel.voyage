@@ -120,7 +120,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
-        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 6 : 5);
+        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 7 : 6);
         $('#change-account').click();
         assert.equal($('#edit-form').parentElement.id,'account-popover');
         assert.equal($('#edit-account-section').hidden,false);

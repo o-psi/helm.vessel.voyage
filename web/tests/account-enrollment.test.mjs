@@ -5,7 +5,7 @@ import {accountEnrollment} from '../resources/js/account-enrollment.js';
 
 const tick = () => new Promise(resolve=>setTimeout(resolve,0));
 function fixture() {
-    const dom=new JSDOM(`<main data-tenant-id="t"><section id="enrollment-panel" hidden><select id="enrollment-provider"></select><input id="enrollment-alias" value="personal"><input id="enrollment-label" value="Personal"><div id="enrollment-private"><a id="enrollment-link"></a><p id="enrollment-code"></p></div><p id="enrollment-status"></p>${['start','check','cancel','close'].map(id=>`<button id="enrollment-${id}"></button>`).join('')}</section></main>`,{url:'https://helm.test'});
+    const dom=new JSDOM(`<main data-tenant-id="t"><section id="enrollment-panel" hidden><h2 id="enrollment-title"></h2><div id="enrollment-setup"><div id="enrollment-provider-field"></div></div><select id="enrollment-provider"></select><input id="enrollment-alias" value="personal"><input id="enrollment-label" value="Personal"><div id="enrollment-private"><a id="enrollment-link"></a><p id="enrollment-code"></p></div><p id="enrollment-status"></p>${['start','check','cancel','close'].map(id=>`<button id="enrollment-${id}"></button>`).join('')}</section></main>`,{url:'https://helm.test'});
     globalThis.localStorage=dom.window.localStorage;
     Object.defineProperty(dom.window.navigator,'locks',{value:{request:async (_key,_options,fn)=>fn({})}});
     const root=dom.window.document.querySelector('main'), calls=[], refreshed=[];
@@ -62,4 +62,23 @@ test('enrollment permission refusal prevents provider effects',async()=>{
 test('cross-tab lock contention refuses a second start',async()=>{
     const x=fixture();await x.ui.open();x.dom.window.navigator.locks.request=async (_key,_options,fn)=>fn(null);
     x.$('start').click();await tick();assert.match(x.$('status').textContent,/Another tab/);assert.equal(x.calls.some(c=>c.op==='enroll_account'),false);
+});
+
+test('progressive account setup hides recovery commands until sign-in starts',async()=>{
+    const x=fixture();await x.ui.open();
+    assert.equal(x.$('setup').hidden,false);assert.equal(x.$('start').hidden,false);
+    assert.equal(x.$('check').hidden,true);assert.equal(x.$('cancel').hidden,true);
+    assert.equal(x.$('provider-field').hidden,true);
+    x.$('start').click();await tick();
+    assert.equal(x.$('setup').hidden,true);assert.equal(x.$('start').hidden,true);
+    assert.equal(x.$('check').hidden,false);assert.equal(x.$('check').textContent,'I’ve signed in');
+    assert.match(x.calls.find(c=>c.op==='enroll_account').alias,/^chatgpt-/);
+    x.ui.hide();
+});
+test('closing the sign-in popover hides its private contents',async()=>{
+    const x=fixture();const host=x.dom.window.document.createElement('div');
+    host.setAttribute('data-flux-popover','');x.root.append(host);host.append(x.$('panel'));
+    let closed=0;host.hidePopover=()=>closed++;
+    await x.ui.open();x.$('start').click();await tick();x.$('close').click();
+    assert.equal(closed,1);assert.equal(x.$('code').textContent,'');assert.equal(x.$('panel').hidden,true);
 });
