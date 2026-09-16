@@ -168,8 +168,7 @@ async fn sync(client: Client, route: state::Route, mut entries: Vec<Entry>) -> R
                     } else {
                         !entry.link.fork
                             && !matches!(entry.local, Destination::New(_))
-                            && record["document"]["target"]["session_id"]
-                                == entry.document["target"]["session_id"]
+                            && record["document"]["target"] == entry.document["target"]
                     }
                 })
             });
@@ -207,30 +206,28 @@ async fn sync(client: Client, route: state::Route, mut entries: Vec<Entry>) -> R
             if entry.link.revision == 0
                 && !empty
                 && !same(&remote["document"], &entry.document)
-                && !(entry
-                    .link
-                    .id
-                    .is_some_and(|id| remote["draft_id"] == id.to_string())
-                    && remote["document"]["parts"]
-                        .as_array()
-                        .is_some_and(|parts| parts.is_empty()))
+                && !remote["document"]["parts"]
+                    .as_array()
+                    .is_some_and(|parts| parts.is_empty())
             {
                 entry.link.conflict = true;
                 continue;
             }
             if entry.link.revision == 0
+                && !empty
                 && remote["document"]["parts"]
                     .as_array()
                     .is_some_and(|parts| parts.is_empty())
             {
-                entry.link.revision = remote["revision"].as_u64().unwrap_or(0);
+                entry.link.id = Some(serde_json::from_value(remote["draft_id"].clone())?);
+                entry.link.revision = remote["revision"]
+                    .as_u64()
+                    .context("draft revision missing")?;
+                entry.link.base = Some(remote["document"].clone());
             }
             if entry.link.revision == 0 || remote["revision"].as_u64() != Some(entry.link.revision)
             {
-                if changed
-                    && !empty
-                    && entry.link.revision > 0
-                    && !same(&remote["document"], &entry.document)
+                if changed && entry.link.revision > 0 && !same(&remote["document"], &entry.document)
                 {
                     entry.link.conflict = true;
                     continue;
@@ -596,3 +593,7 @@ mod race_tests {
         assert!(!same(&a, &text("steer")));
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "shared_drafts_tests.rs"]
+mod socket_tests;
