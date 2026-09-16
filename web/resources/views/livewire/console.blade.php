@@ -32,10 +32,18 @@
                 </flux:callout>
             </div>
             <section id="decisions" class="max-h-[32dvh] space-y-3 overflow-y-auto px-4" aria-label="Pending decisions"></section>
-            <form id="composer" class="mx-auto w-full max-w-5xl px-4 pb-4 pt-2">
+            <form id="composer" class="mx-auto w-full max-w-3xl px-3 pb-2 pt-2 sm:px-4 sm:pb-4">
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="3" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
                     <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
                         <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
+                            <flux:button id="attach-picture" type="button" size="sm" variant="ghost" icon="paper-clip" aria-label="Attach pictures" tooltip="Attach pictures" />
+                            <flux:dropdown position="top" align="start">
+                                <flux:button type="button" size="sm" variant="ghost" icon="ellipsis-horizontal" aria-label="Draft options" tooltip="Draft options" />
+                                <flux:popover class="w-72 max-w-[calc(100vw-2rem)] space-y-3 p-3" data-draft-menu>
+                                    <flux:select label="Saved drafts" aria-label="Shared draft" data-draft-picker />
+                                    <div class="flex flex-wrap gap-2"><flux:button type="button" size="sm" variant="ghost" data-new>New draft</flux:button><flux:button type="button" size="sm" variant="ghost" data-discard>Discard draft</flux:button></div>
+                                </flux:popover>
+                            </flux:dropdown>
                             <flux:dropdown position="top" align="start">
                                 <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change model" disabled><span id="composer-model" class="max-w-48 truncate">Account &amp; model</span></flux:button>
                                 <flux:popover id="edit-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto">
@@ -79,6 +87,8 @@
                     </x-slot>
                     <x-slot name="actionsTrailing" class="col-span-1! shrink-0 ps-2"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>
                 </flux:composer>
+                <input id="picture-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden aria-label="Choose pictures" />
+                <div class="flex min-h-4 items-center justify-end px-3 pt-1"><span data-draft-status role="status" aria-live="polite" class="text-xs text-zinc-400 dark:text-zinc-500"></span></div>
                 <flux:text id="inference-summary" class="sr-only" />
             </form>
     </flux:main>
@@ -92,7 +102,7 @@
             <flux:select id="settings-model" variant="listbox" searchable label="Model" placeholder="Choose a model" />
             <div class="grid gap-4 sm:grid-cols-2"><div class="space-y-3"><flux:slider id="settings-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="settings-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div><flux:radio.group id="settings-service" label="Service tier" variant="pills" /></div>
             <flux:callout id="settings-notice" role="status"><flux:callout.text id="settings-status">Loading…</flux:callout.text></flux:callout>
-            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-draft" type="button" variant="ghost">Compose shared draft</flux:button><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
+            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Create voyage</flux:button></div>
         </form>
     </flux:modal>
     <flux:modal name="message-details" class="w-full md:max-w-3xl">
@@ -110,14 +120,16 @@
         <template id="flux-option"><flux:select.option /></template>
         <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span></flux:select.option></template>
         <template id="flux-voyage"><flux:sidebar.item as="button"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item></template>
-        <template id="flux-draft-panel"><div class="space-y-2 p-2">
-            <div class="flex flex-wrap items-end gap-2"><flux:select label="Shared draft" aria-label="Shared draft" /><flux:button type="button" size="sm" variant="ghost" data-new>New draft</flux:button><flux:button type="button" size="sm" variant="ghost" data-discard>Discard draft</flux:button></div>
-            <flux:text role="status" aria-live="polite" />
-            <div class="flex flex-wrap gap-2"><flux:button type="button" size="sm" data-shared hidden>Use shared version</flux:button><flux:button type="button" size="sm" data-fork hidden>Keep mine separately</flux:button></div>
-            <div class="flex flex-wrap gap-2" data-images></div>
-            <flux:input type="file" label="Add pictures (PNG, JPEG, WebP · 2 MiB total)" accept="image/png,image/jpeg,image/webp" multiple />
+        <template id="flux-draft-panel"><div data-draft-context class="col-span-4 min-w-0" hidden>
+            <div class="flex gap-2 overflow-x-auto px-1 pb-2" data-images hidden></div>
+            <div data-draft-conflict class="mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm dark:bg-amber-950" hidden>
+                <span>Edited on another device. Your text is safe.</span>
+                <flux:button type="button" size="xs" variant="ghost" data-shared>Use saved version</flux:button>
+                <flux:button type="button" size="xs" variant="ghost" data-fork>Keep both</flux:button>
+            </div>
+            <div data-upload-errors class="space-y-1" hidden></div>
         </div></template>
-        <template id="flux-draft-image"><div class="flex max-w-40 flex-col gap-1"><img class="max-h-32 rounded-lg object-contain" hidden /><flux:text data-image-name /><flux:button type="button" size="sm" variant="ghost">Remove picture</flux:button></div></template>
+        <template id="flux-draft-image"><div class="relative flex w-16 shrink-0 flex-col" data-picture-card><img class="h-16 w-16 rounded-xl object-cover" hidden /><span data-image-name class="sr-only"></span><flux:button type="button" size="xs" variant="filled" icon="x-mark" aria-label="Remove picture" tooltip="Remove picture" class="absolute! -right-1 -top-1" /></div></template>
         <template id="flux-draft-retry"><flux:button type="button" size="sm" variant="ghost">Retry picture upload</flux:button></template>
         <template id="flux-heading"><flux:heading level="2"><span data-label></span></flux:heading></template>
         <template id="flux-text"><flux:text><span data-label></span></flux:text></template>

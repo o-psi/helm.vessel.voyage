@@ -5,14 +5,23 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     const option=(label,value)=>{const node=document.createElement('option');node.textContent=label;node.value=value;return node;};
     const template=id=>root.querySelector(`#${id}`).content.firstElementChild.cloneNode(true);
     const panel=template('flux-draft-panel');
-    form.prepend(panel);
-    const status=panel.querySelector('[role=status]'), picker=panel.querySelector('select'), images=panel.querySelector('[data-images]');
+    prompt.prepend(panel);
+    const status=form.querySelector('[data-draft-status]'), picker=form.querySelector('[data-draft-picker]'), images=panel.querySelector('[data-images]');
+    const conflict=panel.querySelector('[data-draft-conflict]'), errors=panel.querySelector('[data-upload-errors]');
+    const menu=form.querySelector('[data-draft-menu]');
+    const closeMenu=()=>menu.hidePopover?.();
     const sessions=new Map(); let active=null, opening=0, listing=[], timer, uploading=false, rendered='', urls=[];
     const c=()=>fleet.connections.get(current().vessel);
     const text=(draft=active)=>draft?.document?.parts.filter(p=>p.type==='text').map(p=>p.text).join('') || '';
     function render(draft=active) {
         if(draft!==active) return;
-        status.textContent=uploading?'Uploading picture — awaiting server validation…': draft?.conflict?'Conflict — edits retained. Choose which version to keep.':draft?.pending?'Saving / unconfirmed — edits retained on this device.':draft?.dirty?'Unsaved on this device':draft?.record?'Saved on Vessel':'Choose a shared draft, or type to create one.';
+        status.textContent=uploading?'Uploading…':draft?.conflict?'Not synced':draft?.pending?'Saving…':draft?.dirty?'Not saved yet':draft?.record?'Saved':'';
+        status.title=draft?.record?'Saved drafts are available on your other devices connected to this Vessel':'';
+        conflict.hidden=!draft?.conflict;
+        errors.hidden=!errors.childElementCount;
+        images.hidden=!(draft?.document?.parts || []).some(p=>p.type==='image');
+        panel.hidden=images.hidden && conflict.hidden && errors.hidden;
+        menu.querySelector('[data-discard]').disabled=!draft?.record || uploading;
         panel.querySelector('[data-shared]').hidden=!draft?.conflict || draft.conflict.deleted;
         panel.querySelector('[data-fork]').hidden=!draft?.conflict;
         const parts=draft?.document?.parts || [], fingerprint=JSON.stringify([draft?.record?.draft_id,parts.filter(p=>p.type==='image')]);
@@ -26,6 +35,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
             }
         }
         for(const button of panel.querySelectorAll('button,input,select'))button.disabled=uploading;
+        form.querySelector('#attach-picture').disabled=uploading;
         changed?.();
     }
     function instance(record) {
@@ -35,8 +45,8 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     }
     async function open(record) {
         const vessel=current().vessel, mine=opening, draft=instance({...record,_vessel:vessel}); active=draft; const ready=draft.saving ? draft.saving : draft.open(record); prompt.value=text(draft); await ready; if(mine!==opening || active!==draft)return draft; render();
-        panel.querySelectorAll('[data-upload-retry]').forEach(node=>node.remove());
-        for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(!key?.startsWith(`${draft.key}:upload:`))continue;const operation=JSON.parse(localStorage.getItem(key));const retry=template('flux-draft-retry');retry.dataset.uploadRetry='';retry.textContent=`Resume ${operation.name} upload`;retry.onclick=async()=>{try{const attachment=await draftRequest(draft.client(),operation);if(!draft.document.parts.some(p=>p.type==='image' && p.attachment.id===attachment.id))draft.edit([...draft.document.parts,{type:'image',attachment}]);await draft.save();localStorage.removeItem(key);retry.remove();}catch(error){notice(error.message);}};panel.append(retry);}
+        errors.replaceChildren();render();
+        for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(!key?.startsWith(`${draft.key}:upload:`))continue;const operation=JSON.parse(localStorage.getItem(key));const retry=template('flux-draft-retry');retry.dataset.uploadRetry='';retry.textContent=`Resume ${operation.name} upload`;retry.onclick=async()=>{try{const attachment=await draftRequest(draft.client(),operation);if(!draft.document.parts.some(p=>p.type==='image' && p.attachment.id===attachment.id))draft.edit([...draft.document.parts,{type:'image',attachment}]);await draft.save();localStorage.removeItem(key);retry.remove();render();}catch(error){notice(error.message);}};errors.append(retry);errors.hidden=false;panel.hidden=false;}
         return draft;
     }
     async function discover() {
@@ -58,9 +68,9 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     }
     function schedule(draft=active) {clearTimeout(timer);timer=setTimeout(()=>draft?.save().catch(e=>{if(active===draft)status.textContent=e.message;}),600);}
     prompt.addEventListener('input',async()=>{const value=prompt.value, mine=opening;try{const pending=ensure(), draft=active;if(draft)draft.edit(updateText(draft.document.parts,value));await pending;if(mine===opening && active===draft)schedule(draft);}catch(e){notice(e.message);}});
-    picker.onchange=async()=>{const record=listing.find(r=>r.draft_id===picker.value);if(!record)return;const target=record.document.target;if(target.type==='new_chat')select(current().vessel,null,'New-chat draft',true);else if(target.session_id!==current().session_id)select(current().vessel,target.session_id,'Draft voyage',true);++opening;await open(record);};
-    panel.querySelector('[data-new]').onclick=async()=>{clearTimeout(timer);const previous=active;if(previous?.dirty)previous.save().catch(e=>notice(e.message));++opening;active=null;prompt.value='';try{await ensure();render();}catch(e){notice(e.message);}};
-    panel.querySelector('[data-discard]').onclick=async()=>{
+    picker.onchange=async()=>{closeMenu();const record=listing.find(r=>r.draft_id===picker.value);if(!record)return;const target=record.document.target;if(target.type==='new_chat')select(current().vessel,null,'New-chat draft',true);else if(target.session_id!==current().session_id)select(current().vessel,target.session_id,'Draft voyage',true);++opening;await open(record);};
+    menu.querySelector('[data-new]').onclick=async()=>{closeMenu();clearTimeout(timer);const previous=active;if(previous?.dirty)previous.save().catch(e=>notice(e.message));++opening;active=null;prompt.value='';try{await ensure();render();}catch(e){notice(e.message);}};
+    menu.querySelector('[data-discard]').onclick=async()=>{closeMenu();
         const draft=active;if(!draft?.record || uploading)return;
         if(!window.confirm('Discard this shared draft on all devices?'))return;
         clearTimeout(timer);
@@ -78,7 +88,8 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     };
     panel.querySelector('[data-shared]').onclick=async()=>{const draft=active, mine=++opening, remote=draft.conflict;draft.storage.removeItem(draft.key);await draft.open(remote);if(mine===opening && draft===active){prompt.value=text();render();}};
     panel.querySelector('[data-fork]').onclick=async()=>{const draft=active, mine=opening, original=JSON.stringify(draft.document);try{const fork=await draft.fork();sessions.set(fork.key,fork);if(mine===opening && active===draft && JSON.stringify(draft.document)===original){active=fork;prompt.value=text();render();}await discover();}catch(e){notice(e.message);}};
-    const input=panel.querySelector('input[type=file]');
+    const input=form.querySelector('#picture-files');
+    form.querySelector('#attach-picture').onclick=()=>input.click();
     async function upload(files) {
         if(uploading)return notice('Wait for the current picture upload.');
         uploading=true;render();
@@ -91,7 +102,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
                 const operation={op:'upload_image',command_id:uuid(),draft_id:draft.record.draft_id,name:file.name || 'pasted-image',data_base64:btoa(binary)};
                 const uploadKey=`${draft.key}:upload:${operation.command_id}`;localStorage.setItem(uploadKey,JSON.stringify(operation));
                 const send=async()=>{const attachment=await draftRequest(draft.client(),operation);if(!draft.document.parts.some(p=>p.type==='image' && p.attachment.id===attachment.id))draft.edit([...draft.document.parts,{type:'image',attachment}]);await draft.save();localStorage.removeItem(uploadKey);};
-                try{await send();}catch(error){const retry=template('flux-draft-retry');retry.type='button';retry.textContent=`Retry ${file.name || 'picture'} upload`;retry.onclick=()=>send().then(()=>retry.remove()).catch(e=>notice(e.message));if(active===draft)panel.append(retry);throw error;}
+                try{await send();}catch(error){const retry=template('flux-draft-retry');retry.type='button';retry.textContent=`Retry ${file.name || 'picture'} upload`;retry.onclick=()=>send().then(()=>{retry.remove();render();}).catch(e=>notice(e.message));if(active===draft){errors.append(retry);errors.hidden=false;panel.hidden=false;}throw error;}
             }
             await discover();
         } catch(error){notice(`Picture not confirmed: ${error.message} Text and existing pictures retained.`);}finally{uploading=false;input.value='';render();}
@@ -100,7 +111,7 @@ export function draftComposer(root,{fleet,current,select,notice,changed}) {
     form.addEventListener('paste',event=>{const files=[...(event.clipboardData?.files || [])];if(files.length){event.preventDefault();upload(files);}});
     form.addEventListener('dragover',event=>{if(event.dataTransfer?.types.includes('Files'))event.preventDefault();});
     form.addEventListener('drop',event=>{if(event.dataTransfer?.files.length){event.preventDefault();upload([...event.dataTransfer.files]);}});
-    const poll=setInterval(()=>{if(!root.isConnected){clearInterval(poll);urls.forEach(URL.revokeObjectURL);return;} discover().catch(()=>{});const draft=active;draft?.poll().then(()=>{if(active===draft && !draft.dirty && document.activeElement!==prompt)prompt.value=text(draft);}).catch(e=>{status.textContent=e.message;});},3000);
+    const poll=setInterval(()=>{if(!root.isConnected){clearInterval(poll);urls.forEach(URL.revokeObjectURL);return;} discover().catch(()=>{});const draft=active;draft?.poll().then(()=>{if(active===draft && !draft.dirty && document.activeElement!==prompt)prompt.value=text(draft);}).catch(e=>{status.textContent='Not synced';status.title=e.message;});},3000);
     return {
         get active(){return active;},
         capture(){return {opening,vessel:current().vessel,session_id:current().session_id,key:active?.key};},

@@ -103,3 +103,23 @@ test('DOM explicit shared discard removes only reviewed revision and retains new
  a.$('[data-discard]').click();await until(()=>!s.records.has(id) && a.composer.active===null);assert.equal(a.composer.active,null);
  }finally{window.confirm=previous;a.dispose();}
 });
+
+test('quiet composer: no permanent draft form, file picker is hidden, contextual pictures and conflicts only',async()=>{
+ localStorage.clear();const s=server(),a=device(s,'compact');try{
+ const prompt=a.$('#prompt'),context=a.$('[data-draft-context]'),menu=a.$('[data-draft-menu]');
+ assert.equal(context.parentElement,prompt);assert.equal(context.hidden,true);
+ assert.equal(a.$('#picture-files').hidden,true);assert.ok(prompt.contains(a.$('#attach-picture')));
+ assert.ok(menu.hasAttribute('popover'));assert.ok(menu.contains(a.$('[data-discard]')));
+ assert.equal(a.$('[data-draft-status]').textContent,'');assert.equal(a.$('#settings-draft'),null);
+ let picks=0;a.$('#picture-files').click=()=>picks++;a.$('#attach-picture').click();assert.equal(picks,1);
+ await a.composer.newChat('a','/repo');a.type('A quiet draft');await pause();await a.composer.active.save();
+ assert.equal(context.hidden,true);assert.equal(a.$('[data-draft-status]').textContent,'Saved');
+ const draft=a.composer.active;draft.conflict={...draft.record};draft.changed(draft);
+ assert.equal(context.hidden,false);assert.equal(a.$('[data-draft-conflict]').hidden,false);
+ assert.equal(a.$('[data-images]').hidden,true);
+ draft.conflict=null;draft.edit([{type:'image',attachment:s.attachment}]);
+ assert.equal(a.$('[data-draft-conflict]').hidden,true);assert.equal(a.$('[data-images]').hidden,false);
+ assert.equal(a.$('[data-images]').querySelectorAll('[data-picture-card]').length,1);
+ a.$('[data-picture-card] button').click();assert.equal(context.hidden,true);
+ }finally{a.dispose();}
+});
