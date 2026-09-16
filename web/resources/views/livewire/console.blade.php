@@ -11,10 +11,7 @@
             <flux:sidebar.nav id="voyages" aria-label="Choose a voyage" />
             <flux:text id="voyage-empty" size="sm" hidden />
             <div id="pending-creations" class="space-y-2" aria-label="Unconfirmed voyage creation"></div>
-<div class="flex items-center justify-between">        <flux:dropdown>
-            <flux:button variant="ghost" icon="sun" aria-label="Appearance" />
-            <flux:menu><flux:menu.radio.group x-model="$flux.appearance"><flux:menu.radio value="light">Light</flux:menu.radio><flux:menu.radio value="dark">Dark</flux:menu.radio><flux:menu.radio value="system">System</flux:menu.radio></flux:menu.radio.group></flux:menu>
-        </flux:dropdown>
+<div class="flex items-center justify-between">        
         <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
 </div><flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text><flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
     </flux:sidebar>
