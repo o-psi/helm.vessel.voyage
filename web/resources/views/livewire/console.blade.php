@@ -36,8 +36,8 @@
             <section id="decisions" class="max-h-[32dvh] space-y-3 overflow-y-auto px-4" aria-label="Pending decisions"></section>
             <form id="composer" class="mx-auto w-full max-w-5xl px-4 pb-4 pt-2">
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="3" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
-                    <x-slot name="actionsLeading">
-                        <div class="flex min-w-0 flex-wrap items-center gap-1 sm:gap-2">
+                    <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
+                        <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
                             <flux:dropdown position="top" align="start">
                                 <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change model" disabled><span id="composer-model" class="max-w-48 truncate">Account &amp; model</span></flux:button>
                                 <flux:popover id="edit-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto">
@@ -79,7 +79,7 @@
                             </flux:dropdown>
                         </div>
                     </x-slot>
-                    <x-slot name="actionsTrailing"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>
+                    <x-slot name="actionsTrailing" class="col-span-1! shrink-0 ps-2"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>
                 </flux:composer>
                 <flux:text id="inference-summary" class="sr-only" />
             </form>
