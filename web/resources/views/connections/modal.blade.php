@@ -1,5 +1,5 @@
 <div x-data="{ adding: {{ $errors->any() && !$errors->has('confirm_disconnect') && $pairings->isEmpty() ? 'true' : 'false' }} }" x-init="@if(request()->boolean('manage-vessels') || session('manage_vessels')) $nextTick(() => $flux.modal('manage-vessels').show()) @endif">
-    <flux:modal name="manage-vessels" class="w-full md:max-w-xl" aria-labelledby="manage-vessels-title" data-connections-url="{{ route('connections') }}">
+    <flux:modal name="manage-vessels" class="w-full md:max-w-2xl" aria-labelledby="manage-vessels-title" data-connections-url="{{ route('connections') }}">
         <div class="space-y-5">
             <div class="pr-8">
                 <flux:heading id="manage-vessels-title" size="xl"><span x-show="!adding">Your Vessels</span><span x-show="adding" x-cloak>Add a Vessel</span></flux:heading>
@@ -10,17 +10,15 @@
             @if($errors->any() && !$errors->has('connection')) <flux:callout variant="danger" role="alert">Check the supplied fields and try again. You’ll need to paste your invitation or credential again.</flux:callout> @endif
 
             <div x-show="!adding" class="space-y-5" data-vessel-list>
-                <div class="divide-y divide-zinc-200 dark:divide-zinc-700">
+                <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2" data-vessel-grid>
                     @forelse($vessels as $connection)
-                        <div x-data="{ details: false }" class="py-3 first:pt-0">
-                            <div class="flex items-center gap-3">
+                        <flux:card x-data="{ details: false }" class="min-w-0 p-4" data-vessel-card>
+                            <div class="mb-4 flex items-center justify-between gap-3">
                                 <div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-700"><flux:icon.server-stack class="size-5 text-zinc-500" /></div>
-                                <div class="min-w-0 flex-1">
-                                    <flux:heading class="truncate">{{ $connection->name }}</flux:heading>
-                                    <flux:text size="sm" class="truncate">{{ parse_url($connection->endpoint, PHP_URL_HOST) ?: $connection->endpoint }}</flux:text>
-                                </div>
                                 <flux:button variant="ghost" size="sm" icon="ellipsis-horizontal" x-on:click="details = !details" x-bind:aria-expanded="details" aria-label="Options for {{ $connection->name }}" />
                             </div>
+                            <flux:heading class="break-words">{{ $connection->name }}</flux:heading>
+                            <flux:text size="sm" class="mt-1 break-all">{{ parse_url($connection->endpoint, PHP_URL_HOST) ?: $connection->endpoint }}</flux:text>
                             <div x-show="details" x-cloak class="mt-3 space-y-3 rounded-lg bg-zinc-50 p-4 dark:bg-zinc-900">
                                 <dl class="space-y-2 text-sm">
                                     <div><dt class="font-medium">Address</dt><dd class="break-all text-zinc-500">{{ $connection->endpoint }}</dd></div>
@@ -34,9 +32,9 @@
                                     <flux:button type="submit" variant="danger" size="sm">Remove Vessel</flux:button>
                                 </form>
                             </div>
-                        </div>
+                        </flux:card>
                     @empty
-                        <div class="space-y-2 py-8 text-center">
+                        <div class="col-span-full space-y-2 py-8 text-center">
                             <flux:icon.server-stack class="mx-auto mb-3 size-8 text-zinc-400" />
                             <flux:heading>No Vessels yet</flux:heading>
                             <flux:text>Add your first computer to start a voyage.</flux:text>

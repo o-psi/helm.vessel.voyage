@@ -28,6 +28,13 @@ for (const populated of [false,true]) test(`actual management Blade renders ${po
     assert.equal(r.status,0,r.stderr+r.stdout);
     const d=new JSDOM(r.stdout).window.document;
     assert.ok(d.querySelector('dialog'));
+    const grid=d.querySelector('[data-vessel-grid]');
+    assert.ok(grid.classList.contains('grid'));
+    assert.ok(grid.classList.contains('grid-cols-1'));
+    assert.ok(grid.classList.contains('sm:grid-cols-2'));
+    assert.equal(grid.querySelectorAll('[data-vessel-card]').length,populated?1:0);
+    if(populated) assert.ok(grid.querySelector('[data-vessel-card] form[action$="/saved-id"]'));
+    else assert.ok(grid.firstElementChild.classList.contains('col-span-full'));
     assert.ok(d.querySelector('[data-vessel-list][x-show="!adding"]'));
     assert.ok(d.querySelector('[data-vessel-add][x-show="adding"][x-cloak]'));
     assert.equal(d.querySelector('[data-vessel-list] textarea'),null);

@@ -154,9 +154,10 @@ to finish unarchiving. Cancel admission does not establish completed cleanup.
 ### Vessel management
 
 **Manage Vessels** opens a Flux dialog in the console rather than navigating away.
-The default view is a compact list with an **Add Vessel** action. Adding opens
+The default view is a responsive card grid (two columns on wider screens, one on
+mobile) with an **Add Vessel** action. Adding opens
 a separate step within the dialog; setup help and credential import are collapsed.
-Each row’s options reveal technical details and removal confirmation. Unconfirmed
+Each card’s options reveal technical details and removal confirmation. Unconfirmed
 pairings stay in the list with a **Check connection** action. Saved connections are not an online-status
 claim. Disconnect requires confirmation and removes only this account’s saved
 connection; admitted voyages continue and the underlying Vessel grant is retained.
