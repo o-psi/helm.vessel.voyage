@@ -182,3 +182,20 @@ This is implementation and offline fixture evidence, not a completed live
 phone/TUI handoff, deployed public-browser journey, installation upgrade or
 live-provider image execution. Pictures in active-run steering remain unsupported
 and are explicitly refused without discarding the draft.
+
+### Composer UX correction
+
+The initial permanent draft-management/file-input panel was rejected in #309.
+The corrected Web composer hides management in an overflow popover, uses a
+paperclip action and conditional thumbnails, and shows only a small save status
+in ordinary use. Empty composition has no visible draft instructions, file picker
+or management form. The input starts at two rows and shares the conversation's
+maximum width. Conflicts and retry controls are contextual, not permanent chrome.
+
+Verification: 43 Web Node/DOM/PHP checks pass with Node 26, including actual Flux
+rendering, hidden file input, icon-only thumbnail removal, conditional panel
+visibility, first-Send creation/submission, and uncertain/rejected creation and
+send recovery. Vite production build and documentation/manifest/diff checks pass.
+No Rust source, Cargo or Rust tests changed, so the previous coverage measurement
+is unchanged. Browser capture was unavailable (local browser not shared): these
+are rendered DOM/behavior checks, not desktop/mobile screenshot certification.
