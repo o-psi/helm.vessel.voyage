@@ -463,8 +463,10 @@ async fn catalogue_refresh_resets_filter_and_focus_without_applying_account() {
 async fn default_mismatch_keeps_pending_review_and_never_applies_settings() {
     let f = Fixture::new();
     let (mut app, t, _connection) = setup(&f);
-    let mut settings = Settings::default();
-    settings.account = Some(super::tests::binding());
+    let settings = Settings {
+        account: Some(super::tests::binding()),
+        ..Default::default()
+    };
     let p = app.accounts.picker.as_mut().unwrap();
     p.mode = Mode::DefaultConsent(settings);
     p.default_change_pending = true;

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     let clients = super::super::routes::Routes::new(vec![Client::local(dir.join("no-vessel"))]);
     let (sender, _receiver) = tokio::sync::mpsc::channel(32);
-    let app = App {
+    App {
         workspace: Default::default(),
         stop_review: None,
         viewport: Default::default(),
@@ -66,8 +66,7 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
         inference: Default::default(),
         accounts: Default::default(),
         sidebar: Default::default(),
-    };
-    app
+    }
 }
 fn settings() -> Settings {
     Settings {
@@ -460,12 +459,14 @@ async fn configured_first_send_persists_policy_and_resolves_the_exact_original_p
     let mut app = app(fixture.0.path());
     let route = app.clients.first_route().unwrap();
     std::fs::create_dir(app.clients[route].directory.clone()).unwrap();
-    let mut config = crate::Config::default();
-    config.workspace = Some(fixture.0.path().into());
-    config.system_prompt = "synthetic policy-preserving launch".into();
-    config.command_timeout_secs = 37;
-    config.terminal_max_count = 3;
-    config.subagent_max_concurrency = 2;
+    let mut config = crate::Config {
+        workspace: Some(fixture.0.path().into()),
+        system_prompt: "synthetic policy-preserving launch".into(),
+        command_timeout_secs: 37,
+        terminal_max_count: 3,
+        subagent_max_concurrency: 2,
+        ..Default::default()
+    };
     config.policy_explicit.github_enabled = Some(false);
     app.new_chat_config = Some(config.clone());
     app.create(Some(fixture.0.path().to_str().unwrap()))

@@ -224,9 +224,6 @@ pub(super) fn page(journal: Option<&Journal>, limit: usize, cursor: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn is_false(value: &bool) -> bool {
-        !*value
-    }
     #[test]
     fn current_account_scope_is_retained_without_secrets() {
         let vessel = Uuid::new_v4();

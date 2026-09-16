@@ -27,6 +27,8 @@ impl Drop for Server {
     }
 }
 impl Server {
+    // The handshake callback error type is fixed by tungstenite.
+    #[allow(clippy::result_large_err)]
     pub async fn new(
         mut reply: impl FnMut(&VesselCommand) -> Result<Value, String> + Send + 'static,
     ) -> Self {

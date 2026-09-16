@@ -1,5 +1,3 @@
-use super::*;
-
 #[tokio::test]
 async fn browser_commands_without_a_local_resource_do_not_start_one_implicitly() {
     let (_fixture, mut app, target) = super::super::coverage_support::app();

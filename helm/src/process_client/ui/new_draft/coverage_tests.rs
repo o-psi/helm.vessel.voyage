@@ -4,8 +4,10 @@ use super::*;
 fn setup() -> (super::super::account_test_support::Fixture, App, Uuid) {
     let (fixture, mut app, target) = coverage_support::app();
     std::fs::create_dir_all(&app.clients[target.route].directory).unwrap();
-    let mut config = crate::Config::default();
-    config.workspace = Some(fixture.0.path().into());
+    let config = crate::Config {
+        workspace: Some(fixture.0.path().into()),
+        ..Default::default()
+    };
     app.new_chat_config = Some(config);
     app.create(Some(fixture.0.path().to_str().unwrap()))
         .unwrap();

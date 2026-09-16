@@ -17,6 +17,8 @@ pub(super) struct Peer {
     _root: tempfile::TempDir,
 }
 impl Peer {
+    // The handshake callback error type is fixed by tungstenite.
+    #[allow(clippy::result_large_err)]
     pub async fn open() -> Self {
         let root = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -57,6 +57,8 @@ struct Loaded {
     defaults: Settings,
     enroll: bool,
 }
+// One pending account reply is retained; keep the value-based reply API.
+#[allow(clippy::large_enum_variant)]
 enum Reply {
     Loaded(Loaded),
     Private(PrivateEnrollmentStatus),
@@ -65,6 +67,8 @@ enum Reply {
     Usage(AccountUsageObservation),
     DefaultAccount(Catalogue),
 }
+// One picker mode is retained; consent owns its reviewed settings snapshot.
+#[allow(clippy::large_enum_variant)]
 enum Mode {
     List,
     Connections,
@@ -191,7 +195,7 @@ fn open_browser(pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Resu
     #[cfg(test)]
     {
         pending.store(false, Ordering::Release);
-        return super::account_test_support::browser(URL);
+        super::account_test_support::browser(URL)
     }
     #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
     {
@@ -307,7 +311,7 @@ impl Picker {
                                 ""
                             }
                         ),
-                        selectable(a).then(|| AccountBinding {
+                        selectable(a).then_some(AccountBinding {
                             account_id: a.id,
                             connection_id: c.id,
                             identity_generation: a.identity_generation,
@@ -419,24 +423,22 @@ impl App {
                     .unwrap_or_else(|| "Account (refresh to load name)".into())
             })
             .unwrap_or_else(|| "unresolved — review".into());
-        if let Destination::Live(t) = destination {
-            if let Some(current) = self
+        if let Destination::Live(t) = destination
+            && let Some(current) = self
                 .views
                 .get(&t)
                 .and_then(|v| v.snapshot.as_ref())
                 .and_then(|s| s.inference_current.as_ref())
                 .and_then(|s| s.account.as_ref())
-            {
-                if settings.account.as_ref() != Some(current) {
-                    let running = self
-                        .accounts
-                        .labels
-                        .get(&(route, current.account_id))
-                        .cloned()
-                        .unwrap_or_else(|| "Account (refresh to load name)".into());
-                    return format!("Running {running}; next {label}");
-                }
-            }
+            && settings.account.as_ref() != Some(current)
+        {
+            let running = self
+                .accounts
+                .labels
+                .get(&(route, current.account_id))
+                .cloned()
+                .unwrap_or_else(|| "Account (refresh to load name)".into());
+            return format!("Running {running}; next {label}");
         }
         label
     }
@@ -611,10 +613,10 @@ impl App {
                     let _ = self.account_reply(id, result);
                     if let Some(p) = self.accounts.picker.as_mut() {
                         p.busy = busy;
-                        if !matches!(p.mode, Mode::List) || busy {
-                            if let Some(notice) = notice {
-                                p.notice = notice;
-                            }
+                        if (!matches!(p.mode, Mode::List) || busy)
+                            && let Some(notice) = notice
+                        {
+                            p.notice = notice;
                         }
                     }
                 }
@@ -627,11 +629,11 @@ impl App {
         if let Some((id, mut rx)) = self.accounts.reply.take() {
             match rx.try_recv() {
                 Ok(result) => {
-                    if let Err(e) = self.account_reply(id, result) {
-                        if let Some(p) = self.accounts.picker.as_mut() {
-                            p.busy = false;
-                            p.notice = safe(&e.to_string());
-                        }
+                    if let Err(e) = self.account_reply(id, result)
+                        && let Some(p) = self.accounts.picker.as_mut()
+                    {
+                        p.busy = false;
+                        p.notice = safe(&e.to_string());
                     }
                 }
                 Err(oneshot::error::TryRecvError::Empty) => self.accounts.reply = Some((id, rx)),
@@ -673,25 +675,23 @@ impl App {
             {
                 let _ = self.poll_account_enrollment();
             }
-        } else if self.accounts.reply.is_none() && !self.inference_picker_open() {
-            if let Some(id) = self.active_draft
-                && self.new_drafts.get(&id).is_some_and(|d| {
-                    d.saved
-                        .account_settings
-                        .as_ref()
-                        .is_none_or(|s| s.account.is_none())
-                        && d.saved.start.is_none()
-                        && !d.busy
-                })
-                && self.accounts.initializing.insert(id)
-            {
-                if self
-                    .open_initial_account_chooser(Destination::Draft(id))
-                    .is_ok()
-                {
-                    self.mark_chooser_automatic();
-                }
-            }
+        } else if self.accounts.reply.is_none()
+            && !self.inference_picker_open()
+            && let Some(id) = self.active_draft
+            && self.new_drafts.get(&id).is_some_and(|d| {
+                d.saved
+                    .account_settings
+                    .as_ref()
+                    .is_none_or(|s| s.account.is_none())
+                    && d.saved.start.is_none()
+                    && !d.busy
+            })
+            && self.accounts.initializing.insert(id)
+            && self
+                .open_initial_account_chooser(Destination::Draft(id))
+                .is_ok()
+        {
+            self.mark_chooser_automatic();
         }
     }
     fn account_reply(&mut self, id: Uuid, result: Result<Reply>) -> Result<()> {
@@ -1273,23 +1273,18 @@ impl App {
         };
         // Esc is closure, never cancellation. Drop private view material immediately.
         if matches!(event, Event::Key(k) if k.code == KeyCode::Esc) {
-            if let Some(p) = self.accounts.picker.as_mut() {
-                if !p.busy
-                    && matches!(
-                        p.mode,
-                        Mode::DefaultConsent(_)
-                            | Mode::ApiSetup
-                            | Mode::Connections
-                            | Mode::Alias(_)
-                    )
-                {
-                    p.mode = Mode::List;
-                    p.query.clear();
-                    p.notice =
-                        "No change made. Choose an account or close to return to your draft."
-                            .into();
-                    return Ok(true);
-                }
+            if let Some(p) = self.accounts.picker.as_mut()
+                && !p.busy
+                && matches!(
+                    p.mode,
+                    Mode::DefaultConsent(_) | Mode::ApiSetup | Mode::Connections | Mode::Alias(_)
+                )
+            {
+                p.mode = Mode::List;
+                p.query.clear();
+                p.notice =
+                    "No change made. Choose an account or close to return to your draft.".into();
+                return Ok(true);
             }
             self.accounts.picker = None;
             self.accounts.reply = None;
@@ -1338,38 +1333,38 @@ impl App {
             return Ok(true);
         }
         let mut select = None;
-        if let Event::Mouse(m) = event {
-            if m.kind == MouseEventKind::Down(MouseButton::Left) {
-                select = self
-                    .accounts
-                    .hits
-                    .borrow()
-                    .iter()
-                    .find(|(r, _)| r.contains((m.column, m.row).into()))
-                    .map(|(_, i)| *i);
-            }
+        if let Event::Mouse(m) = event
+            && m.kind == MouseEventKind::Down(MouseButton::Left)
+        {
+            select = self
+                .accounts
+                .hits
+                .borrow()
+                .iter()
+                .find(|(r, _)| r.contains((m.column, m.row).into()))
+                .map(|(_, i)| *i);
         }
         if p.busy {
             return Ok(true);
         }
-        if matches!(p.mode, Mode::Connections) {
-            if let Some(index) = select {
-                if let Some(c) = p
-                    .catalogue
-                    .connections
-                    .iter()
-                    .filter(|c| {
-                        c.transports.contains(&Transport::ChatgptOauth)
-                            && c.endpoint == "https://chatgpt.com/backend-api/codex"
-                    })
-                    .nth(index)
-                {
-                    p.mode = Mode::Alias(c.id);
-                    p.query.clear();
-                    p.notice = "Type a new safe alias; Enter explicitly starts device sign-in. No browser opens automatically.".into();
-                }
-                return Ok(true);
+        if matches!(p.mode, Mode::Connections)
+            && let Some(index) = select
+        {
+            if let Some(c) = p
+                .catalogue
+                .connections
+                .iter()
+                .filter(|c| {
+                    c.transports.contains(&Transport::ChatgptOauth)
+                        && c.endpoint == "https://chatgpt.com/backend-api/codex"
+                })
+                .nth(index)
+            {
+                p.mode = Mode::Alias(c.id);
+                p.query.clear();
+                p.notice = "Type a new safe alias; Enter explicitly starts device sign-in. No browser opens automatically.".into();
             }
+            return Ok(true);
         }
         if let Some(k) = key {
             match &mut p.mode {
@@ -1415,10 +1410,8 @@ impl App {
                             p.restart = false;
                             self.cancel_enrollment()?;
                         }
-                        KeyCode::Char('o') => {
-                            if p.private.as_ref().is_some_and(active_material) {
-                                open_browser(&self.accounts.browser_pending)?;
-                            }
+                        KeyCode::Char('o') if p.private.as_ref().is_some_and(active_material) => {
+                            open_browser(&self.accounts.browser_pending)?;
                         }
                         _ => (),
                     }

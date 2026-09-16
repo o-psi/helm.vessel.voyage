@@ -324,10 +324,10 @@ impl Supervisor {
         workers.insert(
             id,
             tokio::spawn(async move {
-                if let Some(request) = request {
-                    if service.start(request).await.is_err() {
-                        return;
-                    }
+                if let Some(request) = request
+                    && service.start(request).await.is_err()
+                {
+                    return;
                 }
                 let _ = service.run(id, &actor).await;
             }),
@@ -626,6 +626,8 @@ impl Supervisor {
 }
 
 impl Supervisor {
+    // Keep the explicit invitation/start command fields at this API boundary.
+    #[allow(clippy::too_many_arguments)]
     async fn start_settings(
         &self,
         command_id: Uuid,

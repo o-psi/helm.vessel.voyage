@@ -6,6 +6,8 @@ use voyage_protocol::{
     duplex::{ClientFrame, SUBPROTOCOL, ServerFrame},
     vessel::VesselResponse,
 };
+// The handshake callback error type is fixed by tungstenite.
+#[allow(clippy::result_large_err)]
 async fn peer(
     root: &std::path::Path,
     replies: Vec<Value>,

@@ -1,5 +1,7 @@
 use super::{admin::AdminCommand as A, cli::ConnectedCommand as C, transport::Client};
 #[path = "../dispatch_fixture_final_tests.rs"]
+// Each consumer gets an independent scripted fixture module.
+#[allow(clippy::duplicate_mod)]
 mod fixture;
 use fixture::*;
 use serde_json::json;

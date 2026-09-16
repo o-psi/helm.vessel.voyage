@@ -217,20 +217,18 @@ impl Supervisor {
             let mut delivery = Vec::new();
             for record in store.destinations()? {
                 let destination = &record.destination;
-                if actor.is_none() {
-                    delivery.push(json!({"destination_id":destination.id,"producer":store.cursor(destination.id)?,"budget_delivery":self.budget_delivery_status(destination.id)}));
-                    records.push(serde_json::to_value(record)?);
-                } else if Self::notification_recipient(destination, &actor, vessel)
-                    && registrations
-                        .get(&destination.source_session_id)
-                        .is_some_and(|registration| {
-                            self.notification_authority(
-                                destination,
-                                ProcessRight::Observe,
-                                registration,
-                            )
-                            .is_ok()
-                        })
+                if actor.is_none()
+                    || Self::notification_recipient(destination, &actor, vessel)
+                        && registrations
+                            .get(&destination.source_session_id)
+                            .is_some_and(|registration| {
+                                self.notification_authority(
+                                    destination,
+                                    ProcessRight::Observe,
+                                    registration,
+                                )
+                                .is_ok()
+                            })
                 {
                     delivery.push(json!({"destination_id":destination.id,"producer":store.cursor(destination.id)?,"budget_delivery":self.budget_delivery_status(destination.id)}));
                     records.push(serde_json::to_value(record)?);

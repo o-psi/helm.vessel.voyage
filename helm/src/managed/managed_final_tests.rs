@@ -1,6 +1,8 @@
 use super::*;
 use helm::process_client::transport::Client;
 #[path = "../dispatch_fixture_final_tests.rs"]
+// Each consumer gets an independent scripted fixture module.
+#[allow(clippy::duplicate_mod)]
 mod fixture;
 use fixture::*;
 use voyage_protocol::vessel::VesselCommand as V;

@@ -439,6 +439,8 @@ pub fn inventory(root: &Path) -> Result<Value> {
 }
 
 /// Local account-owner only. The returned invitation must be written privately.
+// Keep the explicit invitation/start command fields at this API boundary.
+#[allow(clippy::too_many_arguments)]
 pub fn invite(
     root: &Path,
     endpoint: &str,
@@ -481,6 +483,8 @@ pub fn invite_owner(
     )
 }
 
+// Keep the explicit invitation/start command fields at this API boundary.
+#[allow(clippy::too_many_arguments)]
 fn invite_with_access(
     root: &Path,
     endpoint: &str,

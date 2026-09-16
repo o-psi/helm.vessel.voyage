@@ -191,8 +191,10 @@ fn previews_and_exact_grants_cannot_be_substituted() {
 #[test]
 fn snapshot_validation_rejects_bad_identity_version_and_preferences() {
     assert!(Registry::open(PathBuf::from("relative")).is_err());
-    let mut snapshot = Snapshot::default();
-    snapshot.schema_version = 2;
+    let mut snapshot = Snapshot {
+        schema_version: 2,
+        ..Default::default()
+    };
     assert!(Registry::validate(&snapshot).is_err());
     snapshot.schema_version = 1;
     let c = connection();

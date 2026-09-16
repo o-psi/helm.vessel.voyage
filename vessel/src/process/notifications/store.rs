@@ -443,7 +443,7 @@ impl Store {
         );
         ensure!(
             count(
-                &tx,
+                tx,
                 "SELECT count(*) FROM events WHERE destination_id=?1",
                 Some(destination_id)
             )? < MAX_EVENTS_PER_DESTINATION,
@@ -609,7 +609,7 @@ fn private_file(path: &Path) -> Result<()> {
 }
 
 fn integer(value: u64) -> Result<i64> {
-    Ok(i64::try_from(value).map_err(|_| anyhow::anyhow!("notification integer out of range"))?)
+    i64::try_from(value).map_err(|_| anyhow::anyhow!("notification integer out of range"))
 }
 
 fn check_clock(connection: &Connection, now: u64) -> Result<()> {

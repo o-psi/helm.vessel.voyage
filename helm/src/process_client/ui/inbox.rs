@@ -251,6 +251,21 @@ impl App {
     }
 }
 
+/// Bounded, optional metadata probe. Older peers and failures produce no fabricated count.
+pub(super) async fn attention(client: &crate::process_client::transport::Client) -> Option<u64> {
+    let value = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        crate::process_client::inbox::request(client, NotificationOperation::Attention),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    value
+        .get("available")?
+        .as_u64()
+        .filter(|count| *count <= 16_384)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,19 +374,4 @@ mod tests {
         .unwrap();
         assert!(metadata(&notification).contains("synthetic test, not a run outcome"));
     }
-}
-
-/// Bounded, optional metadata probe. Older peers and failures produce no fabricated count.
-pub(super) async fn attention(client: &crate::process_client::transport::Client) -> Option<u64> {
-    let value = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        crate::process_client::inbox::request(client, NotificationOperation::Attention),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    value
-        .get("available")?
-        .as_u64()
-        .filter(|count| *count <= 16_384)
 }

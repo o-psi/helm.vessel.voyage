@@ -139,28 +139,28 @@ impl App {
         let Some(mut review) = self.stop_review.take() else {
             return false;
         };
-        if let Event::Key(key) = event {
-            if key.kind != KeyEventKind::Release {
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('c' | 'q'))
-                {
-                    self.quit = true; // Detach only. Private child input must run before this handler.
-                    return true;
+        if let Event::Key(key) = event
+            && key.kind != KeyEventKind::Release
+        {
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c' | 'q'))
+            {
+                self.quit = true; // Detach only. Private child input must run before this handler.
+                return true;
+            }
+            match key.code {
+                KeyCode::Esc => return true,
+                KeyCode::PageUp | KeyCode::Up => {
+                    review.scroll.set(review.scroll.get().saturating_sub(3))
                 }
-                match key.code {
-                    KeyCode::Esc => return true,
-                    KeyCode::PageUp | KeyCode::Up => {
-                        review.scroll.set(review.scroll.get().saturating_sub(3))
-                    }
-                    KeyCode::PageDown | KeyCode::Down => {
-                        review.scroll.set(review.scroll.get().saturating_add(3))
-                    }
-                    KeyCode::Enter => match self.confirm_stop(&review) {
-                        Ok(()) => return true,
-                        Err(error) => review.error = Some(super::safe(&error.to_string())),
-                    },
-                    _ => {}
+                KeyCode::PageDown | KeyCode::Down => {
+                    review.scroll.set(review.scroll.get().saturating_add(3))
                 }
+                KeyCode::Enter => match self.confirm_stop(&review) {
+                    Ok(()) => return true,
+                    Err(error) => review.error = Some(super::safe(&error.to_string())),
+                },
+                _ => {}
             }
         }
         self.stop_review = Some(review);

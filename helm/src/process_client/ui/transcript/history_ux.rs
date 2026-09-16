@@ -138,15 +138,16 @@ mod tests {
     use super::*;
     use ratatui::text::Line;
     fn state() -> State {
-        let mut state = State::default();
-        state.rows = (0..4)
-            .map(|index| super::super::Row {
-                key: Key::MessageHeading(index),
-                offset: 0,
-                line: Line::raw(if index % 2 == 0 { "héllo" } else { "other" }),
-            })
-            .collect();
-        state
+        State {
+            rows: (0..4)
+                .map(|index| super::super::Row {
+                    key: Key::MessageHeading(index),
+                    offset: 0,
+                    line: Line::raw(if index % 2 == 0 { "héllo" } else { "other" }),
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
     #[test]
     fn complete_current_snapshot_can_branch_without_hydration_or_stale_cache() {
@@ -154,14 +155,16 @@ mod tests {
             "session_id":uuid::Uuid::nil(),"revision":3,"model":"fixture","total_messages":2,
             "messages":[{"role":"user","content":"current","message_index":0},{"role":"assistant","content":"reply","message_index":1}]
         })).unwrap();
-        let mut state = State::default();
-        state.loaded_revision = Some(2);
-        state.messages = vec![
-            serde_json::from_value(
-                serde_json::json!({"role":"user","content":"stale","message_index":99}),
-            )
-            .unwrap(),
-        ];
+        let state = State {
+            loaded_revision: Some(2),
+            messages: vec![
+                serde_json::from_value(
+                    serde_json::json!({"role":"user","content":"stale","message_index":99}),
+                )
+                .unwrap(),
+            ],
+            ..Default::default()
+        };
         let (points, selected) = state.branch_points_for(&snapshot);
         assert_eq!(points, vec![(0, "current".into())]);
         assert_eq!(selected, None);
@@ -237,25 +240,27 @@ mod branch_point_tests {
     use super::*;
     #[test]
     fn selection_uses_canonical_saved_index_not_loaded_page_offset() {
-        let mut state = State::default();
-        state.messages = vec![
-            super::super::Message {
-                message_index: 50,
-                role: "assistant".into(),
-                content: "excluded".into(),
-                ..Default::default()
-            },
-            super::super::Message {
-                message_index: 51,
-                role: "user".into(),
-                content: "selected".into(),
-                ..Default::default()
-            },
-        ];
-        state.anchor = Some(super::super::Anchor {
-            key: Key::Message(51),
-            offset: 9,
-        });
+        let mut state = State {
+            messages: vec![
+                super::super::Message {
+                    message_index: 50,
+                    role: "assistant".into(),
+                    content: "excluded".into(),
+                    ..Default::default()
+                },
+                super::super::Message {
+                    message_index: 51,
+                    role: "user".into(),
+                    content: "selected".into(),
+                    ..Default::default()
+                },
+            ],
+            anchor: Some(super::super::Anchor {
+                key: Key::Message(51),
+                offset: 9,
+            }),
+            ..Default::default()
+        };
         let (points, selected) = state.branch_points();
         assert_eq!(points, vec![(51, "selected".into())]);
         assert_eq!(selected, Some(0));

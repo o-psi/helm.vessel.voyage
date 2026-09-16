@@ -17,41 +17,6 @@ pub(crate) struct Working {
     shimmer: RefCell<Effect>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recovery_labels_are_never_decorated_or_claimed_live_without_a_process() {
-        let working = Working {
-            enabled: true,
-            labels: Labels {
-                frames: vec![std::array::from_fn(|_| "decorative status".into())],
-                width: 17,
-            },
-            epoch: Instant::now(),
-            animated: Cell::new(false),
-            area: Cell::new(None),
-            shimmer: RefCell::new(fx::fade_to_fg(Color::Cyan, (1200, Interpolation::Linear))),
-        };
-        for status in [
-            "Reconnecting to provider",
-            "Continuing interrupted response",
-        ] {
-            assert_eq!(working.label(status, true), status);
-            assert!(!working.animated.get());
-            assert_eq!(working.label(status, false), "Status unavailable");
-        }
-        assert_eq!(
-            working.label("Recovery needs attention", false),
-            "Recovery needs attention"
-        );
-        assert_eq!(working.label("Working", true), "decorative status");
-        assert!(working.animated.get());
-        assert_eq!(working.label("Working", false), "Status unavailable");
-    }
-}
-
 impl Working {
     pub(crate) fn new(enabled: bool) -> anyhow::Result<Self> {
         Ok(Self {
@@ -131,5 +96,40 @@ impl Working {
         let phase = (elapsed.as_millis() % 2400) as u64;
         let progress = if phase <= 1200 { phase } else { 2400 - phase };
         shimmer.process(Duration::from_millis(progress), buffer, area);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_labels_are_never_decorated_or_claimed_live_without_a_process() {
+        let working = Working {
+            enabled: true,
+            labels: Labels {
+                frames: vec![std::array::from_fn(|_| "decorative status".into())],
+                width: 17,
+            },
+            epoch: Instant::now(),
+            animated: Cell::new(false),
+            area: Cell::new(None),
+            shimmer: RefCell::new(fx::fade_to_fg(Color::Cyan, (1200, Interpolation::Linear))),
+        };
+        for status in [
+            "Reconnecting to provider",
+            "Continuing interrupted response",
+        ] {
+            assert_eq!(working.label(status, true), status);
+            assert!(!working.animated.get());
+            assert_eq!(working.label(status, false), "Status unavailable");
+        }
+        assert_eq!(
+            working.label("Recovery needs attention", false),
+            "Recovery needs attention"
+        );
+        assert_eq!(working.label("Working", true), "decorative status");
+        assert!(working.animated.get());
+        assert_eq!(working.label("Working", false), "Status unavailable");
     }
 }

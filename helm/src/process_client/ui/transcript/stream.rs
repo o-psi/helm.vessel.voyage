@@ -58,6 +58,75 @@ pub(super) fn reasoning(out: &mut Vec<Row>, snapshot: &Snapshot, state: &State, 
     }
 }
 
+/// Preserve reading/expansion when the final call replaces a stable provisional
+/// key. A fragmented ID is correlation only; transfer only after a canonical
+/// assistant call with that complete ID exists.
+pub(super) fn reconcile(snapshot: &Option<Snapshot>, state: &mut State) {
+    let Some(snapshot) = snapshot else { return };
+    if let Some(run) = &snapshot.run {
+        for block in &run.reasoning_previews {
+            if !block.finalized {
+                continue;
+            }
+            let live = format!(
+                "reasoning:{}:{}:{:?}:false",
+                block.attempt_id, block.index, block.kind
+            );
+            // Finalization intentionally collapses disclosure, but its keyboard
+            // reading position must follow the new key. Do not copy expansion.
+            state.tool_expanded.remove(&live);
+            if let Some(anchor) = &mut state.anchor
+                && anchor.key == Key::Tool(live)
+            {
+                anchor.key = Key::Tool(format!(
+                    "reasoning:{}:{}:{:?}:true",
+                    block.attempt_id, block.index, block.kind
+                ));
+                anchor.offset = 0;
+            }
+        }
+        for preview in &run.tool_previews {
+            if let Some(id) = &preview.call_id {
+                state.preview_calls.insert(
+                    format!("preview:{}:{}", preview.attempt_id, preview.index),
+                    id.clone(),
+                );
+            }
+        }
+    }
+    let messages = if state.loaded_revision == Some(snapshot.revision) {
+        &state.messages
+    } else {
+        &snapshot.messages
+    };
+    let canonical: std::collections::BTreeSet<_> = messages
+        .iter()
+        .flat_map(|m| &m.tool_calls)
+        .map(|c| c.id.clone())
+        .collect();
+    let mappings: Vec<_> = state
+        .preview_calls
+        .iter()
+        .filter(|(_, id)| canonical.contains(*id))
+        .map(|(key, id)| (key.clone(), id.clone()))
+        .collect();
+    for (key, id) in mappings {
+        if state.tool_expanded.remove(&key) {
+            state.tool_expanded.insert(id.clone());
+        }
+        if let Some(anchor) = &mut state.anchor
+            && anchor.key == Key::Tool(key.clone())
+        {
+            anchor.key = Key::Tool(id);
+        }
+        state.preview_calls.remove(&key);
+    }
+    // Correlation cache is display-only and bounded, including interrupted runs.
+    while state.preview_calls.len() > voyage_protocol::tool_preview::MAX_CALLS {
+        state.preview_calls.pop_first();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,74 +242,5 @@ mod tests {
                 .iter()
                 .any(|r| r.line.to_string().contains("disclosed text"))
         );
-    }
-}
-
-/// Preserve reading/expansion when the final call replaces a stable provisional
-/// key. A fragmented ID is correlation only; transfer only after a canonical
-/// assistant call with that complete ID exists.
-pub(super) fn reconcile(snapshot: &Option<Snapshot>, state: &mut State) {
-    let Some(snapshot) = snapshot else { return };
-    if let Some(run) = &snapshot.run {
-        for block in &run.reasoning_previews {
-            if !block.finalized {
-                continue;
-            }
-            let live = format!(
-                "reasoning:{}:{}:{:?}:false",
-                block.attempt_id, block.index, block.kind
-            );
-            // Finalization intentionally collapses disclosure, but its keyboard
-            // reading position must follow the new key. Do not copy expansion.
-            state.tool_expanded.remove(&live);
-            if let Some(anchor) = &mut state.anchor {
-                if anchor.key == Key::Tool(live) {
-                    anchor.key = Key::Tool(format!(
-                        "reasoning:{}:{}:{:?}:true",
-                        block.attempt_id, block.index, block.kind
-                    ));
-                    anchor.offset = 0;
-                }
-            }
-        }
-        for preview in &run.tool_previews {
-            if let Some(id) = &preview.call_id {
-                state.preview_calls.insert(
-                    format!("preview:{}:{}", preview.attempt_id, preview.index),
-                    id.clone(),
-                );
-            }
-        }
-    }
-    let messages = if state.loaded_revision == Some(snapshot.revision) {
-        &state.messages
-    } else {
-        &snapshot.messages
-    };
-    let canonical: std::collections::BTreeSet<_> = messages
-        .iter()
-        .flat_map(|m| &m.tool_calls)
-        .map(|c| c.id.clone())
-        .collect();
-    let mappings: Vec<_> = state
-        .preview_calls
-        .iter()
-        .filter(|(_, id)| canonical.contains(*id))
-        .map(|(key, id)| (key.clone(), id.clone()))
-        .collect();
-    for (key, id) in mappings {
-        if state.tool_expanded.remove(&key) {
-            state.tool_expanded.insert(id.clone());
-        }
-        if let Some(anchor) = &mut state.anchor {
-            if anchor.key == Key::Tool(key.clone()) {
-                anchor.key = Key::Tool(id);
-            }
-        }
-        state.preview_calls.remove(&key);
-    }
-    // Correlation cache is display-only and bounded, including interrupted runs.
-    while state.preview_calls.len() > voyage_protocol::tool_preview::MAX_CALLS {
-        state.preview_calls.pop_first();
     }
 }

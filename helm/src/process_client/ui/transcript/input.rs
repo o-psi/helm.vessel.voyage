@@ -276,7 +276,7 @@ impl super::State {
             })
             .map(|(i, _)| i);
         let next = if previous {
-            headers.filter(|i| *i < current).next_back()
+            headers.rfind(|i| *i < current)
         } else {
             headers.find(|i| *i > current)
         };

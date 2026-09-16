@@ -48,18 +48,18 @@ impl App {
         // The catalogue owns all input while open, including drafts; neither
         // search text nor clipboard shortcuts may fall through to composition.
         if self.explore.is_some() {
-            if let Event::Key(key) = &event {
-                if key.kind != crossterm::event::KeyEventKind::Release {
-                    if key.modifiers.contains(KeyModifiers::CONTROL)
-                        && matches!(key.code, KeyCode::Char('c' | 'q'))
-                    {
-                        self.quit = true;
-                    } else if !key
-                        .modifiers
-                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                    {
-                        self.explore_input(key)?;
-                    }
+            if let Event::Key(key) = &event
+                && key.kind != crossterm::event::KeyEventKind::Release
+            {
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(key.code, KeyCode::Char('c' | 'q'))
+                {
+                    self.quit = true;
+                } else if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                {
+                    self.explore_input(key)?;
                 }
             }
             return Ok(());

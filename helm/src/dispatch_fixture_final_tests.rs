@@ -11,12 +11,18 @@ use voyage_protocol::{
 
 pub struct Peer {
     pub client: Client,
+    // Fixture consumers use different subsets; root also keeps private storage alive.
+    #[allow(dead_code)]
     pub root: tempfile::TempDir,
     task: tokio::task::JoinHandle<()>,
 }
+// Fixture consumers use different subsets; root also keeps private storage alive.
+#[allow(dead_code)]
 pub fn info(session: Uuid, incarnation: Uuid) -> Value {
     json!({"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"live"})
 }
+// Fixture consumers use different subsets; root also keeps private storage alive.
+#[allow(dead_code)]
 pub fn wire(command: VesselCommand) -> Value {
     serde_json::to_value(command).unwrap()
 }
@@ -39,6 +45,8 @@ fn matches(expected: &Value, actual: &Value) {
     }
 }
 impl Peer {
+    // The handshake callback error type is fixed by tungstenite.
+    #[allow(clippy::result_large_err)]
     pub async fn new(script: Vec<(Value, Value)>) -> Self {
         let root = tempfile::tempdir().unwrap();
         let directory = root.path().join("vessel");
@@ -91,6 +99,8 @@ impl Peer {
     }
 }
 
+// Fixture consumers use different subsets; root also keeps private storage alive.
+#[allow(dead_code)]
 pub fn voyage(
     session: Uuid,
     incarnation: Uuid,

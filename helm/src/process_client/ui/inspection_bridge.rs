@@ -130,6 +130,8 @@ pub(super) struct Loaded {
     pub observation: Observation,
     pub result: Result<Content, String>,
 }
+// One inspection result is retained; keep the panel handoff value-based.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum Content {
     Panel(Panel),
     Copy(String),

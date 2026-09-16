@@ -24,7 +24,7 @@ fn keyboard_translation_matrix_never_touches_terminal() {
             .unwrap(),
             format!("\x1b[1;8{end}").as_bytes()
         );
-        let mut application = modes.clone();
+        let mut application = modes;
         application.app_cursor = true;
         assert_eq!(
             key_bytes(code, KeyModifiers::NONE, &application).unwrap(),
@@ -105,8 +105,10 @@ fn keyboard_translation_matrix_never_touches_terminal() {
 
 #[test]
 fn keypad_and_paste_respect_explicit_modes() {
-    let mut modes = TerminalModes::default();
-    modes.app_keypad = true;
+    let mut modes = TerminalModes {
+        app_keypad: true,
+        ..Default::default()
+    };
     for (code, end) in [
         ('0', 'p'),
         ('9', 'y'),
