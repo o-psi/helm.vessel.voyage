@@ -31,7 +31,8 @@ Coordinate Cargo builds with other work sharing `target/`.
    is reported.
 
 The fixture creates a private temporary directory, separate HOME/XDG directories,
-workspace, local provider, and Vessel. It does not inherit provider credentials.
+workspace, local provider, and Vessel. It enrolls an explicit synthetic named account against the loopback provider
+and does not inherit provider credentials.
 It prints its evidence directory, retaining snapshots, synthetic provider requests,
 fixture errors, and the supervisor log. Polling and HTTP calls are bounded; failures
 exit nonzero. The fixture leaves evidence in place for diagnosis.

@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.request
 import uuid
 
@@ -110,7 +111,8 @@ def main():
     directory = root / "vessel"
     workspace = root / "workspace"
     workspace.mkdir()
-    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+           "PROVIDER_FIXTURE_KEY": "synthetic-offline-only"}
     for key in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
         path = root / key.lower()
         path.mkdir(mode=0o700)
@@ -171,8 +173,28 @@ def main():
             str(directory), "--voyage-binary", str(binaries / "voyage")], env=env,
             cwd=workspace, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
         wait_for(lambda: (directory / "process-http.json").exists())
-        request({"op": "start_configured", "session_id": session, "command_id": str(uuid.uuid4()),
-                 "workspace": str(workspace), "config_path": str(config)})
+        # Explicit executing-host account: never inherit the operator's credentials.
+        def account_cli(*arguments):
+            result = subprocess.run([str(binaries / "vessel"), "auth", "accounts", *arguments],
+                env=env, cwd=workspace, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+        connection = account_cli("connect", "--label", "offline-fixture", "--endpoint",
+            f"http://127.0.0.1:{server.server_port}/v1", "--transports", "openai-chat")
+        account = account_cli("add", "--connection", connection["id"], "--account", "fixture",
+            "--env", "PROVIDER_FIXTURE_KEY")
+        binding = {"account_id": account["id"], "connection_id": connection["id"],
+            "identity_generation": account["identity_generation"],
+            "connection_revision": connection["revision"], "transport": "openai_chat"}
+        request({"op": "account_set_default", "command_id": str(uuid.uuid4()),
+            "workspace": str(workspace), "account": binding, "expected_revision": 0})
+        settings = tomllib.loads(config.read_text())
+        settings["account"] = binding
+        config.write_text(json.dumps({"version": 1, "workspace": str(workspace),
+            "config": settings, "explicit": {"access": "unrestricted"},
+            "selection": None, "confirmation": None}))
+        request({"op": "start_settings", "session_id": session, "command_id": str(uuid.uuid4()),
+                 "workspace": str(workspace), "config_path": str(config), "binding": binding, "settings": {}})
         for turn, prompt in enumerate(server.prompts):
             snapshot = command({"op": "snapshot"})
             command({"op": "submit", "command_id": str(uuid.uuid4()),

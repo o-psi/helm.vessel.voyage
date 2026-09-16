@@ -23,8 +23,9 @@ Also run the workspace coverage workflow in `AGENTS.md` after final Rust/test
 edits, and commit `coverage/latest.json`. Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
 [release guide](releases-v1.0.0.md#maintainer-install-check).
-Where present in the selected committed revision, the concurrent-voyage fixture
-below provides additional offline process verification. Missing/deleted historical
+Use `python3 voyage/tests/two_voyages.py --bin-dir target/release` for the
+current concurrent file-work check. The legacy `tests/concurrent_voyages.py`
+fixture below calls a retired endpoint and is not a current release gate. Missing/deleted historical
 scripts are not a passing gate and must not be restored implicitly. This release
 workflow does not depend on `scripts/check-quality` or the old packagers.
 
@@ -38,7 +39,7 @@ reboot persistence and live model quality need separate evidence. Live provider
 work requires an approved provider and budget. No skipped or unavailable check is
 a pass.
 
-## Concurrent voyage regression
+## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:
 
