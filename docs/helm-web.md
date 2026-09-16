@@ -1,7 +1,7 @@
 # Helm Web: personal tenants and public Vessels
 
-Issue [#290](https://github.com/o-psi/voyage/issues/290) replaces the original
-single-operator design. Helm Web is a Laravel/Livewire/Flux browser client, not an
+Issue [#290](https://github.com/o-psi/voyage/issues/290) introduced personal tenants;
+[#307](https://github.com/o-psi/voyage/issues/307) connects browsers directly to public Vessels. Helm Web is a Laravel/Livewire/Flux browser client, not an
 agent host and not Ratzilla.
 
 ## Ownership
@@ -44,8 +44,8 @@ before exercising the socket controls.
 - `/console/login`: configured OAuth provider choices; no operator password login.
 - `/auth/{provider}` and `/auth/{provider}/callback`: OAuth flow.
 - `/connections`: list, pair, import, replace and remove this tenant's Vessels.
-- `/console/ticket`, `/console/socket`: tenant-authorized gateway transport.
-- `/console/gateway/authorize`: loopback-only, authenticated internal redemption;
+- `/console/ticket`: tenant-authorized temporary Vessel credential bootstrap.
+- `/console/socket` and `/console/gateway/authorize`: retired legacy endpoints;
   never a public proxy or endpoint to expose in Cloudflare routing.
 
 The old `/console` page redirect was removed; there is no legacy bookmark support.
@@ -53,9 +53,14 @@ Login returns to `/`, logout to `/landing`. Sessions last at most eight hours.
 A real textarea, sanitized Markdown, history pages, full-message expansion,
 provisional live output, approval/question cards and send/steer/cancel are
 implemented. JavaScript owns the `wire:ignore` conversation region. Snapshot and
-pending-decision reads are serialized at one-second intervals while visible;
-catalogue refreshes every ten seconds. This is not per-token PHP rendering or
-push-token subscription. The sidebar aggregates permitted voyages from all configured Vessels, with the Vessel name on each entry.
+pending-decision reads are driven by the native Vessel observation subscription,
+with a 30-second fallback refresh; catalogue refreshes every ten seconds. Live
+assistant output, generating tool arguments and provider-disclosed reasoning
+update from the same bounded projections used by the TUI. Native events are
+invalidations, not append-only token payloads: bursts coalesce into fresh reads.
+Gaps, owner changes and reconnect seed a new snapshot/subscription. Canonical
+messages replace provisional tool previews without executing preview content.
+This is not per-token PHP rendering. The sidebar aggregates permitted voyages from all configured Vessels, with the Vessel name on each entry.
 
 Browser intent records are tenant/connection/Vessel scoped and contain command
 identities only, not prompts. They are persisted before dispatch. Reconnect reads
@@ -71,12 +76,15 @@ Vessel API must already be published at that origin. A Cloudflare Tunnel is one
 way to expose an owner-operated Vessel; exposing the ordinary local supervisor's
 private listener is **not** the public scoped API. See [Vessel connections](vessel-connections.md).
 
-The gateway resolves all DNS answers, refuses private/reserved addresses and pins
-an approved address for TLS connection with normal hostname/certificate checks.
-It refuses redirects, URL credentials, alternate paths, loopback/private endpoints
-and private DNS answers. This applies to both pairing and WebSocket connections,
-including reconnect; a public hostname resolving to a private address is not a
-workaround. The web app never makes a direct request to a tenant-provided URL.
+Laravel resolves all DNS answers for server-side pairing, verification and temporary
+credential bootstrap. It refuses private/reserved addresses, pins an approved
+address for TLS with normal hostname/certificate checks, and refuses redirects,
+URL credentials and alternate paths. The browser then opens WSS directly to that
+public Vessel. Browser DNS/TLS/network policy is independent: server-side pinning
+does not pin the browser's DNS resolution. There is no private-network relay or
+fallback. Use a publicly resolvable hostname and a browser-trusted TLS certificate.
+No cross-origin HTTP bootstrap is needed: browser bootstrap is same-origin to
+Laravel; only the authenticated WebSocket crosses origins.
 
 On `/connections`, copy your tenant's pairing principal. On the Vessel host:
 
@@ -95,27 +103,50 @@ pairing**: Vessel's exact pairing deduplication returns the original credential,
 not a replacement connection. This differs from ordinary conversation mutations,
 which are reconciled through read-only receipts. A successful credential is
 verified against the public pinned Vessel, encrypted at rest and never embedded
-in the conversation page or gateway ticket.
+in the conversation page or browser bootstrap response.
 
 Existing private credential JSON can also be imported. It must contain a public
 `endpoint`, exact `vessel_id`, `grant_id` and `token`. Use a dedicated connection credential.
 Importing the same Vessel again replaces its credential inside this tenant and
 increments connection revision; it cannot overwrite another tenant's connection.
 Removing a connection stops new tickets and renewals. Open sockets retain a
-maximum 60-second lease; immediate revocation is performed on the Vessel itself.
+maximum 120-second credential lifetime; revoke the underlying grant on the Vessel
+only when all clients using that grant should lose access.
 
-## Gateway and session boundary
+## Direct transport and session boundary
 
-The browser obtains an opaque single-use random ticket after CSRF and tenant
-checks. Node redeems it through a fixed loopback Laravel endpoint using a shared
-server credential. Laravel atomically consumes it, checks the current database
-session, tenant/user ownership and connection revision, then supplies connection
-credentials directly to Node—not to the browser. Each renewal requires a new
-owned ticket; identity cannot switch on an existing socket. Tickets expire in
-60 seconds; browser renewal is every 30 seconds. Logout invalidates sessions and
-unredeemed tickets. Node applies its fixed operation allowlist and connection,
-frame, pending-request, deadline and rate limits. It never handles reverse tool
-execution or arbitrary upstream commands from HTTP.
+The browser obtains a temporary Vessel-issued credential through the authenticated,
+CSRF-protected `/console/ticket` endpoint. Laravel checks tenant ownership and
+calls the selected Vessel's `/v1/vessel/browser-credentials` using its encrypted
+stored pairing credential. The browser receives only a random temporary token,
+expiry, expected Vessel identity and public socket URL. It opens
+`wss://VESSEL/v1/vessel/browser-socket` with subprotocol `voyage.vessel.v1`, sends
+`{type:"authenticate",token:…}` as the first frame, then waits for the identity-bound
+`hello`. Credentials never appear in URLs or WebSocket subprotocols. Do not log
+bootstrap bodies or authentication frames.
+
+Conversation commands, snapshots, history, live output and subscriptions travel
+between browser and Vessel, not through PHP or Node. Vessel applies the existing
+connection grant scope plus the web-operation subset; owner pairing remains
+explicit full access, scoped pairing remains scoped. Shared-local-browser execution
+and private terminals are not enabled by this transport. Provider credentials
+stay on the executing host.
+
+Temporary credentials last at most 120 seconds. The browser opens a replacement
+30 seconds before expiry, switches new requests to it and lets old requests drain
+for at most 30 seconds. Renewal and reconnection never replay effects. Each new
+socket uses the same existing receipt journal. Failed bootstrap retries with bounded
+backoff; sign-out, removed connections and permission refusal stop retries.
+Credentials are memory-only in Vessel and browser: Vessel restart invalidates them.
+
+Logout/removal prevents future bootstrap; it does **not** claim immediate remote
+revocation of an already-open socket. An already-issued credential reaches its
+hard deadline within 120 seconds. The Vessel checks current grant authority and
+expiry on operations and observation delivery; a hard deadline closes the socket,
+with at most 3 additional seconds for bounded in-progress authorization/writes. Revoking the underlying grant on Vessel affects
+all clients using that grant; removing a web connection deliberately does not
+revoke unrelated clients. In-flight admitted commands can finish and voyages are
+not cancelled by closing the browser or signing out.
 
 Use database sessions (`SESSION_DRIVER=database`), the default JSON session serialization and
 no Laravel session encryption (database protection remains a host responsibility).
@@ -127,14 +158,15 @@ Vessel secrets must not be logged. Never enable debug output publicly.
 
 ## Deployment
 
-Install the locked dependencies and build assets. Flux Pro requires Composer authentication for `composer.fluxui.dev`, following the [official installation instructions](https://fluxui.dev/docs/installation). Keep credentials in ignored, owner-private `web/auth.json` or deployment `COMPOSER_AUTH`; never commit license keys. The deployment must install the licensed package before serving its Blade components:
+Install the locked dependencies and build assets. PHP needs cURL, OpenSSL, DNS support,
+a matching CLI executable and permission to launch the bounded DNS-only PHP child
+(5-second DNS deadline; HTTPS has a separate 5-second deadline/3-second connect timeout). Flux Pro requires Composer authentication for `composer.fluxui.dev`, following the [official installation instructions](https://fluxui.dev/docs/installation). Keep credentials in ignored, owner-private `web/auth.json` or deployment `COMPOSER_AUTH`; never commit license keys. The deployment must install the licensed package before serving its Blade components:
 
 ```sh
 cd web
 composer install --no-dev --optimize-autoloader
 npm ci
 npm run build
-(cd gateway && npm ci --omit=dev --ignore-scripts)
 php artisan migrate --force
 php artisan optimize
 ```
@@ -149,8 +181,6 @@ SESSION_DRIVER=database
 SESSION_SECURE_COOKIE=true
 SESSION_SAME_SITE=lax
 HELM_WEB_ENABLED=true
-HELM_WEB_GATEWAY_SECRET=SHARED_RANDOM_SECRET_AT_LEAST_32_BYTES
-HELM_WEB_GATEWAY_ADMIN_URL=http://127.0.0.1:8787
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 X_CLIENT_ID=
@@ -166,63 +196,54 @@ user settings as appropriate. Do not paste secrets into chat. Only fully
 configured providers are enabled; missing credentials show a setup-pending page,
 not a bypass login. Changes require Laravel config cache refresh.
 
-Node gateway environment:
+### Upgrade and retire the conversation gateway
 
-```dotenv
-HELM_WEB_GATEWAY_SECRET=THE_SAME_SHARED_RANDOM_SECRET
-HELM_WEB_AUTH_URL=http://127.0.0.1/console/gateway/authorize
-HELM_WEB_ORIGIN=https://helm.vessel.voyage
-HELM_WEB_GATEWAY_HOST=127.0.0.1
-HELM_WEB_GATEWAY_PORT=8787
-```
+Upgrade each Vessel first so its public API exposes the two browser endpoints.
+Then deploy matching Laravel code and built assets. Keep `APP_KEY`, tenant rows,
+pairings and encrypted connection credentials: existing users do not need to pair
+again. Set `APP_URL` to the exact public HTTPS Helm Web origin. That origin is
+bound into temporary credentials; a different site cannot use them.
 
-No global `HELM_WEB_VESSELS_FILE`, loopback-upstream option or operator password
-is used. Old single-operator sessions do not authenticate a tenant. Do not expose
-the Node listener; Nginx proxies only the exact `/console/socket` endpoint to
-`/socket`. Deny public access to `/console/gateway/authorize` and proxy its
-loopback calls directly to Laravel. Existing [Nginx](../web/deploy/nginx.conf)
-and [gateway service](../web/deploy/helm-web-gateway.service) templates need paths,
-user and node executable matched to the host. Run `nginx -t` and
-`systemd-analyze verify` before activation. The product origin is loopback behind
-Cloudflare HTTPS; it is not a LAN HTTP login server.
+Deploy the [Nginx template](../web/deploy/nginx.conf), which no longer proxies
+`/console/socket`. Stop/disable `helm-web-gateway` only after checking other users
+of that deployment and confirming upgraded clients work directly. The retained
+`web/gateway` code/service template is legacy migration/test material, not required
+by the new console. Retire its shared secret only when no legacy consumer needs it.
+Do not delete unrelated Vessel grants or provider credentials. Old pages should
+be reloaded after upgrade; no silent gateway fallback is provided.
 
-The current local deployment lives at `/srv/helm-web/app` and uses separate
-`helm-web-nginx`, `helm-web-gateway`, `php-fpm` and `helm-web-tunnel` services.
-The old local Vessel adapter is not a connection for new tenants. Roll back source,
-assets and database together from the pre-migration backup; do not re-enable the
-old shared operator model for registered users. Setting `HELM_WEB_ENABLED=false`
-and stopping the gateway disables console access without cancelling voyages.
+Run `nginx -t` before activation. Back up source/assets/database consistently and
+preserve the previous gateway configuration for deliberate rollback. Rollback
+requires matching old browser assets and gateway, not just PHP. Setting
+`HELM_WEB_ENABLED=false` disables new console access; temporary credentials already
+issued expire within their bounded lifetime, without cancelling voyages.
 
 ## Verification and limits
 
-Focused checks use real PHP HTTP sessions and separate tenant identities, plus
-Node gateway tests with injected fixture transports. They cover tenant isolation,
-foreign connection refusal, one-use tickets, connection deletion/session expiry,
-OAuth state/provider identity, public endpoint validation, lease renewal and
-uncertain-command recovery. Commands:
+Focused checks cover separate HTTP tenant sessions, direct PHP bootstrap and
+HTTPS options, native browser socket authentication, direct fleet renewal and
+uncertain-command recovery. Fixtures are not live OAuth, TLS browser certification
+or paid-provider evidence. Legacy gateway fixtures remain for comparison. Commands:
 
 ```sh
 cd web
 npm test
 php tests/oauth.php
+php tests/direct-bootstrap.php
+php tests/direct-http.php
 (cd gateway && npm test)
 npm run build
 find app config routes database/migrations -name '*.php' -exec php -l {} \;
 php artisan route:list --except-vendor
-php artisan view:cache
+# Use an isolated VIEW_COMPILED_PATH for CLI/rendering checks; see deploy/compiled-views.md.
 composer validate --no-check-publish
 ```
 
-Delivery checks passed: 10 web tests, 80 offline OAuth assertions, 19 gateway
-tests, production build, PHP lint/view/route checks, Composer validation,
-Composer/npm audits (zero advisories), and documentation/diff checks. PHP iconv
-must be enabled for the locked Composer dependencies.
+Current delivery evidence and remaining deployed-browser limitations are recorded
+in [the #307 verification report](direct-wss307-verification.md). Historical #290 counts do not establish the new direct transport.
+See [transport measurement](direct-wss307-benchmark.md) for the synthetic
+before/after workload, measured resource use, traffic and explicit limitations.
 
-Mock OAuth and DNS/socket fixtures do not establish live Google/X consent,
-third-party Vessel compatibility, real-browser IME/accessibility or native
-macOS/Windows gateway security. Live OAuth requires provisioned app credentials;
-provider-backed voyage actions require a separate approved execution budget.
-No Rust source changes or Rust coverage refresh belong to this web delivery.
 
 ## Native Flux console presentation
 
@@ -271,11 +292,9 @@ connections explicitly retries them. Reload after adding/removing connections in
 another tab to update the configured set.
 
 The ticket endpoint allows 256 requests per minute per user and 30 per connection,
-covering initial connection and 30-second renewals for up to 64 Vessels. The gateway
-retains its 64-socket global cap, permits up to 64 sockets per authenticated session,
-and caps each session/tenant/connection at four sockets. Global capacity is shared
-across users and tabs; a configured connection is not a reservation of capacity.
-Credentials, grant identity validation and revocation are unchanged.
+covering initial connections and approximately 90-second renewals for up to 64 Vessels.
+Each Vessel bounds its own sockets and temporary credentials. Renewal briefly needs
+an extra socket; configured connections are not capacity reservations.
 
 Browser verification used two synthetic Vessels with identical voyage names and
 session IDs: combined labels, Vessel-name search, empty search, switching/draft
@@ -321,6 +340,8 @@ Tool activity follows the TUI’s compact action pattern: pair calls/results by 
 
 ## Connection deadlines
 
-Gateway requests have a 25-second deadline, inside the browser’s 30-second reply deadline. A gateway request timeout returns an uncertain outcome without closing a healthy socket; mutations stay in the receipt journal and are never automatically resent. One late reply is consumed by its exact request ID. Timed-out upstream requests still count toward the bounded in-flight limit until that reply arrives. Lease expiry, failed heartbeats, invalid frames and capacity refusal still close the socket. The browser exposes only fixed, allowlisted close-reason labels to distinguish these cases. Access-mode commands are explicitly schema-validated by the gateway.
-
-Connection diagnostics are emitted with `[Helm connection]` in the browser console (enable Verbose/Debug). They contain fixed metadata only: request operation/ID, duration, renewal acknowledgement, close reason and action freshness gates; no tickets, credentials, prompt or result bodies. `[Helm gateway]` service logs correlate socket lifetime, lease renewals, close reason, upstream close code and request timeouts using an ephemeral trace ID. A periodic snapshot read no longer rejects an action against a still-fresh observed revision; that old read is invalidated before dispatch, while owner revision checks and uncertain-action receipt handling remain enforced.
+Direct browser requests have a 30-second reply deadline. Timeout or disconnect
+leaves mutations in the receipt journal; neither renewal nor reconnect resends
+them. Connection diagnostics (`[Helm connection]` in the browser console) contain
+fixed metadata only, never token, prompt or result bodies. The legacy Node gateway
+is no longer a source of diagnostics for the current conversation path.

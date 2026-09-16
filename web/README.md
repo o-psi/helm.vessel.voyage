@@ -1,3 +1,8 @@
+> The console now connects browsers directly to public Vessel WSS endpoints (#307).
+> Laravel handles login, tenant connections and temporary credential bootstrap.
+> Node is needed to build assets, not to relay conversations. See
+> [Helm Web deployment and gateway migration](../docs/helm-web.md#upgrade-and-retire-the-conversation-gateway).
+
 # Helm website
 
 Laravel 13, Livewire 4 and licensed Flux Pro UI 2 product website for

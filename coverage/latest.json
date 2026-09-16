@@ -1,15 +1,16 @@
 {
-  "source_commit": "8425a44ba81029074e220e903e4743963e0571a2",
-  "dirty": false,
-  "source_fingerprint_sha256": "2eb60ace170b77aef6689b82a4856f0903b0d41d8c809528407fff5c06e4468d",
+  "source_commit": "7c42025e43225e3e76feac96d6070b21f8a16ebc",
+  "dirty": true,
+  "dirty_note": "Documentation/deployment/benchmark edits only; measured Rust/Cargo source exactly matches source_commit",
+  "source_fingerprint_sha256": "41f98af81c69540b9e95748d9f005feb5190a4a82169fa1c2de20097fe5847f7",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes",
-  "measured_at_utc": "2026-09-16T13:48:35.889713+00:00",
+  "measured_at_utc": "2026-09-16T14:03:40.249726+00:00",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1649,
+    "passed": 1663,
     "failed": 0,
     "ignored": 1
   },
@@ -21,19 +22,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 9776,
-      "covered": 7005,
-      "percent": 71.6550736497545
+      "count": 9813,
+      "covered": 7071,
+      "percent": 72.05747477835524
     },
     "instantiations": {
-      "count": 22287,
-      "covered": 8883,
-      "percent": 39.857315924081306
+      "count": 22373,
+      "covered": 8968,
+      "percent": 40.08402985741743
     },
     "lines": {
-      "count": 101396,
-      "covered": 76195,
-      "percent": 75.1459623653793
+      "count": 101650,
+      "covered": 76647,
+      "percent": 75.4028529267093
     },
     "mcdc": {
       "count": 0,
@@ -42,18 +43,18 @@
       "percent": 0
     },
     "regions": {
-      "count": 166001,
-      "covered": 119061,
-      "notcovered": 46940,
-      "percent": 71.72306190926561
+      "count": 166379,
+      "covered": 119784,
+      "notcovered": 46595,
+      "percent": 71.99466278797205
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/idle-resources -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET_DIR cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET_DIR/coverage-report/direct-wss-307 -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET_DIR/idle-resources.profdata",
+    "-instr-profile=$TARGET_DIR/direct-wss-307.profdata",
     "-object",
     "$TARGET_DIR/debug/deps/chatgpt_conversation-48ecc7ddc62a6aa9",
     "-object",
@@ -87,7 +88,7 @@
     "-object",
     "$TARGET_DIR/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
+    "/rustc/([0-9a-f]+|[0-9]+\\.[0-9]+\\.[0-9]+)/|^($WORKSPACE|$REUSED_SOURCE_WORKSPACE)(/.*)?/(tests|examples|benches)/|^($WORKSPACE|$REUSED_SOURCE_WORKSPACE)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^($WORKSPACE|$REUSED_SOURCE_WORKSPACE)/target($|/)|^$HOME/\\.cargo/(registry|git)/|^$HOME/\\.rustup/toolchains($|/)|^/usr/src/debug/rust/[^/]+/library/",
     "-summary-only"
   ],
   "exclusions": [
@@ -99,7 +100,7 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Issue #310: automatic suspension preserves background session resources, all workspace default-feature offline tests. No live-provider or native macOS/Windows claims.",
-    "Shared existing target directory; preserved default report. Corrected artifact selection uses every current Cargo workspace executable and every executed test binary (#251). No export diagnostics, duplicate file paths, stale-worktree files or changed exclusion patterns."
+    "Issue #307: direct browser WSS credentials and lifecycle; all workspace default-feature offline tests. No live-provider or native macOS/Windows claims.",
+    "Shared existing target directory; preserved default report. Corrected artifact selection uses every current Cargo workspace executable and every executed test binary (#251). No export diagnostics or duplicate source identities. Reused installer/protocol/storage source paths from prior worktree validated byte-identical against prior measured commit 8425a44. Same semantic exclusions applied to both current and reused source roots (test-source path normalization only)."
   ]
 }

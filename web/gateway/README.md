@@ -1,3 +1,8 @@
+> **Legacy relay:** the current Helm Web console does not use this gateway.
+> Retained for deliberate rollback, legacy clients and comparative fixtures.
+> See [direct-WSS migration](../../docs/helm-web.md#upgrade-and-retire-the-conversation-gateway).
+> Do not stop an existing deployment until matching browser/Laravel/Vessel upgrades are verified.
+
 # Helm Web tenant gateway
 
 Node >=22; `npm ci --ignore-scripts`, then `npm test` / `npm start` in this

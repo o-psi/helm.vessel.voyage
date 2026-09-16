@@ -10,13 +10,15 @@ records delivery evidence and its limits.
 [Helm Web](helm-web.md) is an opt-in personal-tenant Laravel/Livewire/Flux client
 alongside the product site. OAuth provider identities own separate tenants and
 multiple public HTTPS/WSS Vessel connections, with no shared default Vessel.
-A JavaScript-owned conversation pane uses a scoped
-WebSocket gateway to read snapshots/history and submit, steer, respond or cancel
-existing voyages. Live text is refreshed through bounded socket reads, not a PHP
-update per token. Owner pairing provides full Vessel access without workspace,
-account or rights selection; old scoped credentials remain limited. The gateway
-holds connection credentials; it is not an executor and never holds provider credentials. Browser intent identities
-are saved before dispatch and uncertain admissions use receipt reads only.
+A JavaScript-owned conversation pane connects directly to each public Vessel over
+WSS for snapshots/history, live observations and submit/steer/respond/cancel.
+Laravel retains login, tenant connections and short-lived credential bootstrap;
+the Node conversation gateway is not in the normal path. Owner pairing provides
+full Vessel access without workspace/account/rights selection; old scoped
+credentials remain limited. Pairing credentials stay encrypted on the web host,
+temporary browser credentials expire in at most 120 seconds, and provider
+credentials stay on executing hosts. Browser intent identities are saved before
+dispatch and uncertain admissions use receipt reads only.
 
 The console is disabled by default. Offline HTTP, DOM and local WebSocket fixture
 checks are recorded in the guide; live OAuth-provider journeys, real-provider voyage execution and native

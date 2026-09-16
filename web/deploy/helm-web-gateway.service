@@ -1,3 +1,4 @@
+# Legacy rollback/comparison service; not required by the direct-WSS console.
 [Unit]
 Description=Helm Web scoped Vessel connection gateway
 After=network-online.target
