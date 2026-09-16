@@ -35,7 +35,14 @@ fn readiness_preserves_identity_and_accepts_clean_suspension() {
             json!({"session_id":"ignored", "state":"suspended"}),
         ];
         assert_eq!(
-            wait(&bin, &f.root.join("state"), &prior, Some("old")).is_ok(),
+            wait_for(
+                &bin,
+                &f.root.join("state"),
+                &prior,
+                Some("old"),
+                Duration::ZERO
+            )
+            .is_ok(),
             matches!(state, "live" | "suspended")
         );
         f.done();
@@ -54,11 +61,12 @@ fn readiness_rejects_missing_or_reincarnated_owner() {
         f.query("ActiveState", "active");
         f.query("MainPID", "42");
         assert!(
-            wait(
+            wait_for(
                 &bin,
                 &f.root.join("state"),
                 &[json!({"session_id":"one", "incarnation":"old", "state":"live"})],
-                None
+                None,
+                Duration::ZERO
             )
             .unwrap_err()
             .to_string()

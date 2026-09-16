@@ -33,7 +33,16 @@ pub(super) fn wait(
     prior: &[Value],
     prior_invocation: Option<&str>,
 ) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(15);
+    wait_for(bin, state, prior, prior_invocation, Duration::from_secs(15))
+}
+fn wait_for(
+    bin: &Path,
+    state: &Path,
+    prior: &[Value],
+    prior_invocation: Option<&str>,
+    timeout: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
     loop {
         if super::command::query("ActiveState")? == "active"
             && super::command::query("MainPID")
@@ -59,32 +68,23 @@ pub(super) fn wait(
             })
             && let Ok(current) = catalogue(bin, state)
         {
-            let mut warming = false;
-            for previous in prior.iter().filter(|v| v["state"] == "live") {
-                if current.iter().any(|now| {
-                    now["session_id"] == previous["session_id"]
-                        && now["incarnation"] == previous["incarnation"]
-                        && now["state"] == "unavailable"
-                }) {
-                    warming = true;
-                    continue;
-                }
-                ensure!(
-                    current
-                        .iter()
-                        .any(|now| now["session_id"] == previous["session_id"]
+            let retained = prior
+                .iter()
+                .filter(|v| v["state"] == "live")
+                .all(|previous| {
+                    current.iter().any(|now| {
+                        now["session_id"] == previous["session_id"]
                             && now["incarnation"] == previous["incarnation"]
-                            && matches!(now["state"].as_str(), Some("live" | "suspended"))),
-                    "A previously live voyage did not confirm its original incarnation live or cleanly suspended after supervisor upgrade; no voyage restart was attempted"
-                );
-            }
-            if !warming {
+                            && matches!(now["state"].as_str(), Some("live" | "suspended"))
+                    })
+                });
+            if retained {
                 return Ok(());
             }
         }
         ensure!(
             Instant::now() < deadline,
-            "Service did not expose an authenticated ready Vessel endpoint; inspect journalctl --user -u voyage-vessel.service"
+            "Service did not expose an authenticated ready Vessel endpoint with every original incarnation live or cleanly suspended; inspect journalctl --user -u voyage-vessel.service"
         );
         std::thread::sleep(Duration::from_millis(100));
     }
