@@ -2,12 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {spawnSync} from 'node:child_process';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {sidebarActions} from '../resources/js/sidebar-actions.js';
 import {IntentJournal} from '../resources/js/vessel-client.js';
 import {validCommand} from '../gateway/protocol.js';
 const dom=new JSDOM('',{url:'https://fixture.invalid'});
 for(const key of ['window','document','localStorage','Event','MouseEvent','Option']) globalThis[key]=dom.window[key];
-const rendered=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8'});
+const compiled=mkdtempSync(join(tmpdir(),'helm-sidebar-views-'));
+let rendered;
+try {
+rendered=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
+} finally { rmSync(compiled,{recursive:true,force:true}); }
 assert.equal(rendered.status,0,rendered.stderr);
 const id='11111111-1111-4111-8111-111111111111', inc='22222222-2222-4222-8222-222222222222', other='33333333-3333-4333-8333-333333333333';
 const pause=()=>new Promise(r=>setTimeout(r,3));

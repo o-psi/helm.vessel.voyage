@@ -11,8 +11,10 @@ then fail with `include(...storage/framework/views/...php): Permission denied`.
 A default directory ACL alone does not prevent recurrence.
 
 Rendering tests must set `VIEW_COMPILED_PATH` to an isolated temporary directory
-before bootstrapping Laravel and remove that directory afterwards. The Flux and
-profile-menu rendering checks do this. For other ad hoc CLI render checks, use
+before bootstrapping Laravel and remove that directory afterwards. The Flux, console, owner-connection, profile-menu and sidebar-action
+rendering checks do this. The sidebar-action check previously omitted this override
+and recreated an unreadable live console view; its render now uses a temporary
+cache removed in a `finally` block. For other ad hoc CLI render checks, use
 an existing private scratch directory via that environment variable as well.
 Never run live view-cache warming or clearing as the development CLI user.
 Perform deliberate deployment cache operations as the PHP-FPM service identity.
