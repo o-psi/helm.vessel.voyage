@@ -5,36 +5,38 @@ operator's request. Targeted Linux regression coverage now checks concurrent
 voyages in one workspace. Broader suite recreation remains separate; historical
 passing runs do not establish coverage for today's source.
 
-## Available checks
+## Linux binary release checks
 
-`scripts/quality-gates.json` defines eight gates:
-
-1. Rust formatting.
-2. Strict workspace Clippy across targets and features.
-3. Locked optimized workspace build.
-4. Concurrent voyage process regression.
-5. Full archive packaging.
-6. Full archive checksum verification.
-7. Standalone installer packaging.
-8. Installer checksum verification.
-
-Run them from a clean committed checkout:
+Run from clean committed source, retaining logs under ignored `target/`:
 
 ```sh
-./scripts/check-quality --plan
-./scripts/check-quality
+cargo fmt --all -- --check
+cargo clippy --workspace --locked --all-targets --all-features -j 8 -- -D warnings
+cargo build --workspace --release --locked -j 8
+python3 -m unittest discover -s packaging -p test_package_linux.py -v
+python3 voyage/tests/conversation_files.py --bin-dir target/release
+python3 packaging/package_linux.py --version v1.0.0 --bin-dir target/release --output dist/linux-release
+(cd dist/linux-release && sha256sum -c *.sha256)
 ```
 
-The Linux runner needs stable Rust, rustfmt, Clippy, Python 3.11+, Git, native build
-utilities, archive tools and checksum utilities. It defaults to one compiler job;
-`--jobs N` selects another bound. Do not run competing builds against the same
-output directory.
+Also run the workspace coverage workflow in `AGENTS.md` after final Rust/test
+edits, and commit `coverage/latest.json`. Verify the extracted release with
+`packaging/verify_linux_install.py`; see the
+[release guide](releases-v1.0.0.md#maintainer-install-check).
+Where present in the selected committed revision, the concurrent-voyage fixture
+below provides additional offline process verification. Missing/deleted historical
+scripts are not a passing gate and must not be restored implicitly. This release
+workflow does not depend on `scripts/check-quality` or the old packagers.
 
-A passing run establishes these build, analysis and packaging results plus the
-specific Linux behaviors below. Other runtime behavior, security boundaries,
-native macOS/Windows operation, deployed services and live model quality need
-separate evidence. Live provider work requires an approved provider and budget.
-No skipped or unavailable check is a pass.
+Linux checks need Rust, rustfmt, Clippy, matching LLVM coverage tools, Python
+3.11+, Git, native build tools, tar/checksum utilities and Bubblewrap for isolated
+installer checks. Do not run competing builds against one target directory.
+
+A passing run establishes only the checks actually recorded. Other runtime
+behavior, security boundaries, native-platform operation, real service activation,
+reboot persistence and live model quality need separate evidence. Live provider
+work requires an approved provider and budget. No skipped or unavailable check is
+a pass.
 
 ## Concurrent voyage regression
 

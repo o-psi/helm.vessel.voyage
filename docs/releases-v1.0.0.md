@@ -34,7 +34,8 @@ release when no local `--bin-dir` is supplied. The source bootstrap supports
 
 ## Scope and limitations
 
-- Linux x86-64 GNU/glibc only. No ARM64, musl/Alpine, macOS or Windows binary
+- Linux x86-64 GNU/glibc only; the native build requires **glibc 2.39 or newer**,
+  with libgcc_s and the GNU ELF loader. Verification ran on glibc 2.44. No ARM64, musl/Alpine, macOS or Windows binary
   support is claimed. Actual published binary libc requirements are recorded in
   the GitHub release verification notes; source builds can use a different libc
   baseline.
