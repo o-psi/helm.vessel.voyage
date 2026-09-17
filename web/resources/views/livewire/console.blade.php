@@ -32,10 +32,11 @@
             </div>
             <section id="decisions" class="max-h-[32dvh] space-y-3 overflow-y-auto px-4" aria-label="Pending decisions"></section>
             <form id="composer" class="mx-auto w-full max-w-3xl px-3 pb-2 pt-2 sm:px-4 sm:pb-4">
+                <div class="mb-2 flex items-center"><flux:dropdown position="top" align="start"><flux:button id="change-location" type="button" size="sm" variant="ghost" icon="folder" icon:trailing="chevron-down"><span id="composer-location">Location</span></flux:button><flux:popover id="location-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" /></flux:dropdown></div>
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="2" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
                     <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
                         <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
-                            <flux:dropdown position="top" align="start"><flux:button id="change-location" type="button" size="sm" variant="ghost" icon="folder" icon:trailing="chevron-down"><span id="composer-location">Location</span></flux:button><flux:popover id="location-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" /></flux:dropdown>
+
                             <flux:button id="attach-picture" type="button" size="sm" variant="ghost" icon="paper-clip" aria-label="Attach pictures" tooltip="Attach pictures" />
 
                             <flux:dropdown position="top" align="start">

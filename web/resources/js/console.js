@@ -115,7 +115,7 @@ export function mount(root) {
             $('change-account').disabled = !newChatSettings && (!enabled || running());
             $('change-service').disabled = !newChatSettings && (!enabled || running());
             $('change-location').hidden = Boolean(selected);
-            $('change-location').disabled = !newChatSettings;
+            $('change-location').disabled = Boolean(selected) || busy || newChatSending || !fleet.connections.size;
             $('composer-location').textContent = reviewed ? `${fleet.connections.get(selectedVessel)?.name} · ${reviewed.workspace}` : 'Vessel / Workspace';
             $('change-reasoning').disabled = !reviewed && (!enabled || running() || !snapshot?.inference?.account);
             $('change-access').disabled = !enabled && !newChatSettings;
