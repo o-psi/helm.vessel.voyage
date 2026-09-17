@@ -189,7 +189,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             assert.equal(root.querySelector('[name="voyage-settings"]'),null,'no new-voyage modal');
             assert.match($('#conversation-empty').textContent,/first Send creates/);
             assert.equal($('#conversation-empty').hidden,false);
-            assert.equal($('#prompt').disabled,false);
+            assert.equal($('#prompt').hasAttribute('disabled'),false);
             assert.equal($('#change-location').disabled,false,'location editable before first Send');
             assert.equal($('#prompt').contains($('#change-location')),true,'location stays in the existing composer control row');
             assert.equal(document.activeElement,$('#prompt').querySelector('textarea'));

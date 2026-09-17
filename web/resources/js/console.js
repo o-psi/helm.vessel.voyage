@@ -1,3 +1,4 @@
+import {setComposerDisabled} from './composer-disabled.js';
 import {renderRootGrant} from './root-grant.js';
 import {sidebarActions} from './sidebar-actions.js';
 import {conversationScroll} from './conversation-scroll.js';
@@ -108,7 +109,7 @@ export function mount(root) {
             const enabled = actionable();
             const newChatSettings = !selected && client && !busy && !newChatSending;
             const reviewed = !selected ? settings?.configuration() : null;
-            $('reconnect').disabled = busy; $('prompt').disabled = busy || newChatSending || !selectedVessel; $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
+            $('reconnect').disabled = busy; setComposerDisabled($('prompt'), busy || newChatSending || !selectedVessel); $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
