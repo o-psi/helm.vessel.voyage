@@ -11,6 +11,23 @@ Discovery scans immediate child directories of these roots, in order:
 
 1. The Voyage workspace's `.agents/skills`.
 2. The executing user's `~/.agents/skills`.
+3. Nested projects' `.agents/skills`, in bounded breadth-first, lexical order.
+
+Each catalog entry carries a `scope`: the owning project directory, or `null`
+for executing-user skills. Nested skills are candidates only for work in their
+project subtree, not global instructions. Root skills remain workspace-wide;
+nested scopes do not silently override parent skills or resolve duplicate names.
+This is model-facing selection guidance, not an additional filesystem permission
+boundary. The runtime advertises scoped metadata at run start so work can cross
+project boundaries within a run; bodies are still loaded on demand. Newly created
+scopes are discovered on the next run, not dynamically after each tool call.
+
+Project traversal visits at most 4,096 directory entries and eight directory
+levels below the workspace. Hidden directories and `vendor`, `node_modules`,
+`target`, `dist`, `build`, `coverage`, and `__pycache__` are skipped. It does not
+follow project-directory symlinks or search for arbitrary `SKILL.md` files.
+Bounds and traversal failures report incomplete discovery rather than claiming
+all scopes were found. Skill-root and entrypoint links retain the checks below.
 
 Canonical roots and identical `SKILL.md` targets are deduplicated. Directory and
 entrypoint symlinks are supported **only when their resolved targets are within
@@ -18,7 +35,7 @@ current policy read roots**. Discovery never grants additional roots; an Omarchy
 link into `/usr/share/omarchy` requires that target to be readable under the
 Voyage's policy. Missing default roots are normal; denied, broken, malformed,
 missing-entrypoint and oversized candidates produce model-visible diagnostics.
-No ancestor traversal, legacy `.codex` scan, recursive grouping-folder search,
+No ancestor traversal, legacy `.codex` scan, recursive skill grouping-folder search,
 remote URL download, hooks, or script execution is implicit.
 
 The provider gets an ephemeral, JSON-escaped catalog of names, descriptions and

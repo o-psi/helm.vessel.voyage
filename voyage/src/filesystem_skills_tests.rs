@@ -236,3 +236,114 @@ async fn executing_agent_advertises_then_reads_without_persisting_catalog() {
             .any(|m| m.content.contains("Available filesystem skills"))
     );
 }
+
+#[test]
+fn nested_projects_have_explicit_scope_and_do_not_load_bodies() {
+    let root = tempfile::tempdir().unwrap();
+    skill(root.path(), "global", "shared");
+    let web = root.path().join("web");
+    let nested = web.join("packages/ui");
+    skill(&web, "boost", "shared");
+    skill(&nested, "ui", "ui");
+    let catalog = discover(&policy(root.path()), None);
+    assert_eq!(catalog.skills.len(), 3);
+    assert_eq!(catalog.skills[0].scope.as_deref(), Some(root.path()));
+    assert_eq!(catalog.skills[1].scope.as_deref(), Some(web.as_path()));
+    assert_eq!(catalog.skills[2].scope.as_deref(), Some(nested.as_path()));
+    assert!(
+        catalog
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("duplicate skill name"))
+    );
+    let guidance = catalog.guidance();
+    assert!(guidance.contains("only for work in that subtree"));
+    assert!(!guidance.contains("PRIVATE BODY MARKER"));
+    // A new run observes scopes added since the previous scan.
+    skill(&root.path().join("api"), "api", "api");
+    assert_eq!(discover(&policy(root.path()), None).skills.len(), 4);
+}
+
+#[test]
+fn project_walk_skips_dependencies_hidden_dirs_and_arbitrary_skill_files() {
+    let root = tempfile::tempdir().unwrap();
+    for excluded in [
+        "vendor",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        "coverage",
+        "__pycache__",
+        ".git",
+        ".worktrees",
+    ] {
+        skill(
+            &root.path().join(excluded).join("nested"),
+            "hidden",
+            "hidden",
+        );
+    }
+    fs::write(root.path().join("SKILL.md"), "not a skill root").unwrap();
+    skill(&root.path().join("web"), "visible", "visible");
+    let catalog = discover(&policy(root.path()), None);
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].name, "visible");
+    assert!(catalog.diagnostics.is_empty());
+}
+
+#[test]
+fn project_walk_bounds_report_incomplete_discovery() {
+    let root = tempfile::tempdir().unwrap();
+    skill(root.path(), "root", "root");
+    for i in 0..MAX_PROJECT_ENTRIES {
+        fs::write(root.path().join(format!("file{i}")), "").unwrap();
+    }
+    let catalog = discover(&policy(root.path()), None);
+    assert_eq!(catalog.skills.len(), 1);
+    assert!(
+        catalog
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("project discovery entry limit"))
+    );
+    let root = tempfile::tempdir().unwrap();
+    let deepest =
+        (0..MAX_PROJECT_DEPTH + 1).fold(root.path().to_path_buf(), |p, _| p.join("nested"));
+    skill(&deepest, "too-deep", "too-deep");
+    let catalog = discover(&policy(root.path()), None);
+    assert!(catalog.skills.is_empty());
+    assert!(
+        catalog
+            .diagnostics
+            .iter()
+            .any(|d| d.contains("depth limit"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn project_walk_does_not_follow_directory_aliases_or_cycles() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    skill(outside.path(), "outside", "outside");
+    skill(&root.path().join("web"), "inside", "inside");
+    symlink(outside.path(), root.path().join("outside")).unwrap();
+    symlink(root.path().join("web"), root.path().join("alias")).unwrap();
+    symlink(root.path(), root.path().join("web/cycle")).unwrap();
+    let catalog = discover(&policy(root.path()), None);
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].scope, Some(root.path().join("web")));
+    assert!(catalog.diagnostics.is_empty());
+}
+
+#[test]
+fn user_skills_have_no_project_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join(".home");
+    skill(&home, "user", "user");
+    let catalog = discover(&policy(root.path()), Some(&home));
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].scope, None);
+}
