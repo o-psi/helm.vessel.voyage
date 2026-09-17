@@ -37,6 +37,27 @@ start an already-authorized build, read its logs, merge completed work or tidy u
 tracking that you can complete yourself. Delegating work does not delegate away
 responsibility for its integration and outcome.
 
+### Discover the current delivery system
+
+- Start from the checkout and Git remote, not remembered chat context. Verify the
+  canonical GitHub repository, default branch, applicable rules/protections and
+  available authenticated access before relying on them. Use existing credentials
+  without exposing them; never weaken protections or permissions to make delivery
+  appear autonomous. Inaccessible settings are unknown, not absent restrictions.
+- Read the applicable workflows under `.github/workflows/`, their referenced
+  preparation/packaging code, and [docs/releasing.md](docs/releasing.md) and
+  [docs/quality.md](docs/quality.md). Confirm commands and files exist before using
+  them. Historical documentation, old run results and deleted tooling are not
+  evidence of today's capabilities. Do not restore retired scripts implicitly.
+- Keep enduring responsibilities in this file; derive mutable versions, schedules,
+  retention, supported targets and build naming from their authoritative files.
+  When sources disagree, inspect the implementation and delivery record, repair
+  in-scope stale documentation, and record any unresolved consequential conflict.
+  Do not invent intended release scope or treat implemented behavior as permission.
+- Changes to delivery tooling must include corresponding instruction/documentation
+  updates in the same delivery. Maintain this file's links when moving entry points;
+  do not leave future agents dependent on the initiating conversation.
+
 ### Establish scope and the delivery record
 
 - Inspect status/diffs, affected code and documentation, relevant open **and closed**
@@ -108,20 +129,21 @@ responsibility for its integration and outcome.
 
 ### Maintain version and channel intent
 
-The current nightly implementation is defined by
-[the workflow](.github/workflows/nightly.yml),
-[version preparation](packaging/prepare_nightly.py) and
-[release documentation](docs/releasing.md). Read these sources rather than assuming
-planned release automation already exists:
+Read [the nightly workflow](.github/workflows/nightly.yml),
+[version preparation](packaging/prepare_nightly.py),
+[the target version file](packaging/nightly-version.txt) and
+[release documentation](docs/releasing.md) for the implemented mechanism:
 
-- `packaging/nightly-version.txt` is the next intended stable version, currently
-  `1.0.2` (patch after `1.0.1`). The checked-in Cargo versions remain the stable
-  baseline; nightly preparation changes workspace/member versions and lock entries
-  only in the temporary CI checkout. Do not commit a generated nightly version.
-- Nightlies run around 03:23 UTC, or by explicit workflow dispatch, on Linux x86-64.
-  They use `TARGET-nightly.YYYYMMDD.RUN_ID.ATTEMPT`, build only when there is no
-  successful unexpired artifact for that source, and retain downloads for 30 days.
-  Expiry/deletion can permit an unchanged-source rebuild. Failed builds can retry.
+- Read the next intended stable version from the target file; confirm its intent
+  against release planning and shipped stable tags. Do not duplicate its current
+  value here. Checked-in Cargo versions are the stable baseline; generated nightly
+  workspace/member versions and lock entries belong only in the temporary CI
+  checkout, not in a delivery commit.
+- Obtain schedules, supported targets, prerelease formatting, deduplication and
+  artifact retention from the workflow and preparation code. Check actual artifact
+  availability: expiry/deletion can permit an unchanged-source rebuild, while a
+  failed build does not prove a usable download exists. Do not treat planned
+  release automation as implemented capability.
 - Nightly artifacts are development downloads, not Git tags, GitHub Releases, a
   stable installer bundle or an automatic update channel. Keep stable downloads
   unchanged. Never reuse the last shipped version as a prerelease base, overwrite
@@ -153,6 +175,30 @@ planned release automation already exists:
   and next action. Leave incomplete scope open. A queued build is pending, not
   successful; an unavailable service is unknown, not failed verification. Report
   these facts concisely instead of presenting a routine handoff as completion.
+
+### Leave work independently resumable
+
+An agent's lifetime is not the lifetime of the work. Update the shared delivery
+record at material transitions, before long external waits and before stopping;
+chat history, private scratch files and promises to return are not sufficient.
+For unfinished work, leave a concise checkpoint containing:
+
+- Objective, scope, acceptance criteria and remaining obligations.
+- Issue/PR/milestone links, branch/worktree location if relevant, exact commits and
+  whether each is local, pushed or integrated. Identify unrelated/concurrent work
+  that must be preserved without publishing private local details.
+- Commands/checks actually completed and their outcomes; exact Actions run URLs,
+  observed status, checked-out source and artifact identities where known. Link
+  durable evidence; do not rely solely on expiring artifacts or local logs.
+- Failure or blocker, attempted remedies, pending/uncertain external effects and
+  their operation identities where available, plus the next safe concrete action.
+
+On resumption, reconcile this record with current Git/GitHub state before acting.
+Confirm whether queued work finished or another agent delivered the fix. Do not
+replay an uncertain dispatch/publication or duplicate active work. Continue feasible
+authorized steps without routine human handoffs; a checkpoint preserves unfinished
+responsibility, it does not make the objective complete. Never include credentials,
+private terminal input or sensitive diagnostics in the shared record.
 
 ## Correctness and security
 
@@ -193,7 +239,8 @@ Use normal Git in ordinary clones. In this workspace `.git` is reserved; use
 `./scripts/local-git` and do not initialize replacement metadata. If the wrapper
 is absent, use `git --git-dir=.local-git/worktree.git --work-tree=.` from the
 checkout root against the existing metadata; do not restore deleted scripts implicitly. See
-[docs/local-git.md](docs/local-git.md). Use `--repo o-psi/voyage` with `gh` as needed.
+[docs/local-git.md](docs/local-git.md). Use an explicit `--repo OWNER/REPO` with
+`gh`, resolved from the verified canonical remote rather than a historical alias.
 Never reset, clean, force-push, stage unrelated files or overwrite concurrent edits
 implicitly. Keep tests and quality validation local; use the build-only GitHub
 workflow and follow-through rules above for hosted compilation and downloads.
@@ -263,13 +310,14 @@ only the compact summary, without local paths, credentials or test diagnostics.
 - Reuse the checkout's existing `target/` and keep toolchain, features and flags
   consistent to preserve cached work. Keep development incremental compilation
   enabled. Coordinate builds; do not launch competing builds or create a fresh
-  per-task target directory merely to bypass a Cargo lock. Respect the quality
-  runner's checkout and output-directory requirements in [docs/quality.md](docs/quality.md).
-- Use development builds for iteration. Reserve optimized builds and the full
-  quality runner for changes requiring that evidence. Ordinary Cargo defaults to
-  the logical CPU count, but `scripts/check-quality` defaults to one compiler job;
-  use `./scripts/check-quality --jobs 8`, for example, when CPU and available memory
-  support it. Reduce concurrency if memory pressure or competing work warrants it.
+  per-task target directory merely to bypass a Cargo lock. Respect the applicable
+  checks' checkout and output-directory requirements in [docs/quality.md](docs/quality.md).
+- Use development builds for iteration. Reserve optimized builds and full release
+  checks for changes requiring that evidence. Choose explicit compiler concurrency
+  suitable for available CPU and memory, such as `cargo build -p helm --locked -j 8`.
+  Reduce it under memory pressure or competing work. Read current validation
+  entry points before invoking them; do not assume a historical quality runner
+  exists or restore one merely to follow an obsolete command.
 - Investigate slow builds with `cargo build -p helm --locked --timings` and its
   `target/cargo-timings/cargo-timing.html` report. Measure representative rebuilds
   before and after tuning. Verify the active linker before changing it; keep
