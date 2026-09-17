@@ -26,6 +26,7 @@ Project traversal visits at most 4,096 directory entries and eight directory
 levels below the workspace. Hidden directories and `vendor`, `node_modules`,
 `target`, `dist`, `build`, `coverage`, and `__pycache__` are skipped. It does not
 follow project-directory symlinks or search for arbitrary `SKILL.md` files.
+Laravel `storage` is also skipped when its parent contains `artisan`.
 Bounds and traversal failures report incomplete discovery rather than claiming
 all scopes were found. Skill-root and entrypoint links retain the checks below.
 
@@ -181,3 +182,8 @@ on the executing host explicitly. No filesystem replication or credential transf
 is implied. The import adapter does not provide selective invocation or a separate runtime
 executor. Automatic runtime discovery above provides on-demand reading of live
 filesystem skills; it does not change installed package activation semantics.
+
+Boost frontmatter supports the standard one-level string-valued `metadata` map
+(e.g. `metadata: author: laravel`, expressed on indented YAML lines). These fields
+are informational only; they neither authorize tools nor replace top-level name
+and description. Other nested YAML remains unsupported and diagnostic.

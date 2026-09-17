@@ -1,17 +1,17 @@
 {
-  "measured_at_utc": "2026-09-17T02:17:47.704199+00:00",
-  "source_commit": "b0153ca83dc2e0b14ca12c23b9bd82a64f576fae",
+  "measured_at_utc": "2026-09-17T02:39:52.549881+00:00",
+  "source_commit": "443133c9106aee19243b3e12684a2f20dfa51066",
   "dirty": true,
-  "source_fingerprint_sha256": "a18acea42e04fc806a72edb688e5fc0e20b28e75090da047bd44e93703689904",
+  "source_fingerprint_sha256": "5a078989ff0ae23b5ab97d70b5b50758f0d7d37dc5eba65f7a9b096df2bbbb0d",
   "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths: path + NUL + file bytes; missing paths marked MISSING",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1688,
+    "passed": 1690,
     "failed": 0,
-    "ignored": 1
+    "ignored": 2
   },
   "totals": {
     "branches": {
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 9829,
-      "covered": 7115,
-      "percent": 72.38783192593347
+      "covered": 7116,
+      "percent": 72.39800590090549
     },
     "instantiations": {
       "count": 22432,
-      "covered": 9023,
-      "percent": 40.22378744650499
+      "covered": 9024,
+      "percent": 40.22824536376605
     },
     "lines": {
-      "count": 101934,
-      "covered": 77197,
-      "percent": 75.73233660996331
+      "count": 101955,
+      "covered": 77219,
+      "percent": 75.73831592369183
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 166882,
-      "covered": 120801,
-      "notcovered": 46081,
-      "percent": 72.38707589793985
+      "count": 166915,
+      "covered": 120836,
+      "notcovered": 46079,
+      "percent": 72.39373333732738
     }
   },
-  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/scoped-skills -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/boost-compat -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -99,8 +99,8 @@
     "Dependency and test-source exclusions"
   ],
   "notes": [
-    "Full workspace default-feature tests. Complete current executable set selected from instrumented cargo test --workspace --locked --no-run --message-format=json; mixed default report preserved locally. Corrected export produced no diagnostics.",
-    "Linux offline evidence only. Includes unrelated staged Helm render source in dirty fingerprint. No live-provider or native macOS/Windows verification.",
-    "Issue #326: scoped nested project skill discovery; 15 focused tests passed."
+    "Complete current 16-executable set selected from instrumented Cargo artifacts. Mixed report preserved locally; corrected export has no diagnostics.",
+    "Linux offline only; unrelated staged Helm source included in dirty fingerprint.",
+    "Boost compatibility: 22 focused tests passed; separately executed ignored real-checkout discovery test passed and found all seven Boost skills. Two ignored tests in workspace run: live provider and checkout-dependent manual discovery."
   ]
 }

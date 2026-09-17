@@ -256,6 +256,10 @@ fn project_roots(
         left -= entries.len();
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
+            // Laravel runtime storage is generated data, not a project scope.
+            if directory.join("artisan").is_file() && entry.file_name() == "storage" {
+                continue;
+            }
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if name.starts_with('.')

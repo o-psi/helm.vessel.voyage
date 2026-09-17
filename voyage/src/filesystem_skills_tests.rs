@@ -347,3 +347,68 @@ fn user_skills_have_no_project_scope() {
     assert_eq!(catalog.skills.len(), 1);
     assert_eq!(catalog.skills[0].scope, None);
 }
+
+#[test]
+fn boost_metadata_mapping_is_discovered_without_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let web = root.path().join("web");
+    let path = skill(&web, "boost", "boost");
+    fs::write(path, "---\nname: boost\ndescription: Laravel fixture\nlicense: MIT\nmetadata:\n  author: laravel\n  name: not-the-skill-name\n---\nPRIVATE BODY MARKER\n").unwrap();
+    fs::write(web.join("artisan"), "fixture").unwrap();
+    skill(
+        &web.join("storage/framework/views"),
+        "generated",
+        "generated",
+    );
+    let catalog = discover(&policy(root.path()), None);
+    assert!(catalog.diagnostics.is_empty(), "{:?}", catalog.diagnostics);
+    assert_eq!(catalog.skills.len(), 1);
+    assert_eq!(catalog.skills[0].name, "boost");
+    assert_eq!(catalog.skills[0].scope.as_deref(), Some(web.as_path()));
+}
+
+#[test]
+#[ignore = "manual executing-checkout verification, no provider calls"]
+fn actual_boost_checkout_skills_are_discovered() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let catalog = discover(&policy(&root), None);
+    let web = root.join("web");
+    let skills: Vec<_> = catalog
+        .skills
+        .iter()
+        .filter(|s| s.scope.as_ref() == Some(&web))
+        .collect();
+    assert_eq!(skills.len(), 7, "diagnostics: {:?}", catalog.diagnostics);
+    assert!(
+        !catalog
+            .diagnostics
+            .iter()
+            .any(|d| d.starts_with(&web.display().to_string())),
+        "{:?}",
+        catalog.diagnostics
+    );
+    println!("Other workspace diagnostics: {:?}", catalog.diagnostics);
+    for skill in skills {
+        println!("{}: {}", skill.name, skill.path.display());
+    }
+}
+
+#[test]
+fn metadata_mapping_rejects_duplicates_and_deeper_structures() {
+    for fields in [
+        "metadata:\n  author: laravel\n  author: other",
+        "metadata:\n  nested:\n    author: laravel",
+        "name:\n  value: forged",
+        "metadata:\n  author: [laravel]",
+        "metadata:\n  author: &alias laravel",
+    ] {
+        let text = format!("---\nname: example\ndescription: Example\n{fields}\n---\nBody\n");
+        assert!(
+            crate::extensions::skills::metadata(&text).is_err(),
+            "{fields}"
+        );
+    }
+}

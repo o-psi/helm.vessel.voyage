@@ -73,7 +73,8 @@ fn absolute(path: &Path) -> Result<PathBuf> {
 }
 
 /// A deliberately strict YAML mapping subset: string scalars and literal/folded
-/// multiline strings. Reject unsupported YAML rather than misinterpret authority.
+/// multiline strings, plus one level of string-valued `metadata` mapping.
+/// Reject unsupported YAML rather than misinterpret authority.
 pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
     let mut lines = text.lines();
     ensure!(
@@ -83,6 +84,7 @@ pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
     let mut fields = BTreeMap::<String, String>::new();
     let mut current: Option<(String, bool)> = None;
     let mut closed = false;
+    let mut metadata_mapping = false;
     for line in lines.by_ref() {
         if line == "---" {
             closed = true;
@@ -91,6 +93,19 @@ pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
             continue;
         }
+        let line = if line.starts_with("  ") && metadata_mapping {
+            let child = &line[2..];
+            ensure!(
+                !child.starts_with(char::is_whitespace),
+                "metadata supports one mapping level"
+            );
+            child
+        } else {
+            if !line.starts_with(' ') {
+                metadata_mapping = false;
+            }
+            line
+        };
         if line.starts_with(' ') {
             let (key, fold) = current
                 .as_ref()
@@ -113,11 +128,21 @@ pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
             "invalid metadata key"
         );
-        ensure!(!fields.contains_key(key), "duplicate metadata key");
+        let key = if metadata_mapping {
+            format!("metadata.{key}")
+        } else {
+            key.to_owned()
+        };
+        ensure!(!fields.contains_key(&key), "duplicate metadata key");
         let raw = raw.trim();
+        if key == "metadata" && raw.is_empty() {
+            fields.insert(key, String::new());
+            metadata_mapping = true;
+            continue;
+        }
         if matches!(raw, "|" | "|-" | "|+" | ">" | ">-" | ">+") {
-            fields.insert(key.into(), String::new());
-            current = Some((key.into(), raw.starts_with('>')));
+            fields.insert(key.clone(), String::new());
+            current = Some((key.clone(), raw.starts_with('>')));
             continue;
         }
         let value = if raw.starts_with('"') {
@@ -144,7 +169,7 @@ pub(crate) fn metadata(text: &str) -> Result<(String, String, Vec<String>)> {
             );
             raw.to_owned()
         };
-        fields.insert(key.into(), value);
+        fields.insert(key, value);
     }
     ensure!(closed, "unterminated SKILL.md frontmatter");
     let name = fields.remove("name").context("missing skill name")?;
