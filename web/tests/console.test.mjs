@@ -186,7 +186,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             assert.equal($('#conversation-empty').hidden,false);
             assert.equal($('#prompt').disabled,false);
             assert.equal($('#change-location').disabled,false,'location editable before first Send');
-            assert.equal($('#prompt').contains($('#change-location')),false,'Flux composer disable propagation must not capture location');
+            assert.equal($('#prompt').contains($('#change-location')),true,'location stays in the existing composer control row');
             assert.equal(document.activeElement,$('#prompt').querySelector('textarea'));
             $('#prompt').value=text;$('#prompt').dispatchEvent(new Event('input'));
         }
