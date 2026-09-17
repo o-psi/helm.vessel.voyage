@@ -493,7 +493,7 @@ async fn start_settings_validates_scope_and_base_before_any_account_resolution()
     let config = voyage_runtime::Config::default();
     let launch = voyage_runtime::launch_config::LaunchConfig::capture(&config, &f.0).unwrap();
     super::access::store::save_bounded(&base, &launch, 1024 * 1024).unwrap();
-    let settings = serde_json::from_value(json!({"max_output_tokens":0})).unwrap();
+    let settings = serde_json::from_value(json!({"command_timeout_secs":0})).unwrap();
     let request = command(Uuid::new_v4(), Some(base), settings);
     assert!(s.host_accounts(request, Scope::Owner).await.is_err());
     assert!(s.registrations.lock().await.unwrap().is_empty());

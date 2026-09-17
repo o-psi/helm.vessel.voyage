@@ -53,7 +53,7 @@ pub fn apply(config: &mut Config, settings: &StartSettings) -> Result<()> {
     macro_rules! optional { ($($field:ident),*) => {$(if let Some(value) = &settings.$field { config.$field = value.clone(); })*}; }
     optional!(reasoning_effort, service_tier, temperature, context_window);
     if let Some(value) = settings.max_output_tokens {
-        ensure!(value > 0, "max_output_tokens must be positive");
+        // Zero explicitly restores the provider default, just as Config/Agent do.
         config.max_tokens = value;
     }
     macro_rules! positive { ($($field:ident),*) => {$(if let Some(value) = settings.$field { ensure!(value > 0, concat!(stringify!($field), " must be positive")); config.$field = value; })*}; }
@@ -105,6 +105,42 @@ mod tests {
         assert_eq!(config.reasoning_effort, None);
         assert_eq!(config.max_tokens, 2048);
     }
+    #[test]
+    fn default_output_tokens_round_trip_and_explicit_reset() {
+        let source = Config::default();
+        assert_eq!(source.max_tokens, 0);
+        let portable = portable(&source, AccessMode::Approval);
+        let wire = serde_json::to_value(&portable).unwrap();
+        assert_eq!(wire["max_output_tokens"], 0);
+        let inherited: StartSettings = serde_json::from_value(wire).unwrap();
+        let mut host = Config {
+            max_tokens: 4096,
+            ..Config::default()
+        };
+        apply(&mut host, &inherited).unwrap();
+        assert_eq!(host.max_tokens, 0);
+
+        for (json, expected) in [
+            (serde_json::json!({"max_output_tokens":2048}), 2048),
+            (serde_json::json!({}), 2048),
+            (serde_json::json!({"max_output_tokens":0}), 0),
+        ] {
+            let overrides: StartSettings = serde_json::from_value(json).unwrap();
+            apply(&mut host, &overrides).unwrap();
+            assert_eq!(host.max_tokens, expected);
+        }
+        let mut capped = StartSettings {
+            max_output_tokens: Some(1024),
+            ..Default::default()
+        };
+        overlay(&mut capped, &StartSettings::default());
+        assert_eq!(capped.max_output_tokens, Some(1024));
+        overlay(&mut capped, &inherited);
+        assert_eq!(capped.max_output_tokens, Some(0));
+        apply(&mut host, &capped).unwrap();
+        assert_eq!(host.max_tokens, 0);
+    }
+
     #[test]
     fn host_base_is_preserved_and_invalid_settings_refuse() {
         let mut config = Config::default();

@@ -111,7 +111,7 @@ fn create_settings_schema() -> Value {
         "model":{"type":"string","minLength":1,"maxLength":1024},
         "reasoning_effort":{"type":["string","null"]},"service_tier":{"type":["string","null"]},
         "temperature":{"type":["number","null"]},
-        "max_output_tokens":{"type":"integer","minimum":1},"context_window":{"type":"integer","minimum":0},
+        "max_output_tokens":{"type":"integer","minimum":0,"description":"0 removes the explicit Voyage output-token cap (provider limits still apply); omission preserves the base value."},"context_window":{"type":"integer","minimum":0},
         "access_mode":{"enum":["read_only","approval","unrestricted"]},
         "terminal_max_count":{"type":"integer","minimum":1},"terminal_max_unread_bytes":{"type":"integer","minimum":1},
         "subagent_max_concurrency":{"type":"integer","minimum":1},"command_timeout_secs":{"type":"integer","minimum":1},

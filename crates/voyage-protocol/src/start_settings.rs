@@ -29,6 +29,8 @@ pub struct StartSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub temperature: Option<Option<f32>>,
+    /// Omission preserves the base; zero removes the explicit output-token cap.
+    /// Provider/model limits still apply. Positive values request an explicit cap.
     pub max_output_tokens: Option<u32>,
     pub context_window: Option<usize>,
     pub access_mode: Option<StartAccessMode>,

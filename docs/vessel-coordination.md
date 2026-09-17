@@ -162,7 +162,10 @@ output-token/context-window settings, current live access mode, command timeout,
 output limit, terminal limits and subagent concurrency. `settings` overrides those
 portable preferences. `reasoning_effort`, `service_tier` and `temperature` accept
 explicit `null` to clear an inherited value; omission preserves it. `context_window`
-zero retains automatic sizing. The settings object rejects unknown fields.
+zero retains automatic sizing. `max_output_tokens: 0` removes the explicit Voyage
+output-token cap (provider/model limits still apply); a positive value requests a
+cap, and omission preserves the inherited or host-base value. The settings object
+rejects unknown fields.
 
 `config_path` instead selects an existing owned private launch configuration as the
 base, with only explicit `settings` applied. The optional `account` is an exact

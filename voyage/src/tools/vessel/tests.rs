@@ -615,3 +615,17 @@ async fn dispatch_matrix_preserves_public_read_and_mutation_envelopes() {
     task.abort();
     let _ = task.await;
 }
+
+#[test]
+fn create_schema_accepts_zero_output_tokens_but_rejects_negative() {
+    let schema = CompiledSchema::compile(&input_schema()).unwrap();
+    for value in [0, 2048, -1] {
+        let args = json!({
+            "action":"create", "command_id":Uuid::new_v4(), "session_id":Uuid::new_v4(),
+            "workspace":"/tmp/workspace", "task":"offline schema validation",
+            "settings":{"max_output_tokens":value}
+        });
+        assert_eq!(schema.validate(&args).is_ok(), value >= 0);
+        assert_eq!(serde_json::from_value::<Action>(args).is_ok(), value >= 0);
+    }
+}
