@@ -28,31 +28,131 @@ into current runtime instructions. Explicit shared local browser execution is op
 Helm–Vessel socket. Keep its local consent/capture boundary separate from Voyage
 policy; do not introduce a separately networked browser bridge or general Helm executor.
 
-## Delivery
+## End-to-end delivery ownership
 
-1. Inspect status/diffs and read affected code and documentation. Review relevant
-   open and closed GitHub issues in `o-psi/voyage`. Reuse a matching issue or create
-   one, recording scope and acceptance before implementation.
-2. Complete the agreed workflows, including applicable failure handling and
-   documentation. Do not replace required behavior with a prototype or silently
-   defer it. Work directly by default. Delegate only when requested or when a
-   substantial independent task clearly benefits from parallel work.
-3. Verify the actual change. The former broad automated suites were removed;
-   use the existing focused tests without recreating suites as documentation work.
-   For Rust code or test changes, run the coverage workflow below and commit its
-   updated measurement with the delivery. Run checks
-   appropriate to the changed surface and scope. Documentation-only edits need
-   source, command, path, link, manifest and diff checks. See
-   [docs/quality.md](docs/quality.md).
-4. Unless the user says otherwise, commit completed changes, fetch and integrate
-   into local `main`, and push normally to GitHub `origin/main`. This publication is
-   authorized. Preserve unrelated history/work and verify local/remote `main` match.
-   A feature branch or worktree is not delivery. Before finishing, integrate its
-   applicable changes into main and retire the completed worktree, preserving
-   unrelated work, release artifacts and verification evidence. Do not leave
-   reviewed implementation stranded on a local branch.
-5. Update the issue with results and actual verification. Close only completed
-   scope. Report blockers, remaining work and platform limitations accurately.
+Own the user's objective from investigation through verified delivery, not merely
+an implementation or an issue comment. GitHub is the shared planning, publication
+and build record. Do not ask the user to perform routine repository operations,
+start an already-authorized build, read its logs, merge completed work or tidy up
+tracking that you can complete yourself. Delegating work does not delegate away
+responsibility for its integration and outcome.
+
+### Establish scope and the delivery record
+
+- Inspect status/diffs, affected code and documentation, relevant open **and closed**
+  issues, related pull requests, milestones and applicable Actions runs. Use narrow
+  searches and retain exact issue/PR/run identities; do not scan unrelated history.
+- Reuse the matching issue or create one before implementation. Record the objective,
+  boundaries, acceptance criteria, dependencies and required verification. An issue
+  is a durable delivery record, not the entire workflow. Link related PRs, commits,
+  build results and follow-up issues so another agent can resume without chat context.
+- Use a release milestone to group work actually intended for that release. Inspect
+  existing milestones before creating one; use `vMAJOR.MINOR.PATCH` for new release
+  milestones. When the user has established the target, create/reuse that milestone
+  and assign applicable work without another permission round. Do not move unrelated
+  issues, invent deadlines, or close a milestone with unfinished scope. Milestones
+  plan release scope; editing or closing one does not publish a release.
+- Keep an existing GitHub Project's relevant status/dependency fields current when
+  the work belongs to it. Do not create a competing project board, labels or a PR
+  solely for ceremony. Use a PR when repository rules, review needs or the task
+  require it; otherwise retain the direct-to-main delivery default below. Never
+  bypass required reviews or branch protection to simulate autonomous completion.
+
+### Implement and verify
+
+- Complete the agreed behavior, failure handling and documentation. Do not replace
+  required behavior with a prototype or silently defer it. Work directly by default;
+  delegate only when requested or when a substantial independent task benefits from
+  parallel work. Coordinate file ownership and builds; preserve concurrent edits.
+- Verify the actual changed surface locally using [docs/quality.md](docs/quality.md).
+  Use existing focused tests rather than recreating removed broad suites. Rust
+  source, Cargo manifest/lockfile and test changes require the coverage measurement
+  below. Documentation-only edits require source, command, path, link, manifest and
+  diff checks, not compilation or a new coverage measurement.
+- GitHub automation is currently **build-only**: do not add hosted test, coverage or
+  broad quality jobs without a new user request. This does not remove applicable
+  local verification obligations. A successful compile or checksum is not proof
+  of passing tests, working installation or native behavior on another platform.
+
+### Publish and own build follow-through
+
+- Unless the user says otherwise, commit only completed in-scope changes, fetch and
+  integrate into local `main`, and push normally to GitHub `origin/main`. This
+  publication is authorized; do not stop to ask whether to commit or push. Verify
+  the delivered commit is on remote main and local/remote main match at the time
+  of verification. Preserve unrelated staged files, history and concurrent work.
+- A branch/worktree or unmerged PR is not delivery. Finish permitted integration,
+  then retire completed task worktrees while preserving unrelated work, release
+  artifacts and evidence. If rules require unavailable human review, record that
+  specific blocker instead of bypassing it or calling the work delivered.
+- For changes to build workflows, version generation, packaging, Rust code or Cargo
+  inputs, own an actual hosted build result after publication. Inspect existing runs
+  first; reuse a suitable queued/running run or a verified artifact rather than
+  dispatching duplicates. If none exists, dispatch the existing `nightly.yml` on
+  `main` yourself; do not wait overnight or tell the user to click Run workflow.
+  Ordinary documentation-only changes do not need an extra hosted build; the
+  scheduled workflow will pick them up normally.
+- Follow the exact run to a terminal result with bounded waits. Inspect failing
+  jobs/logs, fix in-scope causes, verify locally, publish and follow the corrected
+  build. Retry a known transient failure only after inspecting it, with a bounded
+  retry budget. Resolve uncertain dispatch results by inspecting runs before issuing
+  another dispatch. Never repeatedly rebuild unchanged failing source blindly.
+- Verify the **actual checked-out source**, not just the event SHA: the nightly
+  workflow checks out current `main`. Its artifact name and `BUILD.txt` identify
+  the source commit. If main advanced, establish that the built source contains the
+  delivered commit and report the actual SHA; do not claim an exact-commit build.
+  A successful skipped run is not a newly produced download: locate the previous
+  successful, unexpired artifact that justified the skip. For packaging/workflow
+  changes, download and inspect the archive, binary membership, source/version
+  identity and checksum before claiming the download pipeline works.
+
+### Maintain version and channel intent
+
+The current nightly implementation is defined by
+[the workflow](.github/workflows/nightly.yml),
+[version preparation](packaging/prepare_nightly.py) and
+[release documentation](docs/releasing.md). Read these sources rather than assuming
+planned release automation already exists:
+
+- `packaging/nightly-version.txt` is the next intended stable version, currently
+  `1.0.2` (patch after `1.0.1`). The checked-in Cargo versions remain the stable
+  baseline; nightly preparation changes workspace/member versions and lock entries
+  only in the temporary CI checkout. Do not commit a generated nightly version.
+- Nightlies run around 03:23 UTC, or by explicit workflow dispatch, on Linux x86-64.
+  They use `TARGET-nightly.YYYYMMDD.RUN_ID.ATTEMPT`, build only when there is no
+  successful unexpired artifact for that source, and retain downloads for 30 days.
+  Expiry/deletion can permit an unchanged-source rebuild. Failed builds can retry.
+- Nightly artifacts are development downloads, not Git tags, GitHub Releases, a
+  stable installer bundle or an automatic update channel. Keep stable downloads
+  unchanged. Never reuse the last shipped version as a prerelease base, overwrite
+  a published version, or claim nightly/alpha/beta labels have a different order
+  from SemVer's actual comparison rules.
+- Routine delivery does not authorize a stable release. When a user requests a
+  stable release, own its full applicable process in [docs/releasing.md](docs/releasing.md)
+  rather than requiring a second routine approval. Honor actual runtime approvals,
+  repository protections and requested gates. Otherwise do not create stable tags
+  or publish Releases merely because all milestone issues are closed.
+- Before subsequent nightlies after a stable release, reconcile the next target
+  file and release planning. Use an established release plan; if none exists,
+  resolve that product decision rather than quietly inventing a minor/major bump.
+  The version guard must continue refusing targets at or below shipped stable tags.
+
+### Close with evidence, or preserve a real blocker
+
+- Keep issue/PR/project state aligned with reality throughout the work. Record the
+  delivered commit, actual checks and outcomes, build URL and artifact identity
+  when required, and material limitations. Close an issue only when its acceptance
+  criteria are met, including required build follow-through. Do not close scope on
+  push alone, workflow admission, a green skip without its artifact, or future work.
+- Repair failures you can address within scope and authority without asking the
+  user to take over. Ask only for missing consequential intent or an actual authority,
+  credential, resource, external-service or mandatory-review blocker. Do not weaken
+  policy, expand permissions or spend unapproved provider budgets to avoid a blocker.
+- If work cannot finish within a bounded run, retain the unfinished obligation in
+  the issue/task record with exact run/commit identities, observed status, blocker
+  and next action. Leave incomplete scope open. A queued build is pending, not
+  successful; an unavailable service is unknown, not failed verification. Report
+  these facts concisely instead of presenting a routine handoff as completion.
 
 ## Correctness and security
 
@@ -95,7 +195,8 @@ is absent, use `git --git-dir=.local-git/worktree.git --work-tree=.` from the
 checkout root against the existing metadata; do not restore deleted scripts implicitly. See
 [docs/local-git.md](docs/local-git.md). Use `--repo o-psi/voyage` with `gh` as needed.
 Never reset, clean, force-push, stage unrelated files or overwrite concurrent edits
-implicitly. Keep validation local rather than duplicating it in hosted CI.
+implicitly. Keep tests and quality validation local; use the build-only GitHub
+workflow and follow-through rules above for hosted compilation and downloads.
 Preserve existing release artifacts and follow [docs/releasing.md](docs/releasing.md).
 
 ## Code coverage history
