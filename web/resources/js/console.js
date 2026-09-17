@@ -113,16 +113,19 @@ export function mount(root) {
             $('send').title = running() ? 'Steer run · Enter' : 'Send · Enter';
             $('change-inference').disabled = !newChatSettings && (!enabled || running());
             $('change-account').disabled = !newChatSettings && (!enabled || running());
-            $('change-service').disabled = !enabled || running();
-            $('change-reasoning').disabled = !enabled || running() || !snapshot?.inference?.account;
-            $('change-access').disabled = !enabled;
-            $('composer-access').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[snapshot?.access] || 'Access unknown';
-            $('access-mode').disabled = !enabled;
-            $('access-mode').value = ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
+            $('change-service').disabled = !newChatSettings && (!enabled || running());
+            $('change-location').hidden = Boolean(selected);
+            $('change-location').disabled = !newChatSettings;
+            $('composer-location').textContent = reviewed ? `${fleet.connections.get(selectedVessel)?.name} · ${reviewed.workspace}` : 'Vessel / Workspace';
+            $('change-reasoning').disabled = !reviewed && (!enabled || running() || !snapshot?.inference?.account);
+            $('change-access').disabled = !enabled && !newChatSettings;
+            $('composer-access').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[!selected ? composition?.active?.access : snapshot?.access] || (!selected ? 'Vessel default' : 'Access unknown');
+            $('access-mode').disabled = !enabled && !newChatSettings;
+            $('access-mode').value = !selected ? composition?.active?.access || '' : ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy || newChatSending;
             $('composer-model').textContent = clean(reviewed?.settings.model || snapshot?.inference?.model || snapshot?.model || 'Account & model');
-            $('composer-reasoning').textContent = clean(snapshot?.inference?.reasoning_effort || 'Default');
-            $('composer-service').textContent = clean(snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
+            $('composer-reasoning').textContent = clean(reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort || 'Default');
+            $('composer-service').textContent = clean(reviewed ? reviewed.settings.service_tier || 'Default tier' : snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
             $('composer-account').textContent = reviewed?.accountLabel || accountLabel;
             $('inference-summary').textContent = clean([snapshot?.inference?.provider, snapshot?.inference?.model || snapshot?.model].filter(Boolean).join(' · '));
             $('pending').replaceChildren();
@@ -198,7 +201,7 @@ export function mount(root) {
         snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
         messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); renderPreviews($('live-previews'), null); $('live-output').hidden = true; $('earlier').hidden = true;
         $('conversation-empty').hidden = false;
-        $('conversation-empty').textContent = !selected ? 'New chat ready. Write your first message below to begin.' : client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
+        $('conversation-empty').textContent = !selected ? 'Write your first message below. Your first Send creates the voyage.' : client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
         connectionsChanged(); refresh();
     }
     async function refresh() {
@@ -432,9 +435,21 @@ export function mount(root) {
         const origin = composition.capture();
         return origin?.key && composition.active ? {...origin,workspace:composition.active.document.target.workspace,target:structuredClone(composition.active.document.target)} : null;
     }
+    async function submitWithAccess() {
+        const wanted = composition?.active?.access;
+        if (wanted && wanted !== snapshot?.access) {
+            const identity = {vessel:selectedVessel,session:selected,incarnation};
+            if (running() || !await act('set_access',null,null,{access:wanted})) return notice('Access change not confirmed. Message retained; check the voyage before sending.');
+            const deadline = Date.now()+35000;
+            while (!actionable() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
+            if (identity.vessel !== selectedVessel || identity.session !== selected || identity.incarnation !== incarnation || snapshot?.access !== wanted || !actionable()) return notice('Access change not confirmed. Message retained.');
+        }
+        if (composition?.active) delete composition.active.access;
+        return act(running() ? 'steer' : 'submit');
+    }
     async function send() {
         if (newChatSending) return;
-        if (selected || composition?.active?.document?.target?.type !== 'new_chat') return act(running() ? 'steer' : 'submit');
+        if (selected || composition?.active?.document?.target?.type !== 'new_chat') return submitWithAccess();
         if (!$('prompt').value.trim() && !composition.active.document.parts.some(p=>p.type==='image')) return notice('Write a message before sending.');
         if (!settings.configuration()) { settings.review(); return notice('Review the account and model on this device before sending this new chat.'); }
         newChatSending = true; controls();
@@ -448,7 +463,7 @@ export function mount(root) {
             while (selected === process.session_id && selectedVessel === origin.vessel && !actionable() && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,25));
             if (selected !== process.session_id || selectedVessel !== origin.vessel || incarnation !== process.incarnation || !actionable()) throw new Error('Chat created; message retained. Wait for its connected snapshot before sending.');
             if (composition.active !== sent.draft) throw new Error('Draft changed; review the composer before sending.');
-            await act('submit');
+            await submitWithAccess();
         } catch (error) { notice(error.message); }
         finally { newChatSending=false; controls(); }
     }
@@ -495,6 +510,7 @@ export function mount(root) {
     }, {capture:true});
     $('access-mode').addEventListener('change', () => {
         const access = $('access-mode').value;
+        if (!selected && composition?.active?.document.target.type === 'new_chat') { composition.active.access = access; controls(); return; }
         if (['read-only','approval','unrestricted'].includes(access) && access !== snapshot?.access) act('set_access',null,null,{access});
         controls(); // Only a refreshed owner snapshot confirms the new mode.
     });
@@ -507,7 +523,9 @@ export function mount(root) {
     let reasoningTarget;
     $('change-reasoning').addEventListener('click', () => {
         reasoningTarget = {vessel:selectedVessel, session_id:selected, incarnation, revision:snapshot?.revision};
-        const inference = snapshot?.inference;
+        const config = settings.configuration();
+        reasoningTarget.draftKey = captureDraft()?.key;
+        const inference = config ? {...config.settings,reasoning_efforts:config.reasoning_efforts} : snapshot?.inference;
         const levels = [...new Set(['', ...(inference?.reasoning_efforts || []), ...(inference?.reasoning_effort ? [inference.reasoning_effort] : [])])];
         setReasoning($('quick-reasoning'), levels.map(value => ({value,label:value || 'Provider default'})), inference?.reasoning_effort || '');
         $('reasoning-status').textContent = 'Applies to the next run.';
@@ -515,6 +533,7 @@ export function mount(root) {
     });
     $('reasoning-save').addEventListener('click', async () => {
         const t = reasoningTarget;
+        if (!selected && t?.draftKey === captureDraft()?.key && settings.setReasoning(reasoningValue($('quick-reasoning')))) { $('reasoning-popover').hidePopover?.(); return; }
         if (!t || t.vessel !== selectedVessel || t.session_id !== selected || t.incarnation !== incarnation || t.revision !== snapshot?.revision || !actionable() || running()) {
             $('reasoning-status').textContent = 'Voyage changed. Reopen this popover to reload choices.'; return;
         }
@@ -537,6 +556,8 @@ export function mount(root) {
         current:() => ({vessel:selectedVessel,session_id:selected,incarnation,revision:snapshot?.revision,inference:snapshot?.inference}),
         select,
         draft: (vessel,workspace)=>composition.newChat(vessel,workspace),
+        unavailable: message => notice(message),
+        resumeDraft: () => { const draft = composition.newDraft; return draft ? {vessel:draft.vessel,workspace:draft.document.target.workspace} : null; },
         created: (...args)=>composition.created(...args),
         captureDraft,
         prepared: ()=>{

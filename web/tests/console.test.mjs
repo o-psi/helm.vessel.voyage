@@ -43,7 +43,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
             else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',workspaces:[{name:'Fixture',path:'/fixture'}]};
-            else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true}]};
+            else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true,reasoning_efforts:['low','high'],service_tiers:['priority']}]};
             else if(command.op==='start_account'){
                 if(rejectCreate){rejectCreate=false;setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'rejected create',outcome_unknown:false}}),0);return;}
                 id=command.session_id;running=false;createdProcess={session_id:id,incarnation,workspace:command.workspace};result=createdProcess;
@@ -120,7 +120,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
-        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 7 : 6);
+        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 8 : 7);
         $('#change-account').click();
         assert.equal($('#edit-form').parentElement.id,'account-popover');
         assert.equal($('#edit-account-section').hidden,false);
@@ -180,12 +180,9 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
         async function prepareChat(text) {
             $('#new-voyage').click();
-            await until(()=>!$('#settings-save').disabled);
-            const count=requests.filter(c=>c.op==='start_account').length;
-            $('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
-            await until(()=>!$('#send').disabled && $('#settings-status').textContent.includes('New chat ready'));
-            assert.equal(requests.filter(c=>c.op==='start_account').length,count,'Continue prepares a draft without starting a Voyage');
-            assert.match($('#conversation-empty').textContent,/New chat ready/);
+            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'fixture');
+            assert.equal(root.querySelector('[name="voyage-settings"]'),null,'no new-voyage modal');
+            assert.match($('#conversation-empty').textContent,/first Send creates/);
             assert.equal($('#conversation-empty').hidden,false);
             assert.equal($('#prompt').disabled,false);
             assert.equal(document.activeElement,$('#prompt').querySelector('textarea'));
@@ -196,20 +193,20 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#change-inference').disabled,false);
         assert.match($('#composer-account').textContent,/Personal account/);
         $('#change-account').click();
-        await until(()=>!$('#settings-save').disabled);
-        assert.equal($('#settings-account').value,'0');
-        assert.equal($('#settings-model').value,'fixture');
-        assert.ok($('#settings-account').querySelector('[value="2"]').hasAttribute('disabled'));
-        $('#settings-account').value='1';
-        $('#settings-account').dispatchEvent(new Event('change'));
-        await until(()=>!$('#settings-save').disabled);
-        $('#voyage-settings-form').dispatchEvent(new Event('submit',{cancelable:true}));
+        await until(()=>!$('#edit-save').disabled);
+        assert.equal($('#edit-account').value,'0');
+        assert.equal($('#edit-model').value,'fixture');
+        assert.ok($('#edit-account').querySelector('[value="2"]').hasAttribute('disabled'));
+        $('#edit-account').value='1';
+        $('#edit-account').dispatchEvent(new Event('change'));
+        await until(()=>!$('#edit-save').disabled);
+        $('#edit-save').click();
         await until(()=>$('#composer-account').textContent.includes('Work account'));
         $('#change-account').click();
-        await until(()=>!$('#settings-save').disabled);
-        assert.equal($('#settings-account').value,'1','review retains the chosen account instead of resetting to the default');
+        await until(()=>!$('#edit-save').disabled);
+        assert.equal($('#edit-account').value,'1','review retains the chosen account instead of resetting to the default');
         assert.equal($('#prompt').value,'First-send message','review preserves the unsent message');
-        $('#settings-close').click();
+        $('#edit-close').click();
         const submissions=requests.filter(c=>c.op==='submit').length;
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));

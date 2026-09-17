@@ -10,13 +10,15 @@ async function read(client, op, fields = {}) {
     return response.result;
 }
 
-export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft, prepared = () => {}}) {
+export function voyageSettings(root, fleet, {current, select, apply, draft, created, captureDraft, resumeDraft = () => null, unavailable = () => {}, prepared = () => {}}) {
     const raw = id => root.querySelector(`#${id}`);
-    const $ = id => raw(mode === 'edit' ? id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-') : id);
+    const $ = id => raw(id === 'voyage-settings-form' ? 'edit-form' : id.replace(/^settings-/, 'edit-'));
+    const creating = () => !target?.session_id;
+    let openingDraft;
     let editSection = 'model', usageVersion = 0, enrolledAccount = null;
     const configurations = new Map();
     let starting = false;
-    let mode = 'create', target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
+    let target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
     const enrollment = accountEnrollment(root, {context: () => ({connection, workspace: workspace()}), refreshed: async account => { enrolledAccount = account; await loadAccounts(); }});
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
     const status = message => { $('settings-status').textContent = clean(message); };
@@ -39,9 +41,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         field.value = value;
         field.disabled = !items.some(item => !item.disabled);
     }
-    const workspace = () => mode === 'create' && $('settings-workspace').value === '__custom__' ? raw('settings-workspace-path').value.trim() : $('settings-workspace').value;
+    const workspace = () => creating() && $('settings-workspace').value === '__custom__' ? raw('edit-workspace-path').value.trim() : $('settings-workspace').value;
     function workspaceChanged() {
-        raw('settings-custom-workspace').hidden = mode !== 'create' || $('settings-workspace').value !== '__custom__';
+        raw('edit-custom-workspace').hidden = !creating() || $('settings-workspace').value !== '__custom__';
         return loadAccounts();
     }
     const choice = () => choices[Number($('settings-account').value)];
@@ -53,41 +55,41 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
         $('settings-save').disabled = true;
     }
-    function still(mine, c, client) { return mine === version && connection === c && c.client === client; }
+    function still(mine, c, client) { return mine === version && connection === c && c.client === client && current().session_id === target?.session_id && current().vessel === target?.vessel; }
     async function loadVessel() {
         if (saving) return;
         const mine = ++version; reset(); options('settings-workspace', []);
-        raw('settings-custom-workspace').hidden = true; raw('settings-workspace-path').value = ''; raw('settings-workspace-path').disabled = false;
+        raw('edit-custom-workspace').hidden = true; raw('edit-workspace-path').value = ''; raw('edit-workspace-path').disabled = false;
         connection = fleet.connections.get($('settings-vessel').value);
         const c = connection, client = c?.client;
-        if (!client) return status('This Vessel is offline. Reconnect it to load workspaces and accounts.');
+        if (!client) { unavailable('This Vessel is offline. Reconnect it to load workspaces and accounts.'); return status('This Vessel is offline. Reconnect it to load workspaces and accounts.'); }
         status('Loading workspaces…');
         try {
             const caps = await read(client, 'capabilities');
             if (!still(mine,c,client)) return;
             if (caps.vessel_id !== c.vessel_id) throw new Error('Vessel identity changed. Reconnect before continuing.');
-            const required = mode === 'create' ? ['create','account_use'] : ['account_use'];
+            const required = creating() ? ['create','account_use'] : ['account_use'];
             if (caps.scope !== 'owner' && required.some(right => !caps.rights?.includes(right))) throw new Error('This older connection has limited access. Reconnect using the full-access setup instructions.');
-            if (mode === 'create') {
+            if (creating()) {
                 for (let i=0; i<localStorage.length; i++) if (localStorage.key(i)?.startsWith(`${prefix}${c.id}:${c.vessel_id}:`)) throw new Error('This Vessel has an unconfirmed creation. Close this form and use Check creation in the sidebar before creating another voyage.');
             }
             let workspaces = caps.workspaces || [];
-            if (mode === 'edit') {
+            if (!creating()) {
                 const process = await read(client,'inspect',{session_id:target.session_id});
                 if (!still(mine,c,client)) return;
                 if (process.session_id !== target.session_id || process.incarnation !== target.incarnation) throw new Error('Voyage changed. Close this form and reopen its settings.');
                 workspaces = [{name:process.workspace,path:process.workspace}];
             }
             const items = workspaces.map(w => ({value:w.path,label:w.name === w.path ? w.path : `${w.name} · ${w.path}`}));
-            if (mode === 'create' && caps.scope === 'owner') items.push({value:'__custom__',label:'Another folder…'});
-            const origin = mode === 'create' ? captureDraft?.() : null;
+            if (creating() && caps.scope === 'owner') items.push({value:'__custom__',label:'Another folder…'});
+            const origin = creating() ? captureDraft?.() : null;
             const preferred = origin?.vessel === c.id && origin.target?.type === 'new_chat' ? origin.workspace : null;
             options('settings-workspace',items,preferred && items.some(item=>item.value===preferred) ? preferred : preferred && caps.scope === 'owner' ? '__custom__' : null);
             if (preferred && !items.some(item=>item.value===preferred) && caps.scope === 'owner') $('settings-workspace-path').value=preferred;
-            $('settings-workspace').disabled = mode === 'edit' || !items.length;
+            $('settings-workspace').disabled = !creating() || !items.length;
             if (!items.length) return status('No workspaces are available. Reconnect using the full-access setup instructions.');
             await workspaceChanged();
-        } catch (error) { if (still(mine,c,client)) status(error.message); }
+        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     async function loadAccounts() {
         if (saving) return;
@@ -112,15 +114,15 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                 }
             }
             const reviewed = configuration();
-            if (mode === 'create' && reviewed?.vessel === c.id && reviewed.workspace === selectedWorkspace) defaults = reviewed.settings;
-            const preferred = choices.find(c => c.binding.account_id === enrolledAccount)?.binding || (mode === 'edit' ? target.inference?.account : defaults.account);
+            if (creating() && reviewed?.vessel === c.id && reviewed.workspace === selectedWorkspace) defaults = reviewed.settings;
+            const preferred = choices.find(c => c.binding.account_id === enrolledAccount)?.binding || (!creating() ? target.inference?.account : defaults.account);
             enrolledAccount = null;
-            if (mode === 'edit' && editSection !== 'account' && !choices.some(c => c.ready && same(c.binding,preferred))) { reset(); return status('Current account unavailable. Choose an account from its own popover.'); }
+            if (!creating() && editSection !== 'account' && !choices.some(c => c.ready && same(c.binding,preferred))) { reset(); return status('Current account unavailable. Choose an account from its own popover.'); }
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
-            if (mode === 'edit' && editSection === 'account') loadUsage(false);
+            if (editSection === 'account') loadUsage(false);
             if (!choices.some(c => c.ready)) return status('No ready provider account is available. Set up an account on this Vessel, then reload choices.');
             await loadModels();
-        } catch (error) { if (still(mine,c,client)) status(error.message); }
+        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     async function loadModels() {
         if (saving) return;
@@ -134,15 +136,15 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             if (!still(mine,c,client)) return;
             if (!same(result.account,selected.binding) || !Array.isArray(result.models)) throw new Error('Account model list changed. Reload choices.');
             models = result.models;
-            const seed = mode === 'edit' ? target.inference : defaults;
+            const seed = !creating() ? target.inference : defaults;
             const preferred = same(seed?.account,selected.binding) ? seed?.model : models.find(m => m.is_default)?.id;
             options('settings-model',models.map(m => ({value:m.id,label:m.display_name && m.display_name !== m.id ? `${m.display_name} · ${m.id}` : m.id})),preferred);
             updateModel();
-        } catch (error) { if (still(mine,c,client)) status(error.message); }
+        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     function updateModel() {
         const selected = model();
-        const seed = mode === 'edit' ? target.inference : defaults;
+        const seed = !creating() ? target.inference : defaults;
         const preserve = same(seed?.account,choice()?.binding) && seed?.model === selected?.id;
         for (const [id, values, original] of [['settings-reasoning',selected?.reasoning_efforts,seed?.reasoning_effort],['settings-service',selected?.service_tiers,seed?.service_tier]]) {
             const items = [{value:'',label:'Provider default'},...(values || []).map(v => ({value:v,label:v}))];
@@ -151,22 +153,34 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             options(id,items,preserve ? original || '' : '');
         }
         $('settings-save').disabled = !selected;
-        status(selected ? mode === 'create' ? 'Continue prepares a new chat. Your first Send creates the chat and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
+        if (creating() && selected && !configuration()) {
+            const origin = captureDraft?.(), mine = version, c = connection;
+            if (origin?.vessel === connection.id && origin.target?.type === 'new_chat' && !origin.workspace) {
+                draft(connection.id,workspace()).then(() => {
+                    if (!still(mine,c,c.client) || current().session_id || captureDraft()?.key !== origin.key) return;
+                    const active = captureDraft();
+                    configurations.set(active.key,{vessel:connection.id,vessel_id:connection.vessel_id,workspace:workspace(),accountLabel:clean(choice().label),settings:{account:choice().binding,model:selected.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null},reasoning_efforts:selected.reasoning_efforts || []});
+                    prepared();
+                });
+            }
+        }
+
+        status(selected ? creating() ? 'Your first Send creates the voyage and sends the message.' : 'Changes apply to the next run. Changing account or model resets its options to provider defaults.' : 'This account returned no models. Reload choices or choose another account.');
     }
     function open(edit) {
         enrollment.hide();
         if (saving) return;
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
         ++usageVersion;
-        mode = edit ? 'edit' : 'create'; target = current();
+        target = current(); openingDraft = captureDraft?.()?.key;
         $('settings-retry').disabled = false;
         $('settings-close').disabled = false;
-        $('settings-title').textContent = edit ? ({model:'Model',account:'Account',service:'Service tier'})[editSection] : 'New voyage';
-        $('settings-save').textContent = edit ? 'Apply settings' : 'Continue';
+        $('settings-title').textContent = edit ? ({model:'Model',account:'Account',service:'Service tier',location:'Location'})[editSection] : 'New voyage';
+        $('settings-save').textContent = 'Apply';
         $('settings-description').textContent = edit ? (editSection === 'account' ? 'Choose a provider account and review its model before applying. Credentials stay on the Vessel.' : 'Choose settings for the next run.') : 'Choose where your voyage runs and which provider account it uses.';
         options('settings-vessel',[...fleet.connections.values()].map(c => ({value:c.id,label:`${c.name}${c.client ? '' : ' · offline'}`})),target.vessel);
-        $('settings-vessel').disabled = edit;
-        loadVessel();
+        $('settings-vessel').disabled = !creating();
+        return loadVessel();
     }
     async function accept(c, command, process, storageKey, origin) {
         if (process?.session_id !== command.session_id || process.workspace !== command.workspace || typeof process.incarnation !== 'string') throw new Error('Creation identity could not be confirmed. Use Check creation.');
@@ -175,35 +189,36 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         const retained = await created?.(c.id,process.session_id,command.workspace,origin);
         if (!retained) select(c.id,process.session_id,process.name || 'New voyage');
         localStorage.removeItem(storageKey);
-        raw('settings-close').click();
+        raw('edit-close').click();
         renderPending();
     }
     async function save(event) {
         event.preventDefault();
         if (saving || $('settings-save').disabled) return;
+        if (current().vessel !== target?.vessel || current().session_id !== target?.session_id || (creating() && captureDraft?.()?.key !== openingDraft)) return status('Voyage changed. Reopen settings.');
         const c = connection, client = c?.client, selected = choice(), selectedModel = model();
         if (!client || !selected?.ready || !selectedModel) return status('Reload choices before continuing.');
         const settings = {account:selected.binding,model:selectedModel.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null};
         saving = true; ++version;
-        status(mode === 'edit' ? 'Applying account and model settings…' : 'Preparing new chat…');
+        status(!creating() ? 'Applying account and model settings…' : 'Preparing new chat…');
         for (const field of $('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio-group,button')) field.disabled = true;
         let recorded = false;
         try {
-            if (mode === 'edit') {
+            if (!creating()) {
                 if (!await apply(target,settings)) throw new Error('Settings were not confirmed. Close this form to review the voyage status before trying again.');
                 $('settings-close').disabled = false; $('settings-close').click();
             } else {
                 const path = workspace();
                 let origin = captureDraft?.();
-                if (origin?.target?.type === 'new_chat' && (origin.vessel !== c.id || origin.workspace !== path)) throw new Error('This draft belongs to another Vessel or workspace. Restore its settings to keep this draft; discard it explicitly before preparing a different chat.');
+                if (origin?.target?.type === 'new_chat' && (origin.vessel !== c.id || origin.workspace !== path)) { await draft?.(c.id,path); origin = captureDraft?.(); }
                 if (!origin || origin.target?.type !== 'new_chat') {
                     await draft?.(c.id,path);
                     origin = captureDraft?.();
                 }
                 if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The new-chat composer could not be prepared.');
-                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,accountLabel:clean(selected.label),settings:structuredClone(settings)});
-                raw('settings-close').disabled = false;
-                raw('settings-close').click();
+                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,accountLabel:clean(selected.label),settings:structuredClone(settings),reasoning_efforts:selectedModel.reasoning_efforts || []});
+                raw('edit-close').disabled = false;
+                raw('edit-close').click();
                 status('New chat ready. Write your message, then Send.');
                 prepared();
 
@@ -273,7 +288,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
     for (const id of ['account-popover','edit-popover','service-popover']) raw(id)?.addEventListener('toggle', event => { if (event.newState === 'closed') enrollment.hide(); });
-    for (const prefix of ['settings','edit']) {
+    for (const prefix of ['edit']) {
         raw(`${prefix}-enroll`).addEventListener('click', () => {
             raw(`${prefix}-enrollment-host`).append(raw('enrollment-panel'));
             enrollment.open();
@@ -283,20 +298,26 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         });
         raw(`${prefix}-close`).addEventListener('click', () => enrollment.hide());
     }
-    raw('new-voyage').addEventListener('click',() => { $('settings-retry').disabled = false; open(false); });
+    async function newVoyage() {
+        if (saving || starting) return;
+        const retained = resumeDraft();
+        const c = fleet.connections.get(retained?.vessel || current().vessel) || [...fleet.connections.values()].find(c => c.client) || [...fleet.connections.values()][0];
+        if (!c) return unavailable('Connect a Vessel before starting a new voyage.');
+        await draft?.(c.id, retained?.workspace || '');
+        prepared();
+        editSection = 'location';
+        open(false);
+    }
+    raw('new-voyage').addEventListener('click',() => newVoyage().catch(error => unavailable(error.message)));
     function openSection(section, host, event) {
         enrollment.hide();
         if (saving) return;
-        if (!current().session_id) {
-            event.preventDefault(); event.stopPropagation();
-            raw('new-voyage').click();
-            return;
-        }
         editSection = section;
         raw(host).append(raw('edit-form'));
-        for (const name of ['model','account','service']) raw(`edit-${name}-section`).hidden = name !== section && !(section === 'account' && name === 'model');
+        for (const name of ['model','account','service','location']) raw(`edit-${name}-section`).hidden = name !== section && !(section === 'account' && name === 'model');
         open(true);
     }
+    raw('change-location').addEventListener('click',event => openSection('location','location-popover',event));
     raw('change-inference').addEventListener('click',event => openSection('model','edit-popover',event));
     raw('change-account').addEventListener('click',event => openSection('account','account-popover',event));
     raw('change-service').addEventListener('click',event => openSection('service','service-popover',event));
@@ -307,7 +328,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!client || !selected?.ready) { output.textContent = 'Usage unavailable for this account.'; return; }
         try {
             const observation = await read(client,'account_usage',{workspace,account:selected.binding,refresh});
-            if (mine !== usageVersion || mode !== 'edit' || editSection !== 'account' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
+            if (mine !== usageVersion || editSection !== 'account' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
             if (!same(observation.account,selected.binding)) throw new Error('Account usage identity changed. Reopen the account picker.');
             const snapshot = observation.snapshot;
             const lines = [`Status: ${String(observation.refresh_status || 'unavailable').replaceAll('_',' ')}`];
@@ -323,19 +344,19 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         finally { if (mine === usageVersion) button.disabled = false; }
     }
     raw('account-usage-refresh').addEventListener('click',() => loadUsage(true));
-    for (const prefix of ['settings','edit']) {
+    for (const prefix of ['edit']) {
         raw(`${prefix}-vessel`).addEventListener('change',loadVessel);
         raw(`${prefix}-workspace`).addEventListener('change',workspaceChanged);
-        raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (mode === 'edit' && editSection === 'account') loadUsage(false); });
+        raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (editSection === 'account') loadUsage(false); });
         raw(`${prefix}-model`).addEventListener('change',updateModel);
         raw(`${prefix}-retry`).addEventListener('click',loadVessel);
     }
-    raw('settings-workspace-path').addEventListener('input',() => { ++version; reset(); });
-    raw('settings-workspace-path').addEventListener('change',loadAccounts);
-    raw('settings-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await draft?.(connection.id,workspace());raw('settings-close').click();}catch(error){status(error.message);}});
-    raw('voyage-settings-form').addEventListener('submit',save);
+    raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); });
+    raw('edit-workspace-path').addEventListener('change',loadAccounts);
+    raw('edit-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await draft?.(connection.id,workspace());raw('edit-close').click();}catch(error){status(error.message);}});
+
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
     window.addEventListener('storage',renderPending);
-    return {renderPending: () => { enrollment.changed(); renderPending(); }, configuration, startDraft, review: () => raw('new-voyage').click()};
+    return {renderPending: () => { enrollment.changed(); renderPending(); }, configuration, startDraft, review: () => raw('change-account').click(), setReasoning(value) { const config = configuration(); if (!config) return false; config.settings.reasoning_effort = value || null; prepared(); return true; }};
 }

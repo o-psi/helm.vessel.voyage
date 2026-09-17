@@ -25,3 +25,10 @@ test('new chat keeps its composer through session creation, without a draft RPC'
 test('pictures upload directly to the session and reuse uncertain upload identity',async()=>{
  const f=fixture();f.prompt.value='picture';const sent=await f.api.beforeSend();const image={type:'image',name:'x.png',data_base64:'eA==',uploads:new Map()};sent.record.document.parts.push(image);const content=await f.api.promote(sent,'a');assert.equal(content[1].attachment.id,'image');await f.api.promote(sent,'a');assert.equal(f.calls.length,1);assert.equal(f.calls[0].command.op,'upload_image');assert.equal(f.calls[0].command.session_id,'a');
 });
+
+test('new-voyage location edits and reentry retain unsent text without RPCs',async()=>{
+ const f=fixture();await f.api.newChat('v','/one');f.prompt.value='keep this task';f.prompt.dispatchEvent(new Event('input'));
+ const key=f.api.capture().key;await f.api.newChat('v','/two');assert.equal(f.prompt.value,'keep this task');assert.equal(f.api.capture().key,key);assert.equal(f.api.capture().workspace,'/two');
+ f.api.remember();f.setSession('other');await f.api.select();assert.equal(f.prompt.value,'');assert.equal(f.api.newDraft.document.target.workspace,'/two');
+ await f.api.newChat('v','/two');assert.equal(f.prompt.value,'keep this task');assert.deepEqual(f.calls,[]);
+});

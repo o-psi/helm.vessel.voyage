@@ -20,7 +20,7 @@ export function composer(root,{fleet,current,select,notice,changed}) {
         }
         panel.hidden=!images.childElementCount; images.hidden=panel.hidden; changed?.();
     }
-    function remember(){if(active)active.document.parts=[{type:'text',text:text()},...active.document.parts.filter(p=>p.type==='image')];}
+    function remember(){if(active?.document.target.type==='new_chat')entries.set('new',active);if(active)active.document.parts=[{type:'text',text:text()},...active.document.parts.filter(p=>p.type==='image')];}
     function ensure(target){
         if(active)return active;
         const now=current();
@@ -47,6 +47,7 @@ export function composer(root,{fleet,current,select,notice,changed}) {
     form.addEventListener('drop',event=>{if(event.dataTransfer?.files.length){event.preventDefault();attach([...event.dataTransfer.files]);}});
     return {
         get active(){return active;},
+        get newDraft(){return active?.document.target.type==='new_chat'?active:entries.get('new');},
         remember,
         dispose(){
             for(const entry of new Set([...entries.values(),active])) for(const part of entry?.document.parts||[]) if(part.type==='image')URL.revokeObjectURL(part.url);
@@ -54,8 +55,8 @@ export function composer(root,{fleet,current,select,notice,changed}) {
         },
         capture(){return active?{opening,vessel:active.vessel,session_id:current().session_id,key:active.key,workspace:active.document.target.workspace,target:structuredClone(active.document.target)}:null;},
         async select(){opening++;const now=current();active=entries.get(`${now.vessel}:${now.session_id}`)||null;prompt.value=active?.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('')||'';render();},
-        async newChat(vessel,workspace){remember();select(vessel,null,'New chat',true);opening++;active=null;prompt.value='';ensure({type:'new_chat',workspace});render();},
-        async created(vessel,session_id,workspace,origin){if(!active||origin?.key!==active.key||origin.opening!==opening||vessel!==current().vessel)return false;if(active.document.target.workspace!==workspace)throw new Error('Created chat workspace differs from the composer.');select(vessel,session_id,'New voyage',true);active.document.target={type:'message',session_id};entries.set(`${vessel}:${session_id}`,active);return true;},
+        async newChat(vessel,workspace){remember();const retained=active?.document.target.type==='new_chat'?active:entries.get('new');select(vessel,null,'New voyage',true);opening++;active=retained;if(active){active.vessel=vessel;active.document.target.workspace=workspace;prompt.value=active.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('');}else{prompt.value='';ensure({type:'new_chat',workspace});}render();},
+        async created(vessel,session_id,workspace,origin){if(!active||origin?.key!==active.key||origin.opening!==opening||vessel!==current().vessel)return false;if(active.document.target.workspace!==workspace)throw new Error('Created chat workspace differs from the composer.');select(vessel,session_id,'New voyage',true);entries.delete('new');active.document.target={type:'message',session_id};entries.set(`${vessel}:${session_id}`,active);return true;},
         async beforeSend(){if(loading)throw new Error('Wait for picture preparation.');const entry=ensure();remember();if(current().running&&entry.document.parts.some(p=>p.type==='image'))throw new Error('Pictures cannot be sent as steering. Wait for this run to finish.');return {draft:entry,record:{document:{parts:[...entry.document.parts]}},text:text(),vessel:entry.vessel};},
         async promote(sent,session_id){
             const client=fleet.connections.get(sent.vessel)?.client;const content=[];

@@ -2,7 +2,7 @@
             <flux:sidebar.header><flux:heading>Voyages</flux:heading><flux:sidebar.collapse class="lg:hidden" /></flux:sidebar.header>
 
             @if($vessels->isEmpty())<flux:text>No Vessels connected. <flux:link href="{{ route('connections') }}">Add your first Vessel</flux:link>.</flux:text>@endif
-            <flux:modal.trigger name="voyage-settings"><flux:button id="new-voyage" variant="primary" icon="plus" class="w-full">New voyage</flux:button></flux:modal.trigger>
+            <flux:button id="new-voyage" variant="primary" icon="plus" class="w-full">New voyage</flux:button>
             <flux:input id="voyage-search" type="search" icon="magnifying-glass" label="Find a voyage" placeholder="Voyage or Vessel…" />
             <flux:button id="reconnect" variant="ghost" icon="arrow-path" class="w-full">Refresh connections</flux:button>
             <flux:text id="fleet-state" size="sm" role="status" />
@@ -35,6 +35,7 @@
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="2" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
                     <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
                         <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
+                            <flux:dropdown position="top" align="start"><flux:button id="change-location" type="button" size="sm" variant="ghost" icon="folder" icon:trailing="chevron-down"><span id="composer-location">Location</span></flux:button><flux:popover id="location-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" /></flux:dropdown>
                             <flux:button id="attach-picture" type="button" size="sm" variant="ghost" icon="paper-clip" aria-label="Attach pictures" tooltip="Attach pictures" />
 
                             <flux:dropdown position="top" align="start">
@@ -43,7 +44,7 @@
                                     <div id="edit-form" class="space-y-4">
                                         <flux:heading id="edit-title">Model</flux:heading>
                                         <flux:text id="edit-description" />
-                                        <div hidden><flux:select id="edit-vessel" /><flux:select id="edit-workspace" /></div>
+                                        <div id="edit-location-section" hidden class="space-y-4"><flux:select id="edit-vessel" label="Vessel" /><flux:select id="edit-workspace" label="Workspace" /><div id="edit-custom-workspace" hidden><flux:input id="edit-workspace-path" label="Folder on this Vessel" description="Existing absolute path on the Vessel, not your browser’s computer." /></div></div>
                                         <div id="edit-account-section" hidden><flux:select id="edit-account" variant="listbox" searchable label="Provider account" /><flux:dropdown position="bottom" align="start"><flux:button id="edit-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button><flux:popover id="edit-enrollment-host" class="w-80 max-w-[calc(100vw-2rem)] max-h-[70dvh] overflow-y-auto" /></flux:dropdown><div class="mt-3 space-y-2"><flux:heading size="sm">Account usage</flux:heading><flux:text id="account-usage" class="whitespace-pre-line" role="status">Not loaded</flux:text><flux:button id="account-usage-refresh" type="button" size="sm" variant="ghost" icon="arrow-path">Refresh usage</flux:button></div></div>
                                         <div id="edit-model-section"><flux:select id="edit-model" variant="listbox" searchable label="Model" /></div>
                                         <div hidden><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
@@ -72,7 +73,7 @@
                             <flux:dropdown position="top" align="start">
                                 <flux:button id="change-access" type="button" size="sm" variant="ghost" icon="lock-open" icon:trailing="chevron-down" disabled><span id="composer-access">Access unknown</span></flux:button>
                                 <flux:popover class="w-72 max-w-[calc(100vw-2rem)] space-y-3">
-                                    <flux:select id="access-mode" label="Voyage access mode" disabled><flux:select.option value="">Access unknown</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
+                                    <flux:select id="access-mode" label="Voyage access mode" disabled><flux:select.option value="">Vessel default</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
                                     <flux:text size="sm">Read only restricts changes. Approval asks before actions that need permission. Full access runs without asking, within the executing host’s configured limits.</flux:text>
                                 </flux:popover>
                             </flux:dropdown>
@@ -84,23 +85,7 @@
                 <flux:text id="inference-summary" class="sr-only" />
             </form>
     </flux:main>
-    <flux:modal name="voyage-settings" class="w-full md:max-w-xl" :dismissible="false">
-        <form id="voyage-settings-form" class="space-y-5">
-            <div><flux:heading id="settings-title" size="lg">New chat</flux:heading><flux:text id="settings-description" class="mt-2">Choose where your voyage runs and which provider account it uses.</flux:text></div>
-            <flux:select id="settings-vessel" label="Vessel" />
-            <flux:select id="settings-workspace" label="Workspace" />
-            <div id="settings-custom-workspace" hidden><flux:input id="settings-workspace-path" label="Folder on this Vessel" placeholder="/home/you/project" description="Enter an existing absolute folder path on the Vessel, not on your browser’s computer." /></div>
-            <flux:select id="settings-account" variant="listbox" searchable label="Provider account" placeholder="Choose an account" description="Accounts belong to the selected Vessel. Credentials stay there." />
-            <flux:dropdown position="bottom" align="start">
-                <flux:button id="settings-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button>
-                <flux:popover id="settings-enrollment-host" class="w-80 max-w-[calc(100vw-2rem)] max-h-[70dvh] overflow-y-auto">@include('console.account-enrollment')</flux:popover>
-            </flux:dropdown>
-            <flux:select id="settings-model" variant="listbox" searchable label="Model" placeholder="Choose a model" />
-            <div class="grid gap-4 sm:grid-cols-2"><div class="space-y-3"><flux:slider id="settings-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="settings-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div><flux:radio.group id="settings-service" label="Service tier" variant="pills" /></div>
-            <flux:callout id="settings-notice" role="status"><flux:callout.text id="settings-status">Loading…</flux:callout.text></flux:callout>
-            <div class="flex flex-wrap justify-end gap-3"><flux:button id="settings-retry" type="button" variant="ghost" icon="arrow-path">Reload choices</flux:button><flux:modal.close><flux:button id="settings-close" type="button" variant="ghost">Cancel</flux:button></flux:modal.close><flux:button id="settings-save" type="submit" variant="primary" disabled>Continue</flux:button></div>
-        </form>
-    </flux:modal>
+    <div hidden>@include('console.account-enrollment')</div>
     <flux:modal name="sidebar-action" class="w-full md:max-w-2xl" :dismissible="false">
         <form id="sidebar-action-form" class="space-y-4">
             <flux:heading id="sidebar-action-title" size="lg">Voyage action</flux:heading>
