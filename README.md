@@ -1,6 +1,6 @@
 # Voyage
 
-**Linux x86-64 binaries:** [v1.0.0 release and installation](docs/releases-v1.0.0.md).
+**Linux x86-64 binaries:** [v1.0.1 release and installation](docs/releases-v1.0.1.md).
 Other platforms are not included in this binary release.
 
 

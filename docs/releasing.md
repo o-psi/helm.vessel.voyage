@@ -1,7 +1,7 @@
 # Packaging and releases
 
-The first binary release is v1.0.0 for Linux x86-64 only. See the
-[release guide](releases-v1.0.0.md) for scope and installation. The current packagers distribute `helm`,
+The current binary release is v1.0.1 for Linux x86-64 only. See the
+[release guide](releases-v1.0.1.md) for scope and installation. The current packagers distribute `helm`,
 `vessel`, the independent `voyage` runtime, and `voyage-installer`. The supported
 Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
@@ -14,7 +14,7 @@ and failure handling. Build from a clean committed source checkout:
 
 ```sh
 cargo build --workspace --release --locked -j 8
-python3 packaging/package_linux.py --version v1.0.0 --bin-dir target/release --output dist/linux-release
+python3 packaging/package_linux.py --version v1.0.1 --bin-dir target/release --output dist/linux-release
 (cd dist/linux-release && sha256sum -c *.sha256)
 ```
 

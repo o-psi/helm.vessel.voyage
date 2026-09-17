@@ -1,20 +1,20 @@
-# v1.0.0 — Linux x86-64
+# v1.0.1 — Linux x86-64
 
-This first binary release contains `helm`, `vessel`, `voyage`, and
-`voyage-installer`, all version 1.0.0. Helm is the terminal client, Vessel
+This Linux binary release contains `helm`, `vessel`, `voyage`, and
+`voyage-installer`, all version 1.0.1. Helm is the terminal client, Vessel
 supervises independent voyage processes, and disconnecting Helm does not cancel
 a voyage. The web application is not part of these binary assets.
 
 ## Install
 
-Use the assets on the [v1.0.0 release page](https://github.com/o-psi/voyage/releases/tag/v1.0.0).
-Download the full `voyage-v1.0.0-x86_64-unknown-linux-gnu.tar.gz` archive and its
+Use the assets on the [v1.0.1 release page](https://github.com/o-psi/voyage/releases/tag/v1.0.1).
+Download the full `voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz` archive and its
 `.sha256` file into the same directory. Before extracting:
 
 ```sh
-sha256sum -c voyage-v1.0.0-x86_64-unknown-linux-gnu.tar.gz.sha256
-tar -xzf voyage-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
-cd voyage-v1.0.0-x86_64-unknown-linux-gnu
+sha256sum -c voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz
+cd voyage-v1.0.1-x86_64-unknown-linux-gnu
 ./bin/helm --version
 ./bin/voyage-installer --bin-dir "$PWD/bin"
 ```
@@ -29,7 +29,7 @@ Add `$HOME/.local/bin` to PATH yourself; shell startup files are not modified.
 The standalone `voyage-installer-x86_64-unknown-linux-gnu.gz` contains only the
 installer, not the three runtime binaries. It downloads the latest stable full
 release when no local `--bin-dir` is supplied. The source bootstrap supports
-`VOYAGE_VERSION=v1.0.0` for a pinned release. See the
+`VOYAGE_VERSION=v1.0.1` for a pinned release. See the
 [installer guide](../installer/README.md) and [first task](getting-started.md).
 
 ## Scope and limitations
