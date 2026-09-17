@@ -57,7 +57,7 @@ fn now_ms() -> u64 {
 }
 fn validate_response(request: &serde_json::Value, response: &serde_json::Value) -> Result<()> {
     match request["kind"].as_str() {
-        Some("approval") => ensure!(
+        Some("approval" | "root_grant") => ensure!(
             response == "approved" || response == "denied",
             "invalid approval response"
         ),

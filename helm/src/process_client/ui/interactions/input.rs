@@ -158,7 +158,7 @@ impl App {
             review.follow_selection = false;
             return Ok(true);
         }
-        if !enabled || !matches!(kind, "question" | "approval") {
+        if !enabled || !matches!(kind, "question" | "approval" | "root_grant") {
             return Ok(true);
         }
         let options = if kind == "question" {
@@ -177,7 +177,7 @@ impl App {
                 review.follow_selection = true;
             }
             KeyCode::Esc => {
-                response = Some(if kind == "approval" {
+                response = Some(if matches!(kind, "approval" | "root_grant") {
                     json!("denied")
                 } else {
                     json!({"status":"cancelled"})
@@ -195,7 +195,7 @@ impl App {
                 review.follow_selection = true;
             }
             KeyCode::Enter if key.modifiers.is_empty() => {
-                response = if kind == "approval" {
+                response = if matches!(kind, "approval" | "root_grant") {
                     Some(json!(if answer.option == Some(1) {
                         "approved"
                     } else {

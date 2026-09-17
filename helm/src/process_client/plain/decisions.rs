@@ -44,7 +44,10 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
                 );
                 eprintln!(
                     "{}",
-                    if decision["request"]["kind"] == "approval" {
+                    if matches!(
+                        decision["request"]["kind"].as_str(),
+                        Some("approval" | "root_grant")
+                    ) {
                         "Approve? Type yes or no."
                     } else {
                         "Enter your answer or the option number."
@@ -81,7 +84,10 @@ async fn respond(connection: &Connection<'_>, shown: &Value, line: &str) -> Resu
         .flatten()
         .find(|d| d["decision_id"] == shown["decision_id"] && d["run_id"] == shown["run_id"])
         .context("displayed decision expired or was answered elsewhere")?;
-    let response = if decision["request"]["kind"] == "approval" {
+    let response = if matches!(
+        decision["request"]["kind"].as_str(),
+        Some("approval" | "root_grant")
+    ) {
         match line.trim().to_ascii_lowercase().as_str() {
             "yes" | "y" => json!("approved"),
             "no" | "n" => json!("denied"),
@@ -102,6 +108,7 @@ async fn respond(connection: &Connection<'_>, shown: &Value, line: &str) -> Resu
             json!({"status":"custom","answer":line})
         }
     };
+    let response = scope_response(&decision["request"], response);
     let command_id = Uuid::new_v4();
     eprintln!("Decision response command {command_id}");
     connection
@@ -121,4 +128,30 @@ async fn respond(connection: &Connection<'_>, shown: &Value, line: &str) -> Resu
         })
         .await?;
     Ok(())
+}
+
+// The envelope selects owner-only policy authority on both routing boundaries.
+fn scope_response(request: &Value, response: Value) -> Value {
+    if request["kind"] == "root_grant" {
+        json!({"root_grant": response})
+    } else {
+        response
+    }
+}
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+    #[test]
+    fn root_grant_plain_consent_is_not_generic_approval() {
+        for choice in ["approved", "denied"] {
+            assert_eq!(
+                scope_response(&json!({"kind":"root_grant"}), json!(choice)),
+                json!({"root_grant":choice})
+            );
+            assert_eq!(
+                scope_response(&json!({"kind":"approval"}), json!(choice)),
+                json!(choice)
+            );
+        }
+    }
 }

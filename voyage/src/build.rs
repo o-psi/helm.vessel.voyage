@@ -67,7 +67,8 @@ pub async fn build_authorized_agent_bundle(
         let mut policy = resolved
             .policy()
             .clone()
-            .with_live_access(config.live_access.clone());
+            .with_live_access(config.live_access.clone())
+            .enable_run_roots();
         if let Some(authority) = authority {
             policy = policy.with_execution_authority(authority);
         }

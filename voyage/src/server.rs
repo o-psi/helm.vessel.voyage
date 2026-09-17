@@ -16,7 +16,7 @@ pub mod bootstrap;
 mod commands;
 mod configuration;
 pub mod controls;
-mod decisions;
+pub(crate) mod decisions;
 mod dispatch;
 mod github;
 pub mod guardian;

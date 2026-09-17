@@ -1,4 +1,5 @@
 mod live;
+mod roots;
 mod shell;
 pub use live::LiveAccess;
 use std::path::{Component, Path, PathBuf};
@@ -31,6 +32,10 @@ pub struct Policy {
     live_ceiling: bool,
     dispatch_access: Option<u64>,
     snapshot: crate::runtime_policy::Snapshot,
+    run_roots: Option<std::sync::Arc<std::sync::Mutex<roots::RunRoots>>>,
+    dispatch_roots: Option<u64>,
+    dispatch_sandbox: Option<crate::sandbox::Sandbox>,
+    dispatch_error: Option<String>,
 }
 
 impl Policy {
@@ -44,6 +49,10 @@ impl Policy {
         let effective = &snapshot.effective;
         Self {
             execution_authority: None,
+            run_roots: None,
+            dispatch_roots: None,
+            dispatch_sandbox: None,
+            dispatch_error: None,
             live_access: None,
             live_ceiling: false,
             dispatch_access: None,
@@ -67,6 +76,13 @@ impl Policy {
         self
     }
     pub fn check_execution_authority(&self) -> Result<()> {
+        if let Some(error) = &self.dispatch_error {
+            bail!("{error}");
+        }
+        self.check_execution_authority_without_roots()?;
+        self.check_roots()
+    }
+    fn check_execution_authority_without_roots(&self) -> Result<()> {
         if let (Some(live), Some(version)) = (&self.live_access, self.dispatch_access) {
             anyhow::ensure!(
                 live.snapshot() == version,
@@ -82,6 +98,9 @@ impl Policy {
         self.execution_authority = parent.execution_authority.clone();
         self.live_access = parent.live_access.clone();
         self.live_ceiling = true;
+        self.run_roots = None;
+        self.dispatch_roots = None;
+        self.dispatch_sandbox = None;
     }
     pub(crate) fn inherit_profile_freshness(&mut self, parent: &Policy) {
         self.snapshot.ancestor_selection = parent.snapshot.inherited_selection();
@@ -102,7 +121,8 @@ impl Policy {
             resolved.push(part);
         }
         anyhow::ensure!(
-            within_any(&resolved, &self.readable) && within_any(&resolved, &self.writable),
+            within_any(&resolved, &self.snapshot.effective.rules().read_roots)
+                && within_any(&resolved, &self.snapshot.effective.rules().write_roots),
             "child/worktree workspace requires explicit parent read and write root delegation"
         );
         Ok(())
@@ -112,10 +132,10 @@ impl Policy {
         anyhow::ensure!(
             canonical_roots(&config.allow_read)?
                 .iter()
-                .all(|p| within_any(p, &self.readable))
+                .all(|p| within_any(p, &self.snapshot.effective.rules().read_roots))
                 && canonical_roots(&config.allow_write)?
                     .iter()
-                    .all(|p| within_any(p, &self.writable)),
+                    .all(|p| within_any(p, &self.snapshot.effective.rules().write_roots)),
             "child roots exceed captured parent authority"
         );
         let rank = |m| match m {
@@ -142,7 +162,9 @@ impl Policy {
     }
 
     pub fn sandbox(&self) -> &crate::sandbox::Sandbox {
-        &self.snapshot.sandbox
+        self.dispatch_sandbox
+            .as_ref()
+            .unwrap_or(&self.snapshot.sandbox)
     }
     pub fn process_command(
         &self,
@@ -179,6 +201,7 @@ impl Policy {
     }
 
     pub fn resolve_read(&self, path: &Path) -> Result<PathBuf> {
+        self.check_current()?;
         let path = self.absolute(path);
         let resolved = path
             .canonicalize()
@@ -190,6 +213,7 @@ impl Policy {
     }
 
     pub fn resolve_write(&self, path: &Path) -> Result<PathBuf> {
+        self.check_current()?;
         let path = self.absolute(path);
         let (ancestor, suffix) = existing_ancestor(&path)?;
         let resolved_ancestor = ancestor.canonicalize()?;

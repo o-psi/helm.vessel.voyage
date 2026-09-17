@@ -24,12 +24,11 @@ impl LiveAccess {
     /// Only the serialized, authenticated configuration handler publishes updates.
     pub(crate) fn update(&self, mode: AccessMode) {
         let previous = self.snapshot();
-        if Self::mode(previous) != mode {
-            self.0.store(
-                (previous.wrapping_add(4) & !3) | rank(mode),
-                Ordering::Release,
-            );
-        }
+        // Explicit access-setting also revokes current-run filesystem grants.
+        self.0.store(
+            (previous.wrapping_add(4) & !3) | rank(mode),
+            Ordering::Release,
+        );
     }
 }
 fn rank(mode: AccessMode) -> u64 {
@@ -58,8 +57,17 @@ impl Policy {
     /// Freeze access for a tool admission and fence approvals against later changes.
     pub(crate) fn for_dispatch(&self) -> Self {
         let mut policy = self.clone();
+        // Re-dispatching a captured policy must never retain a revoked overlay.
+        policy.readable = self.snapshot.effective.rules().read_roots.clone();
+        policy.writable = self.snapshot.effective.rules().write_roots.clone();
+        policy.dispatch_sandbox = None;
+        policy.dispatch_roots = None;
+        policy.dispatch_error = None;
         if let Some(live) = &self.live_access {
             policy.dispatch_access = Some(live.snapshot());
+        }
+        if let Err(error) = policy.snapshot_roots() {
+            policy.dispatch_error = Some(error.to_string());
         }
         policy
     }

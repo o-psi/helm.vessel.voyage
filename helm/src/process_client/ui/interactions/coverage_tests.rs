@@ -256,3 +256,38 @@ fn response_validation_rejects_mismatched_choices_controls_and_unknown_kinds() {
     assert!(validate_response(&approval, &json!({"status":"selected"})).is_err());
     assert!(validate_response(&json!({"kind":"future"}), &json!("approved")).is_err());
 }
+
+#[tokio::test]
+async fn root_grant_review_shows_exact_scope_and_sends_owner_only_envelope() {
+    let (_fixture, mut app, target) = coverage_support::app();
+    let id = decision(
+        &mut app,
+        target,
+        json!({"kind":"root_grant","root_grant":{"path":"/fixture/config","permission":"write","lifetime":"current_run"},"approval":{"action":"Grant Write filesystem access for CURRENT RUN ONLY (no children)","target":"/fixture/config","reason":"Configure requested integration"}}),
+        u64::MAX,
+    );
+    let output = draw(&app, 110, 40);
+    assert!(output.contains("CURRENT RUN ONLY"));
+    assert!(output.contains("/fixture/config"));
+    assert!(output.contains("Grant for current run"));
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Enter);
+    let command = app.views[&target]
+        .pending
+        .as_ref()
+        .unwrap()
+        .original
+        .as_ref()
+        .unwrap();
+    match command.as_ref() {
+        voyage_protocol::vessel::VoyageCommand::Respond {
+            response,
+            decision_id,
+            ..
+        } => {
+            assert_eq!(*decision_id, id);
+            assert_eq!(response, &json!({"root_grant":"approved"}));
+        }
+        _ => panic!("expected typed root consent"),
+    }
+}

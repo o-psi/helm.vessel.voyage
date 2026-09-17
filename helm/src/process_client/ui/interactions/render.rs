@@ -44,7 +44,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         })
     });
     let kind = decision.request["kind"].as_str().unwrap_or("");
-    let title = if kind == "approval" {
+    let title = if matches!(kind, "approval" | "root_grant") {
         "Permission needed"
     } else {
         "Your answer needed"
@@ -105,7 +105,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 .as_str()
                 .unwrap_or("Question unavailable"),
         )
-    } else if kind == "approval" {
+    } else if matches!(kind, "approval" | "root_grant") {
         [
             ("Action", "action"),
             ("Target", "target"),
@@ -136,8 +136,15 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             .map(|v| safe(v.as_str().unwrap_or("Unavailable answer")))
             .chain(std::iter::once("Write a custom answer…".into()))
             .collect()
-    } else if kind == "approval" {
-        vec!["Deny".into(), "Allow once".into()]
+    } else if matches!(kind, "approval" | "root_grant") {
+        vec![
+            "Deny".into(),
+            if kind == "root_grant" {
+                "Grant for current run".into()
+            } else {
+                "Allow once".into()
+            },
+        ]
     } else {
         Vec::new()
     };
@@ -191,8 +198,9 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     }
     scroll = scroll.min(max);
     review.scroll = scroll.min(u16::MAX as usize) as u16;
-    let enabled =
-        view.pending.is_none() && remaining > 0 && matches!(kind, "question" | "approval");
+    let enabled = view.pending.is_none()
+        && remaining > 0
+        && matches!(kind, "question" | "approval" | "root_grant");
     for (start, end, i) in option_ranges {
         let top = start.max(scroll);
         let bottom = end.min(scroll + body.height as usize);
@@ -231,7 +239,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         "This request has expired. Nothing will be sent.".into()
     } else if editing {
         "Type · Enter Send · Esc Back".into()
-    } else if kind == "approval" {
+    } else if matches!(kind, "approval" | "root_grant") {
         "↑↓ Choose · Enter Allow · Esc Deny".into()
     } else {
         "↑↓ Choose · Enter Answer · Esc Skip".into()
@@ -258,7 +266,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         (
             if editing {
                 "[Back]"
-            } else if kind == "approval" {
+            } else if matches!(kind, "approval" | "root_grant") {
                 "[Deny]"
             } else {
                 "[Skip]"

@@ -362,3 +362,38 @@ and the layered resource protections in
 They are acceptance criteria, not assertions that an existing proxy already meets
 them. The audit requested deployment details; no target-specific sign-off is implied
 without that evidence.
+
+### Active-run filesystem consent (#327)
+
+`request_filesystem_root` requests one exact, existing, canonical absolute directory,
+`permission: "read" | "write"` (write includes read), `lifetime: "current_run"`,
+and a nonblank reason. It is available to foreground managed runs on Linux x86-64.
+It is **not** a generic tool approval: unrestricted mode and unattended allow do
+not consent. Only the authenticated local human/owner connection can answer the
+`root_grant` decision through Helm's existing review surface. Scoped `Decide`
+credentials cannot send its typed response, including via receipt resolution.
+Chat, question answers, and ordinary `"approved"` responses cannot grant roots.
+
+Requests expire after at most 120 seconds (or the shorter tool deadline). Cancellation,
+stale access/policy, changed directory identity, revoked execution authority, host
+ceiling exclusion, unsupported platform/sandbox setup, and unavailable interfaces
+fail closed. The executing host ceiling is re-resolved before publication and new
+dispatch; partial subtree intersection is not approval of the requested directory.
+Durable decision identities and response receipts deduplicate consent, not external
+effects. Grants are in memory only: restart never reconstructs authority from old
+approved decisions, and uncertain tool effects are never replayed.
+
+New file operations and bounded shell launches use the same dispatch snapshot and
+sandbox roots. With sandbox off, these remain application policy, **not OS
+confinement**. Required-sandbox setup failures never fall back to unsandboxed launch.
+Already-launched effects are not retroactively widened or revoked. Persistent PTY
+starts refuse a temporary root overlay because their lifetime can outlast the run;
+use bounded `shell` for granted-root commands. Existing MCP servers and extension
+processes are not restarted or widened by a grant.
+
+Grants are not persisted in configuration, not delegated to child agents/worktrees,
+and expire on a new run. Cancel the run or explicitly set its access mode (even to
+the same value) to revoke all temporary roots for subsequent admissions. A changed
+access generation also invalidates pending root consent. This does not claim that
+an already-running process was stopped; ordinary cancellation/cleanup accounting
+still applies. Native macOS/Windows support is explicitly refused, not certified.

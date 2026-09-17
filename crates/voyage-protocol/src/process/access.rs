@@ -115,6 +115,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         | RuntimeCommand::WorkflowInputs { .. }
         | RuntimeCommand::WorkflowSubmit { .. } => Some(ProcessRight::Execute),
         RuntimeCommand::Steer { .. } => Some(ProcessRight::Steer),
+        RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => None,
         RuntimeCommand::Respond { .. } => Some(ProcessRight::Decide),
         RuntimeCommand::Cancel { .. } => Some(ProcessRight::Cancel),
         RuntimeCommand::Clear { .. }
@@ -129,6 +130,9 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         }
         RuntimeCommand::Terminal { .. } => Some(ProcessRight::Terminal),
         RuntimeCommand::SetAccountInference { .. } => Some(ProcessRight::AccountUse),
+        RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
+            Some(ProcessRight::Execute)
+        }
         RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
         | RuntimeCommand::SetInference { .. } => None,
@@ -207,6 +211,9 @@ pub fn owner_connection_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             command_id,
             original: Some(original),
         } if original.mutation_id() == Some(*command_id) => owner_connection_right(original),
+        RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
+            Some(ProcessRight::Execute)
+        }
         RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
         | RuntimeCommand::SetInference { .. } => Some(ProcessRight::Execute),
@@ -225,5 +232,39 @@ impl ConnectionGrant {
                 && self.accounts.is_empty()
                 && self.enrollment_connections.is_empty()
                 && self.rights == ProcessRight::all())
+    }
+}
+
+#[cfg(test)]
+mod root_grant_tests {
+    use super::*;
+    #[test]
+    fn generic_decide_cannot_manage_filesystem_authority() {
+        let mut command = RuntimeCommand::Respond {
+            command_id: Uuid::new_v4(),
+            expected_revision: 0,
+            expires_at_ms: 10,
+            run_id: Uuid::new_v4(),
+            decision_id: Uuid::new_v4(),
+            response: serde_json::json!({"root_grant":"approved"}),
+        };
+        assert_eq!(required_process_right(&command), None);
+        assert_eq!(
+            owner_connection_right(&command),
+            Some(ProcessRight::Execute)
+        );
+        let wrapped = RuntimeCommand::Resolve {
+            command_id: command.mutation_id().unwrap(),
+            original: Some(Box::new(command.clone())),
+        };
+        assert_eq!(required_process_right(&wrapped), None);
+        assert_eq!(
+            owner_connection_right(&wrapped),
+            Some(ProcessRight::Execute)
+        );
+        if let RuntimeCommand::Respond { response, .. } = &mut command {
+            *response = serde_json::json!("approved");
+        }
+        assert_eq!(required_process_right(&command), Some(ProcessRight::Decide));
     }
 }

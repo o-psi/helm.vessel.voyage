@@ -492,7 +492,7 @@ pub fn resolve_current(
     let ceiling = ceiling::load()?;
     resolve_loaded(workspace, base, layers, ceiling.as_ref())
 }
-fn resolve_loaded(
+pub(crate) fn resolve_loaded(
     workspace: &Path,
     base: &Rules,
     layers: &[Layer],

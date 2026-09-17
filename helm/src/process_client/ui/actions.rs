@@ -306,7 +306,10 @@ impl App {
             let kind = decision.request.get("kind").and_then(|kind| kind.as_str());
             let response = match operation {
                 "/approve" | "/deny" => {
-                    ensure!(kind == Some("approval"), "this decision is a question");
+                    ensure!(
+                        matches!(kind, Some("approval" | "root_grant")),
+                        "this decision is a question"
+                    );
                     serde_json::Value::String(
                         if operation == "/approve" {
                             "approved"
@@ -324,6 +327,11 @@ impl App {
                     serde_json::json!({"status":"custom", "answer":answer})
                 }
                 _ => unreachable!(),
+            };
+            let response = if decision.request["kind"] == "root_grant" {
+                serde_json::json!({"root_grant": response})
+            } else {
+                response
             };
             VoyageCommand::Respond {
                 command_id,

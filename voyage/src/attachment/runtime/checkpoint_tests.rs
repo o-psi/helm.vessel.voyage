@@ -321,3 +321,75 @@ async fn storage_and_validation_failures_do_not_retry_or_expose_raw_diagnostics(
         "Checkpoint failed during partial text: private-secret-path."
     ));
 }
+
+#[tokio::test]
+async fn root_grant_human_decision_roundtrip_is_durable_and_cancellable() {
+    use crate::server::decisions::Decisions;
+    use crate::tools::roots::{RootGrantRequest, RootLifetime, RootPermission};
+    use crate::tools::{ApprovalOutcome, Approver};
+    let (root, owner, run) = fixture().await;
+    let incarnation = Uuid::new_v4();
+    let cancel = CancellationToken::new();
+    let decisions = Decisions {
+        owner: owner.clone(),
+        run: run.run_id,
+        incarnation,
+        cancel: cancel.clone(),
+        timeout: Duration::from_secs(2),
+    };
+    let mut context = crate::tools::reliability_tests::context(root.path());
+    context.cancellation = cancel.clone();
+    let request = RootGrantRequest {
+        id: Uuid::new_v4(),
+        path: root.path().into(),
+        permission: RootPermission::Write,
+        lifetime: RootLifetime::CurrentRun,
+        reason: "fixture".into(),
+    };
+    let worker = {
+        let decisions = decisions.clone();
+        let request = request.clone();
+        let context = context.clone();
+        tokio::spawn(async move { decisions.request_root(&request, &context).await })
+    };
+    for _ in 0..100 {
+        if !owner
+            .decisions(incarnation)
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let pending = owner.decisions(incarnation).await.unwrap();
+    assert_eq!(
+        pending[0]["request"]["root_grant"]["lifetime"],
+        "current_run"
+    );
+    let command = voyage_protocol::process::RuntimeCommand::Respond {
+        command_id: Uuid::new_v4(),
+        expected_revision: owner.snapshot().await.unwrap().revision,
+        expires_at_ms: pending[0]["expires_at_ms"].as_u64().unwrap(),
+        run_id: run.run_id,
+        decision_id: request.id,
+        response: serde_json::json!({"root_grant":"approved"}),
+    };
+    owner
+        .respond_decision(incarnation, command, || Ok(()))
+        .await
+        .unwrap();
+    assert_eq!(worker.await.unwrap(), ApprovalOutcome::Approved);
+    cancel.cancel();
+    let request = RootGrantRequest {
+        id: Uuid::new_v4(),
+        ..request
+    };
+    assert_eq!(
+        decisions.request_root(&request, &context).await,
+        ApprovalOutcome::Cancelled
+    );
+}

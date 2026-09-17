@@ -214,3 +214,55 @@ fn metadata_model_change_rejects_active_run_and_clears_pending_model_when_idle()
     assert_eq!(saved.session.model, "replacement");
     assert!(saved.session.pending_model.is_none());
 }
+
+#[test]
+fn root_decision_requires_typed_consent_and_deduplicates_without_replay() {
+    let (_root, mut j, s, g) = fixture();
+    let run = admit(&mut j, &g);
+    j.mark_running(&g, run.id).unwrap();
+    let incarnation = Uuid::new_v4();
+    let decision = Uuid::new_v4();
+    j.create_decision(
+        &g,
+        run.id,
+        incarnation,
+        decision,
+        61000,
+        json!({"kind":"root_grant"}),
+    )
+    .unwrap();
+    let mut command = RuntimeCommand::Respond {
+        command_id: Uuid::new_v4(),
+        expected_revision: revision(&j, s.id),
+        expires_at_ms: 61000,
+        run_id: run.id,
+        decision_id: decision,
+        response: json!("approved"),
+    };
+    assert!(
+        j.respond_decision(&g, incarnation, &command, || Ok(1000))
+            .is_err()
+    );
+    if let RuntimeCommand::Respond { response, .. } = &mut command {
+        *response = json!({"root_grant":"approved"});
+    }
+    let receipt = j
+        .respond_decision(&g, incarnation, &command, || Ok(1000))
+        .unwrap();
+    assert_eq!(
+        j.respond_decision(&g, incarnation, &command, || Ok(999999))
+            .unwrap(),
+        receipt
+    );
+    if let RuntimeCommand::Respond { response, .. } = &mut command {
+        *response = json!({"root_grant":"denied"});
+    }
+    assert!(
+        j.respond_decision(&g, incarnation, &command, || Ok(1000))
+            .is_err()
+    );
+    assert_eq!(
+        j.decision_response(decision, 999999).unwrap(),
+        Some(json!({"root_grant":"approved"}))
+    );
+}

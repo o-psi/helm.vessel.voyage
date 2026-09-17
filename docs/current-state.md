@@ -1016,3 +1016,17 @@ Helm displays bounded, privacy-filtered provisional tool-call cards through Voya
 run snapshots, with double-click expansion and canonical replacement. Reasoning
 display is not yet adopted. See [tool previews](tool-previews.md) for retention,
 provider/privacy scope, Pi review, actual Linux evidence and remaining #255 acceptance.
+
+## Active-run filesystem root requests
+
+Foreground managed voyages expose `request_filesystem_root` for exact canonical
+existing directories, read/write permission and current-run lifetime. Helm TUI and
+plain attended clients display the scope and submit distinct owner-only root
+consent on the durable decision path. Unattended and unrestricted auto-approval
+cannot grant roots. Temporary grants affect new file and bounded-shell dispatch,
+remain below executing-host ceilings, do not flow to children, and are not restored
+after restart. Persistent PTY starts with an overlay and unsupported native
+platforms refuse explicitly. See [security](security.md#active-run-filesystem-consent-327)
+for revocation, process-lifetime and application-policy limits. Existing sessions
+must execute the updated Voyage binary to expose the new tool; updating installed
+files does not modify a running process or authorize a denied host configuration.

@@ -45,6 +45,11 @@ impl App {
             "request expired; nothing sent"
         );
         let command_id = Uuid::new_v4();
+        let response = if decision.request["kind"] == "root_grant" {
+            serde_json::json!({"root_grant": response})
+        } else {
+            response
+        };
         let command = VoyageCommand::Respond {
             command_id,
             expected_revision: snapshot.revision,

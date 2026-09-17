@@ -288,3 +288,18 @@ workspace Rust coverage. A separate `provider_restart_recovery.py` check kills i
 owned process during backoff, recovers without attestations and verifies no saved
 inference replay after restart before explicitly submitting a new turn. These
 checks do not establish live-provider, WebSocket or native macOS/Windows behavior.
+
+## Runtime root-consent regression (#327)
+
+The focused offline root tests cover generic-Decide refusal at both routing ends,
+durable typed consent/deduplication, cancellation, unrestricted unattended refusal,
+exact directory identity, run/access-generation revocation, child isolation, Helm
+scope presentation, file access and required Linux sandbox mounts:
+
+```sh
+cargo test -p voyage -p voyage-protocol -p vessel -p helm --locked root_ -j 8
+```
+
+The Linux sandbox case launches bubblewrap and requires working user namespaces;
+setup failure is a failing check, never an unsandboxed fallback. This does not
+exercise live provider billing or certify native macOS/Windows behavior.

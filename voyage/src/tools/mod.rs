@@ -11,6 +11,7 @@ mod report;
 pub use report::ToolReport;
 pub(crate) mod process;
 mod questions;
+pub(crate) mod roots;
 pub(crate) mod schema;
 mod shell;
 mod todo;
@@ -62,6 +63,15 @@ pub enum ToolError {
 pub trait Approver: Send + Sync {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome;
 
+    /// Filesystem authority is never delegated to generic/unattended approvers.
+    async fn request_root(
+        &self,
+        _request: &roots::RootGrantRequest,
+        _context: &ToolContext,
+    ) -> ApprovalOutcome {
+        ApprovalOutcome::Unavailable
+    }
+
     /// Optional frontend clarification capability. This does not grant approval.
     /// The default preserves noninteractive/library frontends without reading stdin.
     async fn ask_question(&self, _question: &Question) -> QuestionAnswer {
@@ -76,6 +86,13 @@ struct DispatchApprover {
 }
 #[async_trait]
 impl Approver for DispatchApprover {
+    async fn request_root(
+        &self,
+        request: &roots::RootGrantRequest,
+        context: &ToolContext,
+    ) -> ApprovalOutcome {
+        self.inner.request_root(request, context).await
+    }
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
         if request.cancellation.is_cancelled() {
             return ApprovalOutcome::Cancelled;
@@ -511,7 +528,7 @@ impl ToolRegistry {
             let mut dispatch = context.clone();
             dispatch.timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
             dispatch.tool_call_id = None;
-            dispatch.policy = Arc::new(context.policy.for_dispatch());
+            dispatch.policy = Arc::new(context.policy.for_run_dispatch(context.execution_id));
             dispatch.approver = Arc::new(DispatchApprover {
                 inner: context.approver.clone(),
                 policy: dispatch.policy.clone(),
@@ -546,6 +563,7 @@ impl ToolRegistry {
         registry.register(ReadFile);
         registry.register(evidence::ResultTool);
         registry.register(Questions);
+        registry.register(roots::RequestFilesystemRoot);
         registry.register(WriteFile);
         registry.register(ListDirectory);
         registry.register(SearchFiles);
@@ -710,7 +728,7 @@ impl ToolRegistry {
             .validate(&arguments)?;
         // Bind every permission decision (including MCP approval) to one access generation.
         let mut dispatch_context = context.clone();
-        dispatch_context.policy = Arc::new(context.policy.for_dispatch());
+        dispatch_context.policy = Arc::new(context.policy.for_run_dispatch(context.execution_id));
         dispatch_context.approver = Arc::new(DispatchApprover {
             inner: context.approver.clone(),
             policy: dispatch_context.policy.clone(),
@@ -882,6 +900,7 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
                 .is_ok_and(|a| a.observation_only())
         }
         "questions" | "read_file" | "list_directory" | "search_files" | "result" => true,
+        "request_filesystem_root" => arguments["permission"] == "read",
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
         "completion" => matches!(action, Some("snapshot" | "read")),

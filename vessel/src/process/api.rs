@@ -605,6 +605,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::WorkflowInputs { .. }
         | VoyageCommand::WorkflowSubmit { .. } => Some(ProcessRight::Execute),
         VoyageCommand::Steer { .. } => Some(ProcessRight::Steer),
+        VoyageCommand::Respond { response, .. } if response.get("root_grant").is_some() => None,
         VoyageCommand::Respond { .. } => Some(ProcessRight::Decide),
         VoyageCommand::Cancel { .. } => Some(ProcessRight::Cancel),
         VoyageCommand::Clear { .. }
@@ -662,6 +663,9 @@ pub fn owner_connection_right(command: &VoyageCommand) -> Option<ProcessRight> {
             command_id,
             original: Some(original),
         } if original.mutation_id() == Some(*command_id) => owner_connection_right(original),
+        VoyageCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
+            Some(ProcessRight::Execute)
+        }
         VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }
         | VoyageCommand::SetInference { .. } => Some(ProcessRight::Execute),
@@ -669,5 +673,34 @@ pub fn owner_connection_right(command: &VoyageCommand) -> Option<ProcessRight> {
             Some(ProcessRight::History)
         }
         _ => required_right(command),
+    }
+}
+
+#[cfg(test)]
+mod root_consent_tests {
+    use super::*;
+    use serde_json::json;
+    use uuid::Uuid;
+    #[test]
+    fn root_consent_is_owner_only_on_vessel_route_too() {
+        let c = VoyageCommand::Respond {
+            command_id: Uuid::new_v4(),
+            expected_revision: 0,
+            expires_at_ms: 1,
+            run_id: Uuid::new_v4(),
+            decision_id: Uuid::new_v4(),
+            response: json!({"root_grant":"approved"}),
+        };
+        assert_eq!(required_right(&c), None);
+        assert_eq!(owner_connection_right(&c), Some(ProcessRight::Execute));
+        let wrapped = VoyageCommand::Resolve {
+            command_id: c.mutation_id().unwrap(),
+            original: Some(Box::new(c)),
+        };
+        assert_eq!(required_right(&wrapped), None);
+        assert_eq!(
+            owner_connection_right(&wrapped),
+            Some(ProcessRight::Execute)
+        );
     }
 }

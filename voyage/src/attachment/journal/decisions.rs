@@ -177,7 +177,10 @@ impl Journal {
             "stale, expired or already answered decision"
         );
         let request: Value = serde_json::from_str(&request)?;
-        if request["kind"] == "approval" {
+        if request["kind"] == "root_grant" {
+            let _: crate::tools::roots::RootGrantResponse =
+                serde_json::from_value(response.clone())?;
+        } else if request["kind"] == "approval" {
             ensure!(
                 matches!(response.as_str(), Some("approved" | "denied")),
                 "approval response must be approved or denied"

@@ -125,6 +125,10 @@ impl Tool for ApplyPatch {
         let parent = path
             .parent()
             .ok_or_else(|| ToolError::Failed("target has no parent directory".into()))?;
+        ctx.policy.resolve_write(&path).map_err(denied)?;
+        if ctx.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
         fs::create_dir_all(parent).await.map_err(failed)?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
         std::io::Write::write_all(&mut temporary, updated.as_bytes()).map_err(failed)?;
@@ -143,6 +147,10 @@ impl Tool for ApplyPatch {
             return Err(ToolError::Failed(
                 "target was created concurrently; refusing to replace it".into(),
             ));
+        }
+        ctx.policy.resolve_write(&path).map_err(denied)?;
+        if ctx.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
         }
         temporary.persist(&path).map_err(failed)?;
         Ok(format!(
@@ -180,7 +188,15 @@ impl Tool for WriteFile {
             _ => {}
         }
         if let Some(parent) = path.parent() {
+            ctx.policy.resolve_write(&path).map_err(denied)?;
+            if ctx.cancellation.is_cancelled() {
+                return Err(ToolError::Cancelled);
+            }
             fs::create_dir_all(parent).await.map_err(failed)?;
+        }
+        ctx.policy.resolve_write(&path).map_err(denied)?;
+        if ctx.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
         }
         fs::write(&path, args.content.as_bytes())
             .await

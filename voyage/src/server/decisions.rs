@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 /// A missing interface produces bounded refusal. Silence never grants authority.
 #[derive(Clone)]
-pub(super) struct Decisions {
+pub(crate) struct Decisions {
     pub owner: ManagedSessionOwner,
     pub run: Uuid,
     pub incarnation: Uuid,
@@ -104,6 +104,34 @@ impl Decisions {
 }
 #[async_trait]
 impl Approver for Decisions {
+    async fn request_root(
+        &self,
+        request: &crate::tools::roots::RootGrantRequest,
+        context: &crate::tools::ToolContext,
+    ) -> ApprovalOutcome {
+        let response = self.request(request.id, json!({"kind":"root_grant", "root_grant": request,
+            "approval": {"action":format!("Grant {:?} filesystem access for CURRENT RUN ONLY (no children)", request.permission), "resource":request.path, "target":request.path,
+                "description":format!("{:?} access; CURRENT RUN ONLY; no child inheritance", request.permission), "reason":request.reason}}),
+            context.policy.access_binding(), context.cancellation.clone()).await;
+        match response {
+            Ok(value) if value == "cancelled" => ApprovalOutcome::Cancelled,
+            Ok(value) if value == "expired" => ApprovalOutcome::Expired,
+            Ok(value) if value == "invalidated" => ApprovalOutcome::Invalidated,
+            Ok(value) => {
+                match serde_json::from_value::<crate::tools::roots::RootGrantResponse>(value) {
+                    Ok(value)
+                        if value.root_grant == crate::tools::roots::RootGrantChoice::Approved =>
+                    {
+                        ApprovalOutcome::Approved
+                    }
+                    Ok(_) => ApprovalOutcome::Denied,
+                    Err(_) => ApprovalOutcome::Invalidated,
+                }
+            }
+            Err(_) => ApprovalOutcome::Unavailable,
+        }
+    }
+
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
         match self
             .request(

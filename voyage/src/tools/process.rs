@@ -426,6 +426,9 @@ impl ProcessTool {
                 )));
             }
         }
+        if ctx.policy.has_root_overlay() {
+            return Err(ToolError::Denied("persistent PTYs cannot receive current-run root grants; use the bounded shell tool instead".into()));
+        }
         check_size(rows, cols)?;
         let pair = native_pty_system()
             .openpty(PtySize {

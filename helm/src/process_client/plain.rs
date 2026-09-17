@@ -165,7 +165,10 @@ async fn command(
                 serde_json::json!({"status":"custom","answer":answer})
             } else {
                 ensure!(
-                    decision["request"]["kind"] == "approval",
+                    matches!(
+                        decision["request"]["kind"].as_str(),
+                        Some("approval" | "root_grant")
+                    ),
                     "not an approval decision"
                 );
                 serde_json::json!(if name == "/approve" {
@@ -173,6 +176,11 @@ async fn command(
                 } else {
                     "denied"
                 })
+            };
+            let response = if decision["request"]["kind"] == "root_grant" {
+                serde_json::json!({"root_grant": response})
+            } else {
+                response
             };
             VoyageCommand::Respond {
                 command_id,
