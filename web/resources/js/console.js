@@ -1,3 +1,4 @@
+import {renderRootGrant} from './root-grant.js';
 import {sidebarActions} from './sidebar-actions.js';
 import {conversationScroll} from './conversation-scroll.js';
 import {ConversationStream, renderPreviews} from './conversation-stream.js';
@@ -420,7 +421,9 @@ export function mount(root) {
         for (const decision of decisions) {
             if (decision.expires_at_ms <= Date.now() || decision.incarnation !== incarnation || decision.run_id !== snapshot?.run?.run_id) continue;
             const card = fluxTemplate('flux-decision'); card.dataset.expires = decision.expires_at_ms; const heading = card.querySelector('[data-decision-heading]'), content = card.querySelector('[data-decision-text]'), actions = card.querySelector('[data-decision-actions]'); const value = decision.request;
-            if (value?.kind === 'approval') {
+            if (renderRootGrant(value, {heading, content, actions, button, host: selectedVessel, respond: answer => act('respond', decision, answer)})) {
+                // Dedicated typed consent; existing act() fences identity, expiry and receipts.
+            } else if (value?.kind === 'approval') {
                 heading.textContent = 'Approval requested'; content.textContent = clean(JSON.stringify(value.approval,null,2));
                 actions.append(button('Approve',() => act('respond',decision,'approved')),button('Deny',() => act('respond',decision,'denied')));
             } else if (value?.kind === 'question') {

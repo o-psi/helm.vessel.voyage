@@ -56,7 +56,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
                 if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
-                else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
+                else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='root_grant'?{kind:'root_grant',root_grant:{path:'/fixture/config',permission:'write',lifetime:'current_run',reason:'Configure Boost'}}:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
                 else if(command.op==='receipt'){value={command_id:command.command_id,status:uncertain && receiptKnown?'accepted':'unknown'};}
                 else if(['submit','steer','respond','cancel'].includes(command.op)){
                     if(dropNext){dropNext=false;uncertain=true;this.close();return;}
@@ -150,6 +150,11 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve').click();
         await until(()=>requests.some(c=>c.op==='respond'&&c.response==='approved')&&!$('#send').disabled);
         const approval=requests.find(c=>c.op==='respond');assert.equal(approval.incarnation,incarnation);assert.equal(approval.run_id,run);assert.equal(approval.expected_revision,3);
+        decisionKind='root_grant';observe();await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Grant access for this run'));
+        assert.match($('#decisions').textContent,/Current run only/);
+        assert.match($('#decisions').textContent,/Read and write/);
+        [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Grant access for this run').click();
+        await until(()=>requests.some(c=>c.op==='respond'&&c.response?.root_grant==='approved')&&!$('#send').disabled);
         decisionKind='question';observe();await until(()=>[...$('#decisions').querySelectorAll('button')].some(b=>b.textContent.trim()==='Second'));
         [...$('#decisions').querySelectorAll('button')].find(b=>b.textContent.trim()==='Second').click();
         await until(()=>requests.some(c=>c.response?.status==='selected')&&!$('#send').disabled);
