@@ -76,5 +76,8 @@
         "name": "flux",
         "type": "composer",
         "url": "https://composer.fluxui.dev"
-    }]
+    }],
+    "require-dev": {
+        "laravel/boost": "^2.9"
+    }
 }

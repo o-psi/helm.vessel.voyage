@@ -1,0 +1,10 @@
+# Merge this section into the executing host's Helm configuration.
+# Relative paths assume the voyage workspace is the repository root.
+# For other workspaces, use an absolute path to web/artisan.
+[mcp_servers.laravel-boost]
+command = "php"
+args = ["web/artisan", "boost:mcp"]
+
+[mcp_servers.laravel-boost.env]
+APP_ENV = "local"
+LOG_CHANNEL = "stderr"

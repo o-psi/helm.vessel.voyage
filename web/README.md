@@ -164,3 +164,41 @@ connection; admitted voyages continue and the underlying Vessel grant is retaine
 The legacy `/connections` URL redirects to `/?manage-vessels=1`. Form submissions
 reload the console and reopen management with their result or validation errors;
 invitation and credential fields are never repopulated.
+
+## Laravel Boost (local AI development)
+
+[Laravel Boost](https://laravel.com/docs/boost) is a development-only Composer
+dependency (`laravel/boost`); install with `composer install` from `web/`.
+The committed `boost.json`, `AGENTS.md`, and `.agents/skills/` contain the generated
+Laravel/Livewire/Flux guidance. They do not replace the root repository instructions.
+The Codex generator is used for its portable AGENTS.md and skill format; it does
+not imply that Helm uses Codex or that a client connection has been activated.
+
+To refresh the generated guidance and skills from `web/`:
+
+```sh
+APP_ENV=local LOG_CHANNEL=stderr php artisan boost:update --no-interaction
+```
+
+For Helm, merge [helm-boost.toml](helm-boost.toml) into the **executing host's**
+Helm configuration (normally `~/.config/helm/config.toml`), retaining existing
+settings. Its relative `web/artisan` path assumes a repository-root workspace;
+use the absolute path to `web/artisan` for other workspaces. Start a new voyage
+and check `/tools` for the discovered Boost tools. Helm does not automatically
+load this snippet or Codex's `.codex/config.toml`. Existing voyages do not gain
+new MCP tools in place. See [MCP configuration](../docs/configuration.md#mcp-tools-and-artifacts).
+
+For other MCP clients, configure a stdio server launching `php` with arguments
+`["/absolute/path/to/web/artisan", "boost:mcp"]` and environment variables
+`APP_ENV=local` and `LOG_CHANNEL=stderr`. These overrides apply only to the
+Boost process: the checkout's existing environment may disable development
+commands, and its configured log directory may not be writable locally.
+Do not change production environment/debug settings to enable Boost.
+
+Boost can inspect application data and logs and exposes database tools; only
+connect trusted local development agents, with an appropriate local database
+configuration. Enabling the local environment does not replace credentials or
+isolate the database. No database query is needed for the initialization/tools
+listing smoke check. Do not expose this server publicly. Production deployments
+should continue using `composer install --no-dev`; no automatic `boost:update`
+Composer hook is installed, so production updates do not depend on a dev package.
