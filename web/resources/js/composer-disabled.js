@@ -1,8 +1,7 @@
-// Flux owns action-button disabled attributes while the composer is disabled.
-// Repeating a disabled mutation makes Flux replace its release callbacks with an
-// empty set, permanently retaining those attributes. Only write transitions.
+// The console owns each action's availability independently. Do not disable the
+// Flux composer host: its durable action attributes race with those controls.
+// Read-only keeps the task selectable and leaves location/settings independent.
 export function setComposerDisabled(composer, disabled) {
-    if (composer.hasAttribute('disabled') !== Boolean(disabled)) {
-        composer.toggleAttribute('disabled', Boolean(disabled));
-    }
+    const input = composer.querySelector('textarea');
+    if (input) input.readOnly = Boolean(disabled);
 }

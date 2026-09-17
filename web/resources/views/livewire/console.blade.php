@@ -32,7 +32,8 @@
             </div>
             <section id="decisions" class="max-h-[32dvh] space-y-3 overflow-y-auto px-4" aria-label="Pending decisions"></section>
             <form id="composer" class="mx-auto w-full max-w-3xl px-3 pb-2 pt-2 sm:px-4 sm:pb-4">
-                <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="2" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm" disabled>
+                <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="2" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm">
+                    <x-slot name="input"><flux:textarea rows="2" readonly class="border-0! bg-transparent! shadow-none! resize-none" /></x-slot>
                     <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
                         <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
 

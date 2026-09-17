@@ -109,6 +109,7 @@ export function mount(root) {
             const enabled = actionable();
             const newChatSettings = !selected && client && !busy && !newChatSending;
             const reviewed = !selected ? settings?.configuration() : null;
+            $('attach-picture').disabled = busy || newChatSending || !selectedVessel;
             $('reconnect').disabled = busy; setComposerDisabled($('prompt'), busy || newChatSending || !selectedVessel); $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
             $('send').setAttribute('aria-label', running() ? 'Steer run' : 'Send');
