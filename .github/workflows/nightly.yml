@@ -1,0 +1,92 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly-linux
+  cancel-in-progress: false
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Identify source
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Skip source already built successfully
+        id: changed
+        uses: actions/github-script@v7
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        with:
+          script: |
+            // Compare actual checkout identity via artifact name, not the run's
+            // event SHA: scheduled/manual events can predate checkout of main.
+            const prefix = `nightly-${process.env.SOURCE_SHA}-`;
+            let built = false;
+            for await (const page of github.paginate.iterator(
+              github.rest.actions.listWorkflowRuns,
+              {...context.repo, workflow_id: 'nightly.yml', status: 'success', per_page: 100}
+            )) {
+              for (const run of page.data) {
+                const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts,
+                  {...context.repo, run_id: run.id, per_page: 100});
+                if (artifacts.some(a => !a.expired && a.name.startsWith(prefix))) {
+                  built = true;
+                  break;
+                }
+              }
+              if (built) break;
+            }
+            core.setOutput('build', String(!built));
+            core.summary.addRaw(built ? 'Skipped: this source already has a successful downloadable nightly.' : 'Building a development artifact; no tests or release publication.');
+            await core.summary.write();
+      - name: Set unique development version
+        if: steps.changed.outputs.build == 'true'
+        id: version
+        run: python3 packaging/prepare_nightly.py
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.changed.outputs.build == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.changed.outputs.build == 'true'
+      - name: Build Linux binaries (no tests)
+        if: steps.changed.outputs.build == 'true'
+        run: cargo build --workspace --release --locked
+      - name: Archive binaries and source identity
+        if: steps.changed.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="voyage-${VERSION}-x86_64-unknown-linux-gnu"
+          mkdir -p "dist/$name/bin"
+          for binary in helm vessel voyage voyage-installer; do
+            install -m 755 "target/release/$binary" "dist/$name/bin/$binary"
+          done
+          printf 'Development build: %s\nSource: %s\nLinux x86-64 only. No tests run. Not a stable release.\n' \
+            "$VERSION" "$SOURCE_SHA" > "dist/$name/BUILD.txt"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+      - uses: actions/upload-artifact@v4
+        if: steps.changed.outputs.build == 'true'
+        with:
+          name: nightly-${{ steps.source.outputs.sha }}-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30
