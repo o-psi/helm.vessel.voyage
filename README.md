@@ -1,46 +1,63 @@
 # Voyage
 
-**Linux x86-64 binaries:** [v1.0.1 release and installation](docs/releases-v1.0.1.md).
-Other platforms are not included in this binary release.
+AI help for work in your terminal. Ask questions about a project, edit files,
+investigate problems, or automate a task—in a conversation you can return to later.
 
+You interact through **Helm**, Voyage's terminal app. Work can keep running when
+you close Helm, so you can disconnect and come back without starting over.
 
-Use AI assistance for work in a folder, keep the conversation, and return to it
-later. **Helm** is the terminal interface you use; a **Vessel** supervises work on
-a machine; each **voyage** is an independent process with its own conversation.
-Leaving Helm does not cancel that work.
+## Get started
 
-## Start here
+### 1. Install
 
-**[Getting started: install → sign in → first task → return](docs/getting-started.md)**
+**Linux x86-64 only for now.** You'll need curl, Python 3.11+, glibc 2.39+ and
+a systemd user session. [Requirements and other installation options →](installer/README.md#download-a-published-version)
 
-The guide follows one local Linux path, explains which account pays for requests,
-and keeps credentials out of chat. You do not need to configure a remote machine,
-learn process IDs, or edit a TOML file to understand the first task.
+Run as your normal user, without `sudo`:
 
-For prebuilt Linux x86-64 installation, see the
-[bootstrap quick start](docs/getting-started.md#1-install-on-linux): no arguments
-selects `install --start`. It requires glibc 2.39+, curl, Python 3.11+ and a reachable
-systemd user manager. The guide also retains the source-build and reviewed wizard
-paths. Named-account setup is implemented,
-but successful sign-in is not proof of model access, available credit, or a passing
-live-provider test. ChatGPT subscription access is experimental; it is not API
-credit. Native macOS/Windows install and credential-security verification have
-separate limitations.
+```sh
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  https://raw.githubusercontent.com/o-psi/voyage/main/install.sh -o install.sh
+sh install.sh
+```
 
-## Pick another path
+This installs the latest release and starts its background service. Prefer to
+review first? Run `sh install.sh install --dry-run` before installing.
 
-- Already installed? [Start Helm](docs/getting-started.md#2-launch-helm).
-- Have an API key or an old login? [Accounts and authentication](docs/provider-accounts.md).
-- Need a specific model, endpoint, or policy? [Configuration](docs/configuration.md).
-- Work on another machine? [Connect a Vessel](docs/vessel-connections.md).
-- Administer installation or services? [Installer guide](installer/README.md).
-- Build or contribute? [Development](docs/development.md) and [quality](docs/quality.md).
-- Learn the system? [Documentation index](docs/README.md),
-  [current behavior](docs/current-state.md), and [architecture](docs/architecture.md).
+### 2. Open a folder
 
-Ordinary Helm chat, run, and managed sessions reach independent `voyage` processes
-through Vessel. Switching views changes the input target, not which voyages run.
-The [runtime contract](docs/runtime-contract.md) describes ownership and recovery;
-[security](docs/security.md) explains the limits of application policy. Source and
-focused verification establish only the behaviors actually checked, not universal
-platform or provider readiness.
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+cd /path/to/your/project
+helm --access read-only
+```
+
+Replace `/path/to/your/project` with a folder you'd like help with. Read-only mode
+is a good place to start: Helm can inspect files without changing them. Choose a
+folder without secrets; relevant content may be sent to your AI provider.
+
+### 3. Connect your AI account
+
+Open **Account** below the message box, or type `/account`. Add an account, choose
+its model, and follow the prompts to make it your default.
+
+Bring your own provider access; Voyage doesn't include AI credit. You can use an
+API account or the experimental ChatGPT subscription sign-in.
+[Account setup and billing options →](docs/provider-accounts.md)
+
+### 4. Try a task
+
+> What is in this folder? Summarize the main files and suggest where I should start.
+
+Press **Enter** to send and **F1** whenever you need help. Ready to make changes or
+come back to a conversation? Follow the [first-task walkthrough](docs/getting-started.md).
+
+## Learn more
+
+- [Getting started](docs/getting-started.md) — a guided first task, from sign-in to returning later.
+- [Accounts and models](docs/provider-accounts.md) — connect a provider or troubleshoot access.
+- [Install and upgrade](installer/README.md) — installation options, updates and rollback.
+- [Work on another machine](docs/vessel-connections.md) — connect Helm to a remote Vessel.
+- [Configuration](docs/configuration.md) — customize models, permissions and settings.
+- [Build and contribute](docs/development.md) — work on Voyage itself.
+- [All documentation](docs/README.md) — including security and how Voyage works.
