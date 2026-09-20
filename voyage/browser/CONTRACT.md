@@ -144,3 +144,19 @@ clears them during privacy reset. Public IPv6 classification excludes IANA
 2001::/23 protocol assignments and 2001:db8::/32 documentation space rather than
 the entire 2001::/16. Mixed public/private DNS answers remain refused. See the
 [IANA special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry).
+
+IPv4 special-use checks restrict protocol-assignment and documentation space to
+`192.0.0.0/24` and `192.0.2.0/24`, allowing public destinations such as IANA at
+`192.0.43.8`. Both halves of benchmark range `198.18.0.0/15` remain denied. See
+[IANA's IPv4 registry](https://www.iana.org/assignments/iana-ipv4-special-registry/).
+
+Inspection marks controls obscured at their interaction point. Click/fill checks
+that point before dispatch and returns a recoverable `element_obscured` refusal
+when another element intercepts it. Dismissing overlays or scrolling is a separate
+authorized interaction. Screenshots try bounded JPEG qualities to fit the current
+Voyage output budget; they never increase that budget, and ingestion still refuses
+images too large even at the lowest quality.
+
+The encoder marks webpage content as detailed video and prefers preserving
+resolution over frame rate under bandwidth pressure. Pointer mapping still uses
+the authoritative CSS viewport and remains correct if a receiver adapts frames.

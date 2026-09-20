@@ -4,13 +4,17 @@ const fingerprint = binding => JSON.stringify(binding);
 const mediaFence = status => JSON.stringify([status?.binding?.incarnation,status?.binding?.browser_id,status?.binding?.attachment_id,status?.binding?.capture_epoch,status?.binding?.controller_epoch,status?.mode,status?.controller]);
 const bytes = value => new TextEncoder().encode(value).length;
 
-export function videoPoint(video, clientX, clientY) {
+export function videoPoint(video, clientX, clientY, viewport = null) {
     const rect = video.getBoundingClientRect(), width = video.videoWidth, height = video.videoHeight;
     if (!width || !height || !rect.width || !rect.height) return null;
     const scale = Math.min(rect.width / width, rect.height / height);
     const x = (clientX - rect.left - (rect.width - width * scale) / 2) / scale;
     const y = (clientY - rect.top - (rect.height - height * scale) / 2) / scale;
-    return x < 0 || y < 0 || x >= width || y >= height ? null : {x:Math.floor(x), y:Math.floor(y)};
+    if (x < 0 || y < 0 || x >= width || y >= height) return null;
+    // WebRTC may downscale its encoded frames. Input is in the executing
+    // browser's CSS viewport, not the receiver's changing video resolution.
+    const target = Number.isSafeInteger(viewport?.width) && Number.isSafeInteger(viewport?.height) && viewport.width >= 320 && viewport.width <= 3840 && viewport.height >= 240 && viewport.height <= 2160 ? viewport : {width,height};
+    return {x:Math.min(target.width-1,Math.floor(x / width * target.width)),y:Math.min(target.height-1,Math.floor(y / height * target.height))};
 }
 
 // All state is attachment-local and memory-only. Transport errors are deliberately
@@ -332,7 +336,7 @@ export function mountBrowserViewer(root, options = {}) {
     capture = mountCapture({root,video,canCapture:()=>session.streaming&&!session.closed,onCapture:options.onCapture});
     const pointer = (event, pressed, moving = false) => {
         if (!session.controls) return;
-        const point = videoPoint(video,event.clientX,event.clientY); if (!point) return;
+        const point = videoPoint(video,event.clientX,event.clientY,session.status?.viewport); if (!point) return;
         event.preventDefault();
         if (!moving && pressed) { video.focus(); video.setPointerCapture?.(event.pointerId); }
         session.input({type:'pointer',...point,button:moving ? null : ['left','middle','right'][event.button] || null,pressed});
@@ -341,7 +345,7 @@ export function mountBrowserViewer(root, options = {}) {
     let moveTimer;
     video.onpointermove = event => { if (moveTimer) return; moveTimer = setTimeout(() => { moveTimer = null; },40); pointer(event,false,true); };
     video.oncontextmenu = event => event.preventDefault();
-    video.addEventListener('wheel',event => { if (!session.controls) return; event.preventDefault(); const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? video.videoHeight : 1; const clamp = value => Math.max(-16384,Math.min(16384,Math.round(value * factor))); session.input({type:'scroll',delta_x:clamp(event.deltaX),delta_y:clamp(event.deltaY)}); },{passive:false});
+    video.addEventListener('wheel',event => { if (!session.controls) return; event.preventDefault(); const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? (session.status?.viewport?.height || video.videoHeight) : 1; const clamp = value => Math.max(-16384,Math.min(16384,Math.round(value * factor))); session.input({type:'scroll',delta_x:clamp(event.deltaX),delta_y:clamp(event.deltaY)}); },{passive:false});
     const key = (event, pressed) => {
         if (event.key === 'Escape') { event.preventDefault(); primary.focus(); return; }
         if (!session.controls || event.isComposing || event.key === 'Process' || event.key === 'Dead') return;

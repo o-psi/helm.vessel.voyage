@@ -124,3 +124,10 @@ Status display metadata (`page`, `tab_details`, `dialog`) is bounded text and is
 withheld from noncontroller viewers in private mode. Agent activity contains only
 a known action kind and recent coordinates, never typed text. Stop/dialog/status
 have interruption paths so controls do not queue behind the action they must stop.
+
+Viewer status includes the executing browser's CSS `viewport` (`width`, `height`)
+for observers allowed to view the page. Human pointer coordinates use this
+viewport after removing letterboxing; encoded WebRTC dimensions can change with
+network adaptation and are never the input coordinate space. Viewport epochs
+continue fencing input after resize. Private viewers other than the controller
+receive no viewport metadata.

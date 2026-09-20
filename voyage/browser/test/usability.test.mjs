@@ -34,7 +34,7 @@ test('two isolated workers: upload/download, key, viewport, tabs, proxied WebSoc
  const download=await ca('agent',{action:{kind:'download',download_id:[...a.downloads.keys()][0]}});assert.equal(Buffer.from(download.data_base64,'base64').toString(),'download sentinel');
  const viewer=randomUUID();await ca('join',{viewer});await ca('control',{viewer,mode:'human'});await a.page.locator('input[aria-label=text]').focus();
  for(const [seq,action]of [[1,{kind:'key',type:'down',key:'a'}],[2,{kind:'key',type:'up',key:'a'}],[3,{kind:'resize',width:800,height:600}]])await ca('input',{viewer,seq,action});
- assert.equal(await a.page.locator('input[aria-label=text]').inputValue(),'a');assert.deepEqual(a.page.viewportSize(),{width:800,height:600});assert.deepEqual(b.page.viewportSize(),{width:640,height:480});
+ assert.equal(await a.page.locator('input[aria-label=text]').inputValue(),'a');assert.deepEqual(a.page.viewportSize(),{width:800,height:600});assert.deepEqual(b.page.viewportSize(),{width:640,height:480});assert.deepEqual(a.status().viewport,{width:800,height:600});assert.deepEqual(b.status().viewport,{width:640,height:480});
  await ca('control',{viewer,mode:'agent'});
  assert.equal((await a.request({id:randomUUID(),op:'agent',...a.status(),action:{kind:'tabs',operation:'close',tab:a.active}})).error.code,'last_tab');
  await ca('agent',{action:{kind:'tabs',operation:'new'}});assert.deepEqual(a.page.viewportSize(),{width:800,height:600});await ca('agent',{action:{kind:'tabs',operation:'close',tab:a.active}});assert.equal(a.tabs.size,1);assert.equal(a.page.isClosed(),false);
@@ -81,4 +81,12 @@ test('inspection labels visible controls and pre-effect refusal keeps browser us
  await w.page.locator('#q').evaluate(e=>e.hidden=false);found=await call('agent',{action:{kind:'inspect'}});
  await call('agent',{action:{kind:'fill',ref:found.elements.find(e=>e.type==='search').ref,text:'Recovered'}});
  assert.equal(await w.page.locator('#q').inputValue(),'Recovered');
+ await w.page.setContent('<button id="target" style="position:absolute;left:10px;top:10px;width:120px;height:60px" onclick="this.textContent=\'Clicked\'">Submit search</button><button id="cover" style="position:absolute;left:10px;top:10px;width:120px;height:60px" onclick="this.remove()">Dismiss banner</button>');
+ found=await call('agent',{action:{kind:'inspect'}});const covered=found.elements.find(e=>e.text==='Submit search');assert.equal(covered.obscured,true);assert.equal(found.elements.find(e=>e.text==='Dismiss banner').obscured,false);
+ const blockedId=randomUUID();const blocked=await w.request({id:blockedId,op:'agent',...w.status(),action:{kind:'click',ref:covered.ref}});assert.deepEqual(blocked.error,{code:'element_obscured',state:'refused'});assert.equal(w.journal.records.get(blockedId).state,'refused');assert.equal(await w.page.locator('#cover').count(),1);
+ await call('agent',{action:{kind:'click',ref:found.elements.find(e=>e.text==='Dismiss banner').ref}});found=await call('agent',{action:{kind:'inspect'}});assert.equal(found.elements[0].obscured,false);await call('agent',{action:{kind:'click',ref:found.elements[0].ref}});assert.equal(await w.page.locator('#target').innerText(),'Clicked');
+ await w.page.setContent('<div style="font:16px sans-serif">'+('Browser evidence must fit the output budget. '.repeat(200))+'</div>');
+ const full=await call('agent',{action:{kind:'screenshot'}});const fullBytes=Buffer.from(full.data_base64,'base64').length;
+ const compact=await call('agent',{action:{kind:'screenshot',max_bytes:Math.floor(fullBytes*.9)}});assert.ok(Buffer.from(compact.data_base64,'base64').length<fullBytes*.9);
+
 });

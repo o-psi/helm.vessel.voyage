@@ -264,3 +264,20 @@ frames; all four crash scenarios observed descendant cleanup. Web checks passed
 supervised Linux journey passed both mounted/native viewers, private control,
 suspended native/Web owner preparation, reconnect and observed cleanup. These are
 local checks; the deployed public-site acceptance record is maintained in #333.
+
+The deployed public-site retest exposed two additional interaction problems:
+Wikipedia's overlay could intercept a referenced control, and adaptive WebRTC
+downscaling could misplace human clicks. Inspection now marks obscured controls
+and refuses their click/fill before dispatch; the shared viewer maps decoded
+video coordinates to the separately reported browser CSS viewport. Screenshot
+JPEG quality adapts within the existing Voyage output budget. IPv4 special-use
+classification also preserves the exact protocol/documentation ranges while
+allowing IANA's public IPv4 address.
+
+Final local verification after those interaction corrections: 1,737 Rust tests
+passed, two ignored; coverage is 75.3767% lines, 72.1505% functions and 72.0049%
+regions (about 0.05 percentage points below the preceding measurement, with the
+same exclusions). The complete Web suite and 18 worker checks passed (one TURN
+check unavailable). The supervised native/Web journey again passed with decoded
+media, private input, suspension/resume and observed cleanup. Actual public-site
+results and installed build identity remain in issue #333's acceptance record.

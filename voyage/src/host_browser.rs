@@ -39,6 +39,7 @@ fn worker_reply(reply: Value) -> Result<Value> {
             Some("element_hidden") => Some("element_hidden"),
             Some("element_disabled") => Some("element_disabled"),
             Some("element_not_editable") => Some("element_not_editable"),
+            Some("element_obscured") => Some("element_obscured"),
             _ => None,
         };
         if let Some(code) = code {
@@ -713,7 +714,7 @@ impl HostBrowser {
             .as_str()
             .is_some_and(|id| id == attachment.to_string());
         let disclose = !private || (controller && i.viewers.contains_key(&attachment));
-        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
+        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"viewport":if disclose {i.status["viewport"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
     }
     // No payloads, URLs, SDP, private input or observations enter durable receipts.
     fn receipt(
@@ -1307,6 +1308,7 @@ mod tests {
             "element_hidden",
             "element_disabled",
             "element_not_editable",
+            "element_obscured",
         ] {
             let error = worker_reply(json!({"ok":false,"error":{"state":"refused","code":code}}))
                 .unwrap_err();

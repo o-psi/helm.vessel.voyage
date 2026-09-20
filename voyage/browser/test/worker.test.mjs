@@ -10,7 +10,7 @@ import {Worker} from '../worker.mjs';
 import {publicAddress} from '../security.mjs';
 const executable=process.env.CHROMIUM||'/usr/bin/chromium';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-test('address classification',()=>{for(const ip of ['127.0.0.1','::1','::ffff:127.0.0.1','10.1.2.3','169.254.169.254','100.64.0.1','192.168.1.1','2001::1','2001:01ff::1','2001:0db8::1','2002:0808:0808::1','3fff::1'])assert.equal(publicAddress(ip),false);for(const ip of ['8.8.8.8','2001:500:88:200::8','2001:0200::1','2606:4700:4700::1111'])assert.equal(publicAddress(ip),true);});
+test('address classification',()=>{for(const ip of ['127.0.0.1','::1','::ffff:127.0.0.1','10.1.2.3','169.254.169.254','100.64.0.1','192.168.1.1','192.0.0.1','192.0.2.1','192.88.99.1','198.18.0.1','198.19.255.254','198.51.100.1','203.0.113.1','2001::1','2001:01ff::1','2001:0db8::1','2002:0808:0808::1','3fff::1'])assert.equal(publicAddress(ip),false);for(const ip of ['8.8.8.8','192.0.43.8','192.0.3.1','192.0.255.254','2001:500:88:200::8','2001:0200::1','2606:4700:4700::1111'])assert.equal(publicAddress(ip),true);});
 test('sandboxed worker, decoded media, interruption, fences and receipts',{timeout:90000},async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker333-'));const w=new Worker();let receiver;
  const sockets=new Set();const server=http.createServer((req,res)=>{if(req.url==='/blocked')return;res.setHeader('Content-Type','text/html');res.end(`<body style="background:#159;color:white"><h1>Synthetic worker</h1><input aria-label="entry"><button onclick="document.querySelector('h1').textContent='clicked'">Click</button><button onclick="alert('synthetic dialog')">Dialog</button><canvas width="320" height="160"></canvas></body>`);});

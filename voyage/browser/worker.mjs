@@ -9,6 +9,7 @@ import { encoderRuntime, LatestFrameQueue } from './encoder.mjs';
 
 class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
+const exposed = e => {const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return !!hit&&(hit===e||e.contains(hit));};
 
 const MAX_TEXT=16384, MAX_BYTES=2*1024*1024;
 const text=(v,max=MAX_TEXT)=>{if(typeof v!=='string'||Buffer.byteLength(v)>max)refuse('invalid_text');return v;};
@@ -22,7 +23,7 @@ export class Worker {
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.downloads=new Map();
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;
   }
-  status(){return {agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
+  status(){return {viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){const epochs={...req.epochs};if(['join','offer','answer','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();}
   advance(...keys){for(const k of keys)this.epochs[k]++;this.invalidate();}
@@ -231,7 +232,7 @@ export class Worker {
             const label=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
             return {tag:e.tagName.toLowerCase(),type:e.getAttribute('type')||null,
               text:(e.getAttribute('aria-label')||label||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||'').slice(0,256),
-              disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true};
+              disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true,obscured:!((hit=>hit&&(hit===e||e.contains(hit)))(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)))};
           });guard();
           if(!info){await h.dispose();continue;}const ref=randomUUID();this.refs.set(ref,h);elements.push({ref,...info});
         }
@@ -241,6 +242,7 @@ export class Worker {
         const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
         if(!await h.isEnabled())beforeEffect('element_disabled');guard();
         if(a.kind==='fill'&&!await h.isEditable())beforeEffect('element_not_editable');guard();
+        if(!await h.evaluate(exposed))beforeEffect('element_obscured');guard();
         if(a.kind==='fill')text(a.text);
         this.agentCursor={x:box.x+box.width/2,y:box.y+box.height/2,width:this.config.width,height:this.config.height,at:Date.now()};
         await page.mouse.click(box.x+box.width/2,box.y+box.height/2,{timeout:3000});
@@ -249,7 +251,11 @@ export class Worker {
         if(a.kind==='fill'){await page.keyboard.press('ControlOrMeta+A');guard();await page.keyboard.insertText(a.text);}return null;
       }
       case 'scroll':await page.mouse.wheel(number(a.x,-16384,16384),number(a.y,-16384,16384));return null;
-      case 'screenshot':return {mime_type:'image/jpeg',data_base64:(await page.screenshot({type:'jpeg',quality:80,timeout:5000})).toString('base64')};
+      case 'screenshot':{
+        const limit=a.max_bytes===undefined?MAX_BYTES:number(a.max_bytes,0,MAX_BYTES);let bytes;
+        for(const quality of [80,60,40,20]){bytes=await page.screenshot({type:'jpeg',quality,timeout:3000});guard();if(bytes.length<=limit)break;}
+        return {mime_type:'image/jpeg',data_base64:bytes.toString('base64')};
+      }
       case 'tabs':return this.tabAction(a,stamp);
       case 'upload':{
         const h=await this.ref(a.ref);guard();const name=text(a.name,255);if(!name||name!==path.basename(name)||name.includes('\\'))refuse('invalid_filename');const mimeType=text(a.mime_type,128);const raw=text(a.data_base64,Math.ceil(MAX_BYTES/3)*4);if(!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw))refuse('invalid_base64');const buffer=Buffer.from(raw,'base64');if(buffer.length>MAX_BYTES)refuse('upload_limit');await h.setInputFiles({name,mimeType,buffer},{timeout:3000});return null;

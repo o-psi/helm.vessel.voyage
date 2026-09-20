@@ -76,6 +76,10 @@ test('video source coordinates account for letterboxing and reject outside point
     const video={videoWidth:1280,videoHeight:720,getBoundingClientRect:()=>({left:10,top:20,width:640,height:640})};
     assert.equal(videoPoint(video,12,22),null);
     assert.deepEqual(videoPoint(video,330,340),{x:640,y:360});
+    video.videoWidth=320;video.videoHeight=180;
+    assert.deepEqual(videoPoint(video,330,340,{width:1280,height:720}),{x:640,y:360});
+    assert.deepEqual(videoPoint(video,649,519,{width:1280,height:720}),{x:1278,y:718});
+    assert.equal(videoPoint(video,12,22,{width:1280,height:720}),null);
 });
 test('web adapter is available without creating another transport',()=>{assert.equal(typeof mountHostBrowser,'function');});
 

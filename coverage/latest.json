@@ -1,8 +1,8 @@
 {
-  "measured_at_utc": "2026-09-20T18:34:39.870316+00:00",
-  "source_commit": "a92599509a12051b2ff9881270d41252aa78158b",
+  "measured_at_utc": "2026-09-20T19:09:14.108166+00:00",
+  "source_commit": "a5faf3598cd8b2b0200ba8879bfc0d5dcd491deb",
   "dirty": true,
-  "source_fingerprint_sha256": "7dd0c57d0b8018584d9417117df80b589c320f8123d22c0a7d5bd5cc72d30a49",
+  "source_fingerprint_sha256": "3659f2d04a4f650d25cf11e359674ac282f5280e25c741dc9d667c0b6e64a24c",
   "source_fingerprint_method": "SHA-256 over sorted workspace Rust paths (excluding target/node_modules/.git) and all Cargo manifests/lock: relative path + NUL + bytes",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10151,
-      "covered": 7329,
-      "percent": 72.19978327258399
+      "covered": 7324,
+      "percent": 72.15052704167077
     },
     "instantiations": {
-      "count": 23053,
-      "covered": 9264,
-      "percent": 40.18565913330152
+      "count": 23037,
+      "covered": 9254,
+      "percent": 40.170161045274995
     },
     "lines": {
-      "count": 105329,
-      "covered": 79446,
-      "percent": 75.42652071129508
+      "count": 105331,
+      "covered": 79395,
+      "percent": 75.37666973635491
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 172647,
-      "covered": 124405,
-      "notcovered": 48242,
-      "percent": 72.0574351132658
+      "count": 172655,
+      "covered": 124320,
+      "notcovered": 48335,
+      "percent": 72.00486519359416
     }
   },
-  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser-live-fix -j 8 -- --test-threads=1",
+  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser-live-fix/final -j 8 -- --test-threads=1",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -87,7 +87,7 @@
     "-object",
     "$TARGET/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^/home/psi/voyage/\\.worktrees/browser\\-live\\-fix(/.*)?/(tests|examples|benches)/|^/home/psi/voyage/\\.worktrees/browser\\-live\\-fix(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$TARGET/",
+    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$TARGET/",
     "-summary-only"
   ],
   "exclusions": [
@@ -99,9 +99,9 @@
     "Historical shared-target objects outside current Cargo executable set"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests passed with umask 077 and serial tests; initial parallel run failed existing private-directory permission checks and is preserved in ignored target evidence.",
-    "All 16 current Cargo test/binary executables included. Mixed shared-target report retained; corrected export has zero diagnostics.",
+    "Full workspace default-feature Rust tests passed with umask 077 and serial tests after final browser interaction edits. Earlier superseded/parallel attempts are retained separately; no pass claimed for them.",
+    "All 16 current Cargo test/binary executables included; every reported file belongs to this workspace. Mixed shared-target report retained; corrected export has zero diagnostics. Protocol source timestamp refreshed when switching from a coordinated peer worktree to invalidate stale shared artifacts.",
     "Linux only. Browser JavaScript, process journeys and live-provider acceptance are separate from this measurement.",
-    "Compared with prior: lines +1.0007pp, functions +1.1542pp, regions +0.9680pp. No scope exclusions narrowed."
+    "Compared with prior: lines -0.0499pp, functions -0.0493pp, regions -0.0526pp. No scope exclusions narrowed."
   ]
 }

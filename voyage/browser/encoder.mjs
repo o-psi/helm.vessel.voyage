@@ -4,6 +4,7 @@ export function encoderRuntime() {
   const canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;
   document.body.replaceChildren(canvas);const context=canvas.getContext('2d');
   const stream=canvas.captureStream(0),track=stream.getVideoTracks()[0],peers=new Map();
+  track.contentHint='detail';
   let epoch=0,hasFrame=false;
   // A static page may finish painting before ICE connects. Keep its current
   // pixels available to newly connected receivers without recapturing the page.
@@ -20,7 +21,7 @@ export function encoderRuntime() {
     async reset(generation){epoch=generation;hasFrame=false;for(const p of peers.values())p.close();peers.clear();context.clearRect(0,0,canvas.width,canvas.height);track.requestFrame();},
     async offer({viewer,iceServers,relayOnly}){
       peers.get(viewer)?.close();const pc=new RTCPeerConnection({iceServers,iceTransportPolicy:relayOnly?'relay':'all',bundlePolicy:'max-bundle'});peers.set(viewer,pc);pc.onconnectionstatechange=present;
-      const sender=pc.addTrack(track,stream);const params=sender.getParameters();params.encodings=[{maxBitrate:2000000,maxFramerate:30}];await sender.setParameters(params);
+      const sender=pc.addTrack(track,stream);const params=sender.getParameters();params.encodings=[{maxBitrate:2000000,maxFramerate:30}];params.degradationPreference='maintain-resolution';await sender.setParameters(params);
       const transceiver=pc.getTransceivers()[0];const codecs=RTCRtpSender.getCapabilities('video').codecs.filter(c=>c.mimeType==='video/VP8'||c.mimeType==='video/rtx');transceiver.setCodecPreferences(codecs);
       await pc.setLocalDescription(await pc.createOffer());
       await new Promise((resolve,reject)=>{if(pc.iceGatheringState==='complete')return resolve();const timer=setTimeout(()=>{pc.close();peers.delete(viewer);reject(Error('ice_timeout'));},8000);pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete'){clearTimeout(timer);resolve();}};});
