@@ -30,7 +30,7 @@ test('stdio JSON only, malformed input bounded, clean shutdown',{timeout:15000},
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'stdio333-'));const child=spawn(process.execPath,['worker.mjs'],{cwd:new URL('..',import.meta.url),stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',c=>out+=c);child.stderr.on('data',c=>err+=c);
  child.stdin.write('not json\n');child.stdin.write(JSON.stringify({id:randomUUID(),op:'init',config:{root,executable:'/usr/bin/chromium',public_web:false,origins:[]}})+'\n');
  await new Promise(r=>setTimeout(r,500));child.stdin.write(JSON.stringify({id:randomUUID(),op:'shutdown'})+'\n');child.stdin.end();
- const code=await new Promise(r=>child.on('exit',r));assert.equal(code,0,err);const replies=out.trim().split('\n').map(JSON.parse);assert.equal(replies.length,3);assert.equal(replies[0].error.code,'invalid_json');assert.equal(replies[1].ok,true);assert.equal(replies[2].ok,true);await assert.rejects(fs.stat(path.join(root,'worker.lock')));await fs.rm(root,{recursive:true,force:true});
+ const code=await new Promise(r=>child.on('exit',r));assert.equal(code,0,err);const replies=out.trim().split('\n').map(JSON.parse);assert.equal(replies.length,3);assert.equal(replies[0].error.code,'invalid_json');assert.equal(replies[1].ok,true);assert.equal(replies[2].ok,false);assert.equal(replies[2].error.code,'parent_disconnected');await assert.rejects(fs.stat(path.join(root,'worker.lock')));await fs.rm(root,{recursive:true,force:true});
 });
 test('input ledger stays bounded without durable per-input writes; evicted sequences refuse',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'input333-'));const w=new Worker();

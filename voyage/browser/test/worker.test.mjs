@@ -29,11 +29,27 @@ test('sandboxed worker, decoded media, interruption, fences and receipts',{timeo
  const answer=await rp.evaluate(async offer=>{const pc=globalThis.pc=new RTCPeerConnection({iceServers:[]});const video=document.createElement('video');video.autoplay=true;video.muted=true;document.body.append(video);pc.ontrack=e=>{video.srcObject=e.streams[0];void video.play();};await pc.setRemoteDescription(offer);await pc.setLocalDescription(await pc.createAnswer());await new Promise(r=>{if(pc.iceGatheringState==='complete')return r();pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete')r();};});return {type:pc.localDescription.type,sdp:pc.localDescription.sdp};},offer);
  await call('answer',{viewer,signal_seq:2,description:answer});
  let decoded=0;for(let i=0;i<60;i++){decoded=await rp.evaluate(async()=>{let n=0;for(const s of (await pc.getStats()).values())if(s.type==='inbound-rtp')n+=s.framesDecoded||0;return n;});if(decoded>5)break;await sleep(100);}assert.ok(decoded>5,`decoded ${decoded}`);console.log('decoded frames',decoded);
- await call('offer',{viewer:other,signal_seq:1});
+ const rp2=await receiver.newPage();
+ const offer2=(await call('offer',{viewer:other,signal_seq:1})).value;
+ const answer2=await rp2.evaluate(async offer=>{const pc=globalThis.pc=new RTCPeerConnection({iceServers:[]});const video=document.createElement('video');video.autoplay=true;video.muted=true;document.body.append(video);pc.ontrack=e=>{video.srcObject=e.streams[0];void video.play();};await pc.setRemoteDescription(offer);await pc.setLocalDescription(await pc.createAnswer());await new Promise(r=>{if(pc.iceGatheringState==='complete')return r();pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete')r();};});return {type:pc.localDescription.type,sdp:pc.localDescription.sdp};},offer2);
+ await call('answer',{viewer:other,signal_seq:2,description:answer2});
+ let decoded2=0;for(let i=0;i<60;i++){decoded2=await rp2.evaluate(async()=>{let n=0;for(const s of(await pc.getStats()).values())if(s.type==='inbound-rtp')n+=s.framesDecoded||0;return n;});if(decoded2>5)break;await sleep(100);}assert.ok(decoded2>5,`second viewer decoded ${decoded2}`);console.log('second viewer decoded frames',decoded2);
+ assert.equal(await w.encoder.evaluate(()=>encoder.peerCount()),2);
  const blocked=w.request({id:randomUUID(),op:'agent',browser:w.browser,epochs:{...w.epochs},action:{kind:'navigate',url:origin+'/blocked'}});await sleep(200);
  const started=Date.now();await call('control',{viewer,mode:'private'});assert.ok(Date.now()-started<3000);assert.equal((await blocked).error.code,'control_fenced');assert.deepEqual(w.status().viewers,[viewer]);
  assert.equal((await w.request({id:randomUUID(),op:'agent',browser:w.browser,epochs:{...w.epochs},action:{kind:'inspect'}})).error.code,'agent_fenced');
  assert.equal(await w.encoder.evaluate(()=>encoder.peerCount()),0);
+ // Hold an actual JPEG decode across reset; late bitmap completion must not draw.
+ const jpeg=(await w.page.screenshot({type:'jpeg'})).toString('base64');
+ const generation=w.epochs.capture;
+ await w.encoder.evaluate(()=>{const original=globalThis.createImageBitmap;globalThis.createImageBitmap=async(...args)=>{const bitmap=await original(...args);await new Promise(r=>globalThis.releaseBitmap=r);return bitmap;};});
+ const stale=w.encoder.evaluate(f=>encoder.frame(f),{data:jpeg,width:640,height:480,generation});
+ await w.encoder.waitForFunction(()=>typeof releaseBitmap==='function');
+ await w.encoder.evaluate(g=>encoder.reset(g),generation+1);
+ await w.encoder.evaluate(()=>releaseBitmap());await stale;
+ assert.equal(await w.encoder.evaluate(()=>document.querySelector('canvas').getContext('2d').getImageData(10,10,1,1).data[3]),0);
+ await w.encoder.evaluate(g=>encoder.reset(g),generation);
+
  await call('input',{viewer,seq:1,action:{kind:'navigate',url:origin}});
  // A native modal blocks click completion; the dialog interrupt lane must still run.
  const box=await w.page.locator('button').nth(1).boundingBox();

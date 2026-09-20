@@ -17,7 +17,7 @@ export class Worker {
   constructor(){
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.downloads=new Map();
-    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;
+    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();
   }
   status(){return {browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){if(req.browser!==this.browser||digest(req.epochs)!==digest(this.epochs))refuse('stale_binding');}
@@ -28,11 +28,13 @@ export class Worker {
   async request(req){
     let id=req?.id;
     try{
+      if(this.disconnected)refuse('parent_disconnected');
       if(!req||typeof req!=='object'||Array.isArray(req))refuse('invalid_request');identifier(id);text(req.op,32);
       if(this.pending>=64)refuse('queue_full');this.pending++;
       try{
         let scheduled;
         const admit=this.admission.then(async()=>{
+          if(this.disconnected)refuse('parent_disconnected');
           if(req.op==='init'){
             if(this.journal){const old=this.journal.previous(req);if(old){scheduled=Promise.resolve({receipt:old,content_withheld:true});return;}refuse('already_initialized');}
             await this.init(req.config);const r=await this.journal.begin(req);await this.journal.finish(r,'completed');scheduled=Promise.resolve({status:this.status()});return;
@@ -75,6 +77,7 @@ export class Worker {
     let dispatched=false;
     try{
       if(!['status','receipt','open','shutdown'].includes(req.op))this.exact(req);
+      if(this.disconnected)refuse('parent_disconnected');
       if(this.closing&&!['status','receipt','shutdown'].includes(req.op))refuse('closing');
       if(req.op==='agent')this.checkAgent();
       dispatched=true;
@@ -116,7 +119,7 @@ export class Worker {
         if(stamp!==this.epochs.capture)refuse('capture_fenced');return offer;
       }
       case 'answer':this.signalSequence(req);this.requireOpen();if(req.description?.type!=='answer')refuse('invalid_sdp');text(req.description.sdp,65536);await bounded(this.encoder.evaluate(a=>encoder.answer(a),{viewer:req.viewer,description:req.description}));return null;
-      case 'input':return bounded(this.input(req));
+      case 'input':{const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}}
       case 'agent':return this.agent(req.action);
       default:refuse('unknown_operation');
     }
@@ -130,15 +133,18 @@ export class Worker {
     const base={executablePath:this.config.executable,headless:true,chromiumSandbox:true,timeout:15000,args:['--disable-background-networking','--disable-component-update','--disable-sync','--disable-quic','--force-webrtc-ip-handling-policy=disable_non_proxied_udp','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']};
     try{
       this.task=await chromium.launch({...base,proxy:{server:this.proxy.server,username:this.proxy.username,password:this.proxy.password,bypass:'<-loopback>'}});
+      if(this.disconnected)refuse('parent_disconnected');
       this.context=await this.task.newContext({viewport:{width:this.config.width,height:this.config.height},acceptDownloads:true,serviceWorkers:'block'});
       this.context.setDefaultTimeout(5000);this.context.setDefaultNavigationTimeout(10000);
       await this.context.route('**/*',async route=>{
         try{const url=route.request().url();if(url==='about:blank')return route.continue();const o=origin(url);if(!this.publicWeb&&!this.allowed.has(o))return route.abort();return route.continue();}catch{return route.abort().catch(()=>{});}
       });
-      await this.context.routeWebSocket('**/*',ws=>ws.close());
+      // WebSockets use Chromium's authenticated proxy, including DNS-pinned
+      // CONNECT checks; never forward via a Node-side WebSocket client.
       await this.context.addInitScript(()=>{Object.defineProperty(globalThis,'RTCPeerConnection',{value:undefined,configurable:false});Object.defineProperty(globalThis,'webkitRTCPeerConnection',{value:undefined,configurable:false});});
       this.context.on('page',p=>this.registerPage(p));
       this.encoding=await chromium.launch({...base,args:[...base.args.filter(a=>!a.startsWith('--force-webrtc')), '--disable-features=WebRtcHideLocalIpsWithMdns']});
+      if(this.disconnected)refuse('parent_disconnected');
       this.encoder=await this.encoding.newPage({viewport:{width:1280,height:720}});
       await this.encoder.route('**/*',route=>route.abort());
       await this.encoder.evaluate(encoderRuntime);
@@ -161,7 +167,7 @@ export class Worker {
     const stamp=this.epochs.control;
     try{const file=await download.path();if(!file)return;const s=await fs.stat(file);if(s.size<=MAX_BYTES&&this.mode==='agent'&&stamp===this.epochs.control&&this.downloads.size<8){const data=await fs.readFile(file);if(this.mode==='agent'&&stamp===this.epochs.control)this.downloads.set(randomUUID(),{name:download.suggestedFilename(),data_base64:data.toString('base64')});}}catch{}finally{await download.delete().catch(()=>{});}
   }
-  async select(id){const page=this.tabs.get(id);if(!page)refuse('tab_missing');await this.stopCapture();this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');await page.bringToFront();if(this.encoder)await this.encoder.evaluate(g=>encoder.reset(g),this.epochs.capture);if(this.frames)await this.frames.fence(this.epochs.capture);}
+  async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await this.stopCapture();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);if(this.encoder)await this.encoder.evaluate(g=>encoder.reset(g),this.epochs.capture);this.guard(stamp);if(this.frames)await this.frames.fence(this.epochs.capture);this.guard(stamp);}
   async stopCapture(){const cdp=this.cdp;this.cdp=null;if(cdp){await cdp.send('Page.stopScreencast').catch(()=>{});await cdp.detach().catch(()=>{});}}
   async startCapture(){
     if(this.cdp)return;this.requireOpen();const cdp=await this.context.newCDPSession(this.page);this.cdp=cdp;
@@ -179,11 +185,14 @@ export class Worker {
     if(this.frames){this.frames.generation=generation;this.frames.pending=null;}
     await Promise.all([this.stopCapture(),this.encoder?.evaluate(g=>encoder.reset(g),generation),this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
     if(this.frames)await this.frames.fence(generation);
+    // Acknowledgement means the old effect settled, not merely its raced reply.
+    try{await bounded(Promise.allSettled([...this.effects]),5000);}catch{this.closing=true;await this.task?.close();await Promise.allSettled([...this.effects]);refuse('effect_quarantined');}
   }
   async agent(action){
     this.requireOpen();this.checkAgent();const stamp=this.epochs.control;
     let cancel;const fenced=new Promise((_,reject)=>{cancel=()=>reject(new Refusal('control_fenced'));this.fenceWaiters.add(cancel);});
-    try{const value=await bounded(Promise.race([this.perform(action,stamp),fenced]));this.guard(stamp);this.checkAgent();return value;}finally{this.fenceWaiters.delete(cancel);}
+    const effect=this.perform(action,stamp);this.effects.add(effect);void effect.finally(()=>this.effects.delete(effect)).catch(()=>{});
+    try{const value=await bounded(Promise.race([effect,fenced]));this.guard(stamp);this.checkAgent();return value;}finally{this.fenceWaiters.delete(cancel);await effect.catch(()=>{});}
   }
   async ref(id){text(id,128);const h=this.refs.get(id);if(!h)refuse('stale_reference');return h;}
   async perform(a,stamp){
@@ -216,10 +225,10 @@ export class Worker {
   }
   async tabAction(a,stamp){
     if(a.operation==='list')return {tabs:[...this.tabs.keys()],active:this.active};
-    if(a.operation==='new'){if(this.tabs.size>=16)refuse('tab_limit');const p=await this.context.newPage();this.guard(stamp);await this.select(this.idFor(p));return null;}
+    if(a.operation==='new'){if(this.tabs.size>=16)refuse('tab_limit');const p=await this.context.newPage();if(stamp!==this.epochs.control){await p.close();this.guard(stamp);}await this.select(this.idFor(p),stamp);return null;}
     identifier(a.tab);const p=this.tabs.get(a.tab);if(!p)refuse('tab_missing');
-    if(a.operation==='select'){await this.select(a.tab);return null;}
-    if(a.operation==='close'){if(this.tabs.size===1)refuse('last_tab');const active=this.active===a.tab;await p.close({runBeforeUnload:false});this.guard(stamp);if(active)await this.select(this.tabs.keys().next().value);return null;}
+    if(a.operation==='select'){await this.select(a.tab,stamp);return null;}
+    if(a.operation==='close'){if(this.tabs.size===1)refuse('last_tab');const active=this.active===a.tab;await p.close({runBeforeUnload:false});this.guard(stamp);if(active)await this.select(this.tabs.keys().next().value,stamp);return null;}
     refuse('invalid_tab_operation');
   }
   async input(req){
@@ -232,7 +241,7 @@ export class Worker {
       case 'key':if(!['down','up'].includes(a.type)||!text(a.key,128)||/[\x00-\x1f]/.test(a.key))refuse('invalid_input');await this.page.keyboard[a.type](a.key);break;
       case 'text':await this.page.keyboard.insertText(text(a.text));break;
       case 'scroll':await this.page.mouse.wheel(number(a.x,-16384,16384),number(a.y,-16384,16384));break;
-      case 'resize':{const width=number(a.width,320,3840),height=number(a.height,240,2160);this.advance('viewport');await this.page.setViewportSize({width,height});this.config.width=width;this.config.height=height;break;}
+      case 'resize':{const width=number(a.width,320,3840),height=number(a.height,240,2160);this.advance('viewport');await this.page.setViewportSize({width,height});this.guard(stamp);this.config.width=width;this.config.height=height;break;}
       case 'navigate':case 'tabs':await bounded(this.perform(a,stamp));break;
       default:refuse('invalid_input');
     }
@@ -252,7 +261,7 @@ export class Worker {
 
 export function stdio(){
   const worker=new Worker();let buffer=Buffer.alloc(0),ending=false,outstanding=0;
-  const finish=async()=>{if(ending)return;ending=true;process.stdin.pause();await worker.admission.catch(()=>{});await Promise.all([worker.ordinary,worker.urgent]);await worker.dispose().catch(()=>{process.exitCode=1;});};
+  const finish=async()=>{if(ending)return;ending=true;worker.disconnected=true;worker.closing=true;process.stdin.pause();const deadline=setTimeout(()=>process.exit(1),8000);try{await worker.fence();await worker.admission.catch(()=>{});await Promise.all([worker.ordinary,worker.urgent]);await worker.dispose();}catch{process.exitCode=1;}finally{clearTimeout(deadline);}};
   const write=reply=>{if(!process.stdout.write(JSON.stringify(reply)+'\n'))process.stdin.pause();};
   process.stdout.on('drain',()=>{if(!ending)process.stdin.resume();});
   process.stdout.on('error',()=>{void finish();});

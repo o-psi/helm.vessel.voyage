@@ -90,8 +90,14 @@ Never use untrusted `config`, `policy`, executable or filesystem roots.
 
 Public browsing is dynamic by default only when trusted init sets public_web=true.
 Private/localhost requires an explicit exact origin grant; there is no implicit
-localhost bypass. WebSockets and service workers are deliberately blocked in this
-version. Task-page WebRTC is disabled by init script plus proxy UDP policy;
+localhost bypass. WebSockets use Chromium's authenticated CONNECT proxy; service workers remain
+blocked. CONNECT is authorized as an HTTPS origin, even for Chromium's `ws://`
+tunnels. A private `ws://host:port` therefore also needs the explicit trusted
+`https://host:port` grant; an HTTP grant alone is insufficient. This intentionally
+does not broaden private-network permission or infer grants from page origins.
+Public WebSockets require public_web or an explicit HTTPS origin grant. Proxy
+CONNECT cannot inspect encrypted paths/messages: origin/address containment, not
+application-message filtering. Policy replacement destroys existing tunnels. Task-page WebRTC is disabled by init script plus proxy UDP policy;
 this is defense in depth, not protection from a compromised Chromium. Encoder
 has no task content and uses real host ICE candidates (mDNS obfuscation disabled
 only in the separate encoder process). Parent must authorize candidate disclosure;
@@ -114,3 +120,13 @@ No arbitrary page evaluate action is exposed. CDP uses Playwright private pipes.
 Browser profiles are Playwright temporary profiles, never user profiles.
 Cleanup failure retains the root worker.lock and resource handles; owner must
 reconcile, never delete that lock to replay uncertain effects.
+
+Follow-up fencing: old agent/input effects remain tracked until actual settlement;
+private control acknowledgement waits for them, not only their raced replies.
+An effect that fails to settle within five seconds quarantines/closes the task
+browser and refuses the transition acknowledgement. EOF/SIGTERM synchronously
+blocks new admission/execution and fences before waiting for lanes; cleanup has an
+eight-second process deadline. A deadline exit is unresolved cleanup, not proof
+of descendant termination; supervisor process-tree containment remains required.
+Queued shutdown arriving with EOF may return parent_disconnected rather than a
+success receipt; orderly callers wait for the shutdown reply before closing stdin.

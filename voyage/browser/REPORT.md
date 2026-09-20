@@ -77,8 +77,55 @@ end-to-end yet. Stdio oversized-frame/backpressure stress and abrupt SIGKILL orp
 reconciliation need parent-supervisor testing. Chromium temporary downloads can
 exceed the returned-data cap before completion; supervisor disk quotas required.
 OS egress isolation and process-tree kill/reconciliation remain supervisor duties.
-WebSockets and service workers intentionally blocked; no arbitrary evaluate tool.
+Service workers intentionally blocked; WebSockets now use the authenticated CONNECT proxy (see follow-up below); no arbitrary evaluate tool.
 
 Next safe action: parent review/integration against CONTRACT, then expand the
 missing action/error/stdio qualification. Do not delete a stale lock or replay an
 unknown receipt to get a green test. No stable/release delivery is claimed.
+
+
+## Follow-up qualification (2026-07-10)
+
+Only voyage/browser files changed. Worker stdio request/reply shape is unchanged;
+CONTRACT documents CONNECT/private-origin limitations and EOF refusal semantics.
+
+Completed:
+- Preserve in-flight agent/input effects through actual settlement. Control fence
+  waits for settlement before acknowledgement; delayed tab selection checks its
+  old control stamp after asynchronous capture stop, and cannot replace active
+  page after a private acknowledgement. Five-second unsettled effects trigger
+  quarantine/task close rather than successful acknowledgement.
+- EOF/SIGTERM immediately blocks admissions and queued execution, fences first,
+  then drains and disposes with an eight-second process deadline. Deadline expiry
+  remains unresolved cleanup for the supervisor, not an orphan-cleanup claim.
+- Selected/new tabs adopt current resized viewport (previously new tabs reverted
+  to context creation dimensions).
+- Remove unconditional WebSocket routing denial: Chromium uses the existing
+  authenticated, DNS-pinned CONNECT proxy. No additional network permission,
+  Node-side forwarding, or sandbox relaxation. Real ws:// fixture handshake and
+  received message passed; revocation closed the existing socket and a subsequent
+  connection was denied even with public_web=true. Chromium CONNECT requires the
+  HTTPS origin grant for private ws:// too. WSS and external public sites were not
+  independently qualified; CONNECT is not application-message inspection.
+
+Final local verification: `node --test test/*.test.mjs` in voyage/browser: 12 pass,
+0 fail, 0 cancelled, 0 skipped. Real Chromium sandbox remains enabled. Two worker
+instances have independent task/encoder processes, roots, cookies, localStorage,
+file inputs, download stores, browser IDs, and viewports; closing one leaves the
+other usable. This is worker-level isolation, NOT two integrated Voyage sessions.
+Actual file upload bytes/name, download bytes, key down/up, resize, new-tab viewport,
+last-tab refusal, and active-tab close pass. Two receiver pages both decode VP8
+(final run: first 8 frames, second 6). A real delayed JPEG bitmap completion across
+encoder reset leaves the canvas transparent; queue-drop coverage remains intact.
+Stdio concurrent 32-request test and EOF-before-queued-open refusal pass. The
+private-select regression uses deterministic delayed capture-stop to prove the
+acknowledgement waits and old selection never changes active page.
+
+TURN: no turnserver executable found; dpkg-query did not report installed coturn;
+no UDP :3478 listener observed. Nothing installed and no paid/external relay used.
+Local qualification needs approved coturn package installation/provisioning first,
+then temporary local credentials and relay-only offer/answer with selected relay
+candidate/statistics evidence. TURN/NAT/WSS/native-platform qualification, real
+Voyage-session isolation, overload/backpressure, and SIGKILL process-tree cleanup
+remain unqualified. Parent owns integration, Rust coverage, hosted build and issue
+publication. No Rust/client files changed and no Rust coverage measurement claimed.
