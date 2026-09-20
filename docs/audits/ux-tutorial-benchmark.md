@@ -54,6 +54,13 @@ switches** first, then measure actual interactions on a controlled setup.
 
 ### Installation is part of simplicity, not a footnote
 
+**Subsequent documentation update:** the observations below are historical, not
+current installation instructions. The [quick start](../getting-started.md#1-install-on-linux)
+now documents the bootstrap default `install --start`, prerequisite checks and
+PATH/launch guidance. Published downloads target Linux x86-64 with glibc 2.39+;
+ARM64 remains a trusted-local-build path, not a published binary support claim.
+This documentation change is not fresh hosted-install test evidence.
+
 Pi, OpenCode and Codex teach a distributable installation command prominently.
 Helm has a bootstrap and reviewed installer, but the entry README starts with a
 source build. The installer guide says published downloads require GitHub release

@@ -17,8 +17,11 @@ The guide follows one local Linux path, explains which account pays for requests
 and keeps credentials out of chat. You do not need to configure a remote machine,
 learn process IDs, or edit a TOML file to understand the first task.
 
-**First-release development:** the guide uses a source-built Linux installation.
-It does not promise a published installer asset. Named-account setup is implemented,
+For prebuilt Linux x86-64 installation, see the
+[bootstrap quick start](docs/getting-started.md#1-install-on-linux): no arguments
+selects `install --start`. It requires glibc 2.39+, curl, Python 3.11+ and a reachable
+systemd user manager. The guide also retains the source-build and reviewed wizard
+paths. Named-account setup is implemented,
 but successful sign-in is not proof of model access, available credit, or a passing
 live-provider test. ChatGPT subscription access is experimental; it is not API
 credit. Native macOS/Windows install and credential-security verification have

@@ -36,8 +36,34 @@ will work for it.
 
 ## 1. Install on Linux
 
-For prebuilt binaries, follow the [v1.0.1 release installation](releases-v1.0.1.md).
-To build from source instead, install Git, a stable Rust toolchain (Cargo included), and your
+### Prebuilt release (recommended)
+
+Use Linux x86-64 with glibc 2.39+, curl, Python 3.11+ and a reachable systemd
+user manager. Run as your ordinary user, never with sudo. Fetch the current
+bootstrap, inspect it if desired, then install the latest published release:
+
+```sh
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  https://raw.githubusercontent.com/o-psi/voyage/main/install.sh -o install.sh
+sh install.sh
+```
+
+No arguments means `install --start`: it installs a versioned release and enables
+and starts the local Vessel user service. To review without publishing, use
+`sh install.sh install --dry-run`; to leave an inactive service inactive, use
+`sh install.sh install --no-start`. The script checks prerequisites before download
+and verifies the archive and binary hashes before handing off to the Rust installer.
+It does not edit shell startup files, enable lingering, expose a public port or
+pair Helm Web. A running service stays active with `--no-start` during an upgrade.
+
+After success, use the printed PATH command, then continue to **2. Launch Helm**.
+For a pinned release or manual archive verification, see the
+[v1.0.1 release installation](releases-v1.0.1.md) and
+[bootstrap details](../installer/README.md#download-a-published-version).
+
+### Build from source instead
+
+Install Git, a stable Rust toolchain (Cargo included), and your
 Linux distribution's native compiler/linker build prerequisites first; see
 [development](development.md). Building executes project/dependency build code as
 your user and needs network access for uncached dependencies.

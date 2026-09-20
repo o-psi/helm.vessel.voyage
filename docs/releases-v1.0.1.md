@@ -7,6 +7,13 @@ a voyage. The web application is not part of these binary assets.
 
 ## Install
 
+For the current source bootstrap and its `install --start` default, follow the
+[quick start](getting-started.md#1-install-on-linux). Set `VOYAGE_VERSION=v1.0.1`
+to pin this release: `VOYAGE_VERSION=v1.0.1 sh install.sh`. The current bootstrap
+requires curl, Python 3.11+, glibc 2.39+ and a reachable systemd user manager.
+These bootstrap defaults do not change the bundled Rust installer's no-argument
+wizard used in the manual procedure below.
+
 Use the assets on the [v1.0.1 release page](https://github.com/o-psi/voyage/releases/tag/v1.0.1).
 Download the full `voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz` archive and its
 `.sha256` file into the same directory. Before extracting:

@@ -128,7 +128,7 @@ unsafe entries before running the bundled installer:
 
 ```sh
 sh install.sh
-VOYAGE_VERSION=v0.1.0 sh install.sh upgrade --start
+VOYAGE_VERSION=v1.0.1 sh install.sh install --start
 VOYAGE_RELEASE_DIR=/absolute/extracted-release sh install.sh install --start
 ```
 
@@ -152,7 +152,7 @@ cd /path/to/your/project && helm
 ```
 Replace the project placeholder; no shell startup file is modified.
 
-The version above is an example, not a claim that it is published. Download setup
+The pinned example selects v1.0.1; omit `VOYAGE_VERSION` to resolve latest. Download setup
 requires published GitHub release assets, `curl` and Python 3.11 or later. Local
 release setup works before publication. Checksums establish integrity against the
 HTTPS-delivered manifest, not independent release signing. Temporary downloads are
