@@ -40,14 +40,13 @@ pub(crate) struct RunRoots {
 }
 impl Policy {
     pub(crate) fn for_run_dispatch(&self, run: uuid::Uuid) -> Self {
-        if let Some(shared) = &self.run_roots {
-            if let Ok(mut state) = shared.lock() {
-                if state.run != Some(run) {
-                    state.grants.clear();
-                    state.generation = state.generation.wrapping_add(1);
-                    state.run = Some(run);
-                }
-            }
+        if let Some(shared) = &self.run_roots
+            && let Ok(mut state) = shared.lock()
+            && state.run != Some(run)
+        {
+            state.grants.clear();
+            state.generation = state.generation.wrapping_add(1);
+            state.run = Some(run);
         }
         self.for_dispatch()
     }

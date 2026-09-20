@@ -44,6 +44,12 @@ for binary in helm vessel voyage voyage-installer; do
   test "$(/h/.local/bin/$binary --version)" = "$binary $EXPECTED_VERSION"
   cmp /r/bin/$binary /h/.local/bin/$binary
 done
+if [ -f /r/share/voyage/browser/worker.mjs ]; then
+  test -f /h/.local/share/voyage/install/current/share/voyage/browser/guardian.py
+  cmp /r/share/voyage/browser/worker.mjs /h/.local/share/voyage/install/current/share/voyage/browser/worker.mjs
+  cmp /r/share/voyage/browser/guardian.py /h/.local/share/voyage/install/current/share/voyage/browser/guardian.py
+  cmp /r/share/voyage/browser/node_modules/playwright-core/package.json /h/.local/share/voyage/install/current/share/voyage/browser/node_modules/playwright-core/package.json
+fi
 grep '^KillMode=process$' /h/c/systemd/user/voyage-vessel.service
 '''
 

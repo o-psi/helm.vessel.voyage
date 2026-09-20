@@ -145,8 +145,7 @@ Public NAT/TLS deployment qualification remains distinct from local relay tests.
 The explicit crash fixture found that Node SIGKILL left private profiles and its
 lock; hanging Chromium before EOF/SIGTERM left live crashpad descendants across
 multiple process groups. Parent-process-group kill is insufficient. A separate
-Linux subreaper guardian is being implemented and must be verified before crash
-cleanup is claimed. Failed crash tests are retained as failures; normal EOF success
+Linux subreaper guardian now owns this cleanup; see the verification below. Failed crash tests are retained as failures; normal EOF success
 does not supersede them.
 
 The Linux worker is now launched under a separate Python subreaper guardian.
@@ -155,3 +154,25 @@ or loss of Voyage stdin, removes only its owned short private temporary tree, an
 writes metadata-only cleanup evidence. Runtime resource release requires that
 positive evidence; website action receipts remain unknown after interruption.
 A killed guardian or unavailable proof is still unresolved, never guessed cleanup.
+
+Final guardian adverse checks (Linux synthetic) now pass for Node SIGKILL, hung
+Chromium with EOF, hung Chromium with TERM, and normal explicit shutdown. Each
+fixture verifies zero live descendants/zombies/sockets/profiles and preserves an
+unrelated process. The original failed crash evidence is retained; the passing
+result applies to the new subreaper path, not the removed process-group assumption.
+The integrated guardian process journey also passes native and Web suspended-owner
+preparation and cleanup. SIGKILL of the guardian itself remains unresolved without
+external guardian evidence, not a successful cleanup claim.
+
+The React preview introduced concurrently in #336 now wraps the same viewer and
+adapter, with attachment cleanup on task/socket changes. Its focused lifecycle
+suite and production build pass; the full process journey exercises the shared
+viewer/adapter and native launchers, not every React layout interaction.
+
+Rust workspace coverage after final Rust edits: 1,734 passed, zero failed, two
+ignored. Corrected current-artifact report records lines 75.2771%, functions
+72.0288%, regions 71.9199% (previous 76.1854/72.8644/72.8350). The approximately
+0.9 percentage-point drop reflects new runtime paths; no measured scope was
+narrowed. JS/Python/browser journeys are separate evidence, not Rust coverage.
+Mixed shared-target report was retained; only all 16 current Cargo executables
+were used for the published summary, with no LLVM export diagnostics.
