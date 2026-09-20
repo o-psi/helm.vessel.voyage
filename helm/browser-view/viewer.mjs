@@ -18,7 +18,7 @@ export function videoPoint(video, clientX, clientY) {
 export class BrowserSession {
     constructor({transport, context, video, changed = () => {}, peer = config => new RTCPeerConnection(config), rtcConfiguration = {}, uuid = () => crypto.randomUUID(), timeout = 10000}) {
         Object.assign(this, {transport, context, video, changed, peer, rtcConfiguration, uuid, timeout});
-        this.status = null; this.generation = 0; this.sequence = 0; this.queue = []; this.busy = false; this.closed = false; this.message = 'Browser disconnected';
+        this.status = null; this.foregroundRevision = 0; this.generation = 0; this.sequence = 0; this.queue = []; this.busy = false; this.closed = false; this.message = 'Browser disconnected';
     }
     notify(message) { if (message) this.message = message; this.changed(this); }
     clearVideo() {
@@ -33,12 +33,12 @@ export class BrowserSession {
         this.clearVideo(); this.status = null; this.attached = false; this.notify(message);
         if (detach && !this.closed) Promise.resolve().then(() => this.transport(detach)).catch(() => {});
     }
-    async call(operation, generation = this.generation) {
+    async call(operation, generation = this.generation, current = () => true) {
         if (this.closed) throw Error('closed');
         let timer;
         try {
             const reply = await Promise.race([this.transport(operation), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('slow')), this.timeout); })]);
-            if (this.closed || generation !== this.generation) throw Error('stale');
+            if (this.closed || generation !== this.generation || !current()) throw Error('stale');
             if (!reply?.status || (reply.status.running && !['agent','human','private'].includes(reply.status.mode))) throw Error('invalid');
             this.accept(reply.status);
             return reply;
@@ -60,14 +60,24 @@ export class BrowserSession {
     }
     async exclusive(action) {
         if (this.busy || this.closed) return;
-        this.busy = true; this.notify();
+        this.foregroundRevision++; this.busy = true; this.notify();
         try { return await action(); }
         catch { this.disconnect('Browser operation interrupted or unconfirmed. Nothing was replayed. Retry connection to refresh.'); }
         finally { this.busy = false; this.notify(); }
     }
     async refresh() {
-        if (this.busy || this.closed || !this.status) return;
-        await this.exclusive(async () => { await this.call({action:'status'}); if (this.attached && !this.pc && !this.pumping) await this.negotiate(); });
+        if (this.busy || this.refreshing || this.closed || !this.status) return;
+        const generation = this.generation, revision = this.foregroundRevision;
+        const current = () => generation === this.generation && revision === this.foregroundRevision && !this.closed;
+        this.refreshing = true;
+        try {
+            // Polls do not lock controls or repaint them as busy. A foreground
+            // action invalidates an older poll before it can restore stale state.
+            await this.call({action:'status'}, generation, current);
+            if (this.attached && !this.pc && !this.pumping) await this.exclusive(() => this.negotiate());
+        } catch {
+            if (current()) this.disconnect('Browser status unavailable. Retry connection to refresh.');
+        } finally { this.refreshing = false; }
     }
     async connect() {
         return this.exclusive(async () => {
@@ -130,6 +140,7 @@ export class BrowserSession {
     }
     input(input) {
         if (!this.controls || this.busy || !this.streaming || this.closed) return false;
+        this.foregroundRevision++;
         if (this.queue.length >= 32) { this.disconnect('Browser input too slow. Input cleared; reconnect required.'); return false; }
         // Website modal replies must interrupt the pointer/navigation that opened
         // the dialog; putting them behind that operation deadlocks human control.
@@ -229,7 +240,7 @@ export function mountBrowserViewer(root, options = {}) {
     const retry = button('Retry connection', () => session.connect(), empty);
     const startPage = element('section',null,viewport,'browser-start-page');
     element('h3','Where would you like to go?',startPage);
-    element('p','Ask the agent to open a site, or take private control and enter an address above.',startPage);
+    const startHint = element('p','Ask the agent to open a site, or take private control to browse.',startPage);
     const useAddress = button('Enter an address',async()=>{ if(!session.controls)await session.control('private'); if(session.controls){address.focus();address.select();} },startPage);
     const recent = element('div',null,startPage,'browser-recent');
     const recentPages = new Map(); let recentKey='';
@@ -259,6 +270,7 @@ export function mountBrowserViewer(root, options = {}) {
         const point=current.status?.mode==='agent'?current.status.agent_cursor:null;
         cursor.hidden=!point||Date.now()-point.at>2500||!current.streaming;
         if(!cursor.hidden&&video.videoWidth){const box=video.getBoundingClientRect(),wrap=viewport.getBoundingClientRect();const scale=Math.min(box.width/video.videoWidth,box.height/video.videoHeight);cursor.style.left=`${box.left-wrap.left+(box.width-video.videoWidth*scale)/2+point.x/point.width*video.videoWidth*scale}px`;cursor.style.top=`${box.top-wrap.top+(box.height-video.videoHeight*scale)/2+point.y/point.height*video.videoHeight*scale}px`;}
+        startHint.textContent = privateControl ? 'Enter a website address above to start browsing privately.' : 'Ask the agent to open a site, or take private control to browse.';
         const blank=attached&&(!metadata?.page?.url||metadata.page.url==='about:blank');
         startPage.hidden=!blank||current.status?.mode==='private'&&!current.controls;
         useAddress.disabled=current.busy||!attached;
@@ -277,7 +289,7 @@ export function mountBrowserViewer(root, options = {}) {
         reload.setAttribute('aria-label', metadata?.page?.loading ? 'Stop loading' : 'Reload'); reload.title = reload.getAttribute('aria-label');
         const fence = fingerprint(current.status?.binding) + mediaFence(current.status) + current.streamRevision;
         if (fence !== previousFence) { capture?.reset(); previousFence = fence; text.value = dialog.value = address.value = ''; keys.clear(); more.open = false; }
-        if (doc.activeElement !== address) address.value = displayText(metadata?.page?.url, 8192);
+        if (doc.activeElement !== address) address.value = metadata?.page?.url === 'about:blank' ? '' : displayText(metadata?.page?.url, 8192);
         empty.hidden = Boolean(current.streaming);
         explanation.textContent = current.busy ? 'Opening browser…' : !attached ? current.message : current.status?.mode === 'private' && !current.controls ? 'Private control is active. Agent observation is paused.' : 'Waiting for live video…';
         retry.hidden = Boolean(attached) || current.busy; retry.disabled = current.busy || current.closed;
