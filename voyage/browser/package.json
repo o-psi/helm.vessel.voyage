@@ -1,0 +1,1 @@
+{"name":"@voyage/server-browser-worker","version":"0.1.0","private":true,"type":"module","engines":{"node":">=20.20.0"},"dependencies":{"playwright-core":"1.63.0"},"scripts":{"start":"node worker.mjs","test":"node --test test/*.test.mjs"}}
