@@ -35,11 +35,19 @@ export function activityLabel(activity: any, now = new Date()) {
     return date.toLocaleDateString(undefined, {month: 'short', day: 'numeric', ...(date.getFullYear() !== now.getFullYear() ? {year: 'numeric'} : {})});
 }
 
-export function voyageList(connections: any[], query = '') {
+// Ranking is presentation only. Prefer a fresh open-view snapshot over cached catalogue state.
+export function activeVoyage(voyage: any, snapshot?: any) {
+    if (voyage.catalogue?.summary?.archived || voyage.catalogue?.summary?.deleted || snapshot?.lifecycle?.archived || snapshot?.lifecycle?.deleted) return false;
+    if (['stopped','unavailable','relinquished','suspended'].includes(voyage.state)) return false;
+    const state = snapshot ? snapshot.run?.state : voyage.catalogue?.summary?.run_state;
+    return ['starting','running','cancelling','waiting','blocked'].includes(state);
+}
+
+export function voyageList(connections: any[], query = '', snapshotFor: (connection: any, voyage: any) => any = () => null) {
     const search = query.trim().toLocaleLowerCase();
     return [...connections].flatMap(connection => connection.voyages.map((voyage: any) => ({
-        ...voyage, connection, activity: voyageActivity(voyage),
+        ...voyage, connection, activity: voyageActivity(voyage), active: activeVoyage(voyage, snapshotFor(connection, voyage)),
     }))).filter(v => `${v.name || ''} ${v.session_id} ${v.connection.name}`.toLocaleLowerCase().includes(search))
-        .sort((a, b) => (b.activity?.ms ?? -Infinity) - (a.activity?.ms ?? -Infinity)
+        .sort((a, b) => Number(b.active) - Number(a.active) || (b.activity?.ms ?? -Infinity) - (a.activity?.ms ?? -Infinity)
             || a.connection.id.localeCompare(b.connection.id) || a.session_id.localeCompare(b.session_id));
 }

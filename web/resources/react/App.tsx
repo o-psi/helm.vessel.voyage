@@ -97,7 +97,7 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
         update();media.addEventListener('change',update);try{localStorage.setItem('flux.appearance',appearance);}catch{}
         return ()=>media.removeEventListener('change',update);
     },[appearance]);
-    const connections=[...fleet.connections.values()], voyages=voyageList(connections,query);
+    const connections=[...fleet.connections.values()], voyages=voyageList(connections,query,(connection,voyage)=>{const tab=workspace.tabs.get(JSON.stringify([connection.id,voyage.session_id]));return tab&&!tab.stale&&Date.now()-tab.freshAt<35000?tab.snapshot:null;});
     const selected=active ? workspace.tabs.get(active) : null;
     return <div className="helm-preview">
         <button className="mobile-toggle icon-button" aria-label="Open voyage navigation" aria-expanded={mobile} onClick={()=>setMobile(!mobile)}><Icon name="menu"/></button>
