@@ -19,6 +19,7 @@ Route::middleware(ConsoleHeaders::class)->group(function () {
     Route::post('/console/logout',[ConsoleAuthController::class,'logout'])->name('console.logout');
 });
 Route::middleware([ConsoleOperator::class,ConsoleHeaders::class])->group(function () {
+    Route::get('/react', \App\Http\Controllers\ReactConsoleController::class)->name('console.react');
     Route::get('/',\App\Livewire\Console::class)->name('console');
     Route::post('/console/ticket',[ConsoleAuthController::class,'ticket'])->name('console.ticket')->middleware('throttle:console-tickets');
     Route::get('/connections',[VesselConnectionController::class,'index'])->name('connections');

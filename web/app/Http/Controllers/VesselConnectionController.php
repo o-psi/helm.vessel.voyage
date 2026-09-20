@@ -6,8 +6,11 @@ use App\Services\VesselGateway;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 class VesselConnectionController extends Controller {
+    private function consoleRedirect(Request $request): \Illuminate\Http\RedirectResponse {
+        return redirect()->route($request->header('X-Helm-Client') === 'react' ? 'console.react' : 'console', ['manage-vessels' => 1]);
+    }
     public function index(Request $request) {
-        return redirect()->route('console', ['manage-vessels' => 1]);
+        return $this->consoleRedirect($request);
     }
     public function store(Request $request, VesselGateway $gateway) {
         $request->session()->flash('vessel_form', 'import');
@@ -16,8 +19,8 @@ class VesselConnectionController extends Controller {
         try {
             $credential = json_decode($data['credential'], true, flags: JSON_THROW_ON_ERROR);
             $this->save($request, $gateway, $data['name'], $credential);
-        } catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection' => 'Unable to add this Vessel. Check the web address and connection credential.']); }
-        return redirect()->route('console', ['manage-vessels' => 1])->with('status', 'Vessel connected.');
+        } catch (\Throwable) { return $this->consoleRedirect($request)->withErrors(['connection' => 'Unable to add this Vessel. Check the web address and connection credential.']); }
+        return $this->consoleRedirect($request)->with('status', 'Vessel connected.');
     }
     private function save(Request $request, VesselGateway $gateway, string $name, array $credential): void {
         $endpoint = VesselGateway::endpoint($credential['endpoint'] ?? '');
@@ -48,14 +51,14 @@ class VesselConnectionController extends Controller {
             abort_if(VesselPairing::where('tenant_id',$request->user()->tenant_id)->where('status','pending')->count() >= 16,422);
             $pairing = VesselPairing::create(['tenant_id'=>$request->user()->tenant_id,'name'=>$data['name'],'request'=>$payload]);
             return $this->completePair($request,$gateway,$pairing);
-        } catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'We couldn’t confirm this connection. If it appears in your list, use “Check connection” before trying a new invitation.']); }
+        } catch (\Throwable) { return $this->consoleRedirect($request)->withErrors(['connection'=>'We couldn’t confirm this connection. If it appears in your list, use “Check connection” before trying a new invitation.']); }
     }
     public function retry(Request $request, VesselGateway $gateway, string $id) {
         $request->session()->flash('manage_vessels', true);
         $pairing = VesselPairing::where('tenant_id',$request->user()->tenant_id)->findOrFail($id);
         abort_unless($pairing->status === 'pending',409);
         try { return $this->completePair($request,$gateway,$pairing); }
-        catch (\Throwable) { return redirect()->route('console', ['manage-vessels' => 1])->withErrors(['connection'=>'Still waiting for confirmation. You can check this connection again later.']); }
+        catch (\Throwable) { return $this->consoleRedirect($request)->withErrors(['connection'=>'Still waiting for confirmation. You can check this connection again later.']); }
     }
     private function completePair(Request $request,VesselGateway $gateway,VesselPairing $pairing) {
         $response = $gateway->call('pair',$pairing->request);
@@ -65,13 +68,13 @@ class VesselConnectionController extends Controller {
             && ($credential['endpoint'] ?? null) === $pairing->request['endpoint'],422);
         $this->save($request,$gateway,$pairing->name,$credential);
         $pairing->delete(); // Consumed invitation secret no longer needed.
-        return redirect()->route('console', ['manage-vessels' => 1])->with('status','Vessel paired.');
+        return $this->consoleRedirect($request)->with('status','Vessel paired.');
     }
     public function destroy(Request $request,string $id) {
         $request->session()->flash('manage_vessels', true);
         $connection = VesselConnection::where('tenant_id',$request->user()->tenant_id)->findOrFail($id);
         $request->validate(['confirm_disconnect' => ['accepted']]);
         $connection->delete();
-        return redirect()->route('console', ['manage-vessels' => 1])->with('status','Connection removed. Existing direct Vessel credentials expire within 120 seconds; socket closure may take up to 3 additional seconds. Already admitted work is not cancelled. The underlying grant is preserved for other clients; revoke it on the Vessel if no longer needed.');
+        return $this->consoleRedirect($request)->with('status','Connection removed. Existing direct Vessel credentials expire within 120 seconds; socket closure may take up to 3 additional seconds. Already admitted work is not cancelled. The underlying grant is preserved for other clients; revoke it on the Vessel if no longer needed.');
     }
 }
