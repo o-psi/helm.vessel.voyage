@@ -298,3 +298,10 @@ test('idle agent-controlled browser is Watching, not invented activity', async()
     assert.equal(root.querySelector('.browser-status').textContent,'Watching');
     view.dispose();dom.window.close();
 });
+
+test('stale conversation independently reads browser owner before attaching',async()=>{
+ const sent=[];const client={exchange:async req=>{sent.push(req.command);return {protocol:1,error:null,outcome_unknown:false,result:{session_id:'s',incarnation:'fresh',result:req.command.op==='snapshot'?{session_id:'s',revision:8}:{status:status()}}};}};
+ const adapter=hostBrowserAdapter({client,sessionId:'s',incarnation:'old',context:()=>({revision:2,refresh:true})});
+ await adapter.transport({action:'status'});
+ assert.equal(sent[0].op,'snapshot');assert.equal(sent[1].incarnation,'fresh');assert.equal(adapter.context().revision,8);
+});

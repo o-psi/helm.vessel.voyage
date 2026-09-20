@@ -6,10 +6,18 @@ const prepared = value => value?.status === 'prepared' && value?.not_dispatched 
 // Ephemeral only: no IntentJournal, localStorage, diagnostics or conversation data.
 export function hostBrowserAdapter({client, sessionId, incarnation, context}) {
     let current = null;
+    let preparedInitial = false;
     const readContext = () => current ?? {...context(), incarnation};
     const exchange = async (operation, owner) => voyageResult(await client.exchange(
         request('host_browser', {session_id:sessionId, incarnation:owner, operation})), sessionId);
     const transport = async operation => {
+        let initial = readContext();
+        if (!preparedInitial && (initial.refresh || !initial.incarnation || !Number.isSafeInteger(initial.revision))) {
+            const envelope = voyageResult(await client.exchange(request('snapshot',{session_id:sessionId})),sessionId);
+            if(envelope.result?.session_id!==sessionId || !Number.isSafeInteger(envelope.result?.revision)) throw Error('Browser owner snapshot unavailable');
+            current={incarnation:envelope.incarnation,revision:envelope.result.revision};
+        }
+        preparedInitial=true;
         const owner = readContext().incarnation;
         const mayPrepare = operation.action === 'status' || operation.action === 'start';
         if (operation.binding && operation.binding.incarnation !== owner ||

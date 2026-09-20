@@ -23,14 +23,14 @@ export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; on
     latest.current = tab;
     const id = useId();
     const activity = browserActivity(tab.snapshot);
-    const ready = Boolean(client && !tab.stale && tab.incarnation && Number.isSafeInteger(tab.snapshot?.revision) && tab.snapshot.revision >= 0);
+    const ready = Boolean(client);
     const close = () => { setOpen(false); toggle.current?.focus(); };
     useEffect(() => {
         if (!open || !ready || !root.current) return;
         let alive = true;
         const viewer = mountHostBrowser(root.current, {
             client, sessionId: tab.session, incarnation: tab.incarnation,
-            context: () => ({revision: latest.current.snapshot.revision}),
+            context: () => ({revision: latest.current.snapshot?.revision, refresh:latest.current.stale || !latest.current.incarnation}),
             onClose: close, externalClose:true, onCapture: onCapture ? async (file: File) => { const ok = await onCapture(file,()=>alive && latest.current.key===tab.key && latest.current.incarnation===tab.incarnation); if(!ok)throw Error("Capture not added"); } : undefined,
         });
         // Shared viewer auto-connects on mount; disposal detaches, never closes the browser.
@@ -62,7 +62,7 @@ export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; on
         {activity && <span id={`${id}-activity`} className="sr-only">Browser activity in this voyage</span>}
         {open && <aside ref={panel} tabIndex={-1} id={id} className="task-browser-panel" aria-labelledby={`${id}-title`}>
             <header className="task-browser-heading"><div><h2 id={`${id}-title`}>Browser</h2><span>{tab.title}</span></div><button type="button" aria-label="Close browser viewer" title="Close viewer; keep browser running" onClick={close}>Close ×</button></header>
-            {!ready && <p role="status">Browser detached. Waiting for a current Vessel connection and voyage snapshot.</p>}
+            {!ready && <p role="status">Vessel disconnected. The browser will reconnect when this Vessel connection returns.</p>}
             <div className="task-browser-content" ref={root}/>
         </aside>}
     </div>;

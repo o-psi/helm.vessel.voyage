@@ -51,7 +51,7 @@ test('selected React browser uses shared controls, live revision fences and deta
         client = socket('replacement'); await render();
         assert.ok(sent.some(item=>item.name==='first' && item.operation.action==='detach')); assert.equal(peers[0].closed,true);
         tab = {...tab,stale:true}; client = null; await render();
-        assert.match(dom.window.document.body.textContent!,/Browser detached/);
+        assert.match(dom.window.document.body.textContent!,/Vessel disconnected/);
         assert.equal(sent.at(-1).name,'replacement'); assert.equal(sent.at(-1).operation.action,'detach');
         client = socket('second'); tab = {...tab,key:'two',vessel:'vessel-two',session:'session-two',incarnation:'owner-two',stale:false}; await render();
         assert.equal(dom.window.document.querySelector('video'),null,'switching tasks requires explicit reopening');
