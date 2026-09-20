@@ -1,3 +1,4 @@
+@import '../../../helm/browser-view/viewer.css';
 /* Shared Flux theme. Kept as an entry point for the console asset manifest. */
 @import './app.css';
 

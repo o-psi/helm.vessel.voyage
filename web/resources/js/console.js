@@ -1,3 +1,4 @@
+import {mountHostBrowser} from './host-browser.js';
 import {setComposerDisabled} from './composer-disabled.js';
 import {renderRootGrant} from './root-grant.js';
 import {sidebarActions} from './sidebar-actions.js';
@@ -74,6 +75,19 @@ export function mount(root) {
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     let composition, newChatSending = false;
+    let browserViewer = null;
+    function closeBrowser() { browserViewer?.dispose(); browserViewer = null; $('host-browser-panel').hidden = true; }
+    $('host-browser-toggle').addEventListener('click', () => {
+        if (browserViewer) { closeBrowser(); return; }
+        if (!client || !selected || !incarnation || !snapshot) return;
+        const browserIncarnation = incarnation;
+        $('host-browser-panel').hidden = false;
+        browserViewer = mountHostBrowser($('host-browser-panel'), {
+            client, sessionId:selected, incarnation,
+            context:() => ({incarnation:browserIncarnation, revision:snapshot.revision}), onClose:closeBrowser,
+        });
+        browserViewer.session.connect();
+    });
     const admittedDrafts = new Map();
     const sentDraft = command_id => admittedDrafts.get(command_id);
     function forgetSent(command_id) { admittedDrafts.delete(command_id); }
@@ -107,6 +121,7 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
+            $('host-browser-toggle').disabled = !client || !selected || !incarnation || !snapshot;
             const newChatSettings = !selected && client && !busy && !newChatSending;
             const reviewed = !selected ? settings?.configuration() : null;
             $('attach-picture').disabled = busy || newChatSending || !selectedVessel;
@@ -144,6 +159,7 @@ export function mount(root) {
     function connectionsChanged() {
         const connection = fleet.connections.get(selectedVessel);
         if (client !== connection?.client) {
+            closeBrowser();
             stopStream(); generation++; client = connection?.client; journal = connection?.journal;
             stale = true; refreshing = false;
         }
@@ -191,6 +207,7 @@ export function mount(root) {
         if (busy) return notice('Wait for the current operation, then switch voyages.');
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
 
+        closeBrowser();
         composition?.remember();
         stopStream(); refreshQueued = false;
         scrolling.reset();
@@ -223,6 +240,7 @@ export function mount(root) {
             const decisionReply = voyageResult(await active.exchange(request('decisions', {session_id:id})), id, envelope.incarnation);
             if (mine !== generation || selected !== id || active !== client) return;
             const changed = next.revision !== revision || envelope.incarnation !== incarnation;
+            if (incarnation && incarnation !== envelope.incarnation) closeBrowser();
             snapshot = next; incarnation = envelope.incarnation;
             stream.seed(next, incarnation);
             updateAccountLabel(); decisions = Array.isArray(decisionReply.result) ? decisionReply.result : [];
@@ -554,7 +572,7 @@ export function mount(root) {
     $('reconnect').addEventListener('click',() => fleet.reconnect());
     window.addEventListener('storage', () => controls());
     const timer = setInterval(() => { controls(); if (!document.hidden) { fleet.poll(); if (pending().length || Date.now() - lastFresh >= 30000 || stale) refresh(); } },1000);
-    window.addEventListener('pagehide',() => { scrolling.dispose(); composition?.dispose(); stopStream(); generation++;clearInterval(timer);fleet.close(); });
+    window.addEventListener('pagehide',() => { closeBrowser(); scrolling.dispose(); composition?.dispose(); stopStream(); generation++;clearInterval(timer);fleet.close(); });
     document.addEventListener('visibilitychange',() => { if (!document.hidden) { stale=true;controls();fleet.poll();refresh(); } });
     composition = composer(root, {fleet,select,notice,changed:()=>controls(),current:()=>({vessel:selectedVessel,session_id:selected,incarnation,run_id:snapshot?.run?.run_id,running:running()})});
     settings = voyageSettings(root,fleet,{

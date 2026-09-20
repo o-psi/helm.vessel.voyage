@@ -19,6 +19,8 @@
             <flux:sidebar.toggle class="fixed start-3 top-3 z-20 lg:hidden" icon="bars-2" aria-label="Open voyage navigation" />
             <flux:callout id="notice-panel" class="mx-4 mt-2" role="status" hidden><flux:callout.text id="notice" /></flux:callout>
             <div id="pending" class="space-y-2 px-4 pt-2 empty:hidden" aria-label="Unconfirmed commands"></div>
+            <flux:button id="host-browser-toggle" type="button" variant="ghost" disabled>Browser</flux:button>
+            <section id="host-browser-panel" aria-label="Executing-host browser" hidden></section>
             <div id="conversation" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-8 pt-14 sm:px-8 lg:pt-10" tabindex="0" aria-label="Conversation messages">
                 <flux:button id="earlier" class="mx-auto mb-4" hidden>Load earlier messages</flux:button>
                 <flux:text id="conversation-empty" class="mx-auto max-w-4xl">Choose a voyage from any connected Vessel.</flux:text>

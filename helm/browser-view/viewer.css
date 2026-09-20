@@ -1,0 +1,10 @@
+.host-browser-viewer { color: inherit; background: Canvas; border: 1px solid GrayText; border-radius: .5rem; padding: .75rem; margin: .5rem; max-height: 75vh; overflow: auto; }
+.host-browser-viewer video { display: block; width: 100%; height: min(48vh, 720px); object-fit: contain; background: #080808; touch-action: none; }
+.host-browser-viewer .browser-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-block: .5rem; }
+.host-browser-viewer button, .host-browser-viewer input, .host-browser-viewer select, .host-browser-viewer textarea { font: inherit; color: inherit; background: Canvas; border: 1px solid GrayText; border-radius: .3rem; padding: .35rem .6rem; min-width: 0; }
+.host-browser-viewer input, .host-browser-viewer textarea { flex: 1 1 12rem; }
+.host-browser-viewer button:disabled { opacity: .5; cursor: not-allowed; }
+.host-browser-viewer button:not(:disabled) { cursor: pointer; }
+.host-browser-viewer :focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+.host-browser-viewer [aria-pressed=true] { border-color: Highlight; font-weight: bold; }
+.host-browser-viewer p { margin-block: .5rem; }
