@@ -5,14 +5,21 @@
     "scripts": {
         "build": "vite build",
         "dev": "vite",
-        "test": "node --test tests/*.test.mjs"
+        "test": "node --test tests/*.test.mjs && npm run test:react",
+        "typecheck": "tsc --noEmit",
+        "test:react": "tsx --test tests/react-*.test.ts"
     },
     "devDependencies": {
         "@tailwindcss/vite": "^4.0.0",
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@vitejs/plugin-react": "^6.1.1",
         "concurrently": "^10.0.3",
         "jsdom": "^30.0.1",
         "laravel-vite-plugin": "^3.1",
         "tailwindcss": "^4.0.0",
+        "tsx": "^4.23.13",
+        "typescript": "^7.0.2",
         "vite": "^8.0.0"
     },
     "optionalDependencies": {
@@ -20,6 +27,11 @@
     },
     "dependencies": {
         "dompurify": "^3.4.15",
-        "marked": "^18.0.13"
+        "marked": "^18.0.13",
+        "react": "^19.3.0",
+        "react-dom": "^19.3.0"
+    },
+    "engines": {
+        "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
     }
 }

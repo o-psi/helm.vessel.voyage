@@ -5,6 +5,37 @@
 
 # Helm website
 
+## Helm React preview
+
+The authenticated `/react` route runs the React 19 / TypeScript console alongside
+(not instead of) the existing `/` console. It uses the same Laravel sessions,
+tenant-scoped connection bootstrap and direct Vessel WebSocket transport. No
+Livewire or Flux JavaScript is loaded by the React route. The existing console
+remains the default while the preview is compared and verified.
+
+Use Node 24.15+ (or another version in `package.json`'s `engines`) for the current
+jsdom and Vite toolchain. From `web/`, run `npm ci`, `npm run typecheck`,
+`npm run test:react`, and `npm run build`. `npm test` includes the existing client
+suite followed by the React tests. The preview requires the same Laravel/PHP
+runtime and authentication setup described below; a Vite build alone does not
+start or deploy the application.
+
+React owns workspace navigation, per-voyage drafts, transcript presentation,
+settings, typed decisions, image preparation and the connection manager. Existing
+transport/intent journals are shared. Private account enrollment and advanced
+voyage actions are deliberately isolated DOM adapters with explicit disposal,
+retaining their audited receipt and consent logic while React owns their hosts.
+Pending creation uses the same journal namespace as the existing console, so
+switching interfaces does not authorize another uncertain start.
+
+Draft text and pictures live only in page memory; switching voyages preserves
+them, but refreshing or navigating away does not. The preview contains a link
+back to the existing console. Mutation admission is distinct from execution
+completion; uncertain commands are reconciled by their original identities,
+never automatically replayed. An actual authenticated browser comparison is
+required before claiming visual parity or replacing the default route.
+
+
 Laravel 13, Livewire 4 and licensed Flux Pro UI 2 product website for
 https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
 as a product suite for running coding agents across machines the user controls.

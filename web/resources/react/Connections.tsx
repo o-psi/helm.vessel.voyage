@@ -1,0 +1,23 @@
+import React,{useEffect,useRef,useState} from 'react';
+export function Connections({bootstrap,onClose}:{bootstrap:any;onClose:()=>void}){
+    const [data,setData]=useState(bootstrap);
+    const dialog=useRef<HTMLDialogElement>(null),[notice,setNotice]=useState(bootstrap.connectionError||bootstrap.connectionStatus||''),[busy,setBusy]=useState(false),[name,setName]=useState(''),[secret,setSecret]=useState(''),[kind,setKind]=useState('invitation');
+    useEffect(()=>{dialog.current?.showModal();return()=>dialog.current?.close();},[]);
+    async function send(path:string,body:any,method='POST'){
+        if(busy)return;setBusy(true);setNotice('');setSecret('');
+        try{
+            const response=await fetch(path,{method,credentials:'same-origin',headers:{'X-Helm-Client':'react','Content-Type':'application/json',Accept:'application/json','X-CSRF-TOKEN':document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content||''},body:JSON.stringify(body)});
+            // Existing controller redirects to the console after a confirmed attempt.
+            // Reload bootstrap, including pending pairings/errors; never replay a failed fetch.
+            if(response.redirected){const html=await response.text();const page=new DOMParser().parseFromString(html,'text/html');const data=JSON.parse((page.querySelector('#helm-react') as HTMLElement)?.dataset.bootstrap||'{}');setData(data);if(data.connectionError){setNotice(data.connectionError);return;}location.assign('/react?manage-vessels=1');return;}
+            if(!response.ok)throw new Error('Connection request not confirmed. Check fields and pending pairings before trying again.');
+            location.assign('/react?manage-vessels=1');
+        }catch(error){setNotice(error instanceof Error?error.message:'Connection outcome uncertain. Reload to inspect; do not repeat blindly.');}finally{setBusy(false);}
+    }
+    return <dialog className="settings-dialog" ref={dialog} onCancel={event=>{if(busy)event.preventDefault();else onClose();}}><header><h2>Vessel connections</h2><button disabled={busy} aria-label="Close Vessel connections" onClick={onClose}>×</button></header><p>Connecting grants this web account access to your Vessel. Provider credentials stay on that computer.</p>
+        {data.vessels.map((connection:any)=><section key={connection.id}><strong>{connection.name}</strong><button disabled={busy} onClick={()=>{if(window.confirm(`Remove ${connection.name} from your Vessels? Direct credentials expire within 120 seconds, and socket closure may take 3 more seconds. Already admitted work is not cancelled.`))void send(`/connections/${encodeURIComponent(connection.id)}`,{confirm_disconnect:1},'DELETE');}}>Remove</button></section>)}
+        {(data.pairings||[]).map((pairing:any)=><section key={pairing.id}><p>{pairing.name} · not confirmed</p><button disabled={busy} onClick={()=>void send(`/connections/pair/${encodeURIComponent(pairing.id)}/retry`,{})}>Check pairing</button></section>)}
+        <details><summary>Set up a Vessel</summary><p>Install Helm, Vessel and Voyage on a Linux computer you control, configure a public HTTPS endpoint, and create a private invitation.</p><a href="https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/getting-started.md" target="_blank" rel="noopener noreferrer">First-time setup guide ↗</a><pre>{`STATE="/path/to/vessel/state"\nENDPOINT="https://vessel.example.com"\nINVITE_DIR=$(mktemp -d)\nvessel pair-invite --directory "$STATE" \\\n  --endpoint "$ENDPOINT" \\\n  --principal ${bootstrap.principalId||'YOUR_PRINCIPAL_ID'} \\\n  --full-access \\\n  --output "$INVITE_DIR/invitation.json" &&\ncat "$INVITE_DIR/invitation.json"`}</pre><p>Use the invitation within 10 minutes. Keep it private—never paste it into chat.</p></details>
+        <form onSubmit={event=>{event.preventDefault();void send(kind==='invitation'?'/connections/pair':'/connections',{name,[kind]:secret});}}><label>Name<input required maxLength={100} value={name} onChange={event=>setName(event.target.value)} disabled={busy}/></label><label>Connection method<select value={kind} onChange={event=>{setKind(event.target.value);setSecret('');}} disabled={busy}><option value="invitation">Invitation</option><option value="credential">Existing credential</option></select></label><label>{kind==='invitation'?'Invitation':'Connection credential'}<textarea required maxLength={16384} autoComplete="off" spellCheck={false} value={secret} onChange={event=>setSecret(event.target.value)} disabled={busy}/></label><p role="status">{notice}</p><button disabled={busy||!secret.trim()||!name.trim()}>Connect Vessel</button></form>
+    </dialog>;
+}

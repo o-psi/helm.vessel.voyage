@@ -109,8 +109,10 @@ export function accountEnrollment(root, {context, refreshed}) {
     for (const kind of ['start','check','cancel']) $(''+kind).addEventListener('click',()=>run(kind));
     function hide() { clear(); $('panel').hidden=true; $('panel').closest('[data-flux-popover]')?.hidePopover?.(); }
     $('close').addEventListener('click',hide);
-    root.ownerDocument.addEventListener('visibilitychange',()=>{if(root.ownerDocument.hidden)clear();});
+    const visibilityChanged = () => { if (root.ownerDocument.hidden) clear(); };
+    root.ownerDocument.addEventListener('visibilitychange', visibilityChanged);
     return {
+        dispose() { hide(); active = null; root.ownerDocument.removeEventListener('visibilitychange', visibilityChanged); },
         hide,
         changed() {if(active && !current(active,generation))clear();},
         async open() {

@@ -2,7 +2,7 @@ import {request, voyageResult, mutation, uuid} from './vessel-client.js';
 
 const activeRun = s => ['starting','running','cancelling'].includes(s?.run?.state);
 const archived = v => Boolean(v.process.archive || v.snapshot?.lifecycle?.archived);
-const terminal = new Set(['applied','accepted','requested','already_terminal','deleted','not_applied','unknown_after_restart']);
+const terminal = new Set(['applied','accepted','requested','already_terminal','deleted','not_applied']);
 const descriptions = {
     access:'Change execution policy on the owning Vessel. Configured roots and server limits still apply.',
     rename:'Rename this voyage.', archive:'Archive an idle voyage, or restore an archived voyage.',
