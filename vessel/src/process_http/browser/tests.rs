@@ -657,7 +657,7 @@ mod transport {
                 session_id,
                 incarnation: Some(incarnation),
                 command: VoyageCommand::HostBrowser {
-                    operation: voyage_protocol::host_browser::HostBrowserOperation::Status,
+                    operation: voyage_protocol::host_browser::HostBrowserOperation::Status {},
                 },
             }))
             .await;
@@ -1045,7 +1045,7 @@ async fn host_browser_requires_registered_live_socket_and_public_envelopes_are_r
             session_id: Uuid::new_v4(),
             incarnation: Some(Uuid::new_v4()),
             command: VoyageCommand::HostBrowser {
-                operation: voyage_protocol::host_browser::HostBrowserOperation::Status,
+                operation: voyage_protocol::host_browser::HostBrowserOperation::Status {},
             },
         }),
     };

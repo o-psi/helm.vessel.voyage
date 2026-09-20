@@ -24,7 +24,7 @@ const DEADLINE: Duration = Duration::from_secs(25);
 type Pending = Arc<std::sync::Mutex<HashMap<Uuid, oneshot::Sender<Value>>>>;
 
 /// Loaded exclusively from executing-host configuration, never portable launch settings.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Launch {
     pub node: PathBuf,
@@ -32,6 +32,11 @@ pub struct Launch {
     pub chromium: PathBuf,
     #[serde(default = "default_config")]
     pub config: Value,
+}
+impl std::fmt::Debug for Launch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HostBrowserLaunch").finish_non_exhaustive()
+    }
 }
 fn default_config() -> Value {
     json!({"public_web":true,"origins":[],"ice_servers":[],"relay_only":false,"width":1280,"height":720})
@@ -65,6 +70,70 @@ impl Launch {
     }
 }
 
+fn validate_viewer_ice(config: &Value) -> Result<()> {
+    let Some(value) = config.get("viewer_rtc_configuration") else {
+        return Ok(());
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("invalid viewer ICE configuration"))?;
+    ensure!(
+        object
+            .keys()
+            .all(|k| matches!(k.as_str(), "iceServers" | "iceTransportPolicy")),
+        "invalid viewer ICE field"
+    );
+    ensure!(
+        value
+            .get("iceTransportPolicy")
+            .is_none_or(|p| p == "all" || p == "relay"),
+        "invalid viewer ICE policy"
+    );
+    let servers = value["iceServers"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("viewer ICE servers required"))?;
+    ensure!(servers.len() <= 4, "viewer ICE server bound");
+    for server in servers {
+        let fields = server
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("invalid ICE server"))?;
+        ensure!(
+            fields
+                .keys()
+                .all(|k| matches!(k.as_str(), "urls" | "username" | "credential")),
+            "invalid ICE server field"
+        );
+        let urls = server["urls"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("ICE URLs required"))?;
+        ensure!(!urls.is_empty() && urls.len() <= 4, "ICE URL bound");
+        for url in urls {
+            let url = url
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid ICE URL"))?;
+            ensure!(
+                url.len() <= 2048
+                    && (url.starts_with("turn:") || url.starts_with("turns:"))
+                    && !url.chars().any(|c| c.is_whitespace() || c.is_control()),
+                "invalid ICE URL"
+            );
+        }
+        for key in ["username", "credential"] {
+            ensure!(
+                server[key]
+                    .as_str()
+                    .is_some_and(|v| v.len() <= 4096 && !v.chars().any(char::is_control)),
+                "invalid ICE credential"
+            );
+        }
+    }
+    ensure!(
+        value["iceTransportPolicy"] != "relay" || !servers.is_empty(),
+        "relay-only viewer needs TURN"
+    );
+    Ok(())
+}
+
 /// Pipe ownership is independent of a caller's cancellation. An interrupt command
 /// can be written while a prior ordinary operation awaits its reply.
 struct Worker {
@@ -73,6 +142,8 @@ struct Worker {
     capacity: Arc<Semaphore>,
     failed: Arc<AtomicBool>,
     child: Mutex<tokio::process::Child>,
+    temporary: PathBuf,
+    cleanup_marker: PathBuf,
     _reader: tokio::task::JoinHandle<()>,
     _writer: tokio::task::JoinHandle<()>,
 }
@@ -99,24 +170,65 @@ impl Worker {
             launch.node.is_file() && launch.worker.is_file() && launch.chromium.is_file(),
             "browser distribution unavailable"
         );
-        let mut command = tokio::process::Command::new(&launch.node);
+        // Chromium uses Unix sockets beneath TMPDIR; session journal paths can
+        // exceed sockaddr_un. Own a short private directory until observed cleanup.
+        let temporary = tempfile::Builder::new()
+            .prefix("vhb-")
+            .tempdir_in("/tmp")?
+            .keep();
+        let guardian = launch.worker.with_file_name("guardian.py");
+        ensure!(
+            guardian.is_file(),
+            "browser guardian distribution unavailable"
+        );
+        let mut command = tokio::process::Command::new("/usr/bin/python3");
         command
+            .arg(&guardian)
+            .arg(&launch.node)
             .arg(&launch.worker)
+            .arg(&temporary)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", root)
-            .env("TMPDIR", root)
+            .env("TMPDIR", &temporary)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true);
+            .kill_on_drop(false);
         // The worker and descendants have one owned group. Forced termination is
         // not reported as observed browser cleanup (worker must acknowledge it).
         #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command
-            .spawn()
-            .map_err(|_| anyhow::anyhow!("browser worker unavailable"))?;
+        {
+            command.process_group(0);
+            unsafe {
+                command.pre_exec(|| {
+                    // Bound individual files/descriptors and forbid private core dumps.
+                    // Aggregate memory/disk containment still needs the host guardian.
+                    for (resource, value) in [
+                        (libc::RLIMIT_FSIZE, 64 * 1024 * 1024),
+                        (libc::RLIMIT_NOFILE, 1024),
+                        (libc::RLIMIT_CORE, 0),
+                    ] {
+                        let limit = libc::rlimit {
+                            rlim_cur: value,
+                            rlim_max: value,
+                        };
+                        if libc::setrlimit(resource, &limit) != 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    libc::umask(0o077);
+                    Ok(())
+                });
+            }
+        }
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(_) => {
+                std::fs::remove_dir_all(&temporary)?;
+                anyhow::bail!("browser worker unavailable");
+            }
+        };
         let mut input = child
             .stdin
             .take()
@@ -187,6 +299,8 @@ impl Worker {
             capacity: Arc::new(Semaphore::new(12)),
             failed,
             child: Mutex::new(child),
+            temporary,
+            cleanup_marker: root.join("guardian-cleanup.json"),
             _reader: reader,
             _writer: writer_task,
         }))
@@ -200,7 +314,7 @@ impl Worker {
         let interrupt = matches!(
             request["op"].as_str(),
             Some("control" | "disconnect" | "shutdown" | "close")
-        );
+        ) || (request["op"] == "input" && request["action"]["kind"] == "dialog");
         let _permit = if interrupt {
             None
         } else {
@@ -253,47 +367,104 @@ impl Worker {
             .exchange(json!({"id":Uuid::new_v4(),"op":"shutdown"}))
             .await
             .is_ok();
+        // EOF is an independent authority fence for the guardian, including when
+        // the worker transport was poisoned and cannot accept shutdown.
+        self._writer.abort();
         let mut child = self.child.lock().await;
-        if graceful
-            && matches!(
-                tokio::time::timeout(Duration::from_secs(8), child.wait()).await,
-                Ok(Ok(_))
-            )
-        {
-            return Ok(());
-        }
-        #[cfg(unix)]
-        if let Some(pid) = child.id() {
-            unsafe {
-                libc::kill(-(pid as i32), libc::SIGKILL);
+        let mut exited = matches!(
+            tokio::time::timeout(Duration::from_secs(12), child.wait()).await,
+            Ok(Ok(_))
+        );
+        if !exited {
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                unsafe {
+                    libc::kill(pid as i32, libc::SIGTERM);
+                }
             }
+            exited = matches!(
+                tokio::time::timeout(Duration::from_secs(12), child.wait()).await,
+                Ok(Ok(_))
+            );
         }
-        let _ = child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
-        anyhow::bail!("browser descendant cleanup unconfirmed")
+        ensure!(exited, "browser guardian cleanup unconfirmed");
+        let metadata = std::fs::symlink_metadata(&self.cleanup_marker)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            ensure!(
+                metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0,
+                "unsafe guardian evidence"
+            );
+        }
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 4096,
+            "invalid guardian evidence"
+        );
+        let evidence: Value = serde_json::from_slice(&std::fs::read(&self.cleanup_marker)?)?;
+        ensure!(
+            evidence["observed"] == true,
+            "browser descendant cleanup unconfirmed"
+        );
+        ensure!(
+            !self.temporary.exists(),
+            "browser private profile cleanup unconfirmed"
+        );
+        // A forced teardown resolves resource ownership, not website success.
+        if !graceful {
+            self.failed.store(true, Ordering::Release);
+        }
+        Ok(())
     }
 }
 impl Drop for Worker {
     fn drop(&mut self) {
+        // Closing the forwarding pipe wakes the independent subreaper guardian.
+        // Killing the guardian here could strand descendants in other groups.
         self._reader.abort();
         self._writer.abort();
-        #[cfg(unix)]
-        if let Ok(child) = self.child.try_lock() {
-            if let Some(pid) = child.id() {
-                unsafe {
-                    libc::kill(-(pid as i32), libc::SIGKILL);
-                }
-            }
-        }
     }
 }
 
 struct Viewer {
+    signal_sequence: u64,
+    input_sequence: u64,
     socket: Uuid,
     principal: Uuid,
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     seen: std::time::Instant,
 }
+/// Bounded conservative tombstone set. False positives refuse, never dispatch.
+/// Retired identities cannot become fresh input after receipt compaction.
+struct RetiredIds {
+    bits: Vec<u64>,
+}
+impl Default for RetiredIds {
+    fn default() -> Self {
+        Self {
+            bits: vec![0; 262144],
+        }
+    }
+}
+impl RetiredIds {
+    fn indices(id: Uuid) -> [usize; 4] {
+        let bytes = Sha256::digest(id.as_bytes());
+        std::array::from_fn(|i| {
+            u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap()) as usize % (262144 * 64)
+        })
+    }
+    fn insert(&mut self, id: Uuid) {
+        for n in Self::indices(id) {
+            self.bits[n / 64] |= 1u64 << (n % 64);
+        }
+    }
+    fn contains(&self, id: Uuid) -> bool {
+        Self::indices(id)
+            .iter()
+            .all(|n| self.bits[n / 64] & (1u64 << (n % 64)) != 0)
+    }
+}
+
 struct Inner {
     worker: Option<Arc<Worker>>,
     reservation: Option<crate::host_resources::Reservation>,
@@ -303,6 +474,8 @@ struct Inner {
     disconnected: HashSet<Uuid>,
     private_owner: Option<(Uuid, Uuid)>,
     live_receipts: HashMap<Uuid, (Uuid, Uuid, String, String)>,
+    input_receipts: HashSet<Uuid>,
+    retired_input_ids: RetiredIds,
     starting: bool,
 }
 pub struct HostBrowser {
@@ -344,6 +517,8 @@ impl HostBrowser {
                 disconnected: HashSet::new(),
                 private_owner: None,
                 live_receipts: HashMap::new(),
+                input_receipts: HashSet::new(),
+                retired_input_ids: RetiredIds::default(),
                 starting: false,
             }),
             fence: AtomicU64::new(0),
@@ -374,7 +549,14 @@ impl HostBrowser {
         let launch = self.launch.as_ref().ok_or_else(|| {
             anyhow::anyhow!("host browser unavailable; install packaged worker, Node and Chromium")
         })?;
+        validate_viewer_ice(&launch.config)?;
         let root = self.root()?;
+        // Only this exclusive Voyage owner may retire its own prior guardian
+        // evidence before a new launch. A worker lock still refuses uncertain reuse.
+        let marker = root.join("guardian-cleanup.json");
+        if marker.exists() {
+            std::fs::remove_file(&marker)?;
+        }
         // Reservations survive failed launch/cleanup, including process death.
         let capacity = crate::host_browser_capacity::Capacity::acquire(
             &crate::config::default_data_dir().join("host-browser-capacity"),
@@ -481,6 +663,12 @@ impl HostBrowser {
         inner.reservation = None;
         inner.status = Value::Null;
         inner.viewers.clear();
+        let retired: Vec<_> = inner.live_receipts.keys().copied().collect();
+        for id in retired {
+            inner.retired_input_ids.insert(id);
+        }
+        inner.live_receipts.clear();
+        inner.input_receipts.clear();
         inner.private_owner = None;
         Ok(())
     }
@@ -498,7 +686,7 @@ impl HostBrowser {
     }
     async fn projection(&self, attachment: Uuid) -> Value {
         let i = self.inner.lock().await;
-        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":i.status["tabs"]})
+        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":i.status["tabs"],"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
     }
     // No payloads, URLs, SDP, private input or observations enter durable receipts.
     fn receipt(
@@ -535,7 +723,7 @@ impl HostBrowser {
             }
             tx.commit()?;
             return Ok(Some(
-                json!({"command_id":id,"state":outcome,"content_withheld":true}),
+                json!({"command_id":id,"state":if outcome == "dispatched" { "unknown" } else { &outcome },"content_withheld":true}),
             ));
         }
         if let Some(hash) = digest {
@@ -599,6 +787,10 @@ impl HostBrowser {
                     "browser transport unresolved"
                 );
             }
+            let active_worker = { self.inner.lock().await.worker.clone() };
+            if let Some(worker) = active_worker {
+                self.refresh(&worker).await?;
+            }
             let attachment = self
                 .inner
                 .lock()
@@ -625,6 +817,10 @@ impl HostBrowser {
         );
         if ephemeral {
             let mut inner = self.inner.lock().await;
+            ensure!(
+                !inner.retired_input_ids.contains(id),
+                "browser input identity retired; never replay"
+            );
             if let Some((owner, bound, hash, state)) = inner.live_receipts.get(&id) {
                 ensure!(
                     *owner == principal && *bound == socket && *hash == digest,
@@ -636,8 +832,25 @@ impl HostBrowser {
             }
             ensure!(
                 inner.live_receipts.len() < 8192,
-                "browser attachment receipt capacity exhausted; detach and reconnect"
+                "browser in-flight receipt capacity exhausted"
             );
+            if inner.live_receipts.len() >= 4096 {
+                let retired: Vec<_> = inner
+                    .live_receipts
+                    .iter()
+                    .filter(|(id, r)| r.3 != "dispatched" && inner.input_receipts.contains(id))
+                    .take(1024)
+                    .map(|(id, _)| *id)
+                    .collect();
+                for id in retired {
+                    inner.retired_input_ids.insert(id);
+                    inner.live_receipts.remove(&id);
+                    inner.input_receipts.remove(&id);
+                }
+            }
+            if matches!(operation, HostBrowserOperation::Input { .. }) {
+                inner.input_receipts.insert(id);
+            }
             inner
                 .live_receipts
                 .insert(id, (principal, socket, digest.clone(), "dispatched".into()));
@@ -721,6 +934,8 @@ impl HostBrowser {
             i.viewers.insert(
                 id,
                 Viewer {
+                    signal_sequence: 0,
+                    input_sequence: 0,
                     socket,
                     principal,
                     authority: authority.clone(),
@@ -745,16 +960,38 @@ impl HostBrowser {
         if let Some(a) = &authority {
             a.check()?;
         }
-        if matches!(&operation, HostBrowserOperation::Control { .. }) {
-            if let Some(viewer) = self.inner.lock().await.viewers.get_mut(&attachment) {
-                viewer.authority = authority;
-            }
+        if matches!(&operation, HostBrowserOperation::Control { .. })
+            && let Some(viewer) = self.inner.lock().await.viewers.get_mut(&attachment)
+        {
+            viewer.authority = authority;
         }
         let mut request = json!({"id":operation.mutation_id(),"browser":status["browser"],"epochs":status["epochs"],"viewer":attachment});
         let detach = matches!(operation, HostBrowserOperation::Detach { .. });
+        let request_offer = matches!(
+            &operation,
+            HostBrowserOperation::Signal {
+                signal: HostBrowserSignal::RequestOffer {},
+                ..
+            }
+        );
+        if matches!(operation, HostBrowserOperation::Signal { .. }) {
+            let mut inner = self.inner.lock().await;
+            let viewer = inner
+                .viewers
+                .get_mut(&attachment)
+                .ok_or_else(|| anyhow::anyhow!("browser viewer missing"))?;
+            viewer.signal_sequence = viewer
+                .signal_sequence
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("browser signal sequence exhausted"))?;
+            request["signal_seq"] = json!(viewer.signal_sequence);
+        }
         match operation {
             HostBrowserOperation::Attach { .. } => request["op"] = json!("join"),
             HostBrowserOperation::Detach { .. } => {
+                if status["mode"] == "private" && status["controller"] == json!(attachment) {
+                    self.inner.lock().await.private_owner = Some((attachment, principal));
+                }
                 self.fence.fetch_add(1, Ordering::AcqRel);
                 request["op"] = json!("disconnect");
             }
@@ -776,6 +1013,22 @@ impl HostBrowser {
             HostBrowserOperation::Input {
                 sequence, input, ..
             } => {
+                {
+                    let mut inner = self.inner.lock().await;
+                    let viewer = inner
+                        .viewers
+                        .get_mut(&attachment)
+                        .ok_or_else(|| anyhow::anyhow!("browser viewer missing"))?;
+                    ensure!(
+                        sequence
+                            == viewer
+                                .input_sequence
+                                .checked_add(1)
+                                .ok_or_else(|| anyhow::anyhow!("input sequence exhausted"))?,
+                        "browser input sequence mismatch"
+                    );
+                    viewer.input_sequence = sequence;
+                }
                 request["op"] = json!("input");
                 request["seq"] = json!(sequence);
                 request["action"] = input_action(input)?;
@@ -791,9 +1044,18 @@ impl HostBrowser {
         if detach {
             let mut inner = self.inner.lock().await;
             inner.viewers.remove(&attachment);
-            inner
+            let retired: Vec<_> = inner
                 .live_receipts
-                .retain(|_, (_, bound, _, _)| *bound != socket);
+                .iter()
+                .filter(|(_, (_, bound, _, _))| *bound == socket)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in retired {
+                inner.retired_input_ids.insert(id);
+                inner.live_receipts.remove(&id);
+            }
+            let kept: HashSet<_> = inner.live_receipts.keys().copied().collect();
+            inner.input_receipts.retain(|id| kept.contains(id));
         }
         // Worker effects carry current status; do not queue a status request behind an in-flight agent.
 
@@ -804,14 +1066,26 @@ impl HostBrowser {
                 !i.disconnected.contains(&socket),
                 "browser result withheld after disconnect"
             );
-            if let Some(v) = i.viewers.get(&attachment) {
-                if let Some(a) = &v.authority {
-                    a.check()?;
-                }
+            if let Some(v) = i.viewers.get(&attachment)
+                && let Some(a) = &v.authority
+            {
+                a.check()?;
+            }
+        }
+        let mut output = value.get("value").unwrap_or(&value).clone();
+        if request_offer {
+            // Explicit host-provided viewer ICE configuration is private signaling,
+            // never status/history. Do not disclose encoder-only TURN credentials.
+            if let Some(config) = self
+                .launch
+                .as_ref()
+                .and_then(|l| l.config.get("viewer_rtc_configuration"))
+            {
+                output["rtc_configuration"] = config.clone();
             }
         }
         Ok(
-            json!({"status":self.projection(if detach {Uuid::nil()}else{attachment}).await,"value":value.get("value").unwrap_or(&value)}),
+            json!({"status":self.projection(if detach {Uuid::nil()}else{attachment}).await,"value":output}),
         )
     }
     pub async fn disconnect(&self, socket: Uuid) -> Result<()> {
@@ -823,16 +1097,24 @@ impl HostBrowser {
                 "browser disconnected socket capacity exhausted"
             );
             i.disconnected.insert(socket);
-            i.live_receipts
-                .retain(|_, (_, bound, _, _)| *bound != socket);
-            if i.status["mode"] == "private" {
-                if let Ok(controller) =
+            let retired: Vec<_> = i
+                .live_receipts
+                .iter()
+                .filter(|(_, (_, bound, _, _))| *bound == socket)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in retired {
+                i.retired_input_ids.insert(id);
+                i.live_receipts.remove(&id);
+            }
+            let kept: HashSet<_> = i.live_receipts.keys().copied().collect();
+            i.input_receipts.retain(|id| kept.contains(id));
+            if i.status["mode"] == "private"
+                && let Ok(controller) =
                     serde_json::from_value::<Uuid>(i.status["controller"].clone())
-                {
-                    if let Some(v) = i.viewers.get(&controller) {
-                        i.private_owner = Some((controller, v.principal));
-                    }
-                }
+                && let Some(v) = i.viewers.get(&controller)
+            {
+                i.private_owner = Some((controller, v.principal));
             }
             (
                 i.worker.clone(),
@@ -987,7 +1269,7 @@ mod tests {
         assert!(b.receipt(id, p, Some("abc"), None).unwrap().is_none());
         assert_eq!(
             b.receipt(id, p, Some("abc"), None).unwrap().unwrap()["state"],
-            "dispatched"
+            "unknown"
         );
         assert!(b.receipt(id, p, Some("changed"), None).is_err());
         assert!(b.receipt(id, Uuid::new_v4(), None, None).is_err());
@@ -1035,5 +1317,44 @@ mod tests {
             .await
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod launch_privacy_tests {
+    use super::*;
+    #[test]
+    fn diagnostic_configuration_withholds_turn_credentials() {
+        let launch = Launch {
+            node: "/usr/bin/node".into(),
+            worker: "/private/worker.mjs".into(),
+            chromium: "/usr/bin/chromium".into(),
+            config: json!({"ice_servers":[{"credential":"turn-secret-sentinel"}]}),
+        };
+        assert!(!format!("{launch:?}").contains("turn-secret-sentinel"));
+        let config = crate::Config {
+            host_browser_launch: Some(launch),
+            ..Default::default()
+        };
+        let display = config.diagnostic_toml().unwrap();
+        assert!(!display.contains("turn-secret-sentinel"));
+        assert!(!display.contains("/private/worker"));
+    }
+}
+
+#[cfg(test)]
+mod retired_input_tests {
+    use super::*;
+    #[test]
+    fn bounded_tombstones_never_forget_inserted_ids() {
+        let mut ids = RetiredIds::default();
+        let inserted: Vec<_> = (0..12000).map(|_| Uuid::new_v4()).collect();
+        for id in &inserted {
+            ids.insert(*id);
+        }
+        for id in inserted {
+            assert!(ids.contains(id));
+        }
+        assert_eq!(ids.bits.len() * 8, 2 * 1024 * 1024);
     }
 }

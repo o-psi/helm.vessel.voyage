@@ -37,3 +37,9 @@ Exports also include `BrowserSession` (transport/controller state without DOM),
 `dispose()`. Controls include Start/Connect, human/private/agent mode, navigation,
 tabs, remote dialog accept/dismiss, viewport resize, pointer/wheel, physical keys,
 and a transient IME text composer. No screenshots are substituted for video.
+
+A remount on an existing attachment takes `status.input_sequence` as its starting
+sequence; it never guesses zero. Explicit viewer detach/disconnect is best effort
+and never resumes private mode or closes the browser. Host-authored
+`value.rtc_configuration` in a RequestOffer reply overrides the local receiver
+configuration; it is private signaling, not status, history, or model input.

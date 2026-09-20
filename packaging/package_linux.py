@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import browser_assets
 import gzip
 import hashlib
 import json
@@ -185,6 +186,9 @@ def populate(root: Path, bin_dir: Path, source: Path, version: str) -> None:
             write_bytes(root, destination, run_binary(binary, "completions", shell))
     manifest = {"schema_version": 1, "version": version, "target": TARGET,
                 "binaries": {name: {"sha256": digest(root / "bin" / name)} for name in BINARIES}}
+    assets = browser_assets.stage(source / "voyage/browser", root)
+    if assets:
+        manifest["assets"] = assets
     write_bytes(root, "release.json", (json.dumps(manifest, indent=2) + "\n").encode())
 
 

@@ -397,3 +397,15 @@ the same value) to revoke all temporary roots for subsequent admissions. A chang
 access generation also invalidates pending root consent. This does not claim that
 an already-running process was stopped; ordinary cancellation/cleanup accounting
 still applies. Native macOS/Windows support is explicitly refused, not certified.
+
+### Host-browser target (#333)
+
+[Host-browser design](host-browser.md) moves task website execution to a
+Voyage-owned worker on the Vessel host. WebRTC viewing does not grant arbitrary
+CDP or host execution. Private input must fence agent observations and other
+viewers before acknowledgement. The host still sees browser credentials; it is not
+a secrecy boundary against the executing-account owner. Chromium sandbox plus
+DNS-pinned proxy checks are defense in depth, **not an OS egress sandbox**. Disk,
+CPU/memory and private-network/metadata access must be qualified before broad
+production claims. The current implementation work and synthetic media tests do
+not establish native-platform or public proxy/NAT deployment security.

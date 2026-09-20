@@ -26,7 +26,13 @@ impl App {
                 );
                 if !self.browsers.contains_key(&target) {
                     ensure!(
-                        self.browsers.len() < 4,
+                        self.browsers.len()
+                            + self
+                                .browser_retired
+                                .iter()
+                                .filter(|job| !job.is_finished())
+                                .count()
+                            < 4,
                         "At most four browser viewers; detach one first"
                     );
                     let revision = view
@@ -134,7 +140,7 @@ impl App {
         let targets = self.browsers.keys().copied().collect::<Vec<_>>();
         for target in targets {
             if self.views.get(&target).is_none_or(|view| {
-                view.process.incarnation != self.browsers[&target].incarnation
+                !self.browsers[&target].accepts_incarnation(view.process.incarnation)
                     || view.deleted()
                     || view.archived()
             }) {

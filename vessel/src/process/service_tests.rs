@@ -284,6 +284,7 @@ async fn socket_backend_rechecks_identity_and_rotated_local_authority() {
     let s = state(&f).await;
     let identity = super::super::identity::public(&f.0).unwrap();
     let backend = LocalSocketBackend {
+        sockets: Default::default(),
         supervisor: s.supervisor,
         token_hash: s.token_hash,
         vessel_id: identity.vessel_id,

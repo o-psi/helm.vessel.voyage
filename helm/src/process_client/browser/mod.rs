@@ -53,6 +53,7 @@ impl Default for Status {
         }
     }
 }
+#[allow(dead_code)] // Retained only for explicit legacy local-browser reconciliation/tests.
 #[derive(Clone, Copy)]
 pub(crate) enum Control {
     Human,
@@ -60,6 +61,7 @@ pub(crate) enum Control {
 }
 pub(crate) struct Handle {
     pub state: watch::Receiver<Status>,
+    #[allow(dead_code)]
     control: mpsc::Sender<Control>,
     stop: CancellationToken,
     job: Option<tokio::task::JoinHandle<Result<()>>>,
@@ -96,14 +98,13 @@ impl Handle {
             job: Some(job),
         }
     }
+    #[cfg(test)]
     pub fn control(&self, value: Control) -> Result<()> {
         self.control
             .try_send(value)
             .context("Local browser control queue unavailable")
     }
-    pub fn stop(&self) {
-        self.stop.cancel();
-    }
+    #[cfg(test)]
     pub fn finished(&self) -> bool {
         self.job.as_ref().is_none_or(|job| job.is_finished())
     }

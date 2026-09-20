@@ -40,6 +40,12 @@ pub(super) async fn fixture() -> (tempfile::TempDir, Arc<State>) {
         ..Default::default()
     };
     let state = Arc::new(State {
+        host_browser: crate::host_browser::HostBrowser::new(
+            directory.join("host-browser"),
+            session.id,
+            registration.incarnation,
+            None,
+        ),
         browser: crate::browser::BrowserBroker::open(
             directory.join("journal"),
             session.id,

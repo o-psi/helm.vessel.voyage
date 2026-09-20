@@ -6,6 +6,17 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use voyage_protocol::process::*;
 
+fn browser_may_prepare(command: &RuntimeCommand) -> bool {
+    matches!(
+        command,
+        RuntimeCommand::HostBrowser {
+            operation: voyage_protocol::host_browser::HostBrowserOperation::Status {}
+                | voyage_protocol::host_browser::HostBrowserOperation::Start { .. },
+            ..
+        }
+    )
+}
+
 impl Supervisor {
     // The persisted executable identifies the old execution owner, not the
     // version a clean read-only helper must use after a supervisor upgrade.
@@ -168,6 +179,53 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        // Browser effects and transport cleanup must not queue behind a long
+        // lifecycle operation. Private IPC authenticates the exact registration;
+        // a replacement owner cannot accept its token/incarnation. Never recover
+        // or retry an effect whose browser/attachment belongs to a dead owner.
+        if matches!(
+            &command,
+            RuntimeCommand::HostBrowser { .. } | RuntimeCommand::HostBrowserDisconnected { .. }
+        ) {
+            let registration = self.registration(session).await?;
+            ensure!(
+                expected_incarnation == Some(registration.incarnation),
+                "stale runtime incarnation"
+            );
+            ensure!(
+                registration.state != ProcessState::Relinquished,
+                "source ownership has been permanently relinquished"
+            );
+            let directory = registry::directory(&self.directory, session);
+            if browser_may_prepare(&command)
+                && (super::recovery::suspended(&directory, &registration)
+                    || (!directory.join("runtime.sock").exists()
+                        && super::recovery::clean_stop(&directory, &registration)))
+            {
+                // Preparation has no browser effect. Return the new owner fence
+                // without replaying or rewriting the original command envelope.
+                // The caller retries Status/Start with this incarnation and the
+                // SAME command ID after observing this not-dispatched result.
+                let mut response = Box::pin(self.dispatch_session(
+                    session,
+                    expected_incarnation,
+                    RuntimeCommand::PrepareBrowser,
+                    authorization,
+                ))
+                .await?;
+                if response.error.is_none() {
+                    response.result =
+                        serde_json::json!({"status":"prepared", "not_dispatched":true});
+                }
+                return Ok(response);
+            }
+            ensure!(
+                !super::recovery::suspended(&directory, &registration),
+                "browser owner is suspended"
+            );
+            return routing::forward_authorized(&directory, &registration, command, authorization)
+                .await;
+        }
         // A long-lived SSE observer must never hold the lifecycle lock and delay
         // admission, suspension or recovery. Events are read-only, bounded and
         // incarnation checked. A concurrent lifecycle transition can end this
@@ -498,3 +556,37 @@ pub(super) async fn observe(
 #[cfg(test)]
 #[path = "suspension_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod browser_route_tests {
+    use super::*;
+    use voyage_protocol::host_browser::{HostBrowserOperation, HostBrowserSocket};
+
+    #[test]
+    fn cleanup_and_receipts_never_prepare_a_replacement_owner() {
+        let socket = HostBrowserSocket {
+            socket_id: Uuid::new_v4(),
+        };
+        assert!(!browser_may_prepare(
+            &RuntimeCommand::HostBrowserDisconnected { socket }
+        ));
+        assert!(!browser_may_prepare(&RuntimeCommand::HostBrowser {
+            socket,
+            operation: HostBrowserOperation::Receipt {
+                command_id: Uuid::new_v4()
+            },
+        }));
+        assert!(browser_may_prepare(&RuntimeCommand::HostBrowser {
+            socket,
+            operation: HostBrowserOperation::Status {}
+        }));
+        assert!(browser_may_prepare(&RuntimeCommand::HostBrowser {
+            socket,
+            operation: HostBrowserOperation::Start {
+                command_id: Uuid::new_v4(),
+                expected_revision: 0,
+                incarnation: Uuid::new_v4(),
+            },
+        }));
+    }
+}

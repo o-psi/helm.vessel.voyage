@@ -12,6 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare pinned browser worker dependency
+        run: npm ci --prefix voyage/browser --ignore-scripts --omit=dev --no-audit --no-fund
       - name: Build Linux binaries
         run: cargo build --workspace --release --locked
       - name: Package Linux binaries

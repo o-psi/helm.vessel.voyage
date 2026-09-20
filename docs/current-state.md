@@ -71,22 +71,28 @@ verified. This is not #257 condition-watch/wake scheduling or mobile/browser del
 See [notifications](notifications.md), [client commands](notifications-client.md) and
 [verification and remaining scope](notifications-verification.md).
 
-## Shared local browser
+## Voyage-owned host browser
 
-Helm's F6 and `/browser` open a dedicated local Chromium companion. Browser actions
-and results use the same authenticated full-duplex Helm–Vessel socket as ordinary
-commands; the helper has private local stdio only. Human/agent control shares one
-browser context, with local origin grants, per-effect confirmation, private capture
-suspension and explicit return-to-agent epochs. Remote policy remains independent.
-A socket identity/loss change fences sharing, not the remote Voyage. Typed visual
-tool results retain their original call provenance through authorized artifacts.
+The #333 implementation moves interactive task browsing to a Voyage-owned worker
+on the Vessel host. `host_browser` launches it on demand under executing policy.
+Helm Web's Browser panel and native Helm F6 / `/browser` use one shared graphical
+WebRTC viewer. Native Helm opens it in the ordinary browser; terminal video is not
+required. Viewer detach does not close the host browser. Human/private control,
+tab/document/viewport fences, exact receipts and observed cleanup remain explicit.
 
-This is Linux-qualified source functionality, not certification of arbitrary
-websites, a production TLS proxy or native macOS/Windows behavior. Setup is an
-explicit `helm browser setup` operation; no browser or model credentials are
-installed automatically. See [local browser](local-browser.md),
-[runtime browser binding](shared-local-browser-runtime.md) and
-[visual tool results](visual-tool-results.md) for exact scope and limits.
+Local synthetic evidence includes two real Voyages, mounted production viewer,
+native local-owner/access-file launchers, decoded video and private-input history
+exclusion. A separate loopback TURN test checks relay-selected decoded media. These
+are not public-NAT, native macOS/Windows or arbitrary-site certification. See
+[host-browser design](host-browser.md) for configuration, limits and acceptance.
+Distribution uses packaged worker assets plus host Node/Chromium; required OS
+sandbox policy currently refuses this worker rather than being bypassed.
+
+Legacy explicit local-browser code and cleanup receipts remain for compatibility;
+it is no longer the F6/default browser path. Its old setup instructions in
+[local browser](local-browser.md) describe that legacy implementation, not the
+new host-browser viewer. [Visual tool results](visual-tool-results.md) still govern
+image/artifact provenance.
 
 On Linux, an existing voyage can recreate its deleted working directory on the
 next message while retaining conversation history and access settings. Recovery

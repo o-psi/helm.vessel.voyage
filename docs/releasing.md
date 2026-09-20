@@ -100,3 +100,21 @@ must explicitly verify before extracting or executing. No production trust key,
 product release, container image, reproducible-build result or native deployment
 is implied. Publication of signed assets/full build SBOMs and service deployment
 remain explicit delivery work; credentials must never enter source or archives.
+
+### Host-browser distribution (#333, implementation in progress)
+
+The executing-host browser worker is a release asset, not a dependency downloaded
+by a model tool. Prepare its pinned dependency with
+`npm ci --prefix voyage/browser --ignore-scripts --omit=dev --no-audit --no-fund`
+before packaging. The Linux packager inventories `voyage/browser/*.mjs`, the Python guardian, package
+metadata and pinned `playwright-core` under `share/voyage/browser`; the installer
+verifies and preserves their hashes as part of release identity. It refuses
+symlinks, missing entry points, mismatched dependency versions and oversized
+inventories. Older binary-only releases remain readable.
+
+The nightly workflow prepares and includes the same worker assets without adding
+hosted tests. Runtime Python 3, Node and sandbox-capable Chromium remain execution-host
+requirements, not programs required on a Helm viewer machine. This section does
+not establish successful deployment or #333 acceptance; exact runtime discovery,
+provisioning, media and cleanup evidence must accompany delivery. Do not silently
+install system packages or fetch JavaScript dependencies during browser actions.

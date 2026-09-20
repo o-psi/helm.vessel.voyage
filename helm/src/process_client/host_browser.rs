@@ -37,7 +37,8 @@ pub(crate) enum Control {
     Close,
 }
 pub(crate) struct Handle {
-    pub incarnation: Uuid,
+    initial_incarnation: Uuid,
+    owner: Arc<Mutex<(Uuid, u64)>>,
     pub state: watch::Receiver<Status>,
     control: mpsc::Sender<Control>,
     stop: CancellationToken,
@@ -53,17 +54,10 @@ impl Handle {
         let (control, rx) = mpsc::channel(8);
         let stop = CancellationToken::new();
         let cancelled = stop.clone();
+        let owner = Arc::new(Mutex::new((incarnation, revision)));
+        let adapter_owner = owner.clone();
         let job = tokio::spawn(async move {
-            let result = run(
-                client,
-                session,
-                incarnation,
-                revision,
-                cancelled,
-                rx,
-                tx.clone(),
-            )
-            .await;
+            let result = run(client, session, adapter_owner, cancelled, rx, tx.clone()).await;
             tx.send_modify(|s| {
                 s.finished = true;
                 s.launcher = None;
@@ -77,12 +71,18 @@ impl Handle {
             result
         });
         Self {
-            incarnation,
+            initial_incarnation: incarnation,
+            owner,
             state,
             control,
             stop,
             job: Some(job),
         }
+    }
+    /// The catalogue can lag a verified preparation. Accept only the original
+    /// observation or our explicitly prepared owner, never an arbitrary restart.
+    pub fn accepts_incarnation(&self, observed: Uuid) -> bool {
+        observed == self.initial_incarnation || observed == self.owner.lock().unwrap().0
     }
     pub fn control(&self, control: Control) -> Result<()> {
         self.control
@@ -112,9 +112,8 @@ impl Drop for Handle {
 struct Adapter {
     client: Client,
     session: Uuid,
-    incarnation: Uuid,
+    owner: Arc<Mutex<(Uuid, u64)>>,
     socket: Uuid,
-    revision: u64,
     origin: String,
     host: String,
     launch: Mutex<Option<String>>,
@@ -139,21 +138,48 @@ impl Adapter {
                 == Some(self.secret.as_str())
             && headers.get("x-helm-csrf").and_then(|v| v.to_str().ok()) == Some(self.csrf.as_str())
     }
+    async fn dispatch(&self, mut op: Op) -> Result<Value> {
+        let incarnation = self.owner.lock().unwrap().0;
+        let (value, owner) = self
+            .client
+            .host_browser_observed(self.socket, self.session, incarnation, op.clone())
+            .await?;
+        if !super::transport::browser_prepared(&value) {
+            return Ok(value);
+        }
+        let revision = self
+            .client
+            .host_browser_revision(self.socket, self.session, owner)
+            .await?;
+        // Exact intent was explicitly NOT dispatched or admitted. Keep its ID;
+        // only replace the owner/revision preconditions after observing preparation.
+        rebind_prepared(&mut op, owner, revision)?;
+        *self.owner.lock().unwrap() = (owner, revision);
+        let value = self
+            .client
+            .host_browser(self.socket, self.session, owner, op)
+            .await?;
+        ensure!(
+            !super::transport::browser_prepared(&value),
+            "Repeated browser preparation; not replayed"
+        );
+        Ok(value)
+    }
     async fn exchange(&self, op: Op) -> Result<Value> {
+        let incarnation = self.owner.lock().unwrap().0;
         ensure!(!self.stop.is_cancelled(), "Viewer detached");
         ensure!(op.valid(), "Invalid browser operation");
         ensure!(
-            op.binding()
-                .is_none_or(|b| b.incarnation == self.incarnation),
+            op.binding().is_none_or(|b| b.incarnation == incarnation),
             "Browser owner mismatch"
         );
         if let Op::Start { incarnation, .. } = &op {
-            ensure!(*incarnation == self.incarnation, "Browser owner mismatch");
+            ensure!(
+                *incarnation == self.owner.lock().unwrap().0,
+                "Browser owner mismatch"
+            );
         }
-        let result = self
-            .client
-            .host_browser(self.socket, self.session, self.incarnation, op)
-            .await;
+        let result = self.dispatch(op).await;
         // Unknown outcomes poison this viewer; opening a new viewer is an explicit human action.
         if result.is_err() {
             self.stop.cancel();
@@ -162,7 +188,7 @@ impl Adapter {
         let status = &value["status"];
         let binding = serde_json::from_value::<HostBrowserBinding>(status["binding"].clone())
             .ok()
-            .filter(|b| b.incarnation == self.incarnation && b.valid());
+            .filter(|b| b.incarnation == self.owner.lock().unwrap().0 && b.valid());
         *self.binding.lock().unwrap() = binding;
         let mode = match status["mode"].as_str() {
             Some("human") => "human",
@@ -181,6 +207,22 @@ impl Adapter {
     }
 }
 
+fn rebind_prepared(op: &mut Op, owner: Uuid, revision: u64) -> Result<()> {
+    match op {
+        Op::Status {} => {}
+        Op::Start {
+            incarnation,
+            expected_revision,
+            ..
+        } => {
+            *incarnation = owner;
+            *expected_revision = revision;
+        }
+        _ => anyhow::bail!("Only unbound Status/Start may prepare an owner"),
+    }
+    Ok(())
+}
+
 async fn bootstrap(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Bytes) -> Response {
     if !a.headers_ok(&headers) || a.stop.is_cancelled() {
         return StatusCode::FORBIDDEN.into_response();
@@ -189,7 +231,8 @@ async fn bootstrap(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Byte
     if !consume_launch(&mut launch, &body) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    Json(json!({"authorization":a.secret,"csrf":a.csrf,"incarnation":a.incarnation,"revision":a.revision})).into_response()
+    let (incarnation, revision) = *a.owner.lock().unwrap();
+    Json(json!({"authorization":a.secret,"csrf":a.csrf,"incarnation":incarnation,"revision":revision})).into_response()
 }
 fn consume_launch(launch: &mut Option<String>, supplied: &[u8]) -> bool {
     if launch
@@ -209,11 +252,32 @@ async fn operation(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Byte
     let Ok(op) = serde_json::from_slice::<Op>(&body) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let Ok(_guard) = a.gate.try_lock() else {
-        return StatusCode::CONFLICT.into_response();
+    // Revocation and website dialog replies must not wait behind the operation
+    // they interrupt. Other effects remain serialized in this local adapter.
+    let interrupt = matches!(
+        &op,
+        Op::Control { .. }
+            | Op::Detach { .. }
+            | Op::Close { .. }
+            | Op::Input {
+                input: voyage_protocol::host_browser::HostBrowserInput::Dialog { .. },
+                ..
+            }
+    );
+    let _guard = if interrupt {
+        None
+    } else {
+        match a.gate.try_lock() {
+            Ok(guard) => Some(guard),
+            Err(_) => return StatusCode::CONFLICT.into_response(),
+        }
     };
     match a.exchange(op).await {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            let (incarnation, revision) = *a.owner.lock().unwrap();
+            Json(json!({"result":value,"context":{"incarnation":incarnation,"revision":revision}}))
+                .into_response()
+        }
         Err(_) => (
             StatusCode::CONFLICT,
             "Browser operation refused or outcome unknown; not replayed",
@@ -252,7 +316,9 @@ try {
    try {
    const response=await fetch('/operation',{method:'POST',credentials:'omit',cache:'no-store',headers,body:JSON.stringify(operation)});
    if(!response.ok){viewer?.disconnect();throw Error('Viewer disconnected or operation refused; never replayed');}
-   return await response.json();
+   const reply=await response.json();
+   Object.assign(auth,reply.context);
+   return reply.result;
    } catch(error) {disconnect();throw error;}
  }});
  window.addEventListener('pagehide',()=>{clearInterval(heartbeat);viewer.dispose();},{once:true});
@@ -262,8 +328,7 @@ try {
 async fn run(
     client: Client,
     session: Uuid,
-    incarnation: Uuid,
-    revision: u64,
+    owner: Arc<Mutex<(Uuid, u64)>>,
     stop: CancellationToken,
     mut controls: mpsc::Receiver<Control>,
     status: watch::Sender<Status>,
@@ -280,9 +345,8 @@ async fn run(
     let a = Arc::new(Adapter {
         client,
         session,
-        incarnation,
+        owner,
         socket,
-        revision,
         origin: origin.clone(),
         host,
         launch: Mutex::new(Some(token.clone())),
@@ -340,7 +404,7 @@ async fn run(
                 }
                 command = controls.recv() => {
                     let Some(command) = command else { break; };
-                    let _guard = a.gate.lock().await;
+                    // Revocation must interrupt a pending page operation/dialog.
                     let binding = a.binding.lock().unwrap().clone();
                     if let Some(binding) = binding {
                         let command_id = Uuid::new_v4();
@@ -362,7 +426,7 @@ async fn run(
             .host_browser(
                 socket,
                 session,
-                incarnation,
+                binding.incarnation,
                 Op::Detach {
                     command_id: Uuid::new_v4(),
                     binding,
@@ -431,9 +495,8 @@ mod tests {
                 std::env::temp_dir().join(format!("missing-host-view-test-{}", Uuid::new_v4())),
             ),
             session: Uuid::new_v4(),
-            incarnation: Uuid::new_v4(),
+            owner: Arc::new(Mutex::new((Uuid::new_v4(), 1))),
             socket: Uuid::new_v4(),
-            revision: 1,
             origin: "http://127.0.0.1:12345".into(),
             host: "127.0.0.1:12345".into(),
             launch: Mutex::new(Some("one-use".into())),
@@ -461,6 +524,42 @@ mod tests {
         h
     }
     #[test]
+    fn preparation_requires_exact_non_admission_and_preserves_start_identity() {
+        use super::super::transport::browser_prepared;
+        assert!(browser_prepared(
+            &json!({"status":"prepared","not_dispatched":true})
+        ));
+        for value in [
+            json!({"status":"prepared"}),
+            json!({"not_dispatched":true}),
+            json!({"status":"prepared","not_dispatched":"true"}),
+            json!({"status":"applied","not_dispatched":true}),
+        ] {
+            assert!(!browser_prepared(&value));
+        }
+        let id = Uuid::new_v4();
+        let owner = Uuid::new_v4();
+        let mut op = Op::Start {
+            command_id: id,
+            incarnation: Uuid::new_v4(),
+            expected_revision: 1,
+        };
+        rebind_prepared(&mut op, owner, 9).unwrap();
+        assert_eq!(
+            op,
+            Op::Start {
+                command_id: id,
+                incarnation: owner,
+                expected_revision: 9
+            }
+        );
+        let mut status = Op::Status {};
+        rebind_prepared(&mut status, owner, 9).unwrap();
+        assert_eq!(status, Op::Status {});
+        let mut receipt = Op::Receipt { command_id: id };
+        assert!(rebind_prepared(&mut receipt, owner, 9).is_err());
+    }
+    #[test]
     fn exact_host_origin_authorization_and_csrf_are_required() {
         let a = adapter();
         assert!(a.authenticated(&headers()));
@@ -481,10 +580,10 @@ mod tests {
     #[tokio::test]
     async fn stale_socket_is_refused_without_connecting_or_replaying() {
         let a = adapter();
-        assert!(a.exchange(Op::Status).await.is_err());
+        assert!(a.exchange(Op::Status {}).await.is_err());
         assert!(a.stop.is_cancelled());
         assert_eq!(a.client.connection_state().borrow().socket_id, None);
-        assert!(a.exchange(Op::Status).await.is_err());
+        assert!(a.exchange(Op::Status {}).await.is_err());
     }
     #[tokio::test]
     async fn bootstrap_is_origin_checked_and_one_use() {

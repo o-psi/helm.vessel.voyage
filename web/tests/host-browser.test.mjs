@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {BrowserSession, videoPoint} from '../../helm/browser-view/viewer.mjs';
-import {mountHostBrowser} from '../resources/js/host-browser.js';
+import {mountHostBrowser, hostBrowserAdapter} from '../resources/js/host-browser.js';
 const nil = '00000000-0000-0000-0000-000000000000';
 const binding = {incarnation:'inc',browser_id:'browser',attachment_id:'viewer',tab_id:'tab',document_epoch:1,viewport_epoch:1,controller_epoch:1,capture_epoch:1};
 const status = (changes = {}) => ({available:true,running:true,binding:{...binding},mode:'human',controller:'viewer',tabs:['tab'],...changes});
@@ -98,4 +98,77 @@ test('mounted Web UI sends transient navigation/text/dialog/resize/tab and clear
         assert.deepEqual(sent[0].command,{op:'host_browser',session_id:'session',incarnation:'inc',operation:{action:'status'}});
         viewer.dispose(); assert.equal(root.children.length,0);
     } finally { viewer.dispose(); dom.window.close(); }
+});
+
+function adapterFixture(replies) {
+    const sent=[];
+    const client={exchange:async request=>{sent.push(structuredClone(request.command));const next=replies.shift(); if(next instanceof Error) throw next; return next;}};
+    return {sent,...hostBrowserAdapter({client,sessionId:'session',incarnation:'old',context:()=>({incarnation:'old',revision:1})})};
+}
+const envelope = (result, incarnation='new', extra={}) => ({protocol:1,error:null,outcome_unknown:false,result:{session_id:'session',incarnation,result},...extra});
+const preparation = () => envelope({status:'prepared',not_dispatched:true});
+test('prepared Start refreshes fences and resends exact non-admitted intent once',async()=>{
+    const a=adapterFixture([preparation(),envelope({revision:9}),envelope({status:status()})]);
+    const original={action:'start',command_id:'same-id',incarnation:'old',expected_revision:1};
+    await a.transport(original);
+    assert.deepEqual(a.sent.map(c=>c.op),['host_browser','snapshot','host_browser']);
+    assert.deepEqual(a.sent[2].operation,{...original,incarnation:'new',expected_revision:9});
+    assert.deepEqual(original,{action:'start',command_id:'same-id',incarnation:'old',expected_revision:1});
+    assert.deepEqual(a.context(),{incarnation:'new',revision:9});
+});
+test('prepared Status refreshes context for subsequent Start',async()=>{
+    const a=adapterFixture([preparation(),envelope({revision:9}),envelope({status:status()})]);
+    await a.transport({action:'status'});
+    assert.deepEqual(a.sent[2].operation,{action:'status'});
+    assert.deepEqual(a.context(),{incarnation:'new',revision:9});
+});
+test('uncertainty, wrong identity and incomplete preparation never authorize resend',async()=>{
+    for(const reply of [new Error('lost'),envelope({},'new'),envelope({status:'prepared'}),envelope({not_dispatched:true}),envelope({status:'prepared',not_dispatched:true},'new',{outcome_unknown:true}),{...preparation(),result:{...preparation().result,session_id:'other'}}]) {
+        const a=adapterFixture([reply]);
+        await assert.rejects(a.transport({action:'status'})); assert.equal(a.sent.length,1);
+    }
+});
+test('bound effects never prepare; repeated preparation is bounded',async()=>{
+    const a=adapterFixture([preparation()]);
+    await assert.rejects(a.transport({action:'control',binding:{...binding,incarnation:'old'},mode:'human',command_id:'id'}));
+    assert.equal(a.sent.length,1);
+    const b=adapterFixture([preparation(),envelope({revision:9}),preparation()]);
+    await assert.rejects(b.transport({action:'status'})); assert.equal(b.sent.length,3);
+});
+test('snapshot fence/revision failures and uncertain resend do not retry',async()=>{
+    for(const snapshot of [envelope({revision:9},'third'),envelope({revision:-1}),envelope({}),new Error('snapshot lost')]) {
+        const a=adapterFixture([preparation(),snapshot]);
+        await assert.rejects(a.transport({action:'status'})); assert.equal(a.sent.length,2);
+        assert.equal(a.context().incarnation,'old');
+    }
+    const a=adapterFixture([preparation(),envelope({revision:9}),new Error('lost after admission')]);
+    await assert.rejects(a.transport({action:'start',incarnation:'old',expected_revision:1,command_id:'id'}));
+    assert.equal(a.sent.length,3);
+});
+
+test('website dialog can interrupt blocked pointer input without replay', async()=>{
+    let release;
+    const {session,sent} = fixture(op => op.action === 'input' && op.input.type === 'pointer' ? new Promise(r=>release=r) : Promise.resolve({status:status()}));
+    session.accept(status());session.streaming=true;
+    session.input({type:'pointer',x:1,y:1,button:'left',pressed:false});await tick();
+    session.input({type:'dialog',accept:true,text:null});await tick();
+    assert.deepEqual(sent.map(x=>x.input.type),['pointer','dialog']);
+    assert.deepEqual(sent.map(x=>x.sequence),[1,2]);
+    release({status:status()});await tick();session.dispose();
+});
+
+test('remounted viewer continues acknowledged attachment input sequence',async()=>{
+    const {session,sent} = fixture(op=>({status:status({input_sequence:42}),value:op.signal?.type==='request_offer'?{type:'offer',sdp:'offer'}:null}));
+    await session.connect();session.streaming=true;
+    session.input({type:'text',text:'synthetic'});await tick();
+    assert.equal(sent.find(op=>op.action==='input').sequence,43);
+    session.dispose();
+});
+
+test('authorized offer can provide viewer-only RTC configuration',async()=>{
+    const rtc={iceServers:[{urls:['turn:relay.invalid:3478'],username:'fixture',credential:'synthetic'}],iceTransportPolicy:'relay'};
+    let seen;
+    const f=fixture(op=>({status:status(),value:op.signal?.type==='request_offer'?{type:'offer',sdp:'offer',rtc_configuration:rtc}:null}));
+    const original=f.session.peer;f.session.peer=config=>{seen=config;return original(config);};
+    await f.session.connect();assert.deepEqual(seen,rtc);f.session.dispose();
 });

@@ -250,7 +250,20 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             registration.session_id,
             registration.incarnation,
         )?;
-        let host_browser = crate::host_browser::HostBrowser::new(directory.join("journal"), registration.session_id, registration.incarnation, config.host_browser_launch.clone().or_else(crate::host_browser::Launch::discover));
+        let host_browser_launch = if config.sandbox.mode == crate::sandbox::Mode::Required {
+            None // Never silently bypass a host-required OS execution sandbox.
+        } else {
+            config
+                .host_browser_launch
+                .clone()
+                .or_else(crate::host_browser::Launch::discover)
+        };
+        let host_browser = crate::host_browser::HostBrowser::new(
+            directory.join("journal"),
+            registration.session_id,
+            registration.incarnation,
+            host_browser_launch,
+        );
         config.host_browser = Some(host_browser.clone());
         config.browser = Some(browser.clone());
         let state = Arc::new(State {

@@ -61,6 +61,13 @@ jobs:
         if: steps.changed.outputs.build == 'true'
       - uses: Swatinem/rust-cache@v2
         if: steps.changed.outputs.build == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.build == 'true'
+        with:
+          node-version: '24'
+      - name: Prepare pinned browser worker dependency (no tests)
+        if: steps.changed.outputs.build == 'true'
+        run: npm ci --prefix voyage/browser --ignore-scripts --omit=dev --no-audit --no-fund
       - name: Build Linux binaries (no tests)
         if: steps.changed.outputs.build == 'true'
         run: cargo build --workspace --release --locked
@@ -77,6 +84,7 @@ jobs:
           for binary in helm vessel voyage voyage-installer; do
             install -m 755 "target/release/$binary" "dist/$name/bin/$binary"
           done
+          python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"packaging"); import browser_assets; browser_assets.stage(Path("voyage/browser"), Path(sys.argv[1]))' "dist/$name"
           printf 'Development build: %s\nSource: %s\nLinux x86-64 only. No tests run. Not a stable release.\n' \
             "$VERSION" "$SOURCE_SHA" > "dist/$name/BUILD.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"

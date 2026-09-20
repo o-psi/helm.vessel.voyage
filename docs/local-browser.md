@@ -1,3 +1,7 @@
+> Legacy opt-in local-browser implementation. For the Voyage-owned host browser
+> and current Helm viewer direction, see [host browser](host-browser.md). F6 and
+> `/browser` now target the host viewer; this document is not its setup guide.
+
 # Share a local browser with a Voyage
 
 The browser runs **on the computer running Helm**, even when its Vessel and Voyage

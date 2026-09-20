@@ -42,9 +42,12 @@ pub(super) async fn dispatch_admitted(
             Ok(json!({"disconnected":true}))
         }
         RuntimeCommand::HostBrowser { operation, socket } => {
+            // Private runtime IPC authenticates the executing-account owner when
+            // no scoped grant is present. Socket provenance is injected only by
+            // the authenticated Vessel adapter, never public request arguments.
             ensure!(
-                authorization.grant.is_some(),
-                "host browser requires authenticated socket grant"
+                !socket.socket_id.is_nil(),
+                "host browser socket identity required"
             );
             if matches!(
                 &operation,

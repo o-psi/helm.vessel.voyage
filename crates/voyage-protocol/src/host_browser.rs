@@ -42,7 +42,7 @@ impl HostBrowserBinding {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostBrowserSignal {
-    RequestOffer,
+    RequestOffer {},
     Answer {
         sdp: String,
     },
@@ -55,7 +55,7 @@ pub enum HostBrowserSignal {
 impl HostBrowserSignal {
     pub fn valid(&self) -> bool {
         match self {
-            Self::RequestOffer => true,
+            Self::RequestOffer {} => true,
             Self::Answer { sdp } => !sdp.is_empty() && sdp.len() <= MAX_SDP_BYTES,
             Self::Ice {
                 candidate, sdp_mid, ..
@@ -154,7 +154,7 @@ pub enum HostBrowserTabOperation {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostBrowserOperation {
-    Status,
+    Status {},
     Start {
         command_id: Uuid,
         expected_revision: u64,
@@ -205,7 +205,7 @@ impl HostBrowserOperation {
     /// attachment ledger, never the process lifetime durable tombstone store.
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
-            Self::Status | Self::Receipt { .. } => None,
+            Self::Status {} | Self::Receipt { .. } => None,
             Self::Start { command_id, .. }
             | Self::Attach { command_id, .. }
             | Self::Detach { command_id, .. }
@@ -302,7 +302,7 @@ mod tests {
             None
         );
         assert_eq!(
-            HostBrowserOperation::Status.required_right(),
+            HostBrowserOperation::Status {}.required_right(),
             ProcessRight::Observe
         );
     }

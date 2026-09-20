@@ -251,7 +251,30 @@ impl Client {
         incarnation: uuid::Uuid,
         operation: voyage_protocol::host_browser::HostBrowserOperation,
     ) -> Result<Value> {
+        let (result, owner) = self
+            .host_browser_observed(socket_id, session_id, incarnation, operation)
+            .await?;
+        ensure!(
+            owner == incarnation,
+            "Host browser response identity mismatch"
+        );
+        Ok(result)
+    }
+
+    /// Only an explicit non-admission of an unbound Status/Start may change owner.
+    pub(super) async fn host_browser_observed(
+        &self,
+        socket_id: uuid::Uuid,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+        operation: voyage_protocol::host_browser::HostBrowserOperation,
+    ) -> Result<(Value, uuid::Uuid)> {
         ensure!(operation.valid(), "Invalid host browser operation");
+        let may_prepare = matches!(
+            &operation,
+            voyage_protocol::host_browser::HostBrowserOperation::Status {}
+                | voyage_protocol::host_browser::HostBrowserOperation::Start { .. }
+        );
         let command = VesselCommand::Voyage(VoyageRequest {
             session_id,
             incarnation: Some(incarnation),
@@ -265,11 +288,45 @@ impl Client {
         .context("Host browser deadline elapsed; outcome unknown, never replay")??;
         let reply: VoyageReply = serde_json::from_value(value)
             .map_err(|_| anyhow::anyhow!("Invalid host browser response"))?;
+        let prepared = browser_prepared(&reply.result);
         ensure!(
-            reply.session_id == session_id && reply.incarnation == incarnation,
+            reply.session_id == session_id
+                && (!prepared || may_prepare)
+                && (reply.incarnation == incarnation || (may_prepare && prepared)),
             "Host browser response identity mismatch"
         );
-        Ok(reply.result)
+        Ok((reply.result, reply.incarnation))
+    }
+
+    /// Snapshot stays on the viewer's original socket and verifies the new fence.
+    pub(super) async fn host_browser_revision(
+        &self,
+        socket_id: uuid::Uuid,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+    ) -> Result<u64> {
+        let value = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.socket.exchange_bound(
+                self,
+                socket_id,
+                VesselCommand::Voyage(VoyageRequest {
+                    session_id,
+                    incarnation: Some(incarnation),
+                    command: VoyageCommand::Snapshot,
+                }),
+            ),
+        )
+        .await
+        .context("Browser snapshot deadline elapsed")??;
+        let reply: VoyageReply = serde_json::from_value(value)?;
+        ensure!(
+            reply.session_id == session_id && reply.incarnation == incarnation,
+            "Browser snapshot identity mismatch"
+        );
+        reply.result["revision"]
+            .as_u64()
+            .context("Browser snapshot revision unavailable")
     }
 
     pub async fn voyage(
@@ -310,3 +367,8 @@ impl Client {
 #[cfg(test)]
 #[path = "transport_tests.rs"]
 mod tests;
+
+/// A preparation acknowledgement is not an admission or an effect receipt.
+pub(super) fn browser_prepared(value: &Value) -> bool {
+    value["status"] == "prepared" && value["not_dispatched"] == true
+}

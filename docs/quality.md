@@ -312,3 +312,28 @@ preflight refusals and success-only guidance. These use fake installer/systemctl
 executables: they do not establish real service activation or hosted downloads.
 See the [installer guide](../installer/README.md)
 for bootstrap prerequisites and the distinction from the Rust wizard.
+
+## Host-browser packaging (#333)
+
+The browser asset inventory extends the Linux release contract. Focused local
+checks (no hosted quality job) are:
+
+```sh
+python3 -m unittest discover -s packaging -p test_browser_assets.py -v
+python3 -m unittest discover -s packaging -p test_package_linux.py -v
+cargo test -p voyage-installer --locked browser_assets_are_verified -j 8
+```
+
+These checks verify staging and integrity, not browser execution or WebRTC.
+Actual decoded media, both Helm client journeys, private takeover, multiple
+voyages, relay/network behavior and observed cleanup remain separate acceptance
+obligations documented in [host-browser design](host-browser.md).
+
+Actual Linux host-browser journeys use `node --test voyage/browser/test/*.test.mjs`
+(after pinned npm preparation) and `python3 voyage/tests/host_browser.py --binaries
+/absolute/path/to/built/bin`. The latter checks production mounted/native viewers,
+actual decoded frames, suspended-owner preparation and observed cleanup. Relay
+qualification additionally sets `TURN_SERVER` to an existing coturn binary and
+`TURN_TEST_ROOT` to an ignored evidence directory; an unset relay test is skipped,
+not passing. Crash qualification is a separate adverse gate, not inferred from
+normal browser closure.

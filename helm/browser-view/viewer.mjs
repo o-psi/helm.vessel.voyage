@@ -28,7 +28,9 @@ export class BrowserSession {
         this.streaming = false;
     }
     disconnect(message = 'Browser disconnected. Connect explicitly to resume.') {
+        const detach = this.attached && this.status?.binding ? this.operation('detach') : null;
         this.clearVideo(); this.status = null; this.attached = false; this.notify(message);
+        if (detach && !this.closed) Promise.resolve().then(() => this.transport(detach)).catch(() => {});
     }
     async call(operation, generation = this.generation) {
         if (this.closed) throw Error('closed');
@@ -77,6 +79,9 @@ export class BrowserSession {
             }
             if (!this.attached) { await this.call(this.operation('attach', {binding:{...this.status.binding,attachment_id:this.uuid()}})); this.sequence = 0; }
             if (!this.attached) throw Error('attach');
+            // A remounted viewer on the same socket must continue the acknowledged
+            // attachment sequence, never guess zero or replay old input.
+            this.sequence = Number.isSafeInteger(this.status.input_sequence) ? this.status.input_sequence : this.sequence;
             await this.negotiate();
         });
     }
@@ -85,7 +90,7 @@ export class BrowserSession {
         const generation = this.generation, binding = mediaFence(this.status);
         const current = () => !this.closed && generation === this.generation && binding === mediaFence(this.status);
         if (reply.value?.type !== 'offer' || typeof reply.value.sdp !== 'string' || bytes(reply.value.sdp) > 65536) throw Error('offer');
-        const pc = this.pc = this.peer(this.rtcConfiguration);
+        const pc = this.pc = this.peer(reply.value.rtc_configuration ?? this.rtcConfiguration);
         pc.ontrack = event => {
             if (!current() || pc !== this.pc) { event.track.stop(); return; }
             const stream = event.streams[0] || new MediaStream([event.track]);
@@ -124,6 +129,14 @@ export class BrowserSession {
     input(input) {
         if (!this.controls || this.busy || !this.streaming || this.closed) return false;
         if (this.queue.length >= 32) { this.disconnect('Browser input too slow. Input cleared; reconnect required.'); return false; }
+        // Website modal replies must interrupt the pointer/navigation that opened
+        // the dialog; putting them behind that operation deadlocks human control.
+        if (input.type === 'dialog') {
+            const generation = this.generation;
+            void this.call(this.operation('input',{sequence:++this.sequence,input}),generation)
+                .catch(() => { if (generation === this.generation) this.disconnect('Dialog response unconfirmed; not replayed.'); });
+            return true;
+        }
         this.queue.push({input, binding:fingerprint(this.status.binding), generation:this.generation});
         this.pump(); return true;
     }
@@ -162,6 +175,7 @@ export function mountBrowserViewer(root, options) {
     const privateMode = button('Private control', () => session.control('private'));
     const agent = button('Return to agent', () => session.control('agent'));
     button('Disconnect viewer', () => { session.dispose(); options.onClose?.(); });
+    button('Close browser', () => session.exclusive(async () => { if (!session.attached) return; session.clearVideo(); await session.call(session.operation('close')); }));
     const form = element('form'); form.className = 'browser-toolbar';
     const address = element('input',null,form); address.type = 'url'; address.placeholder = 'https://…'; address.setAttribute('aria-label','Navigate browser'); address.autocomplete = 'off'; sensitive.push(address);
     const go = button('Go', () => {}, form, true); go.type = 'submit';

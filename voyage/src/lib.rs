@@ -1,8 +1,6 @@
 pub mod agent;
 pub mod attachment;
 pub mod browser;
-pub mod host_browser;
-pub(crate) mod host_browser_capacity;
 pub mod chat_preferences;
 pub mod completion;
 pub mod config;
@@ -12,6 +10,8 @@ pub mod extensions;
 pub mod file_publication;
 mod filesystem_skills;
 pub mod github;
+pub mod host_browser;
+pub(crate) mod host_browser_capacity;
 pub mod host_resources;
 pub mod images;
 pub mod inference;

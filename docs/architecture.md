@@ -4,16 +4,24 @@ Status: canonical component model. The Linux implementation uses these process
 boundaries; see [current state](current-state.md) and [delivery evidence](implementation.md)
 for supported paths, verification and deployment limits.
 
+## Browser direction for v1.0.2
+
+Issue #333 targets Voyage-owned browsers on the Vessel host, with WebRTC live
+viewing and human control in both Helm clients. This is implementation work, not
+a claim that the target is delivered. See [host-browser design](host-browser.md).
+The existing local browser described below remains current until replacement is
+verified.
+
 ## Three programs
 
-**Helm is the TUI.** It owns presentation, draft editing, navigation and client
+**Helm includes the TUI and Web clients.** The native TUI owns presentation, draft editing, navigation and client
 connections. Unsent composition and new-chat proposals are memory-only;
 shared drafts and unsent-content persistence are removed. Helm connects to Vessels, whether local or remote. It does not own an
 agent loop, acknowledge canonical checkpoints or directly supervise voyage processes.
-Its explicitly shared local browser is a narrow execution exception: Helm owns a
-local browser adapter and independently enforces local consent while the Voyage
-owns tool admission, task execution and canonical results. This does not expose a
-general tool executor in Helm. See [local browser](local-browser.md).
+The host-browser path puts execution and cleanup in Voyage; Helm only presents
+the shared graphical view and forwards typed authorized input. Legacy explicit
+local-browser code retains its independent local consent boundary. Neither path
+exposes a general executor in Helm. See [host browser](host-browser.md).
 
 **Helm Web is a separate, browser-native client.** Its Laravel/Livewire shell
 and JavaScript conversation pane connect directly to public Vessels over authenticated

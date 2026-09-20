@@ -115,15 +115,105 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
 }
 
 /// Local account authority is authenticated by local_boundary before upgrade.
+#[derive(Default)]
+struct LocalBrowserSocket {
+    closed: bool,
+    sessions: std::collections::HashSet<(Uuid, Uuid)>,
+}
+type LocalBrowserState = Arc<std::sync::Mutex<LocalBrowserSocket>>;
+
 struct LocalSocketBackend {
     supervisor: Arc<Supervisor>,
     token_hash: [u8; 32],
     vessel_id: Uuid,
+    sockets: std::sync::Mutex<HashMap<Uuid, LocalBrowserState>>,
 }
 impl crate::duplex::Backend for LocalSocketBackend {
+    fn connected(&self, connection: crate::duplex::Connection) {
+        if let Ok(mut sockets) = self.sockets.lock() {
+            sockets.insert(connection.socket_id, Arc::default());
+        }
+    }
+    fn disconnected(&self, socket_id: Uuid) {
+        let state = self
+            .sockets
+            .lock()
+            .ok()
+            .and_then(|mut sockets| sockets.remove(&socket_id));
+        let Some(state) = state else { return };
+        let sessions = match state.lock() {
+            Ok(mut state) => {
+                state.closed = true;
+                state.sessions.clone()
+            }
+            Err(_) => return,
+        };
+        let supervisor = self.supervisor.clone();
+        tokio::spawn(async move {
+            for (session_id, incarnation) in sessions {
+                let _ = supervisor
+                    .handle(VesselCommand::HostBrowserDisconnected {
+                        session_id,
+                        incarnation,
+                        socket: voyage_protocol::host_browser::HostBrowserSocket { socket_id },
+                    })
+                    .await;
+            }
+        });
+    }
+    fn socket_command(
+        &self,
+        request: VesselRequest,
+        socket_id: Uuid,
+    ) -> crate::duplex::BackendFuture<VesselResponse> {
+        let supervisor = self.supervisor.clone();
+        let state = self
+            .sockets
+            .lock()
+            .ok()
+            .and_then(|sockets| sockets.get(&socket_id).cloned());
+        Box::pin(async move {
+            let result = async {
+                ensure!(
+                    request.protocol == VESSEL_API_VERSION,
+                    "unsupported protocol"
+                );
+                ensure!(
+                    !private_envelope(&request.command),
+                    "private envelope refused"
+                );
+                let state = state.ok_or_else(|| anyhow::anyhow!("closed socket"))?;
+                ensure!(!socket_id.is_nil(), "invalid socket identity");
+                let socket = voyage_protocol::host_browser::HostBrowserSocket { socket_id };
+                LOCAL_BROWSER_OWNER
+                    .scope(
+                        state,
+                        HOST_BROWSER_SOCKET.scope(socket, supervisor.handle(request.command)),
+                    )
+                    .await
+            }
+            .await;
+            super::api::response(result)
+        })
+    }
+
     fn command(&self, request: VesselRequest) -> crate::duplex::BackendFuture<VesselResponse> {
         let supervisor = self.supervisor.clone();
-        Box::pin(async move { super::api::response(supervisor.handle(request.command).await) })
+        Box::pin(async move {
+            let result = async {
+                ensure!(
+                    request.protocol == VESSEL_API_VERSION,
+                    "unsupported protocol"
+                );
+                ensure!(
+                    !private_envelope(&request.command),
+                    "private envelope refused"
+                );
+                supervisor.handle(request.command).await
+            }
+            .await;
+            super::api::response(result)
+        })
     }
     fn authorize(&self, _session: Option<Uuid>) -> crate::duplex::BackendFuture<bool> {
         let directory = self.supervisor.directory.clone();
@@ -160,6 +250,7 @@ async fn local_socket(
         supervisor: state.supervisor,
         token_hash: state.token_hash,
         vessel_id: identity.vessel_id,
+        sockets: std::sync::Mutex::new(HashMap::new()),
     });
     upgrade
         .protocols([voyage_protocol::duplex::SUBPROTOCOL])
@@ -359,7 +450,36 @@ async fn local_command(
     Json(response).into_response()
 }
 
+fn private_envelope(command: &VesselCommand) -> bool {
+    matches!(
+        command,
+        VesselCommand::Socket { .. }
+            | VesselCommand::HostBrowserDisconnected { .. }
+            | VesselCommand::Granted { .. }
+    )
+}
+
+/// Register before dispatch; disconnect closes admission atomically and snapshots
+/// every exact owner that could receive a late command.
+pub(super) fn admit_local_browser(session: Uuid, incarnation: Uuid) -> Result<bool> {
+    LOCAL_BROWSER_OWNER
+        .try_with(|state| {
+            let mut state = state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("socket state unavailable"))?;
+            ensure!(!state.closed, "closed socket");
+            ensure!(
+                state.sessions.len() < 32 || state.sessions.contains(&(session, incarnation)),
+                "socket browser limit"
+            );
+            state.sessions.insert((session, incarnation));
+            Ok(true)
+        })
+        .unwrap_or(Ok(false))
+}
+
 tokio::task_local! {
+    static LOCAL_BROWSER_OWNER: LocalBrowserState;
     /// Scoped by private gateway IPC, not caller JSON or principal claims.
     pub(super) static HOST_BROWSER_SOCKET: voyage_protocol::host_browser::HostBrowserSocket;
 }
@@ -516,3 +636,45 @@ mod subscriptions_final_tests;
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod local_browser_routing_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_owner_requires_private_scope_and_closed_socket_refuses_late_admission() {
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        assert!(!admit_local_browser(session, incarnation).unwrap());
+        let state: LocalBrowserState = Arc::default();
+        LOCAL_BROWSER_OWNER
+            .scope(state.clone(), async {
+                assert!(admit_local_browser(session, incarnation).unwrap());
+                let mut guard = state.lock().unwrap();
+                assert!(guard.sessions.contains(&(session, incarnation)));
+                guard.closed = true;
+                drop(guard);
+                assert!(admit_local_browser(session, incarnation).is_err());
+                assert!(admit_local_browser(session, Uuid::new_v4()).is_err());
+            })
+            .await;
+        assert!(!admit_local_browser(session, incarnation).unwrap());
+    }
+
+    #[test]
+    fn socket_clients_cannot_supply_private_provenance_or_cleanup() {
+        let socket = voyage_protocol::host_browser::HostBrowserSocket {
+            socket_id: Uuid::new_v4(),
+        };
+        let cleanup = VesselCommand::HostBrowserDisconnected {
+            session_id: Uuid::new_v4(),
+            incarnation: Uuid::new_v4(),
+            socket,
+        };
+        assert!(private_envelope(&cleanup));
+        assert!(private_envelope(&VesselCommand::Socket {
+            socket,
+            command: Box::new(cleanup)
+        }));
+    }
+}

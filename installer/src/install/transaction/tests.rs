@@ -51,6 +51,7 @@ impl Fixture {
             version: version.into(),
             target: format!("linux-{}", std::env::consts::ARCH),
             binaries,
+            assets: BTreeMap::new(),
         };
         files::write_new(
             &source.parent().unwrap().join("release.json"),
@@ -350,4 +351,56 @@ fn private_permissions_and_bounded_reads_are_enforced() {
     assert!(files::lock(&f.layout.root.join("lock")).is_err());
     drop(lock);
     assert!(files::lock(&f.layout.root.join("lock")).is_ok());
+}
+
+#[test]
+fn browser_assets_are_verified_staged_and_bound_to_release_identity() {
+    let f = Fixture::new();
+    let (source, mut manifest) = f.source("1.2.3");
+    let original = manifest.id().unwrap();
+    for name in [
+        "worker.mjs",
+        "guardian.py",
+        "package.json",
+        "package-lock.json",
+        "node_modules/playwright-core/package.json",
+    ] {
+        let name = format!("share/voyage/browser/{name}");
+        let path = source.parent().unwrap().join(&name);
+        files::directory(path.parent().unwrap()).unwrap();
+        files::write_new(&path, b"fixture").unwrap();
+        manifest.assets.insert(
+            name,
+            Binary {
+                sha256: files::hash(&path).unwrap(),
+            },
+        );
+    }
+    assert_ne!(original, manifest.id().unwrap());
+    manifest.validate().unwrap();
+    let destination = f.layout.release(&manifest.id().unwrap());
+    manifest.stage(&source, &destination).unwrap();
+    manifest.verify(&destination).unwrap();
+    let worker = destination.join("share/voyage/browser/worker.mjs");
+    fs::write(&worker, b"changed").unwrap();
+    assert!(manifest.verify(&destination).is_err());
+    assert!(manifest.stage(&source, &destination).is_err());
+    for name in [
+        "share/voyage/browser/../escape",
+        "share/voyage/browser//empty",
+        "share/voyage/browser/x\\y",
+        "/absolute",
+        "other/file",
+    ] {
+        let mut invalid = manifest.clone();
+        invalid.assets.insert(
+            name.into(),
+            Binary {
+                sha256: "a".repeat(64),
+            },
+        );
+        assert!(invalid.validate().is_err(), "{name}");
+    }
+    manifest.assets.remove("share/voyage/browser/worker.mjs");
+    assert!(manifest.validate().is_err());
 }

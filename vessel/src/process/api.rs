@@ -496,7 +496,8 @@ impl Supervisor {
                 );
             }
             ensure!(
-                authorization.is_some(),
+                authorization.is_some()
+                    || super::service::admit_local_browser(request.session_id, incarnation)?,
                 "host browser requires authenticated principal"
             );
         }
@@ -734,5 +735,26 @@ mod root_consent_tests {
             owner_connection_right(&wrapped),
             Some(ProcessRight::Execute)
         );
+    }
+}
+
+#[cfg(test)]
+mod host_browser_provenance_tests {
+    use super::*;
+    use voyage_protocol::host_browser::{HostBrowserOperation, HostBrowserSocket};
+
+    #[tokio::test]
+    async fn public_operation_cannot_manufacture_socket_provenance() {
+        let command = || VoyageCommand::HostBrowser {
+            operation: HostBrowserOperation::Status {},
+        };
+        assert!(runtime(command()).is_err());
+        let socket = HostBrowserSocket {
+            socket_id: uuid::Uuid::new_v4(),
+        };
+        super::super::service::HOST_BROWSER_SOCKET.scope(socket, async {
+            assert!(matches!(runtime(command()).unwrap(), RuntimeCommand::HostBrowser { socket: actual, .. } if actual == socket));
+        }).await;
+        assert!(runtime(command()).is_err());
     }
 }

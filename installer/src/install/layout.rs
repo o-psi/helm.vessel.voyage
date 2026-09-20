@@ -86,7 +86,8 @@ impl Layout {
     }
     pub(super) fn verify(&self, id: &str) -> Result<Manifest> {
         let root = self.release(id);
-        let m: Manifest = serde_json::from_slice(&files::read(&root.join("release.json"), 65536)?)?;
+        let m: Manifest =
+            serde_json::from_slice(&files::read(&root.join("release.json"), 1024 * 1024)?)?;
         ensure!(m.id()? == id, "Installed release identity mismatch");
         m.verify(&root)?;
         Ok(m)

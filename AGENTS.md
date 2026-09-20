@@ -7,7 +7,7 @@ scope, preserve unrelated work and respect runtime permissions.
 
 The canonical target is [docs/architecture.md](docs/architecture.md):
 
-- **Helm** is the TUI. It connects to local and remote Vessels.
+- **Helm** comprises Helm TUI and Helm Web. Both connect to Vessels; client presentation must not become a competing execution owner.
 - **Vessel** supervises and exposes voyage processes. It does not run session agent
   loops inside the supervisor process.
 - **Voyage** is the execution runtime: one session per independent process, owning
@@ -24,9 +24,7 @@ executors. Human Vessel connections, scoped process grants and participant bindi
 remain distinct authority surfaces. Outbound worker mode is retired; do not reintroduce it.
 Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
-into current runtime instructions. Explicit shared local browser execution is opt-in through the same full-duplex
-Helm–Vessel socket. Keep its local consent/capture boundary separate from Voyage
-policy; do not introduce a separately networked browser bridge or general Helm executor.
+into current runtime instructions. Issue #333 establishes the browser target: Voyage owns a browser on the Vessel host, with authenticated live viewing and human control in both Helm clients. WebRTC is the preferred media transport; signaling and authorization use the existing Helm–Vessel connection. This target does not make unfinished code current behavior. Preserve explicit private-input fencing, isolated voyage state, exact receipts and observed cleanup without making users operate a separate companion. Helm is a viewer/controller, not a general executor. Existing opt-in local browser execution retains its independent local consent boundary until deliberately retired. See [host-browser design](docs/host-browser.md).
 
 ## End-to-end delivery ownership
 

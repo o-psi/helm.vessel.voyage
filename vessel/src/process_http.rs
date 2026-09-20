@@ -404,9 +404,9 @@ impl vessel::duplex::Backend for SocketBackend {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let directory = self.directory.clone();
         tokio::spawn(async move {
-            // Existing command holds this lock through its private exchange. New
-            // admission is already fenced, including work queued before Drop.
-            let sessions = state.sessions.lock().await;
+            // Snapshot targets without waiting for in-flight effects. Runtime tombstones
+            // refuse a late command even if this notification reaches it first.
+            let sessions = state.sessions.lock().await.clone();
             for &(session_id, incarnation) in sessions.iter() {
                 let request = VesselRequest {
                     protocol: VESSEL_API_VERSION,
@@ -474,6 +474,7 @@ impl vessel::duplex::Backend for SocketBackend {
                 }
                 sessions.insert((*session_id, incarnation));
             }
+            drop(sessions);
             backend
                 .exchange_socket(
                     request.command,

@@ -201,7 +201,7 @@ fn replies_keep_structured_failures_and_uncertainty_without_private_envelopes() 
 async fn host_browser_translation_requires_private_socket_scope() {
     use voyage_protocol::host_browser::{HostBrowserOperation, HostBrowserSocket};
     let command = || VoyageCommand::HostBrowser {
-        operation: HostBrowserOperation::Status,
+        operation: HostBrowserOperation::Status {},
     };
     assert!(runtime(command()).is_err());
     let socket = HostBrowserSocket {
@@ -211,7 +211,7 @@ async fn host_browser_translation_requires_private_socket_scope() {
         .scope(socket, async {
             match runtime(command()).unwrap() {
                 RuntimeCommand::HostBrowser {
-                    operation: HostBrowserOperation::Status,
+                    operation: HostBrowserOperation::Status {},
                     socket: actual,
                 } => assert_eq!(actual, socket),
                 other => panic!("unexpected translation: {other:?}"),

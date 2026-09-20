@@ -516,6 +516,8 @@ impl Config {
     /// placeholders deliberately cannot restore the concealed bindings.
     pub fn diagnostic_toml(&self) -> Result<String> {
         let mut displayed = self.clone();
+        // Host browser launch config can contain TURN credentials and private paths.
+        displayed.host_browser_launch = None;
         displayed.extension_private_files.clear();
         displayed.extension_private_files_complete = false;
         displayed.access = Some(self.access_mode());
