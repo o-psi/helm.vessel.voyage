@@ -59,7 +59,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             _=idle.tick() => {
                 if suspensions.is_empty() {
                     let state = state.clone();
-                    suspensions.spawn(async move { super::suspension::suspend(&state).await });
+                    suspensions.spawn(async move { state.host_browser.maintain().await?; super::suspension::suspend(&state).await });
                 }
             },
             _=state.shutdown.cancelled()=>break,
@@ -141,7 +141,9 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     let snapshot = state.owner.process_snapshot().await?;
     let session_resources = state.owner.session_resources().await?;
     let browser_observed = state.browser.finish_run().unwrap_or(false);
-    let observed = browser_observed
+    let host_browser_observed = state.host_browser.close().await.is_ok();
+    let observed = host_browser_observed
+        && browser_observed
         && run_cleanup
         && retained.is_ok()
         && session_resources.as_array().is_some_and(Vec::is_empty)

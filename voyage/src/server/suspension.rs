@@ -14,7 +14,7 @@ pub(super) async fn suspend(state: &Arc<State>) -> Result<()> {
         "private turn preparation remains pending"
     );
     ensure!(
-        !state.browser.blocks_suspension()?,
+        !state.browser.blocks_suspension()? && !state.host_browser.blocks_suspension().await,
         "local browser lease or cleanup remains active"
     );
     let snapshot = state.owner.process_snapshot().await?;

@@ -248,6 +248,8 @@ async fn configure_inner(
     }
     config.vessel_context = current.vessel_context.clone();
     config.browser = current.browser.clone();
+    config.host_browser = current.host_browser.clone();
+    config.host_browser_launch = current.host_browser_launch.clone();
     config.artifact_scope = current.artifact_scope.clone();
     *current = config;
     Ok(receipt)

@@ -52,6 +52,7 @@ struct ActiveRun {
 }
 struct State {
     browser: Arc<crate::browser::BrowserBroker>,
+    host_browser: Arc<crate::host_browser::HostBrowser>,
     directory: PathBuf,
     workflows: workflows::Workflows,
     controls: Arc<controls::LiveControls>,
@@ -249,8 +250,11 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             registration.session_id,
             registration.incarnation,
         )?;
+        let host_browser = crate::host_browser::HostBrowser::new(directory.join("journal"), registration.session_id, registration.incarnation, config.host_browser_launch.clone().or_else(crate::host_browser::Launch::discover));
+        config.host_browser = Some(host_browser.clone());
         config.browser = Some(browser.clone());
         let state = Arc::new(State {
+            host_browser,
             browser,
             directory: directory.clone(),
             workflows: workflows::Workflows::default(),

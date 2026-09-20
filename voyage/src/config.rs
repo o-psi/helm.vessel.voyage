@@ -74,6 +74,10 @@ fn is_false(value: &bool) -> bool {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    #[serde(skip)]
+    pub host_browser: Option<std::sync::Arc<crate::host_browser::HostBrowser>>,
+    /// Executing-host-only launch configuration; portable settings cannot replace this.
+    pub host_browser_launch: Option<crate::host_browser::Launch>,
     /// Explicit process-local sharing; configuration files cannot enable it.
     #[serde(skip)]
     pub browser: Option<std::sync::Arc<crate::browser::BrowserBroker>>,
@@ -452,6 +456,8 @@ impl Default for Config {
             vessel: Default::default(),
             vessel_context: None,
             browser: None,
+            host_browser: None,
+            host_browser_launch: None,
             sandbox: Default::default(),
             participants: Vec::new(),
             chat_preferences: None,
@@ -832,6 +838,8 @@ impl Config {
         // retain it so the next rebuild checks the same profile and transition.
         updated.vessel_context = self.vessel_context.clone();
         updated.browser = self.browser.clone();
+        updated.host_browser = self.host_browser.clone();
+        updated.host_browser_launch = self.host_browser_launch.clone();
         updated.live_access = self.live_access.clone();
         updated.provider_authority = self.provider_authority.clone();
         updated.artifact_scope = self.artifact_scope.clone();

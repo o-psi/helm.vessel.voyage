@@ -1,4 +1,6 @@
 mod browser;
+mod host_browser;
+pub use host_browser::HostBrowserTool;
 pub use browser::BrowserTool;
 pub(crate) mod action_schema;
 pub(crate) mod evidence;
@@ -895,6 +897,7 @@ impl ToolRegistry {
 fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
     let action = arguments.get("action").and_then(Value::as_str);
     match name {
+        "host_browser" => matches!(action, Some("inspect" | "screenshot")) || (action==Some("tabs") && arguments["operation"]=="list"),
         "browser" => {
             serde_json::from_value::<voyage_protocol::browser::BrowserAction>(arguments.clone())
                 .is_ok_and(|a| a.observation_only())

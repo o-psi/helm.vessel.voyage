@@ -5,6 +5,7 @@ pub struct ManagedResourceState {
     pub terminals: Vec<crate::tools::ProcessTool>,
     pub shells: Vec<crate::tools::ManagedShell>,
     pub browser: Option<Arc<crate::browser::BrowserBroker>>,
+    pub host_browser: Option<Arc<crate::host_browser::HostBrowser>>,
     pub mcp: Vec<Arc<crate::tools::mcp::McpServer>>,
     pub(crate) extensions: Vec<Arc<crate::extensions::runtime::Manager>>,
 }
@@ -31,6 +32,18 @@ impl ManagedResources {
             .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
         anyhow::ensure!(!state.closed, "managed resource admission closed");
         state.extensions.push(manager);
+        Ok(())
+    }
+    pub fn register_host_browser(
+        &self,
+        browser: Arc<crate::host_browser::HostBrowser>,
+    ) -> Result<()> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("resource lock poisoned"))?;
+        anyhow::ensure!(!state.closed, "resource admission closed");
+        state.host_browser = Some(browser);
         Ok(())
     }
     pub fn register_browser(&self, browser: Arc<crate::browser::BrowserBroker>) -> Result<()> {
@@ -129,7 +142,13 @@ impl ManagedResources {
                 .as_ref()
                 .map(|b| b.finish_run().unwrap_or(false))
                 .unwrap_or(true);
+            let host_browser = if let Some(browser) = &retained.host_browser {
+                browser.finish_run().await.is_ok()
+            } else {
+                true
+            };
             browser
+                && host_browser
                 && terminals.iter().all(|item| item.observation_complete)
                 && shells.iter().all(|item| item.observation_complete)
                 && mcp.iter().all(Result::is_ok)
@@ -157,6 +176,7 @@ impl ManagedResources {
             shells: state.shells.clone(),
             mcp: state.mcp.clone(),
             browser: state.browser.clone(),
+            host_browser: state.host_browser.clone(),
             extensions: state.extensions.clone(),
         })
     }

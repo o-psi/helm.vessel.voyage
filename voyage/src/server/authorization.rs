@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use uuid::Uuid;
 use voyage_protocol::process::{
     GrantBinding, ProcessGrant, ProcessRight, RuntimeRequest, required_process_right,
 };
@@ -38,6 +39,24 @@ impl crate::policy::ExecutionAuthority for GrantAuthority {
         ensure!(
             !self.browser_history || grant.rights.contains(&ProcessRight::History),
             "browser disclosure history grant withdrawn"
+        );
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct BrowserAuthority {
+    path: PathBuf,
+    binding: GrantBinding,
+    session: Uuid,
+    right: ProcessRight,
+}
+impl crate::policy::ExecutionAuthority for BrowserAuthority {
+    fn check(&self) -> Result<()> {
+        let grant = read_current(&self.path, &self.binding, self.session)?;
+        ensure!(
+            grant.rights.contains(&self.right),
+            "browser grant withdrawn"
         );
         Ok(())
     }
@@ -124,13 +143,27 @@ pub(super) fn authorize_parts(
     actor.principal_id = grant.principal_id;
     Ok(Authorization {
         owner_connection: grant.full_access,
-        authority: Some(Arc::new(GrantAuthority {
-            path,
-            binding: binding.clone(),
-            session: registration.session_id,
-            account: None,
-            browser_history,
-        })),
+        authority: Some(
+            if matches!(
+                &request.command,
+                voyage_protocol::process::RuntimeCommand::HostBrowser { .. }
+            ) {
+                Arc::new(BrowserAuthority {
+                    path: path.clone(),
+                    binding: binding.clone(),
+                    session: registration.session_id,
+                    right,
+                }) as Arc<dyn crate::policy::ExecutionAuthority>
+            } else {
+                Arc::new(GrantAuthority {
+                    path,
+                    binding: binding.clone(),
+                    session: registration.session_id,
+                    account: None,
+                    browser_history,
+                })
+            },
+        ),
         actor,
         grant: Some(binding.clone()),
     })

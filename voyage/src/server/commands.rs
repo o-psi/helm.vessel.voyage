@@ -37,6 +37,51 @@ pub(super) async fn dispatch_admitted(
         RuntimeCommand::NotificationEvents { after, limit } => {
             state.owner.notification_events(after, limit).await
         }
+        RuntimeCommand::HostBrowserDisconnected { socket } => {
+            state.host_browser.disconnect(socket.socket_id).await?;
+            Ok(json!({"disconnected":true}))
+        }
+        RuntimeCommand::HostBrowser { operation, socket } => {
+            ensure!(
+                authorization.grant.is_some(),
+                "host browser requires authenticated socket grant"
+            );
+            if matches!(
+                &operation,
+                voyage_protocol::host_browser::HostBrowserOperation::Start { .. }
+                    | voyage_protocol::host_browser::HostBrowserOperation::Input { .. }
+            ) {
+                let config = state.config.read().await;
+                let policy = crate::runtime_policy::RuntimePolicy::resolve(
+                    &config,
+                    &state.registration.workspace,
+                )?;
+                ensure!(
+                    policy.policy().access_mode() != crate::config::AccessMode::ReadOnly,
+                    "browser effects disabled in read-only mode"
+                );
+            }
+            if let voyage_protocol::host_browser::HostBrowserOperation::Start {
+                expected_revision: revision,
+                ..
+            } = &operation
+            {
+                let snapshot = state.owner.process_snapshot().await?;
+                ensure!(
+                    snapshot["revision"].as_u64() == Some(*revision),
+                    "stale browser revision"
+                );
+            }
+            state
+                .host_browser
+                .human(
+                    operation,
+                    socket.socket_id,
+                    authorization.actor.principal_id,
+                    authorization.authority,
+                )
+                .await
+        }
         RuntimeCommand::PrepareBrowser => {
             if let Some(authority) = &authorization.authority {
                 authority.check()?;

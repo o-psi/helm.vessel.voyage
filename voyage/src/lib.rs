@@ -1,6 +1,8 @@
 pub mod agent;
 pub mod attachment;
 pub mod browser;
+pub mod host_browser;
+pub(crate) mod host_browser_capacity;
 pub mod chat_preferences;
 pub mod completion;
 pub mod config;

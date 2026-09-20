@@ -92,6 +92,9 @@ fn builtin_preflight(config: &crate::Config, policy: &crate::policy::Policy) -> 
     inventory.push(crate::subagent::SubagentTool::builtin_definition());
     // Managed build adds the browser after build_tools, only for an explicit offer.
     // Cloning the broker does not claim sharing or contact the human browser.
+    if let Some(browser) = &config.host_browser {
+        inventory.push(crate::tools::HostBrowserTool(browser.clone()).definition());
+    }
     if let Some(browser) = &config.browser {
         inventory.push(crate::tools::BrowserTool(browser.clone()).definition());
     }

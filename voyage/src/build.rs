@@ -132,6 +132,10 @@ pub async fn build_authorized_agent_bundle(
             &context.policy,
         )
         .await?;
+        if let Some(browser) = &config.host_browser {
+            managed_resources.register_host_browser(browser.clone())?;
+            tools.register_arc(Arc::new(crate::tools::HostBrowserTool(browser.clone())))?;
+        }
         if let Some(browser) = &config.browser {
             managed_resources.register_browser(browser.clone())?;
             // Presence is capability, not local sharing authority. A human may
