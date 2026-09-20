@@ -43,6 +43,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
             else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',workspaces:[{name:'Fixture',path:'/fixture'}]};
+            else if(command.op==='profiles')result={revision:1,can_manage:true,default_profile_id:'personal',profiles:[{id:'personal',name:'Everyday',account:{account_id:id,connection_id:id,identity_generation:1,connection_revision:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'high',service_tier:null},{id:'work',name:'Work',account:{account_id:'alternate-account',connection_id:id,identity_generation:2,connection_revision:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'low',service_tier:null}]};
             else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true,reasoning_efforts:['low','high'],service_tiers:['priority']}]};
             else if(command.op==='start_account'){
                 if(rejectCreate){rejectCreate=false;setTimeout(()=>this.receive({type:'reply',request_id:frame.request_id,response:{protocol:1,result:null,error:'rejected create',outcome_unknown:false}}),0);return;}
@@ -130,22 +131,15 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
         assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 8 : 7);
-        $('#change-account').click();
-        assert.equal($('#edit-form').parentElement.id,'account-popover');
-        assert.equal($('#edit-account-section').hidden,false);
-        assert.equal($('#edit-model-section').hidden,false,'account changes expose the selected model before applying');
         $('#change-inference').click();
+        await until(()=>!$('#edit-save').disabled);
         assert.equal($('#edit-form').parentElement.id,'edit-popover');
         assert.equal($('#edit-account-section').hidden,true);
-        assert.equal($('#edit-model-section').hidden,false);
+        assert.equal($('#edit-model-section').hidden,true);
         assert.equal($('#edit-service-section').hidden,true);
         assert.equal($('#edit-form').tagName,'DIV','no nested form inside message composer');
-        assert.equal($('#change-inference').closest('[data-flux-modal-trigger]'),null);
-        $('#change-reasoning').click();
-        assert.equal($('#quick-reasoning').value,'2');
-        assert.equal($('#quick-reasoning').tagName,'UI-SLIDER');
-        assert.equal($('#edit-service').tagName,'UI-RADIO-GROUP');
-        $('#quick-reasoning').value='3';$('#reasoning-save').click();
+        assert.match($('#edit-profile-summary').textContent,/fixture/);
+        $('#edit-save').click();
         await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
         assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
         delaySnapshot=true;
@@ -194,7 +188,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
         async function prepareChat(text) {
             $('#new-voyage').click();
-            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'fixture');
+            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'Everyday');
             assert.equal(root.querySelector('[name="voyage-settings"]'),null,'no new-voyage modal');
             assert.match($('#conversation-empty').textContent,/first Send creates/);
             assert.equal($('#conversation-empty').hidden,false);
@@ -208,19 +202,14 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.equal($('#change-account').disabled,false,'new chats allow account review before sending');
         assert.equal($('#change-inference').disabled,false);
         assert.match($('#composer-account').textContent,/Personal account/);
-        $('#change-account').click();
+        $('#change-inference').click();
         await until(()=>!$('#edit-save').disabled);
-        assert.equal($('#edit-account').value,'0');
-        assert.equal($('#edit-model').value,'fixture');
-        assert.ok($('#edit-account').querySelector('[value="2"]').hasAttribute('disabled'));
-        $('#edit-account').value='1';
-        $('#edit-account').dispatchEvent(new Event('change'));
-        await until(()=>!$('#edit-save').disabled);
+        $('#edit-profile').value='work';$('#edit-profile').dispatchEvent(new Event('change'));
         $('#edit-save').click();
         await until(()=>$('#composer-account').textContent.includes('Work account'));
-        $('#change-account').click();
+        $('#change-inference').click();
         await until(()=>!$('#edit-save').disabled);
-        assert.equal($('#edit-account').value,'1','review retains the chosen account instead of resetting to the default');
+        assert.equal($('#edit-profile').value,'work','review retains the selected settings');
         assert.equal($('#prompt').value,'First-send message','review preserves the unsent message');
         $('#edit-close').click();
         const submissions=requests.filter(c=>c.op==='submit').length;

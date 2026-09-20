@@ -120,13 +120,18 @@ A **draft** is an unsent first message, not a running voyage. **Ctrl+N** opens a
 local draft. Check the executing host and workspace displayed above the first
 message. **F1** opens help. You can leave without submitting using **Ctrl+C**.
 
-## 3. Sign in privately and choose the default
+## 3. Create an execution profile
 
-Open **Account** beneath the composer (or type `/account` and press Enter). Use
-arrows to choose **+ ChatGPT — sign in with your subscription**. If more than one
-authorized ChatGPT connection is offered, choose the intended one. Enter a new
-descriptive alias, such as `personal`, and press **Enter**; an existing alias
-is not silently overwritten.
+Open **Profile** beneath the composer. If this host already has a valid default
+account, a **Default** profile is created automatically. Otherwise press **N** to
+create a profile, enter a name such as `Everyday`, and choose its provider account,
+model, thinking level and service tier. Profile settings do not include permissions
+or instructions.
+
+In the profile editor, use account sign-in to add a ChatGPT account. Choose the
+intended connection if more than one is offered, then enter a descriptive new
+alias such as `personal`. Existing aliases are not silently overwritten. The
+private account view also remains available through `/account`.
 
 The dedicated private sign-in view shows the executing host, provider website,
 temporary device code, expiry, and status. Press **O** to open the displayed
@@ -135,21 +140,17 @@ the provider's instructions in the browser. **Never paste a password, API key,
 token, or device code into the conversation.** The private view is not model input;
 provider tokens remain on the executing host.
 
-When enrollment succeeds, Helm refreshes the account list and highlights the new
-account. Select it with **Enter**, review **Settings for next run**, and use
-**Apply**. Check the model shown; leave reasoning/service unset unless you
-intentionally want an override. An unavailable model or account needs correction,
-not silent fallback.
+After enrollment, return to the profile editor, choose the account and model, and
+use **Save profile**. Leave thinking/service unset unless you intend an override.
+Back in the profile list, **Enter** selects the profile without sending a message.
+The first saved profile becomes the default for new voyages.
 
-If this host has no default, Helm opens **Ready for the first task** before applying
-the draft selection. Review the executing host and named account; **Enter** saves
-it as this host's default, while **Esc** returns without changing it. This is a
-host-wide choice for future voyages, not just this draft, and it does not change an
-active run. Scoped remote users who cannot set it must ask the host owner. After
-the host confirms the default, Helm returns to the reviewed settings; press
-**Enter** to apply them to this draft. This does not send a message. Check the
-draft's account/model before sending. **F6 Set default** remains a separate account
-management action, not a hidden prerequisite to this first-time flow.
+The profile list offers **E** to edit, **D** to duplicate, **X** to delete (with
+confirmation) and **F** to make the selected profile the default. Owner or
+full-access human connections can manage profiles. Scoped users can select visible
+profiles but need the host owner to manage them. Editing or deleting a profile
+leaves existing voyages' copied settings unchanged. An unavailable account or model
+requires correction; it does not silently select another account.
 
 If the view needs more space, enlarge the terminal to at least **44 × 22**.
 If sign-in fails, read its failure category. **R** inspects the same attempt;

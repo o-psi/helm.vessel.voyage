@@ -28,6 +28,23 @@ console. Web and TUI composers support picture attachments and memory-only unsen
 composition. Shared drafts and unsent-content persistence are removed. Terminal/browser execution and account
 enrollment remain native-client capabilities. The web client is not Ratzilla.
 
+## Execution profiles
+
+Helm TUI and both Web console views use a Vessel-local profile picker for model,
+service tier, thinking level and provider account. Profile management supports
+create, edit, duplicate, delete and a default; these profiles contain no instructions,
+tool permissions or workspace configuration. Owner and full-access human connections
+can manage profiles; scoped clients see only profiles for their permitted accounts.
+An existing valid host default account seeds a Default profile on first owner use.
+An unconfigured host offers profile creation and private account setup.
+
+Selection copies the four settings into a draft or the existing next-run settings
+command. Saved voyages therefore retain their values across profile edits, deletion,
+suspension and resume. Deleting a default chooses the first remaining profile;
+deleting the last leaves an empty catalogue until the user creates another.
+Unavailable accounts are not silently replaced. Concurrent edits require the current
+catalogue revision, and mutation identities bind exact requests and caller identity.
+
 ## Guided setup and daily interaction
 
 The [local first-task guide](getting-started.md) is the front door; architecture,

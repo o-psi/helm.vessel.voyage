@@ -4,6 +4,7 @@ mod access;
 mod account_choices;
 mod chooser;
 mod preload;
+mod profiles;
 mod render;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result,
@@ -159,6 +160,7 @@ fn model_load_error(failure: Option<voyage_protocol::model_discovery::Failure>) 
 }
 #[derive(Default)]
 pub(super) struct Controls {
+    profiles: profiles::Controls,
     account_load: Option<account_choices::Load>,
     cache: preload::Cache,
     catalog_job: Option<(Uuid, std::time::Instant, tokio::task::JoinHandle<()>)>,
@@ -266,6 +268,7 @@ impl Picker {
 impl App {
     pub(super) fn inference_picker_open(&self) -> bool {
         self.accounts.open()
+            || self.inference.profiles.panel.is_some()
             || self.inference.picker.is_some()
             || self.inference.access.draft.is_some()
     }
@@ -633,6 +636,7 @@ impl App {
         }
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
+        self.poll_profiles();
         self.account_tick();
         self.poll_model_catalog();
         self.poll_chooser_accounts();
@@ -759,6 +763,9 @@ impl App {
         Ok(())
     }
     pub(super) fn inference_input(&mut self, event: &Event) -> Result<bool> {
+        if self.profiles_input(event)? {
+            return Ok(true);
+        }
         if self
             .inference
             .picker

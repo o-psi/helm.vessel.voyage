@@ -13,11 +13,16 @@ test('owner connection can choose a new folder; scoped connections retain their 
     const root=document.querySelector('#helm-client'), field=id=>root.querySelector(`#${id}`);
     let scope='owner'; const seen=[]; let selected, origin;
     const account={account_id:'10000000-0000-4000-8000-000000000001',connection_id:'10000000-0000-4000-8000-000000000002',identity_generation:1,connection_revision:1,transport:'openai_responses'};
+    let profiles={revision:1,can_manage:true,default_profile_id:'default',profiles:[{id:'default',name:'Default',account,model:'model',reasoning_effort:null,service_tier:null}]};
     const client={exchange:async envelope=>{
         const c=envelope.command; seen.push(c);
         let result;
         if(c.op==='capabilities') result={vessel_id:'vessel',scope,rights:scope==='owner'?[]:['create','account_use'],workspaces:[{name:'Known',path:'/known'}]};
         else if(c.op==='accounts') result={accounts:[{id:account.account_id,connection_id:account.connection_id,identity_generation:1,state:'ready',availability:'available',label:'Account'}],connections:[{id:account.connection_id,revision:1,transports:[account.transport],label:'Provider'}]};
+        else if(c.op==='profiles') result=structuredClone({...profiles,can_manage:scope==='owner'});
+        else if(c.op==='save_profile') {assert.equal(c.expected_revision,profiles.revision);profiles.profiles.push(c.profile);profiles.revision++;result=structuredClone(profiles);}
+        else if(c.op==='set_default_profile') {profiles.default_profile_id=c.profile_id;profiles.revision++;result=structuredClone(profiles);}
+        else if(c.op==='delete_profile') {profiles.profiles=profiles.profiles.filter(p=>p.id!==c.profile_id);profiles.default_profile_id=profiles.profiles[0]?.id;profiles.revision++;result=structuredClone(profiles);}
         else if(c.op==='account_models') result={account,models:[{id:'model',display_name:'Model',is_default:true}]};
         else if(c.op==='start_account') result={session_id:c.session_id,workspace:c.workspace,incarnation:'10000000-0000-4000-8000-000000000003'};
         else throw Error(`Unexpected ${c.op}`);
@@ -26,6 +31,15 @@ test('owner connection can choose a new folder; scoped connections retain their 
     const settings=voyageSettings(root,{connections:new Map([['v',{id:'v',vessel_id:'vessel',name:'Computer',client,voyages:[]}]])},{current:()=>({vessel:'v'}),select:(...args)=>{selected=args;},apply:()=>{},draft:async(vessel,workspace)=>{origin={key:'draft-key',vessel,workspace,target:{type:'new_chat',workspace}};},captureDraft:()=>origin});
     field('new-voyage').click();
     await until(()=>!field('edit-save').disabled);
+    assert.equal(field('edit-model-section').hidden,true);
+    field('profile-duplicate').click();
+    await until(()=>!field('edit-save').disabled);
+    assert.equal(field('edit-model-section').hidden,false);
+    assert.equal(field('edit-profile-name').value,'Default copy');
+    field('edit-save').click();await until(()=>profiles.profiles.length===2&&field('edit-model-section').hidden);
+    field('profile-default').click();await until(()=>profiles.default_profile_id===profiles.profiles[1].id&&!field('profile-delete').disabled);
+    assert.equal(seen.some(c=>c.op==='start_account'||c.op==='set_account_inference'),false);
+    field('profile-delete').click();await until(()=>profiles.profiles.length===1&&!field('profile-delete').disabled);
     assert.ok([...field('edit-workspace').options].some(o=>o.value==='__custom__'));
     field('edit-workspace').value='__custom__';
     field('edit-workspace').dispatchEvent(new Event('change'));

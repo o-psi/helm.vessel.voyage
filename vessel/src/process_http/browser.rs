@@ -243,6 +243,10 @@ fn allowed(command: &VesselCommand) -> bool {
         | VesselCommand::CancelAccountEnrollment { .. }
         | VesselCommand::PrivateAccountEnrollment { .. }
         | VesselCommand::AccountDefaults { .. }
+        | VesselCommand::Profiles { .. }
+        | VesselCommand::SaveProfile { .. }
+        | VesselCommand::DeleteProfile { .. }
+        | VesselCommand::SetDefaultProfile { .. }
         | VesselCommand::AccountUsage { .. }
         | VesselCommand::AccountModels { .. }
         | VesselCommand::StartAccount {

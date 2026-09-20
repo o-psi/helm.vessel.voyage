@@ -83,7 +83,7 @@ impl Scope {
             Self::Session(g) => g.full_access || g.enrollment_connections.contains(&id),
         }
     }
-    fn account_allowed(
+    pub(super) fn account_allowed(
         &self,
         registry: &Registry,
         id: Uuid,
@@ -339,6 +339,10 @@ impl Supervisor {
         scope: Scope,
     ) -> Result<Value> {
         match command {
+            command @ (VesselCommand::Profiles { .. }
+            | VesselCommand::SaveProfile { .. }
+            | VesselCommand::DeleteProfile { .. }
+            | VesselCommand::SetDefaultProfile { .. }) => self.execution_profiles(command, scope),
             VesselCommand::Accounts {
                 workspace,
                 transport,
@@ -481,11 +485,24 @@ impl Supervisor {
             VesselCommand::AccountDefaults { workspace } => {
                 scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
                 let mut config = voyage_runtime::Config::load(None)?;
-                let (_, default) = Registry::default_host()?.default_account()?;
-                let Some(default) = default else {
-                    return Ok(json!({"code":"default_account_required","account":null}));
-                };
-                config.select_account(default)?;
+                let catalogue = self.profile_catalogue(&workspace, &scope)?;
+                let profile = catalogue
+                    .default_profile_id
+                    .and_then(|id| catalogue.profiles.iter().find(|p| p.id == id));
+                if let Some(profile) = profile {
+                    config.select_account(profile.account.clone())?;
+                    config.model = profile.model.clone();
+                    config.reasoning_effort = profile.reasoning_effort.clone();
+                    config.service_tier = profile.service_tier.clone();
+                } else if catalogue.revision > 0 {
+                    return Ok(json!({"code":"default_profile_required","account":null}));
+                } else {
+                    let (_, default) = Registry::default_host()?.default_account()?;
+                    let Some(default) = default else {
+                        return Ok(json!({"code":"default_account_required","account":null}));
+                    };
+                    config.select_account(default)?;
+                }
                 if let Some(binding) = &config.account {
                     scope.use_account(&self.directory, &workspace, binding)?;
                 }

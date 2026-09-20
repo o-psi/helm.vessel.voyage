@@ -18,6 +18,8 @@ import tomllib
 import urllib.request
 import uuid
 
+import images_composer as pty_helpers
+
 
 def wait_for(observe, timeout=30):
     deadline = time.monotonic() + timeout
@@ -102,9 +104,10 @@ class Provider(http.server.BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True)
+    parser.add_argument("--profiles-tui", action="store_true", help="Also exercise the real Helm profile picker")
     args = parser.parse_args()
     binaries = args.bin_dir.resolve()
-    for name in ("vessel", "voyage"):
+    for name in (("helm", "vessel", "voyage") if args.profiles_tui else ("vessel", "voyage")):
         assert (binaries / name).is_file(), f"missing binary: {binaries / name}"
     root = Path(tempfile.mkdtemp(prefix="voyage-conversation-files-"))
     print(f"evidence: {root}", flush=True)
@@ -188,13 +191,41 @@ def main():
             "connection_revision": connection["revision"], "transport": "openai_chat"}
         request({"op": "account_set_default", "command_id": str(uuid.uuid4()),
             "workspace": str(workspace), "account": binding, "expected_revision": 0})
+        # Profile selection copies only execution preferences into the launch.
+        profile = {"id": str(uuid.uuid4()), "name": "Everyday", "account": binding,
+                   "model": "fixture-model", "reasoning_effort": None, "service_tier": None}
+        saved = request({"op": "save_profile", "command_id": str(uuid.uuid4()),
+                         "workspace": str(workspace), "expected_revision": 0,
+                         "profile": profile, "make_default": True})
+        assert saved["default_profile_id"] == profile["id"]
+        defaults = request({"op": "account_defaults", "workspace": str(workspace)})
+        assert all(defaults[key] == profile[key] for key in
+                   ("account", "model", "reasoning_effort", "service_tier"))
         settings = tomllib.loads(config.read_text())
         settings["account"] = binding
         config.write_text(json.dumps({"version": 1, "workspace": str(workspace),
             "config": settings, "explicit": {"access": "unrestricted"},
             "selection": None, "confirmation": None}))
         request({"op": "start_settings", "session_id": session, "command_id": str(uuid.uuid4()),
-                 "workspace": str(workspace), "config_path": str(config), "binding": binding, "settings": {}})
+                 "workspace": str(workspace), "config_path": str(config), "binding": profile["account"],
+                 "settings": {key: profile[key] for key in ("model", "reasoning_effort", "service_tier")}})
+        # Exercise the actual TUI profile picker against this same Vessel.
+        if args.profiles_tui:
+            pty = pty_helpers.launch_pty(
+                [str(binaries / "helm"), "connect", "--directory", str(directory), "--no-start"],
+                {**env, "TERM": "xterm-256color"}, workspace, root / "profile-picker.pty")
+            try:
+                wait_for(lambda: "fixture-model" in pty_helpers.rendered(pty))
+                pty_helpers.send(pty, "/preferences\r")
+                wait_for(lambda: "Execution profiles" in pty_helpers.rendered(pty)
+                         and "Everyday" in pty_helpers.rendered(pty))
+                pty_helpers.send(pty, "\r")
+                wait_for(lambda: "Inference applied" in pty_helpers.rendered(pty))
+                assert "Profile: Everyday" in pty_helpers.rendered(pty)
+                assert command({"op": "snapshot"})["inference"]["model"] == profile["model"]
+                assert not server.requests, "profile selection sent inference"
+            finally:
+                pty_helpers.stop_pty(pty, wait_for)
         for turn, prompt in enumerate(server.prompts):
             snapshot = command({"op": "snapshot"})
             command({"op": "submit", "command_id": str(uuid.uuid4()),
@@ -224,6 +255,19 @@ def main():
             assert len(snapshot["turns"]) == turn + 1
             assert server.notes.read_text() == server.expected
             assert len(server.requests) == (3 if turn == 0 else 5)
+            if turn == 0:
+                changed = {**profile, "model": "fixture-updated"}
+                saved = request({"op": "save_profile", "command_id": str(uuid.uuid4()),
+                                 "workspace": str(workspace), "expected_revision": saved["revision"],
+                                 "profile": changed, "make_default": False})
+                assert request({"op": "account_defaults", "workspace": str(workspace)})["model"] == "fixture-updated"
+                deleted = request({"op": "delete_profile", "command_id": str(uuid.uuid4()),
+                                   "workspace": str(workspace), "expected_revision": saved["revision"],
+                                   "profile_id": profile["id"]})
+                assert deleted["profiles"] == []
+                assert request({"op": "profiles", "workspace": str(workspace)})["profiles"] == []
+                assert request({"op": "account_defaults", "workspace": str(workspace)})["code"] == "default_profile_required"
+        assert all(body["model"] == "fixture-model" for body in server.requests), "profile edits changed an existing voyage"
         assert not server.errors, server.errors
     finally:
         try:

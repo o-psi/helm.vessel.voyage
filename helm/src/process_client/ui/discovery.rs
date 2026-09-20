@@ -6,7 +6,11 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show focus-specific help", ""),
     ("actions", "Search all actions", ""),
     ("settings", "Effective settings, sources and gates", ""),
-    ("preferences", "Model, account and next-turn options", ""),
+    (
+        "preferences",
+        "Execution profiles",
+        "Choose or manage named execution settings",
+    ),
     (
         "attempts",
         "Read provider retry history",
@@ -350,7 +354,7 @@ impl App {
                 self.discovery.detail_scroll = 0;
                 self.explore = Some(0);
             }
-            "preferences" => self.open_model_options()?,
+            "preferences" => self.open_profiles()?,
             "settings" => {
                 self.discovery.settings = true;
                 self.help = true;

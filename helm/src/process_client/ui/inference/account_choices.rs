@@ -25,7 +25,7 @@ pub(super) struct Load {
     pub task: tokio::task::JoinHandle<()>,
 }
 impl Catalogue {
-    fn choices(&self) -> Result<Vec<Choice>> {
+    pub(super) fn choices(&self) -> Result<Vec<Choice>> {
         ensure!(
             self.accounts.len() <= 128 && self.connections.len() <= 64,
             "Account list exceeds limits"
@@ -110,17 +110,19 @@ impl App {
                     })
                     .await?;
                 let catalogue = serde_json::from_value::<Catalogue>(value)?;
-                let defaults = if catalogue.default_account.is_some() {
-                    Some(serde_json::from_value::<Settings>(
-                        client
-                            .request(voyage_protocol::vessel::VesselCommand::AccountDefaults {
-                                workspace: workspace.clone(),
-                            })
-                            .await?,
-                    )?)
-                } else {
-                    None
-                };
+                // Account discovery remains usable when a stale default profile cannot
+                // resolve. Keep explicit editor settings and let the user repair them.
+                let defaults = client
+                    .request(voyage_protocol::vessel::VesselCommand::AccountDefaults {
+                        workspace: workspace.clone(),
+                    })
+                    .await
+                    .ok()
+                    .filter(|value| {
+                        value["code"] != "default_account_required"
+                            && value["code"] != "default_profile_required"
+                    })
+                    .and_then(|value| serde_json::from_value::<Settings>(value).ok());
                 Ok::<_, anyhow::Error>((host, catalogue, defaults))
             })
             .await

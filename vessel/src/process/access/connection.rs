@@ -39,10 +39,14 @@ impl Supervisor {
                 "scope": if grant.full_access { "owner" } else { "workspaces" }, "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": self.connection_workspaces(&grant).await?,
-                "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
+                "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment"]
             })),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
+            | VesselCommand::Profiles { .. }
+            | VesselCommand::SaveProfile { .. }
+            | VesselCommand::DeleteProfile { .. }
+            | VesselCommand::SetDefaultProfile { .. }
             | VesselCommand::AccountUsage { .. }
             | VesselCommand::AccountSetDefault { .. }
             | VesselCommand::AccountModels { .. }

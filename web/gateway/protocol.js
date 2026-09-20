@@ -9,6 +9,12 @@ const nullableText = v => v === null || text(v);
 const account = v => exact(v, ['account_id','connection_id','identity_generation','connection_revision','transport']) && uuid(v.account_id) && uuid(v.connection_id) && uint(v.identity_generation) && uint(v.connection_revision) && ['openai_responses','openai_chat','chatgpt_oauth','anthropic'].includes(v.transport);
 function accountCommand(c) {
   if (c.op === 'set_access') return exact(c,['op','session_id','incarnation','command_id','expected_revision','expires_at_ms','access']) && uuid(c.session_id) && uuid(c.incarnation) && uuid(c.command_id) && uint(c.expected_revision) && uint(c.expires_at_ms) && ['read-only','approval','unrestricted'].includes(c.access);
+  if (c.op === 'profiles') return exact(c,['op','workspace']) && text(c.workspace);
+  if (['delete_profile','set_default_profile'].includes(c.op)) return exact(c,['op','command_id','workspace','expected_revision','profile_id']) && uuid(c.command_id) && text(c.workspace) && uint(c.expected_revision) && uuid(c.profile_id);
+  if (c.op === 'save_profile') {
+    const p=c.profile;
+    return exact(c,['op','command_id','workspace','expected_revision','profile','make_default']) && uuid(c.command_id) && text(c.workspace) && uint(c.expected_revision) && typeof c.make_default === 'boolean' && exact(p,['id','name','account','model','reasoning_effort','service_tier']) && uuid(p.id) && text(p.name) && p.name.length <= 80 && p.name === p.name.trim() && !/[\u0000-\u001f\u007f-\u009f]/.test(p.name) && account(p.account) && text(p.model) && p.model.length <= 256 && [p.reasoning_effort,p.service_tier].every(value=>value===null || text(value) && value.length<=64);
+  }
   if (c.op === 'accounts') return exact(c,['op','workspace','transport']) && text(c.workspace) && c.transport === null;
   if (c.op === 'account_defaults') return exact(c,['op','workspace']) && text(c.workspace);
   if (c.op === 'account_usage') return exact(c,['op','workspace','account','refresh']) && text(c.workspace) && account(c.account) && typeof c.refresh === 'boolean';
@@ -80,7 +86,7 @@ export function validReply(f) {
 // view rather than forwarding unknown future execution/credential metadata.
 export function restrictCapabilities(value, vesselId) {
   if (!object(value) || value.protocol !== 1 || value.vessel_id !== vesselId || !Array.isArray(value.features) || !value.features.every(v => typeof v === 'string')) throw Error('invalid capabilities');
-  const features = new Set(['sqlite_catalogue', 'catalogue', 'scoped_catalogue', 'inspect', 'durable_receipts', 'history_paging', 'events', 'duplex_socket', 'decisions', 'grant_revocation', 'revocation', 'provider_accounts', 'account_start', 'start_resolution']);
+  const features = new Set(['sqlite_catalogue', 'catalogue', 'scoped_catalogue', 'inspect', 'durable_receipts', 'history_paging', 'events', 'duplex_socket', 'decisions', 'grant_revocation', 'revocation', 'provider_accounts', 'execution_profiles', 'account_start', 'start_resolution']);
   const result = { protocol: 1, vessel_id: vesselId, features: value.features.filter(f => features.has(f)) };
   if (typeof value.version === 'string') result.version = value.version;
   if (typeof value.scope === 'string') result.scope = value.scope;

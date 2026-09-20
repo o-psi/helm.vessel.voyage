@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-20T19:09:14.108166+00:00",
-  "source_commit": "a5faf3598cd8b2b0200ba8879bfc0d5dcd491deb",
+  "measured_at_utc": "2026-09-20T19:20:17.161941+00:00",
+  "source_commit": "c0641e4e96b9f3f802d34921cdfe31b15b3dc334",
   "dirty": true,
-  "source_fingerprint_sha256": "3659f2d04a4f650d25cf11e359674ac282f5280e25c741dc9d667c0b6e64a24c",
-  "source_fingerprint_method": "SHA-256 over sorted workspace Rust paths (excluding target/node_modules/.git) and all Cargo manifests/lock: relative path + NUL + bytes",
+  "source_fingerprint_sha256": "e0c38bbc85f43372d40fe7d6b36762ba710a03544fd8ebac7474a81af8d85949",
+  "source_fingerprint_method": "SHA-256 over sorted workspace Rust source and Cargo manifests/lockfile: relative path + NUL + bytes",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1737,
+    "passed": 1755,
     "failed": 0,
     "ignored": 2
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10151,
-      "covered": 7324,
-      "percent": 72.15052704167077
+      "count": 10221,
+      "covered": 7371,
+      "percent": 72.11623128852362
     },
     "instantiations": {
-      "count": 23037,
-      "covered": 9254,
-      "percent": 40.170161045274995
+      "count": 23234,
+      "covered": 9316,
+      "percent": 40.09641043298614
     },
     "lines": {
-      "count": 105331,
-      "covered": 79395,
-      "percent": 75.37666973635491
+      "count": 106329,
+      "covered": 79925,
+      "percent": 75.16764006056673
     },
     "mcdc": {
       "count": 0,
@@ -42,18 +42,18 @@
       "percent": 0
     },
     "regions": {
-      "count": 172655,
-      "covered": 124320,
-      "notcovered": 48335,
-      "percent": 72.00486519359416
+      "count": 174299,
+      "covered": 125091,
+      "notcovered": 49208,
+      "percent": 71.76805374672259
     }
   },
-  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser-live-fix/final -j 8 -- --test-threads=1",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$TARGET CARGO_TARGET_DIR=$TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/execution-profiles -j 8 -- --test-threads=1",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET/browser-live-fix.profdata",
+    "-instr-profile=$TARGET/execution-profiles.profdata",
     "-object",
     "$TARGET/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
     "-object",
@@ -99,9 +99,10 @@
     "Historical shared-target objects outside current Cargo executable set"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests passed with umask 077 and serial tests after final browser interaction edits. Earlier superseded/parallel attempts are retained separately; no pass claimed for them.",
-    "All 16 current Cargo test/binary executables included; every reported file belongs to this workspace. Mixed shared-target report retained; corrected export has zero diagnostics. Protocol source timestamp refreshed when switching from a coordinated peer worktree to invalidate stale shared artifacts.",
-    "Linux only. Browser JavaScript, process journeys and live-provider acceptance are separate from this measurement.",
-    "Compared with prior: lines -0.0499pp, functions -0.0493pp, regions -0.0526pp. No scope exclusions narrowed."
+    "Full workspace default-feature Rust tests passed; current Cargo test/binary executable set used for corrected export. Default mixed-target report retained locally. No export diagnostics.",
+    "Linux offline Rust evidence only; JavaScript and actual offline process journeys recorded separately in issue #338. No live-provider or native macOS/Windows claim.",
+    "Compared with previous record: lines -0.2090pp, functions -0.0343pp, regions -0.2368pp. No scope exclusions narrowed.",
+    "Initial profile test compilation failed on test-only Debug requirements; corrected assertions before this passing measurement. Default HTML includes unavailable distribution Rust source warnings; corrected current-object export has no diagnostics.",
+    "The new profile paths expand measured source by roughly 1,000 lines; coverage decreased slightly because not every new UI path executes in the offline suite."
   ]
 }

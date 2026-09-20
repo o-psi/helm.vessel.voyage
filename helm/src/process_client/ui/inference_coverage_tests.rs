@@ -56,7 +56,7 @@ async fn controls_render_registers_and_clears_click_targets() {
         .iter()
         .map(|c| c.symbol())
         .collect();
-    assert!(text.contains("Model:"));
+    assert!(text.contains("Profile:"));
     app.clear_inference_hits();
     assert!(app.inference.options_hit.get().is_none());
     assert!(app.inference.choices.borrow().is_empty());

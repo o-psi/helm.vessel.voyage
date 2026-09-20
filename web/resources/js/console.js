@@ -171,7 +171,8 @@ export function mount(root) {
             $('access-mode').disabled = !enabled && !newChatSettings;
             $('access-mode').value = !selected ? composition?.active?.access || '' : ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy || newChatSending;
-            $('composer-model').textContent = clean(reviewed?.settings.model || snapshot?.inference?.model || snapshot?.model || 'Account & model');
+            $('composer-model').textContent = clean(reviewed?.profileName || 'Profile');
+            $('change-inference').title = clean([reviewed?.settings.model || snapshot?.inference?.model, reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort, reviewed?.settings.service_tier || snapshot?.inference?.service_tier].filter(Boolean).join(' · ') || 'Choose profile');
             $('composer-reasoning').textContent = clean(reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort || 'Default');
             $('composer-service').textContent = clean(reviewed ? reviewed.settings.service_tier || 'Default tier' : snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
             $('composer-account').textContent = reviewed?.accountLabel || accountLabel;

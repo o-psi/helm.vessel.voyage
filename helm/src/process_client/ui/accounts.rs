@@ -556,7 +556,9 @@ impl App {
                     .request(VesselCommand::AccountDefaults { workspace })
                     .await
                     .and_then(|v| {
-                        if v["code"] == "default_account_required" {
+                        if v["code"] == "default_account_required"
+                            || v["code"] == "default_profile_required"
+                        {
                             Ok(Settings::default())
                         } else {
                             Ok(serde_json::from_value(v)?)
@@ -687,11 +689,10 @@ impl App {
                     && !d.busy
             })
             && self.accounts.initializing.insert(id)
-            && self
-                .open_initial_account_chooser(Destination::Draft(id))
-                .is_ok()
         {
-            self.mark_chooser_automatic();
+            if let Err(error) = self.open_initial_profiles() {
+                self.status = safe(&error.to_string());
+            }
         }
     }
     fn account_reply(&mut self, id: Uuid, result: Result<Reply>) -> Result<()> {

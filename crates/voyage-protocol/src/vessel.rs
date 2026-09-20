@@ -535,6 +535,28 @@ pub enum VesselCommand {
         account: crate::accounts::AccountBinding,
         expected_revision: u64,
     },
+    Profiles {
+        workspace: PathBuf,
+    },
+    SaveProfile {
+        command_id: Uuid,
+        workspace: PathBuf,
+        expected_revision: u64,
+        profile: crate::execution_profiles::ExecutionProfile,
+        make_default: bool,
+    },
+    DeleteProfile {
+        command_id: Uuid,
+        workspace: PathBuf,
+        expected_revision: u64,
+        profile_id: Uuid,
+    },
+    SetDefaultProfile {
+        command_id: Uuid,
+        workspace: PathBuf,
+        expected_revision: u64,
+        profile_id: Uuid,
+    },
     AccountDefaults {
         workspace: PathBuf,
     },

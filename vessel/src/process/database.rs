@@ -41,7 +41,7 @@ fn private_file(path: &Path) -> Result<()> {
     );
     Ok(())
 }
-fn open(root: &Path) -> Result<Connection> {
+pub(super) fn open(root: &Path) -> Result<Connection> {
     open_file(root, FILE)
 }
 fn open_file(root: &Path, file: &str) -> Result<Connection> {

@@ -108,11 +108,6 @@ impl App {
             p.chooser.requires_default = required;
         }
     }
-    pub(in crate::process_client::ui) fn mark_chooser_automatic(&mut self) {
-        if let Some(p) = self.inference.picker.as_mut() {
-            p.chooser.automatic = true;
-        }
-    }
     #[cfg(test)]
     pub(in crate::process_client::ui) fn chooser_initializing(&self) -> bool {
         self.inference
@@ -203,7 +198,9 @@ impl App {
         }
         self.inference.return_to_model = None;
         let saved = self.inference.return_choice.take();
-        if self.inference_settings(destination).is_err() {
+        if self.inference_settings(destination).is_err()
+            && self.inference.profiles.editing.is_none()
+        {
             return;
         }
         if let Err(e) = self.open_model_options() {
@@ -256,7 +253,7 @@ impl App {
                 .or(self.selected.map(Destination::Live))
                 == Some(d)
             {
-                self.open_model_options()?;
+                self.open_profiles()?;
             }
             self.inference.options_hit.set(None);
             return Ok(true);
@@ -268,6 +265,7 @@ impl App {
             Control::Cancel => {
                 self.cancel_chooser_accounts();
                 self.cancel_model_catalog();
+                self.inference.profiles.editing = None;
                 return Ok(());
             }
             Control::Retry => {
@@ -341,15 +339,17 @@ impl App {
                     p.chooser.focus = Control::Reset;
                     p.notice="This model may not support your advanced settings. Reset them or keep them?".into();
                 } else {
-                    let latest = self.inference_settings(p.destination)?;
-                    ensure!(
-                        latest.model == p.original.model
-                            && latest.account == p.original.account
-                            && latest.provider == p.original.provider
-                            && latest.reasoning_effort == p.original.reasoning_effort
-                            && latest.service_tier == p.original.service_tier,
-                        "Settings changed elsewhere. Reopen this chooser; nothing applied."
-                    );
+                    if self.inference.profiles.editing.is_none() {
+                        let latest = self.inference_settings(p.destination)?;
+                        ensure!(
+                            latest.model == p.original.model
+                                && latest.account == p.original.account
+                                && latest.provider == p.original.provider
+                                && latest.reasoning_effort == p.original.reasoning_effort
+                                && latest.service_tier == p.original.service_tier,
+                            "Settings changed elsewhere. Reopen this chooser; nothing applied."
+                        );
+                    }
                     ensure!(
                         !p.chooser.model.is_empty()
                             && p.chooser.model.len() <= 256
@@ -363,6 +363,9 @@ impl App {
                     settings.reasoning_effort = p.chooser.thinking.clone();
                     settings.service_tier = p.chooser.service.clone();
                     settings.resolve(&p.models);
+                    if self.inference.profiles.editing.is_some() {
+                        return self.save_profile_settings(settings);
+                    }
                     if p.chooser.requires_default {
                         return self.review_chooser_default(p, settings);
                     }
@@ -415,6 +418,7 @@ impl App {
                     }
                     self.cancel_chooser_accounts();
                     self.cancel_model_catalog();
+                    self.inference.profiles.editing = None;
                     return Ok(true);
                 }
                 if k.modifiers.contains(KeyModifiers::CONTROL)
@@ -572,9 +576,13 @@ impl App {
             h,
         );
         frame.render_widget(Clear, area);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Choose a model ");
+        let block = Block::default().borders(Borders::ALL).title(
+            if self.inference.profiles.editing.is_some() {
+                " Profile execution settings "
+            } else {
+                " Choose a model "
+            },
+        );
         let inner = block.inner(area);
         frame.render_widget(block, area);
         self.inference.visible.set(true);
@@ -745,7 +753,15 @@ impl App {
                     "[Retry]"
                 },
             ),
-            (apply, Control::Apply, "[Use model]"),
+            (
+                apply,
+                Control::Apply,
+                if self.inference.profiles.editing.is_some() {
+                    "[Save profile]"
+                } else {
+                    "[Use model]"
+                },
+            ),
         ] {
             frame.render_widget(
                 Paragraph::new(label).style(if p.chooser.focus == c {

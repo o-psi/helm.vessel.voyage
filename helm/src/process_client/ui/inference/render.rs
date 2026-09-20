@@ -32,11 +32,11 @@ impl App {
             .split(area);
         self.draw_access_control(frame, columns[1], destination);
         let label = format!(
-            "Model: {} ▾",
+            "Profile: {} ▾",
             settings
                 .as_ref()
-                .map(|s| safe(&s.model))
-                .unwrap_or_else(|| "Set up account".into())
+                .map(|s| self.profile_label(s))
+                .unwrap_or_else(|| "Choose profile".into())
         );
         self.draw_composer_control(frame, columns[0], label, true);
         self.inference
@@ -71,6 +71,9 @@ impl App {
         self.draw_draft_access(frame);
         self.draw_accounts(frame);
 
+        if self.draw_profiles(frame) {
+            return;
+        }
         let Some(picker) = &self.inference.picker else {
             return;
         };

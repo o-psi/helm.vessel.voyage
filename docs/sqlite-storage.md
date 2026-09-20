@@ -12,7 +12,7 @@ and [current state](current-state.md) for supported runtime behavior.
 
 | Database/store | Owner | Durable contents |
 | --- | --- | --- |
-| `<vessel-directory>/catalogue.sqlite3` | Vessel | Voyage registrations, process incarnations, exact lifecycle bindings, creation receipts, catalogue summaries and refresh state |
+| `<vessel-directory>/catalogue.sqlite3` | Vessel | Voyage registrations, process incarnations, exact lifecycle bindings, creation receipts, catalogue summaries, refresh state, execution profiles and exact profile mutation receipts |
 | `<vessel-directory>/sessions/<uuid>/journal/journal.sqlite3` | Independent Voyage process | Conversation, runs, canonical checkpoints, exact turn receipts, decisions, configuration and cleanup obligations |
 | Existing notification SQLite database | Vessel notification component | Bounded notification acceptance, payload retention, receipts and delivery state |
 | Existing Helm private draft files | Helm | Unsent composer text, proposed configuration, exact creation/first-turn envelopes and pending recovery |
@@ -43,6 +43,14 @@ Its repository implementation is
 | catalogue | Session UUID primary key and voyage FK | Last summary, observed process info, file-change fingerprint, last success time, sanitized failure and next refresh deadline |
 | catalogue_events | Increasing sequence; voyage FK | Bounded committed metadata invalidations, retaining the last 4096 events |
 | legacy_imports | Source locator primary key | Imported registration digests and completed-import marker |
+
+The additive execution-profile tables are initialized by
+[`execution_profiles.rs`](../vessel/src/process/execution_profiles.rs):
+`execution_profiles` retains one revisioned catalogue, and
+`execution_profile_commands` retains exact actor-bound requests and original results.
+Both change in one immediate transaction. Profiles are limited to 64 entries;
+after 4096 mutations the store refuses further mutations rather than forgetting
+command identities. No credentials or session execution state live in these tables.
 
 The registration JSON retains existing protocol fields, including runtime-private
 transport authentication. It is private supervisor storage and is never returned

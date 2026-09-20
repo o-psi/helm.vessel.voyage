@@ -337,3 +337,16 @@ qualification additionally sets `TURN_SERVER` to an existing coturn binary and
 `TURN_TEST_ROOT` to an ignored evidence directory; an unset relay test is skipped,
 not passing. Crash qualification is a separate adverse gate, not inferred from
 normal browser closure.
+
+## Execution profiles
+
+`cargo test -p helm -p vessel --locked profiles -j 8` covers profile storage,
+revision conflicts, exact mutation replay, account-scope visibility and TUI profile
+selection/management. The conversation/file check above additionally creates a
+profile, copies it into a real supervised voyage, edits and deletes the profile,
+and verifies the resumed voyage retains its original model. With Helm also built,
+`python3 voyage/tests/conversation_files.py --bin-dir target/debug --profiles-tui`
+additionally opens the real TUI picker, selects the named profile and checks that
+selection sends no inference. These checks use
+synthetic accounts and local provider responses. Web profile tests run with the
+existing Web test scripts; they do not establish live sign-in or provider behavior.
