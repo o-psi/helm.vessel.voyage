@@ -289,3 +289,12 @@ test('missing media has a bounded error and does not automatically reconnect',as
     assert.equal(f.sent.length,calls+1); // best-effort detach, never replay
     f.session.dispose();
 });
+
+test('idle agent-controlled browser is Watching, not invented activity', async()=>{
+    const {JSDOM}=await import('jsdom');const {mountBrowserViewer}=await import('../../helm/browser-view/viewer.mjs');
+    const dom=new JSDOM('<div id="root"></div>');const root=dom.window.document.getElementById('root');
+    const view=mountBrowserViewer(root,{autoConnect:false,transport:async()=>({status:status()}),context:()=>({incarnation:'inc',revision:1})});
+    view.session.accept(status({mode:'agent',controller:null,agent_active:false}));
+    assert.equal(root.querySelector('.browser-status').textContent,'Watching');
+    view.dispose();dom.window.close();
+});

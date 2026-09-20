@@ -118,18 +118,22 @@ export class Workspace {
         } catch { tab.notice = 'Action not confirmed. Draft retained. Check receipts before sending again.'; }
         finally { tab.busy = false; tab.stale = true; this.changed(); await this.refresh(key); }
     }
-    async attach(key: string, files: File[]) {
-        const tab = this.tabs.get(key); if (!tab || tab.busy) return;
+    async attach(key: string, files: File[], guard?: () => boolean) {
+        const tab = this.tabs.get(key); if (!tab || tab.busy || this.closed || guard && !guard()) return false;
+        let success = true;
         tab.busy = true; this.changed();
         try {
             for (const file of files) {
                 if (!['image/png','image/jpeg','image/webp'].includes(file.type) || !file.size || tab.pictures.length >= 4 || tab.pictures.reduce((n,p) => n+p.size,0)+file.size > 2097152) throw new Error('Use PNG, JPEG or WebP; at most four pictures and 2 MiB total.');
-                const bytes = new Uint8Array(await file.arrayBuffer()); let binary = '';
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                if (this.closed || this.tabs.get(key) !== tab || guard && !guard()) throw new Error('Voyage changed; capture not attached.');
+                let binary = '';
                 for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
                 tab.pictures.push({id:uuid(),name:file.name || 'pasted-image',size:file.size,url:URL.createObjectURL(file),base64:btoa(binary),uploadId:uuid()});
             }
-        } catch (error) { tab.notice = error instanceof Error ? error.message : 'Picture unavailable.'; }
+        } catch (error) { success = false; tab.notice = error instanceof Error ? error.message : 'Picture unavailable.'; }
         finally { tab.busy = false; this.changed(); }
+        return success;
     }
     removePicture(key: string, id: string) {
         const tab = this.tabs.get(key); if (!tab || tab.busy) return;

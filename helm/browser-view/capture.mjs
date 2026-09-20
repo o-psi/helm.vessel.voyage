@@ -102,6 +102,7 @@ export function mountCapture({root, video, canCapture, onCapture}) {
     clear.addEventListener('click', () => { if (check()) { release(); start = null; rectangles = []; paint(); status.textContent = 'Annotations cleared. Original capture preserved.'; } });
     consent.addEventListener('change', update);
     cancel.addEventListener('click', reset);
+    dialog.addEventListener('keydown', event => { if(event.key === 'Escape' || event.key === 'Tab') event.stopPropagation(); });
     dialog.addEventListener('cancel', event => { event.preventDefault(); reset(); });
     dialog.addEventListener('close', () => { if (active) reset(); });
     save.addEventListener('click', async () => {

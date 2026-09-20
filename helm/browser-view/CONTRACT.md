@@ -15,9 +15,9 @@ persist or pass SDP/input/private payloads to model-visible history.
 on socket replacement, voyage change, incarnation change, or disconnect. Call
 `disconnect()` immediately on transport loss, and `dispose()` when unmounting.
 
-Status is `{available, running, binding, mode, controller, tabs}`. Binding is the
+Status includes `{available, running, binding, mode, controller, tabs, page, tab_details, dialog, agent_active, agent_action, agent_cursor}`. Private metadata is disclosed only to its attached controller. Binding is the
 full protocol HostBrowserBinding; attachment_id is nil before Attach; the viewer supplies a fresh non-nil UUID
-on Attach and uses the authoritative reply thereafter. Controller is an attachment UUID. Tabs are UUIDs, not page titles.
+on Attach and uses the authoritative reply thereafter. Controller is an attachment UUID. Tabs remain UUIDs; `tab_details` provides bounded inert display titles/URLs.
 All effects carry fresh UUIDs; input uses consecutive attachment-local sequence.
 Every input is fenced by the complete binding captured when queued; stale queued
 input is dropped, never rebound. A bounded queue refuses/clears on slow transport.
@@ -34,9 +34,10 @@ on transition; no automatic return to agent, automatic reconnect, or input repla
 
 Exports also include `BrowserSession` (transport/controller state without DOM),
 `videoPoint` (letterbox-aware source coordinates). Mount returns the session plus
-`dispose()`. Controls include Start/Connect, human/private/agent mode, navigation,
+`dispose()`. Mount auto-connects by default (`autoConnect:false` is an explicit embedding override). Controls include private takeover/return, navigation,
 tabs, remote dialog accept/dismiss, viewport resize, pointer/wheel, physical keys,
-and a transient IME text composer. No screenshots are substituted for video.
+and a transient IME text composer under More. No screenshots are substituted for video.
+Capture/annotation is an explicit local frozen-frame editor; `onCapture(File)` must confirm successful draft insertion or reject. `externalClose:true` omits duplicate inner close chrome when the shell owns panel dismissal.
 
 A remount on an existing attachment takes `status.input_sequence` as its starting
 sequence; it never guesses zero. Explicit viewer detach/disconnect is best effort

@@ -11,6 +11,7 @@ test('mobile viewer traps focus, Escape restores action and conversation DOM sur
     const dom = new JSDOM('<main id="app" class="voyage-workspace"></main>');
     const saved = ['window','document','IS_REACT_ACT_ENVIRONMENT'].map(name => [name,Object.getOwnPropertyDescriptor(globalThis,name)] as const);
     Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true});
+    dom.window.HTMLElement.prototype.getClientRects=function(){return [{width:40,height:40}] as any;};
     Object.defineProperty(dom.window,'matchMedia',{value:()=>({matches:true})});
     const root = createRoot(dom.window.document.getElementById('app')!);
     const tab = {key:'one',session:'one',title:'Research trip',stale:true,snapshot:{messages:[{role:'tool',name:'host_browser'}]}} as Tab;

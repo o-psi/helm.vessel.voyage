@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-20T15:07:49.909293+00:00",
-  "source_commit": "ed6ebb9f4ee52a02835d54b63d54d3a539a5f93d",
+  "measured_at_utc": "2026-09-20T17:19:46.291865+00:00",
+  "source_commit": "3aed0d4eba19d8ebe63095b241c59932ae30eeb3",
   "dirty": true,
-  "source_fingerprint_sha256": "1182867c4b9eaee2f4647476db9ba584b6a36bc9952f910d24b665d323a57567",
+  "source_fingerprint_sha256": "dccb6cd19c1ab89259c6916ca0cc9ce5e744356395734cd41206dc4892bfc2db",
   "source_fingerprint_method": "SHA-256 over sorted workspace Rust paths (excluding target/node_modules/.git) and all Cargo manifests/lock: relative path + NUL + bytes",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1734,
+    "passed": 1736,
     "failed": 0,
     "ignored": 2
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10139,
-      "covered": 7303,
-      "percent": 72.02879968438702
+      "count": 10147,
+      "covered": 7209,
+      "percent": 71.04562925002463
     },
     "instantiations": {
-      "count": 22865,
-      "covered": 9179,
-      "percent": 40.14432538814782
+      "count": 14864,
+      "covered": 8382,
+      "percent": 56.39128094725512
     },
     "lines": {
-      "count": 105214,
-      "covered": 79202,
-      "percent": 75.27705438439752
+      "count": 105274,
+      "covered": 78351,
+      "percent": 74.42578414423315
     },
     "mcdc": {
       "count": 0,
@@ -42,18 +42,18 @@
       "percent": 0
     },
     "regions": {
-      "count": 172389,
-      "covered": 123982,
-      "notcovered": 48407,
-      "percent": 71.91990208191939
+      "count": 172560,
+      "covered": 122672,
+      "notcovered": 49888,
+      "percent": 71.08947612424664
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser333 -j 8 -- --test-threads=1",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser333-ux -j 8 -- --test-threads=1",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET/browser333.profdata",
+    "-instr-profile=$TARGET/browser333-ux.profdata",
     "-object",
     "$TARGET/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
     "-object",
@@ -99,9 +99,9 @@
     "Historical shared-target objects outside current Cargo executable set"
   ],
   "notes": [
-    "Full workspace tests passed. Complete current 16-executable Cargo artifact set selected; mixed initial report retained under ignored target, not published. Corrected export has zero diagnostics.",
-    "Rust source frozen during measurement; base plus dirty fingerprint is explicit. Coverage is Linux default-feature execution, not native-platform or live-provider certification.",
-    "New browser runtime/guardian integration lowers Rust percentages; worker/viewer JS/Python media/crash journeys are separate and not counted as Rust coverage.",
-    "show-env initially selected a worktree target; artifact selection was corrected to existing shared target and completed without recompilation; accidental artifact build was interrupted and not used."
+    "Full workspace default-feature Rust tests passed with serialized test execution; Linux only, no provider or native-platform certification.",
+    "Complete current 16 Cargo executable set selected; initial mixed shared-target report preserved under ignored target. Corrected export has zero diagnostics.",
+    "Frozen measured source dirty fingerprint includes final typed history and metadata privacy tests; UI JS/Python real browser tests are separate.",
+    "Compared with prior: lines -0.8513pp, functions -0.9832pp, regions -0.8304pp. No exclusions narrowed. Only 60 net counted lines added; differing execution counts across runs also contribute, so the drop is not attributed solely to added code."
   ]
 }

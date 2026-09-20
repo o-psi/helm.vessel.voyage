@@ -75,21 +75,23 @@ export function mount(root) {
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     let composition, newChatSending = false;
-    let browserViewer = null;
+    let browserViewer = null, browserBackground = [];
     function closeBrowser() {
         const hadFocus = $('host-browser-panel').contains(document.activeElement);
         browserViewer?.dispose(); browserViewer = null;
+        browserBackground.forEach(([node,previous])=>node.inert=previous);browserBackground=[];
+        $('host-browser-panel').removeAttribute('aria-modal');$('host-browser-panel').removeAttribute('role');
         $('host-browser-panel').hidden = true;
         $('host-browser-toggle').setAttribute('aria-expanded', 'false');
         if (hadFocus) $('host-browser-toggle').focus();
     }
     $('host-browser-close').addEventListener('click', closeBrowser);
     root.addEventListener('keydown', event => {
-        if ($('host-browser-panel').hidden) return;
+        if ($('host-browser-panel').hidden || event.defaultPrevented) return;
         if (event.key === 'Escape') { event.preventDefault(); closeBrowser(); $('host-browser-toggle').focus(); }
         if (event.key !== 'Tab' || !window.matchMedia('(max-width: 1000px)').matches) return;
         const panel = $('host-browser-panel');
-        const nodes = [...panel.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter(node => !node.hidden && !node.closest('[hidden]'));
+        const nodes = [...panel.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')].filter(node => !node.hidden && !node.closest('[hidden]') && !node.closest('dialog:not([open])') && (!node.closest('details:not([open])') || node.tagName==='SUMMARY') && node.getClientRects().length);
         const first = nodes[0], last = nodes.at(-1);
         if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first?.focus(); }
@@ -97,16 +99,16 @@ export function mount(root) {
     $('host-browser-toggle').addEventListener('click', () => {
         if (browserViewer) { closeBrowser(); return; }
         if (!client || !selected || !incarnation || !snapshot || stale) return;
-        const browserIncarnation = incarnation;
+        const browserIncarnation = incarnation, browserSession = selected, browserVessel = selectedVessel;
         $('host-browser-panel').hidden = false;
         $('host-browser-toggle').setAttribute('aria-expanded', 'true');
         $('host-browser-voyage').textContent = $('voyage-title').textContent;
         $('host-browser-panel').focus();
+        if(window.matchMedia('(max-width: 1000px)').matches){browserBackground=[$('conversation'),$('composer'),$('decisions')].filter(Boolean).map(node=>[node,node.inert]);browserBackground.forEach(([node])=>node.inert=true);$('host-browser-panel').setAttribute('role','dialog');$('host-browser-panel').setAttribute('aria-modal','true');}
         browserViewer = mountHostBrowser($('host-browser-content'), {
             client, sessionId:selected, incarnation,
-            context:() => ({incarnation:browserIncarnation, revision:snapshot.revision}), onClose:closeBrowser,
+            context:() => ({incarnation:browserIncarnation, revision:snapshot.revision}), onClose:closeBrowser, externalClose:true, onCapture:async file=>{if(selected!==browserSession||selectedVessel!==browserVessel||incarnation!==browserIncarnation)throw Error("Voyage changed; capture not attached");if(!await composition.attach([file],()=>selected===browserSession&&selectedVessel===browserVessel&&incarnation===browserIncarnation))throw Error("Capture not attached");},
         });
-        browserViewer.session.connect();
     });
     const admittedDrafts = new Map();
     const sentDraft = command_id => admittedDrafts.get(command_id);

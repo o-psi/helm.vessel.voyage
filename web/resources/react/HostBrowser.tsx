@@ -16,7 +16,7 @@ export function browserActivity(snapshot: any): boolean {
 }
 
 // Only the selected voyage and its exact live socket may own a viewer.
-export function HostBrowser({tab, client}: {tab: Tab; client: any}) {
+export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; onCapture?: (file: File, guard?: () => boolean) => Promise<boolean>}) {
     const [open, setOpen] = useState(false);
     const root = useRef<HTMLDivElement>(null), panel = useRef<HTMLElement>(null), toggle = useRef<HTMLButtonElement>(null);
     const latest = useRef(tab);
@@ -27,27 +27,33 @@ export function HostBrowser({tab, client}: {tab: Tab; client: any}) {
     const close = () => { setOpen(false); toggle.current?.focus(); };
     useEffect(() => {
         if (!open || !ready || !root.current) return;
+        let alive = true;
         const viewer = mountHostBrowser(root.current, {
             client, sessionId: tab.session, incarnation: tab.incarnation,
             context: () => ({revision: latest.current.snapshot.revision}),
-            onClose: close,
+            onClose: close, externalClose:true, onCapture: onCapture ? async (file: File) => { const ok = await onCapture(file,()=>alive && latest.current.key===tab.key && latest.current.incarnation===tab.incarnation); if(!ok)throw Error("Capture not added"); } : undefined,
         });
         // Shared viewer auto-connects on mount; disposal detaches, never closes the browser.
-        return () => viewer.dispose();
+        return () => {alive=false;viewer.dispose();};
     }, [open, ready, client, tab.vessel, tab.session, tab.incarnation]);
     useEffect(() => {
         if (!open) return;
         panel.current?.focus();
+        const mobile=window.matchMedia?.('(max-width: 1000px)').matches;
+        const background=mobile?[...document.querySelectorAll<HTMLElement>('.conversation,.sidebar')]:[];
+        const previous=background.map(node=>node.inert);background.forEach(node=>node.inert=true);
+        if(mobile){panel.current?.setAttribute('role','dialog');panel.current?.setAttribute('aria-modal','true');}
         const key = (event: KeyboardEvent) => {
+            if (event.defaultPrevented) return;
             if (event.key === 'Escape') { event.preventDefault(); close(); }
             if (event.key !== 'Tab' || !window.matchMedia?.('(max-width: 1000px)').matches) return;
-            const nodes = [...panel.current!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter(node => !node.hidden && !node.closest('[hidden]'));
+            const nodes = [...panel.current!.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex="0"]')].filter(node => !node.hidden && !node.closest('[hidden]') && !node.closest('dialog:not([open])') && (!node.closest('details:not([open])') || node.tagName==='SUMMARY') && node.getClientRects().length);
             const first = nodes[0], last = nodes.at(-1);
             if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last?.focus(); }
             else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel.current)) { event.preventDefault(); first?.focus(); }
         };
         document.addEventListener('keydown', key);
-        return () => document.removeEventListener('keydown', key);
+        return () => {document.removeEventListener('keydown', key);background.forEach((node,i)=>node.inert=previous[i]);};
     }, [open]);
     return <div className="react-host-browser">
         <button ref={toggle} className="task-browser-action" type="button" aria-expanded={open} aria-controls={id} aria-describedby={activity ? `${id}-activity` : undefined} title={`Browser · ${tab.title}`} onClick={() => open ? close() : setOpen(true)}>

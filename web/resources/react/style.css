@@ -25,3 +25,8 @@
  .voyage-workspace:has(.task-browser-panel) .task-browser-action{right:16px}
  .task-browser-panel{position:fixed;inset:0;z-index:100;border:0;height:100dvh}
 }
+
+/* Constrain flex descendants so horizontally scrollable options never widen mobile viewport. */
+.voyage-workspace,.conversation,.composer,.composer-box,.composer-toolbar{min-width:0;max-width:100%}.composer-options{width:0;min-width:0;overflow-x:auto}.task-browser-action{min-height:44px;min-width:88px}.task-browser-heading>button{min-height:44px}
+/* Visually hidden labels must remain clipped within their scrollable owner. */
+.composer-options{position:relative;contain:inline-size}.access-picker{position:relative}.composer{overflow:clip}

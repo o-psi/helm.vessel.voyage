@@ -184,3 +184,55 @@ status, executable hashes and worker/guardian/Playwright sidecar preservation;
 host services were untouched. The unstripped development package initially exceeded
 bootstrap size bounds and was refused; limits were not weakened. Hosted nightly
 optimized artifact inspection remains a separate delivery gate.
+
+## Voyage browser UX revision
+
+Opening Browser now reveals a responsive side panel and automatically attaches to
+that voyage's browser; there is no Start/Connect step on the normal path. The task
+entry indicates observed browser-tool activity without a background launch probe.
+Desktop conversation and browser share the workspace; smaller screens use an
+accessible full-screen panel with close/focus restoration. Closing the panel leaves
+the Voyage browser running and preserves conversation scroll and drafts.
+
+Chrome includes readable tab titles, address, Back/Forward, Reload/Stop, and one
+primary Take control privately / Return to agent action. Advanced text composition,
+viewport sizing and destructive browser closure are under More. Website dialog
+controls appear only for a current dialog. Navigation remains unavailable until
+human control is acknowledged; private mode never auto-returns to the agent.
+Status distinguishes active agent work from watching an idle browser. Metadata is
+inert text; private title/URL/dialog metadata is sent only to the attached private
+controller, not other viewers or the model. New History input is typed and fenced.
+
+T3 comparison follow-through: a blank browser now offers an address-entry path and
+recent origins from this viewer's nonprivate browsing (memory only, no private URLs
+retained). Active agent actions have concise labels and recent click position,
+without typed text or page content in activity labels. Capture and annotate freezes
+a visible frame only on explicit click, supports rectangle markup, and adds a PNG
+to the message draft only after explicit disclosure confirmation. It never sends
+a message. Native viewer provides a local download instead. Privacy/control/tab
+changes wipe the editor. Local-server autodiscovery is not fabricated; permitted
+development origins remain subject to host network policy.
+
+Actual Chromium geometry tests cover 1440×900 and 390×844 production React layouts,
+including split-pane/composer separation, overlay focus, draft/scroll retention and
+no horizontal viewport overflow. A real production-viewer journey verifies auto
+connection, history/title, private control, website modal, IME and capture-editor
+cancellation, plus native/Web suspended preparation. One intermediate scoped native
+launcher refused during suspension; its failed evidence is retained and an unchanged
+rerun passed. No claim of exhaustive race qualification follows from that rerun.
+
+The UX follow-up audit identified capture success reporting, stream replacement
+reset, invisible controls in mobile focus traps, and asynchronous attachment
+lifecycle. These were corrected: draft insertion returns success or keeps the
+editor, stream changes/end invalidate capture, focusable controls must actually be
+visible, and insertion checks the captured voyage before committing. Mobile
+background conversation is inert while the panel is open. Actual Chromium layout
+checks also confirm explicit capture consent adds a PNG to the draft without any
+submit operation. No image is captured or sent merely by opening Browser.
+
+UX delivery Rust measurement: 1,736 passed, zero failed, two ignored. Current-set
+coverage is 74.4258% lines / 71.0456% functions / 71.0895% regions, down about
+0.85/0.98/0.83 percentage points from the preceding record. No exclusions were
+narrowed; only 60 net counted lines were added, so differing executed paths also
+contribute and the decline is not attributed solely to new code. All 16 current
+Cargo executable objects were selected; corrected export had no diagnostics.

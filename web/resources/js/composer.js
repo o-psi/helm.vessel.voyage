@@ -29,16 +29,16 @@ export function composer(root,{fleet,current,select,notice,changed}) {
         return active;
     }
     prompt.addEventListener('input',()=>{ensure();remember();});
-    async function attach(files){
-        if(loading)return; loading=true;
+    async function attach(files, guard){
+        if(loading||guard&&!guard())return false; loading=true;let success=true;
         const entry=ensure();
         try {for(const file of files){
             const pictures=entry.document.parts.filter(p=>p.type==='image');
             if(!imageTypes.includes(file.type)||!file.size||pictures.length>=4||pictures.reduce((n,p)=>n+p.size,0)+file.size>2097152)throw new Error('Use PNG, JPEG or WebP; at most four pictures and 2 MiB total.');
-            const bytes=new Uint8Array(await file.arrayBuffer()); let binary='';
+            const bytes=new Uint8Array(await file.arrayBuffer());if(guard&&!guard())throw Error('Voyage changed; capture not attached'); let binary='';
             for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
             entry.document.parts.push({type:'image',name:file.name||'pasted-image',size:file.size,data_base64:btoa(binary),url:URL.createObjectURL(file),uploads:new Map()});
-        }}catch(error){notice(error.message);}finally{loading=false;input.value='';render();}
+        }}catch(error){success=false;notice(error.message);}finally{loading=false;input.value='';render();}return success;
     }
     form.querySelector('#attach-picture').onclick=()=>input.click();
     input.onchange=()=>attach([...input.files]);
@@ -57,6 +57,7 @@ export function composer(root,{fleet,current,select,notice,changed}) {
         async select(){opening++;const now=current();active=entries.get(`${now.vessel}:${now.session_id}`)||null;prompt.value=active?.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('')||'';render();},
         async newChat(vessel,workspace){remember();const retained=active?.document.target.type==='new_chat'?active:entries.get('new');select(vessel,null,'New voyage',true);opening++;active=retained;if(active){active.vessel=vessel;active.document.target.workspace=workspace;prompt.value=active.document.parts.filter(p=>p.type==='text').map(p=>p.text).join('');}else{prompt.value='';ensure({type:'new_chat',workspace});}render();},
         async created(vessel,session_id,workspace,origin){if(!active||origin?.key!==active.key||origin.opening!==opening||vessel!==current().vessel)return false;if(active.document.target.workspace!==workspace)throw new Error('Created chat workspace differs from the composer.');select(vessel,session_id,'New voyage',true);entries.delete('new');active.document.target={type:'message',session_id};entries.set(`${vessel}:${session_id}`,active);return true;},
+        attach,
         async beforeSend(){if(loading)throw new Error('Wait for picture preparation.');const entry=ensure();remember();if(current().running&&entry.document.parts.some(p=>p.type==='image'))throw new Error('Pictures cannot be sent as steering. Wait for this run to finish.');return {draft:entry,record:{document:{parts:[...entry.document.parts]}},text:text(),vessel:entry.vessel};},
         async promote(sent,session_id){
             const client=fleet.connections.get(sent.vessel)?.client;const content=[];

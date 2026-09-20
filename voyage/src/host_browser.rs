@@ -314,7 +314,10 @@ impl Worker {
         let interrupt = matches!(
             request["op"].as_str(),
             Some("control" | "disconnect" | "shutdown" | "close")
-        ) || (request["op"] == "input" && request["action"]["kind"] == "dialog");
+        ) || (request["op"] == "input"
+            && (request["action"]["kind"] == "dialog"
+                || (request["action"]["kind"] == "history"
+                    && request["action"]["direction"] == "stop")));
         let _permit = if interrupt {
             None
         } else {
@@ -686,7 +689,12 @@ impl HostBrowser {
     }
     async fn projection(&self, attachment: Uuid) -> Value {
         let i = self.inner.lock().await;
-        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":i.status["tabs"],"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
+        let private = i.status["mode"] == "private";
+        let controller = i.status["controller"]
+            .as_str()
+            .is_some_and(|id| id == attachment.to_string());
+        let disclose = !private || (controller && i.viewers.contains_key(&attachment));
+        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
     }
     // No payloads, URLs, SDP, private input or observations enter durable receipts.
     fn receipt(
@@ -1222,6 +1230,7 @@ impl HostBrowser {
 }
 fn input_action(input: HostBrowserInput) -> Result<Value> {
     Ok(match input {
+        HostBrowserInput::History { direction } => json!({"kind":"history","direction":direction}),
         HostBrowserInput::Pointer {
             x,
             y,
@@ -1356,5 +1365,46 @@ mod retired_input_tests {
             assert!(ids.contains(id));
         }
         assert_eq!(ids.bits.len() * 8, 2 * 1024 * 1024);
+    }
+}
+
+#[cfg(test)]
+mod viewer_metadata_tests {
+    use super::*;
+    #[tokio::test]
+    async fn private_page_metadata_is_visible_only_to_attached_controller() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = HostBrowser::new(root.path().into(), Uuid::new_v4(), Uuid::new_v4(), None);
+        let owner = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let tab = Uuid::new_v4();
+        {
+            let mut inner = manager.inner.lock().await;
+            inner.status = json!({"browser":Uuid::new_v4(),"tab":tab,"tabs":[tab],"open":true,"mode":"private","controller":owner,"page":{"title":"PRIVATE TITLE","url":"https://private.invalid/secret"},"tab_details":[{"id":tab,"title":"PRIVATE TITLE"}],"dialog":{"message":"PRIVATE DIALOG"},"epochs":{"document":1,"viewport":1,"control":1,"capture":1}});
+            inner.viewers.insert(
+                owner,
+                Viewer {
+                    signal_sequence: 0,
+                    input_sequence: 0,
+                    socket: Uuid::new_v4(),
+                    principal: Uuid::new_v4(),
+                    authority: None,
+                    seen: std::time::Instant::now(),
+                },
+            );
+        }
+        for id in [other, Uuid::nil()] {
+            let projection = manager.projection(id).await;
+            assert!(projection["page"].is_null());
+            assert!(projection["dialog"].is_null());
+            assert_eq!(projection["tab_details"], json!([]));
+            assert!(!projection.to_string().contains("PRIVATE"));
+        }
+        assert_eq!(
+            manager.projection(owner).await["page"]["title"],
+            "PRIVATE TITLE"
+        );
+        manager.inner.lock().await.viewers.remove(&owner);
+        assert!(manager.projection(owner).await["page"].is_null());
     }
 }

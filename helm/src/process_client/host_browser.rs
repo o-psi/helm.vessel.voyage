@@ -256,11 +256,15 @@ async fn operation(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Byte
     // they interrupt. Other effects remain serialized in this local adapter.
     let interrupt = matches!(
         &op,
-        Op::Control { .. }
+        Op::Status {}
+            | Op::Control { .. }
             | Op::Detach { .. }
             | Op::Close { .. }
             | Op::Input {
-                input: voyage_protocol::host_browser::HostBrowserInput::Dialog { .. },
+                input: voyage_protocol::host_browser::HostBrowserInput::Dialog { .. }
+                    | voyage_protocol::host_browser::HostBrowserInput::History {
+                        direction: voyage_protocol::host_browser::HostBrowserHistory::Stop
+                    },
                 ..
             }
     );
@@ -365,6 +369,8 @@ async fn run(
         .route("/alive", post(alive)).route("/bootstrap", post(bootstrap)).route("/operation", post(operation))
         .route("/native.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], SCRIPT) }))
         .route("/viewer.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../browser-view/viewer.mjs")) }))
+        .route("/capture.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../browser-view/capture.mjs")) }))
+        .route("/capture.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../browser-view/capture.css")) }))
         .route("/viewer.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../browser-view/viewer.css")) }))
         .layer(DefaultBodyLimit::max(384 * 1024))
         .layer(axum::middleware::map_response(|mut response: Response| async move {

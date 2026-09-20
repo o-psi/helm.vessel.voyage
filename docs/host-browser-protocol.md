@@ -115,3 +115,9 @@ refuses rather than admitting an uncertain replay. This is a bounded no-false-
 negative tombstone filter, not an exact historical reply cache. Old bindings are
 invalid after process/attachment replacement. Signaling replies remain scoped to
 the attachment, and their full payloads never enter durable history.
+
+UX navigation adds typed `History { direction: back|forward|reload|stop }` input.
+Status display metadata (`page`, `tab_details`, `dialog`) is bounded text and is
+withheld from noncontroller viewers in private mode. Agent activity contains only
+a known action kind and recent coordinates, never typed text. Stop/dialog/status
+have interruption paths so controls do not queue behind the action they must stop.

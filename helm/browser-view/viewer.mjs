@@ -1,3 +1,4 @@
+import {mountCapture} from './capture.mjs';
 const NIL = '00000000-0000-0000-0000-000000000000';
 const fingerprint = binding => JSON.stringify(binding);
 const mediaFence = status => JSON.stringify([status?.binding?.incarnation,status?.binding?.browser_id,status?.binding?.attachment_id,status?.binding?.capture_epoch,status?.binding?.controller_epoch,status?.mode,status?.controller]);
@@ -25,7 +26,7 @@ export class BrowserSession {
         const pc = this.pc; this.pc = null;
         if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
         if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
-        this.streaming = false;
+        this.streaming = false; this.streamRevision = (this.streamRevision || 0) + 1;
     }
     disconnect(message = 'Browser disconnected. Retry connection to resume.') {
         const detach = this.attached && this.status?.binding ? this.operation('detach') : null;
@@ -184,6 +185,8 @@ export function mountBrowserViewer(root, options = {}) {
     const header = element('div', null, root, 'browser-header');
     const status = element('span', 'Disconnected', header, 'browser-status');
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    let capture;
+    const captureButton = button('Capture and annotate', () => capture?.open(), header);
     const primary = button('Take control privately', () => session.control(session.controls && session.status?.mode === 'private' ? 'agent' : 'private'), header);
     primary.className = 'browser-primary';
     const more = element('details', null, header, 'browser-more');
@@ -202,7 +205,7 @@ export function mountBrowserViewer(root, options = {}) {
     }), menu, true);
     closeBrowser.className = 'browser-destructive';
     button('Disconnect viewer', () => { session.disconnect(); more.open = false; }, menu);
-    button('Close viewer', () => { dispose(); options.onClose?.(); }, header, false, '×');
+    if (!options.externalClose) button('Close viewer', () => { dispose(); options.onClose?.(); }, header, false, '×');
     more.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); more.open = false; summary.focus(); } });
     const tabs = element('div', null, root, 'browser-tabs'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Browser tabs');
     const form = element('form', null, root, 'browser-navigation'); form.setAttribute('aria-label', 'Browser navigation');
@@ -220,9 +223,17 @@ export function mountBrowserViewer(root, options = {}) {
     const viewport = element('div', null, root, 'browser-viewport');
     const video = element('video', null, viewport); video.autoplay = true; video.muted = true; video.playsInline = true; video.tabIndex = 0;
     video.setAttribute('aria-label', 'Remote browser. Escape releases keyboard focus; use More to compose text.');
+    const cursor = element('span', '↖', viewport, 'browser-agent-cursor'); cursor.hidden = true; cursor.setAttribute('aria-hidden','true');
     const empty = element('div', null, viewport, 'browser-empty');
     const explanation = element('p', 'Opening browser…', empty);
     const retry = button('Retry connection', () => session.connect(), empty);
+    const startPage = element('section',null,viewport,'browser-start-page');
+    element('h3','Where would you like to go?',startPage);
+    element('p','Ask the agent to open a site, or take private control and enter an address above.',startPage);
+    const useAddress = button('Enter an address',async()=>{ if(!session.controls)await session.control('private'); if(session.controls){address.focus();address.select();} },startPage);
+    const recent = element('div',null,startPage,'browser-recent');
+    const recentPages = new Map(); let recentKey='';
+
     const dialogPanel = element('section', null, root, 'browser-dialog'); dialogPanel.hidden = true;
     dialogPanel.setAttribute('role', 'region'); dialogPanel.setAttribute('aria-label', 'Website dialog');
     const dialogMessage = element('p', null, dialogPanel); dialogMessage.setAttribute('role', 'status');
@@ -234,13 +245,29 @@ export function mountBrowserViewer(root, options = {}) {
     const session = new BrowserSession({...options,video,changed:current => {
         const attached = current.attached && current.status?.running;
         const privateControl = current.controls && current.status?.mode === 'private';
-        status.textContent = !attached ? 'Disconnected' : privateControl ? 'You control privately' : current.status?.mode === 'agent' ? 'Agent working' : 'Watching';
+        status.textContent = !attached ? 'Disconnected' : privateControl ? 'You control privately' : current.status?.mode === 'agent' && current.status?.agent_active !== false ? 'Agent working' : 'Watching';
         root.dataset.state = !attached ? 'disconnected' : privateControl ? 'private' : current.status?.mode === 'agent' ? 'agent' : 'watching';
         primary.textContent = privateControl ? 'Return to agent' : 'Take control privately';
         primary.setAttribute('aria-label', primary.textContent); primary.title = primary.textContent;
         primary.disabled = !attached || current.busy || current.closed;
+        captureButton.disabled = !current.streaming || current.busy || current.closed;
+        if (!current.streaming) capture?.reset();
         privacy.textContent = privateControl ? 'Private control · Agent observation is paused. Return to agent explicitly when finished.' : 'Taking control is private: agent observation is paused until you return control.';
         const metadata = current.status?.mode === 'private' && !current.controls ? null : current.status;
+        const actionLabels={inspect:'Reading page',navigate:'Opening page',click:'Clicking',fill:'Filling a field',scroll:'Scrolling',tabs:'Changing tabs',screenshot:'Capturing page',upload:'Uploading',download:'Downloading'};
+        if(current.status?.agent_active&&actionLabels[current.status?.agent_action]) status.textContent='Agent · '+actionLabels[current.status.agent_action];
+        const point=current.status?.mode==='agent'?current.status.agent_cursor:null;
+        cursor.hidden=!point||Date.now()-point.at>2500||!current.streaming;
+        if(!cursor.hidden&&video.videoWidth){const box=video.getBoundingClientRect(),wrap=viewport.getBoundingClientRect();const scale=Math.min(box.width/video.videoWidth,box.height/video.videoHeight);cursor.style.left=`${box.left-wrap.left+(box.width-video.videoWidth*scale)/2+point.x/point.width*video.videoWidth*scale}px`;cursor.style.top=`${box.top-wrap.top+(box.height-video.videoHeight*scale)/2+point.y/point.height*video.videoHeight*scale}px`;}
+        const blank=attached&&(!metadata?.page?.url||metadata.page.url==='about:blank');
+        startPage.hidden=!blank||current.status?.mode==='private'&&!current.controls;
+        useAddress.disabled=current.busy||!attached;
+        // Only nonprivate public-origin browsing is kept, in this viewer's memory.
+        if(metadata?.page?.url&&current.status?.mode!=='private'&&metadata.page.url!=='about:blank'){
+            try{const u=new URL(metadata.page.url);if(['https:','http:'].includes(u.protocol)&&!u.username&&!u.password){recentPages.set(u.origin,{url:u.origin,title:displayText(metadata.page.title)||u.hostname});if(recentPages.size>5)recentPages.delete(recentPages.keys().next().value);}}catch{}
+        }
+        const nextRecent=JSON.stringify([...recentPages.values()]);
+        if(nextRecent!==recentKey){recentKey=nextRecent;recent.replaceChildren();if(recentPages.size){element('h4','Recent sites in this view',recent);for(const item of [...recentPages.values()].reverse())button(item.title,async()=>{if(!session.controls)await session.control('private');session.input({type:'navigate',url:item.url});},recent);}}
         const enabled = current.controls && !current.busy && current.streaming;
         for (const node of sensitive) node.disabled = !enabled;
         address.readOnly = !enabled; address.disabled = !attached;
@@ -248,8 +275,8 @@ export function mountBrowserViewer(root, options = {}) {
         forward.disabled = !enabled || metadata?.page?.can_go_forward !== true;
         reload.textContent = metadata?.page?.loading ? '■' : '↻';
         reload.setAttribute('aria-label', metadata?.page?.loading ? 'Stop loading' : 'Reload'); reload.title = reload.getAttribute('aria-label');
-        const fence = fingerprint(current.status?.binding) + mediaFence(current.status);
-        if (fence !== previousFence) { previousFence = fence; text.value = dialog.value = address.value = ''; keys.clear(); more.open = false; }
+        const fence = fingerprint(current.status?.binding) + mediaFence(current.status) + current.streamRevision;
+        if (fence !== previousFence) { capture?.reset(); previousFence = fence; text.value = dialog.value = address.value = ''; keys.clear(); more.open = false; }
         if (doc.activeElement !== address) address.value = displayText(metadata?.page?.url, 8192);
         empty.hidden = Boolean(current.streaming);
         explanation.textContent = current.busy ? 'Opening browser…' : !attached ? current.message : current.status?.mode === 'private' && !current.controls ? 'Private control is active. Agent observation is paused.' : 'Waiting for live video…';
@@ -279,6 +306,7 @@ export function mountBrowserViewer(root, options = {}) {
         }
         options.changed?.(current);
     }});
+    capture = mountCapture({root,video,canCapture:()=>session.streaming&&!session.closed,onCapture:options.onCapture});
     const pointer = (event, pressed, moving = false) => {
         if (!session.controls) return;
         const point = videoPoint(video,event.clientX,event.clientY); if (!point) return;
@@ -305,7 +333,7 @@ export function mountBrowserViewer(root, options = {}) {
     doc.addEventListener('visibilitychange',hidden);
     const timer = setInterval(() => session.refresh(),2000);
     let disposed = false;
-    const dispose = () => { if (disposed) return; disposed = true; clearInterval(timer); clearTimeout(moveTimer); doc.removeEventListener('visibilitychange',hidden); session.dispose(); root.replaceChildren(); };
+    const dispose = () => { if (disposed) return; disposed = true; clearInterval(timer); clearTimeout(moveTimer); doc.removeEventListener('visibilitychange',hidden); capture.dispose(); session.dispose(); recentPages.clear(); root.replaceChildren(); };
     session.notify();
     if (options.autoConnect !== false) void session.connect();
     return {session,disconnect:() => session.disconnect(),dispose};

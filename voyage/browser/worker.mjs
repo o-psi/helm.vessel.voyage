@@ -17,9 +17,9 @@ export class Worker {
   constructor(){
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.downloads=new Map();
-    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();
+    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;
   }
-  status(){return {browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
+  status(){return {agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){if(req.browser!==this.browser||digest(req.epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();}
   advance(...keys){for(const k of keys)this.epochs[k]++;this.invalidate();}
@@ -45,7 +45,7 @@ export class Worker {
           if(old){if(old.digest!==digest(req))refuse('id_conflict');scheduled=Promise.resolve({receipt:old,content_withheld:true});return;}
           const r=ephemeral?{id:req.id,digest:digest(req),state:'dispatched',ephemeral:true}:await this.journal.begin(req);
           if(ephemeral){this.ephemeral.set(req.id,r);if(this.ephemeral.size>2048)this.ephemeral.delete(this.ephemeral.keys().next().value);}
-          const urgent=['control','disconnect','close','shutdown','policy'].includes(req.op)||(req.op==='input'&&req.action?.kind==='dialog');
+          const urgent=['control','disconnect','close','shutdown','policy','status'].includes(req.op)||(req.op==='input'&&(req.action?.kind==='dialog'||(req.action?.kind==='history'&&req.action.direction==='stop')));
           const execute=()=>this.execute(req,r);
           const lane=urgent?'urgent':'ordinary';scheduled=this[lane].then(execute);this[lane]=scheduled.catch(()=>{});
         });
@@ -82,16 +82,28 @@ export class Worker {
       if(req.op==='agent')this.checkAgent();
       dispatched=true;
       const value=await this.dispatch(req);
-      await this.finishReceipt(r,'completed');return {status:this.status(),value};
+      await this.refreshMetadata();await this.finishReceipt(r,'completed');return {status:this.status(),value};
     }catch(e){
       const code=e instanceof Refusal?e.code:'outcome_unknown';
       await this.finishReceipt(r,dispatched?'unknown':'refused',code);throw new Refusal(code);
     }
   }
+  async refreshMetadata(){
+    if(!this.context||this.dialog)return;
+    const stamp=this.epochs.document,control=this.epochs.control;
+    for(const [id,page]of this.tabs){
+      let url='';try{const u=new URL(page.url());if(['http:','https:'].includes(u.protocol)){u.username='';u.password='';url=u.href.slice(0,8192);}else if(u.href==='about:blank')url='about:blank';}catch{}
+      const meta={url,title:this.metadata.get(id)?.title||'New tab',loading:this.metadata.get(id)?.loading||false,can_go_back:false,can_go_forward:false};
+      // CDP metadata remains responsive even while a website modal blocks input.
+      let cdp;try{cdp=await bounded(this.context.newCDPSession(page),1000);const h=await bounded(cdp.send('Page.getNavigationHistory'),1000);meta.can_go_back=h.currentIndex>0;meta.can_go_forward=h.currentIndex<h.entries.length-1;meta.title=(h.entries[h.currentIndex]?.title||'New tab').slice(0,256);}catch{}finally{if(cdp)await bounded(cdp.detach(),500).catch(()=>{});}
+      if(stamp!==this.epochs.document||control!==this.epochs.control)return;
+      meta.loading=this.metadata.get(id)?.loading||false;this.metadata.set(id,meta);
+    }
+  }
   async finishReceipt(r,state,code){if(r.ephemeral){r.state=state;if(code)r.code=code;}else await this.journal.finish(r,state,code);}
   async dispatch(req){
     switch(req.op){
-      case 'status':return this.status();
+      case 'status':await this.refreshMetadata();return this.status();
       case 'receipt':identifier(req.request_id);return this.ephemeral.get(req.request_id)||this.journal.records.get(req.request_id)||null;
       case 'open':return this.open();
       case 'close':return this.close();
@@ -120,7 +132,7 @@ export class Worker {
       }
       case 'answer':this.signalSequence(req);this.requireOpen();if(req.description?.type!=='answer')refuse('invalid_sdp');text(req.description.sdp,65536);await bounded(this.encoder.evaluate(a=>encoder.answer(a),{viewer:req.viewer,description:req.description}));return null;
       case 'input':{const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}}
-      case 'agent':return this.agent(req.action);
+      case 'agent':this.agentActive++;this.agentAction=['inspect','navigate','click','fill','scroll','tabs','screenshot','upload','download'].includes(req.action?.kind)?req.action.kind:null;try{return await this.agent(req.action);}finally{this.agentActive--;this.agentAction=null;}
       default:refuse('unknown_operation');
     }
   }
@@ -158,9 +170,11 @@ export class Worker {
   registerPage(page){
     if(this.tabs.size>=16){void page.close();return;}
     const id=randomUUID();this.tabs.set(id,page);
+    page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())this.metadata.set(id,{...this.metadata.get(id),loading:true});});
+    page.on('load',()=>{this.metadata.set(id,{...this.metadata.get(id),loading:false});});
     page.on('dialog',dialog=>{if(page===this.page)this.dialog=dialog;else void dialog.dismiss().catch(()=>{});});
     page.on('framenavigated',frame=>{if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}});
-    page.on('close',()=>{this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');void this.stopCapture();}});
+    page.on('close',()=>{this.metadata.delete(id);this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');void this.stopCapture();}});
     page.on('download',download=>{void this.recordDownload(download);});
   }
   async recordDownload(download){
@@ -180,6 +194,7 @@ export class Worker {
   }
   async fence(){
     this.advance('control','capture');this.downloads.clear();for(const f of this.fenceWaiters)f();this.fenceWaiters.clear();
+    this.agentCursor=null;this.agentAction=null;
     const generation=this.epochs.capture;
     // Invalidate before any await. Reset encoder before draining old JPEG work.
     if(this.frames){this.frames.generation=generation;this.frames.pending=null;}
@@ -210,6 +225,7 @@ export class Worker {
       case 'click':case 'fill':{
         const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box)refuse('element_hidden');
         if(a.kind==='fill')text(a.text);
+        this.agentCursor={x:box.x+box.width/2,y:box.y+box.height/2,width:this.config.width,height:this.config.height,at:Date.now()};
         await page.mouse.click(box.x+box.width/2,box.y+box.height/2,{timeout:3000});guard();
         if(a.kind==='fill'){await page.keyboard.press('ControlOrMeta+A');guard();await page.keyboard.insertText(a.text);}return null;
       }
@@ -242,6 +258,14 @@ export class Worker {
       case 'text':await this.page.keyboard.insertText(text(a.text));break;
       case 'scroll':await this.page.mouse.wheel(number(a.x,-16384,16384),number(a.y,-16384,16384));break;
       case 'resize':{const width=number(a.width,320,3840),height=number(a.height,240,2160);this.advance('viewport');await this.page.setViewportSize({width,height});this.guard(stamp);this.config.width=width;this.config.height=height;break;}
+      case 'history':{
+        if(!['back','forward','reload','stop'].includes(a.direction))refuse('invalid_history');
+        if(a.direction==='back')await this.page.goBack({waitUntil:'domcontentloaded'});
+        else if(a.direction==='forward')await this.page.goForward({waitUntil:'domcontentloaded'});
+        else if(a.direction==='reload')await this.page.reload({waitUntil:'domcontentloaded'});
+        else {const c=await this.context.newCDPSession(this.page);try{await c.send('Page.stopLoading');}finally{await c.detach();}this.metadata.set(this.active,{...this.metadata.get(this.active),loading:false});}
+        break;
+      }
       case 'navigate':case 'tabs':await bounded(this.perform(a,stamp));break;
       default:refuse('invalid_input');
     }
@@ -252,7 +276,7 @@ export class Worker {
     try{await this.fence();}catch{}
     const results=await Promise.allSettled([this.task?.close(),this.encoding?.close(),this.proxy?.close()]);
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');
-    this.task=null;this.encoding=null;this.encoder=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.frames=null;this.tabs.clear();this.viewers.clear();this.downloads.clear();this.closing=false;
+    this.task=null;this.encoding=null;this.encoder=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.frames=null;this.tabs.clear();this.metadata.clear();this.viewers.clear();this.downloads.clear();this.closing=false;
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');return null;
   }
   async releaseLock(){if(this.lock){await this.lock.close();this.lock=null;await fs.unlink(this.lockPath);}}

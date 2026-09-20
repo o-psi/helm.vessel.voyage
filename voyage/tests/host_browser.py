@@ -8,6 +8,8 @@ journey/cleanup failure; pre-teardown status is retained separately from cleanup
 """
 import argparse
 import http.server
+import html
+import shutil
 import hashlib
 import json
 import os
@@ -45,13 +47,14 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         self.server.visits.append(self.path)
         if self.path in self.server.modules or self.path == '/receiver':
             data = (self.server.modules[self.path].read_bytes() if self.path in self.server.modules else
-                    b'<!doctype html><main id=viewer></main>')
+                    b'<!doctype html><meta name=viewport content="width=device-width, initial-scale=1"><link rel=stylesheet href=/viewer.css><style>html,body{margin:0;height:100%;overflow:hidden}main{box-sizing:border-box;height:100dvh!important}</style><main id=viewer></main>')
             self.send_response(200)
-            self.send_header('Content-Type', 'text/javascript' if self.path.endswith(('.mjs', '.js')) else 'text/html')
+            self.send_header('Content-Type', 'text/javascript' if self.path.endswith(('.mjs', '.js')) else 'text/css' if self.path.endswith('.css') else 'text/html')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers(); self.wfile.write(data); return
-        data = ('<!doctype html><body style="background:#1b6579;color:white;font:48px sans-serif">'
-                '<h1>Synthetic voyage browser</h1><p>' + self.path + '</p><input autofocus>'
+        data = ('<!doctype html><title>Synthetic ' + html.escape(self.path) + '</title><body style="background:#1b6579;color:white;font:48px sans-serif">'
+                '<h1>Synthetic voyage browser</h1><p>' + html.escape(self.path) + '</p><input autofocus>' +
+                ('<script>setTimeout(()=>{document.querySelector("input").value=prompt("Synthetic modal","")||""},400)</script>' if self.path == '/modal' else '') +
                 '<canvas id="c" width="300" height="80"></canvas><script>let n=0;setInterval(()=>{'
                 'let x=c.getContext("2d");x.fillStyle=n++%2?"orange":"blue";x.fillRect(0,0,300,80);},100)</script>').encode()
         self.send_response(200)
@@ -92,6 +95,8 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--node', type=Path, default=Path('/usr/bin/node'))
+    parser.add_argument('--evidence-dir', type=Path, help='Existing ignored target directory for pre-private screenshots (runtime evidence uses short /tmp path)')
     parser.add_argument('--binaries', type=Path, required=True)
     parser.add_argument('--ws', type=Path, default=Path('/home/psi/voyage/web/gateway/node_modules/ws'))
     parser.add_argument('--chromium', type=Path, default=Path('/usr/bin/chromium'))
@@ -100,6 +105,7 @@ def main():
     binaries = args.binaries.resolve()
     os.umask(0o077)
     root = Path(tempfile.mkdtemp(prefix='host-browser333-'))
+    screenshots = args.evidence_dir.resolve() if args.evidence_dir else root
     print('evidence:', root, flush=True)
     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'PROVIDER_FIXTURE_KEY': 'synthetic-only'}
     for key in ('HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'TMPDIR'):
@@ -111,8 +117,11 @@ def main():
               'binary_sha256': {name: hashlib.file_digest((binaries/name).open('rb'), 'sha256').hexdigest()
                                 for name in ('helm', 'vessel', 'voyage')}}
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
-    server.modules = {'/viewer.mjs': repo/'helm/browser-view/viewer.mjs',
+    server.modules = {'/viewer.css': repo/'helm/browser-view/viewer.css', '/viewer.mjs': repo/'helm/browser-view/viewer.mjs',
                       '/helm/browser-view/viewer.mjs': repo/'helm/browser-view/viewer.mjs'}
+    for name in ('capture.mjs','capture.css'):
+        server.modules['/'+name]=repo/'helm/browser-view'/name
+        server.modules['/helm/browser-view/'+name]=repo/'helm/browser-view'/name
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
         server.modules['/web/resources/js/'+name] = repo/'web/resources/js'/name
     server.site = f'http://127.0.0.1:{server.server_port}'
@@ -189,7 +198,7 @@ def main():
         config = {'provider': 'openai-chat', 'model': 'fixture-model', 'api_key_required': False,
                   'base_url': server.site+'/v1', 'provider_retry_attempts': 1,
                   'access': 'unrestricted', 'context_window': 0, 'account': binding,
-                  'host_browser_launch': {'node': '/usr/bin/node', 'worker': str(repo/'voyage/browser/worker.mjs'),
+                  'host_browser_launch': {'node': str(args.node.resolve()), 'worker': str(repo/'voyage/browser/worker.mjs'),
                       'chromium': str(args.chromium), 'config': {'public_web': True, 'origins': [{'origin': server.site, 'private_network': True}],
                        'ice_servers': [], 'relay_only': False, 'width': 1280, 'height': 720}}}
         config_path = root/'config.json'
@@ -229,12 +238,12 @@ def main():
         viewer = root/'viewer.json'
         viewer.write_text(json.dumps({'sessions': report['sessions'], 'ws': str(args.ws.resolve()),
             'playwright': str(repo/'voyage/browser/node_modules/playwright-core'), 'chromium': str(args.chromium),
-            'site': server.site, 'evidence': str(root/'viewer-evidence.json')}))
+            'site': server.site, 'screenshots': str(screenshots), 'evidence': str(root/'viewer-evidence.json')}))
         with (root/'viewer.log').open('wb') as output:
-            result = subprocess.run(['/usr/bin/node', str(Path(__file__).with_name('host_browser_viewer.mjs')), str(viewer)],
+            result = subprocess.run([str(args.node.resolve()), str(Path(__file__).with_name('host_browser_viewer.mjs')), str(viewer)],
                 env=env, cwd=workspace, stdout=output, stderr=output, timeout=200)
         assert result.returncode == 0, f'viewer failed ({result.returncode}); see viewer-evidence.json/viewer.log'
-        assert all(path in server.visits for path in ('/human', '/private', '/native-local-owner', '/native-access-file')), server.visits
+        assert all(path in server.visits for path in ('/history-one', '/history-two', '/modal', '/private', '/native-local-owner', '/native-access-file')), server.visits
         for launch in launchers:
             launch.send_signal(signal.SIGINT)
             assert launch.wait(timeout=15) == 0, 'native viewer cleanup failed'
@@ -270,7 +279,7 @@ def main():
             phase_config.write_text(json.dumps({**json.loads(viewer.read_text()), 'sessions': report['sessions'],
                 'mode': phase, 'evidence': str(root/(phase+'-evidence.json'))}))
             with (root/(phase+'.log')).open('wb') as output:
-                result = subprocess.run(['/usr/bin/node', str(Path(__file__).with_name('host_browser_viewer.mjs')), str(phase_config)],
+                result = subprocess.run([str(args.node.resolve()), str(Path(__file__).with_name('host_browser_viewer.mjs')), str(phase_config)],
                     env=env, cwd=workspace, stdout=output, stderr=output, timeout=200)
             assert result.returncode == 0, f'{phase} failed ({result.returncode}); inspect sanitized phase evidence'
             for launch in launchers:
@@ -323,7 +332,7 @@ def main():
             report['journey'] = 'passed'
         (root/'report.json').write_text(json.dumps(report, indent=2))
     assert report.get('journey') == 'passed' and not report['cleanup'].get('forced_pids') and not owned(), str(root)
-    print('PASS: two real voyages, shared mounted viewer, native local/access-file launchers, decoded RTC, human/private UI control, conversation fence, actual suspended native/Web preparation and cleanup')
+    print('PASS: two real voyages, shared mounted viewer, native local/access-file launchers, decoded RTC, private UI control, history/title, modal/IME, conversation fence, actual suspended native/Web preparation and cleanup')
 
 
 if __name__ == '__main__':

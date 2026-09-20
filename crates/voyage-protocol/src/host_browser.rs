@@ -72,9 +72,21 @@ pub enum HostBrowserButton {
     Middle,
     Right,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostBrowserHistory {
+    Back,
+    Forward,
+    Reload,
+    Stop,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostBrowserInput {
+    History {
+        direction: HostBrowserHistory,
+    },
     Pointer {
         x: u32,
         y: u32,
@@ -111,6 +123,7 @@ pub enum HostBrowserInput {
 impl HostBrowserInput {
     pub fn valid(&self) -> bool {
         match self {
+            Self::History { .. } => true,
             Self::Pointer { x, y, .. } => *x <= 16384 && *y <= 16384,
             Self::Key { key, .. } => {
                 !key.is_empty() && key.len() <= 128 && !key.chars().any(char::is_control)
@@ -387,6 +400,26 @@ mod tests {
         assert!(
             serde_json::from_str::<HostBrowserInput>(r#"{"type":"text","text":"x","script":"x"}"#)
                 .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    #[test]
+    fn navigation_controls_are_typed_not_arbitrary_commands() {
+        for direction in ["back", "forward", "reload", "stop"] {
+            let input: HostBrowserInput =
+                serde_json::from_value(serde_json::json!({"type":"history","direction":direction}))
+                    .unwrap();
+            assert!(input.valid());
+        }
+        assert!(
+            serde_json::from_value::<HostBrowserInput>(
+                serde_json::json!({"type":"history","direction":"evaluate","script":"x"})
+            )
+            .is_err()
         );
     }
 }

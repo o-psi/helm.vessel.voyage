@@ -52,3 +52,17 @@ test('stdio admits bounded concurrent requests and shuts down cleanly',{timeout:
  const ids=Array.from({length:32},()=>randomUUID());child.stdin.end(ids.map(id=>JSON.stringify({id,op:'status'})).join('\n')+'\n');
  assert.deepEqual(await exited,{code:0,signal:null});const replies=output.trim().split('\n').map(JSON.parse);assert.equal(replies.length,32);assert.deepEqual(new Set(replies.map(r=>r.id)),new Set(ids));assert.ok(replies.every(r=>r.error.code==='not_initialized'));assert.equal(stderr,'');
 });
+
+test('human browser chrome exposes titles/history and preserves navigation fences',{timeout:30000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'browser-chrome-'));const w=new Worker();
+ const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(`<title>${req.url==='/one'?'First page':'Second page'}</title><h1>Browser chrome</h1>`);});
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
+ t.after(async()=>{await w.dispose();await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});});
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],ice_servers:[]}});await call('open');
+ await call('agent',{action:{kind:'navigate',url:origin+'/one'}});await call('agent',{action:{kind:'navigate',url:origin+'/two'}});
+ assert.equal(w.status().page.title,'Second page');assert.ok(w.status().page.can_go_back);assert.equal(w.status().tab_details[0].id,w.active);
+ const viewer=randomUUID();await call('join',{viewer});await call('control',{viewer,mode:'private'});
+ await call('input',{viewer,seq:1,action:{kind:'history',direction:'back'}});assert.equal(w.status().page.url,origin+'/one');assert.equal(w.status().page.title,'First page');assert.ok(w.status().page.can_go_forward);
+ await call('input',{viewer,seq:2,action:{kind:'history',direction:'forward'}});assert.equal(w.status().page.url,origin+'/two');
+ await call('input',{viewer,seq:3,action:{kind:'history',direction:'reload'}});assert.equal(w.status().page.title,'Second page');
+});
