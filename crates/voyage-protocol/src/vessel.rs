@@ -102,8 +102,10 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
-    /// Follow/resume the ordinary owner for an explicitly authorized local share.
-    /// No browser effect, sharing authority, or agent turn is created.
+    /// Executing-host browser, available only on authenticated duplex sockets.
+    HostBrowser {
+        operation: crate::host_browser::HostBrowserOperation,
+    },
     PrepareBrowser,
     Browser {
         operation: crate::browser::BrowserOperation,
@@ -346,7 +348,8 @@ impl VoyageCommand {
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
-            Self::Browser { .. }
+            Self::HostBrowser { .. }
+                | Self::Browser { .. }
                 | Self::ExecuteTool { .. }
                 | Self::Terminal { .. }
                 | Self::Cancel { .. }
@@ -356,6 +359,7 @@ impl VoyageCommand {
     }
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
+            Self::HostBrowser { operation, .. } => operation.mutation_id(),
             Self::Browser { operation } => operation.mutation_id(),
             Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
@@ -493,6 +497,16 @@ pub enum VesselCommand {
         command_id: Uuid,
         grant_id: Uuid,
         expected_revision: u64,
+    },
+    /// Private gateway provenance. Public transports must reject this envelope.
+    HostBrowserDisconnected {
+        session_id: Uuid,
+        incarnation: Uuid,
+        socket: crate::host_browser::HostBrowserSocket,
+    },
+    Socket {
+        socket: crate::host_browser::HostBrowserSocket,
+        command: Box<VesselCommand>,
     },
     Granted {
         #[serde(default, skip_serializing_if = "Option::is_none")]

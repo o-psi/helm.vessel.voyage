@@ -133,6 +133,7 @@ pub(crate) async fn mint(
         grant_id,
         token: token.into(),
         authority: serde_json::Value::Null,
+        browser_sockets: Default::default(),
     };
     let initial = match tokio::time::timeout(
         Duration::from_secs(3),
@@ -165,6 +166,31 @@ enum Authentication {
 }
 struct BrowserBackend(Credential);
 impl Backend for BrowserBackend {
+    fn connected(&self, connection: vessel::duplex::Connection) {
+        self.0.backend.connected(connection);
+    }
+    fn socket_command(
+        &self,
+        request: VesselRequest,
+        socket_id: Uuid,
+    ) -> vessel::duplex::BackendFuture<VesselResponse> {
+        let credential = self.0.clone();
+        Box::pin(async move {
+            if credential.deadline <= tokio::time::Instant::now() || !allowed(&request.command) {
+                return VesselResponse {
+                    protocol: VESSEL_API_VERSION,
+                    result: serde_json::Value::Null,
+                    error: Some("browser command refused".into()),
+                    outcome_unknown: false,
+                };
+            }
+            credential.backend.socket_command(request, socket_id).await
+        })
+    }
+    fn disconnected(&self, socket_id: Uuid) {
+        self.0.backend.disconnected(socket_id);
+    }
+
     fn deadline(&self) -> Option<tokio::time::Instant> {
         Some(self.0.deadline)
     }
@@ -226,6 +252,7 @@ fn allowed(command: &VesselCommand) -> bool {
             config_path: None, ..
         } => true,
         VesselCommand::Voyage(request) => match &request.command {
+            VoyageCommand::HostBrowser { operation } => operation.valid(),
             VoyageCommand::Snapshot
             | VoyageCommand::Decisions
             | VoyageCommand::Receipt { .. }

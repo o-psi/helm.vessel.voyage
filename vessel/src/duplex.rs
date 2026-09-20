@@ -30,6 +30,13 @@ pub trait Backend: Send + Sync + 'static {
     }
     /// Lifecycle notification only: never use this to cancel admitted work.
     fn disconnected(&self, _socket_id: Uuid) {}
+    fn socket_command(
+        &self,
+        request: VesselRequest,
+        _socket_id: Uuid,
+    ) -> BackendFuture<VesselResponse> {
+        self.command(request)
+    }
     fn command(&self, request: VesselRequest) -> BackendFuture<VesselResponse>;
     fn authorize(&self, session: Option<Uuid>) -> BackendFuture<bool>;
 }
@@ -296,7 +303,7 @@ pub async fn serve(
                         tokio::spawn(async move {
                             let (_command_permit, _global_permit, _lifetime) = (command_permit, global_permit, lifetime);
                             if !authorized(&backend, None).await { let _ = failure.send(true); return; }
-                            let response = tokio::time::timeout(COMMAND_TIMEOUT, backend.command(*request)).await.unwrap_or_else(|_| unknown());
+                            let response = tokio::time::timeout(COMMAND_TIMEOUT, backend.socket_command(*request, socket_id)).await.unwrap_or_else(|_| unknown());
                             if !enqueue(&tx, ServerFrame::Reply { request_id, response }, None).await { let _ = failure.send(true); }
                         });
                     }

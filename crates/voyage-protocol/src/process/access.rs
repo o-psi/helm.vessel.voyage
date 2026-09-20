@@ -125,6 +125,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         | RuntimeCommand::Archive { .. }
         | RuntimeCommand::Delete { .. }
         | RuntimeCommand::Stop => Some(ProcessRight::Lifecycle),
+        RuntimeCommand::HostBrowser { operation, .. } => Some(operation.required_right()),
         RuntimeCommand::PrepareBrowser | RuntimeCommand::Browser { .. } => {
             Some(ProcessRight::Execute)
         }

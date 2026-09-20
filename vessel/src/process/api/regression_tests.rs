@@ -196,3 +196,41 @@ fn replies_keep_structured_failures_and_uncertainty_without_private_envelopes() 
     assert!(public.result.is_null());
     assert!(!public.outcome_unknown);
 }
+
+#[tokio::test]
+async fn host_browser_translation_requires_private_socket_scope() {
+    use voyage_protocol::host_browser::{HostBrowserOperation, HostBrowserSocket};
+    let command = || VoyageCommand::HostBrowser {
+        operation: HostBrowserOperation::Status,
+    };
+    assert!(runtime(command()).is_err());
+    let socket = HostBrowserSocket {
+        socket_id: Uuid::new_v4(),
+    };
+    super::super::service::HOST_BROWSER_SOCKET
+        .scope(socket, async {
+            match runtime(command()).unwrap() {
+                RuntimeCommand::HostBrowser {
+                    operation: HostBrowserOperation::Status,
+                    socket: actual,
+                } => assert_eq!(actual, socket),
+                other => panic!("unexpected translation: {other:?}"),
+            }
+            assert!(
+                runtime(VoyageCommand::HostBrowser {
+                    operation: HostBrowserOperation::Receipt {
+                        command_id: Uuid::nil()
+                    }
+                })
+                .is_err()
+            );
+        })
+        .await;
+    assert!(runtime(command()).is_err());
+    assert!(command().requires_incarnation());
+    assert_eq!(required_right(&command()), Some(ProcessRight::Observe));
+    assert_eq!(
+        required_process_right(&RuntimeCommand::HostBrowserDisconnected { socket }),
+        None
+    );
+}

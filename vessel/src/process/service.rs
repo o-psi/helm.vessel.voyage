@@ -1,5 +1,5 @@
 use super::{registry, routing};
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use axum::{
     Json, Router,
     body::Body,
@@ -359,9 +359,42 @@ async fn local_command(
     Json(response).into_response()
 }
 
+tokio::task_local! {
+    /// Scoped by private gateway IPC, not caller JSON or principal claims.
+    pub(super) static HOST_BROWSER_SOCKET: voyage_protocol::host_browser::HostBrowserSocket;
+}
+
 impl Supervisor {
     pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
         match command {
+            VesselCommand::HostBrowserDisconnected {
+                session_id,
+                incarnation,
+                socket,
+            } => {
+                ensure!(!socket.socket_id.is_nil(), "invalid socket identity");
+                super::api::reply(
+                    self.dispatch_session(
+                        session_id,
+                        Some(incarnation),
+                        voyage_protocol::process::RuntimeCommand::HostBrowserDisconnected {
+                            socket,
+                        },
+                        None,
+                    )
+                    .await?,
+                )
+            }
+            VesselCommand::Socket { socket, command } => {
+                ensure!(!socket.socket_id.is_nil(), "invalid socket identity");
+                ensure!(
+                    matches!(command.as_ref(), VesselCommand::Granted { .. }),
+                    "socket requires authenticated grant"
+                );
+                HOST_BROWSER_SOCKET
+                    .scope(socket, Box::pin(self.handle(*command)))
+                    .await
+            }
             VesselCommand::Notifications { operation } => self.notifications(operation, None).await,
             VesselCommand::DiscoverModels {
                 workspace,

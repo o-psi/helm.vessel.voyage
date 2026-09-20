@@ -34,6 +34,7 @@ pub mod accounts;
 pub mod coordination;
 
 pub mod browser;
+pub mod host_browser;
 pub mod duplex;
 
 /// Human-only emulated terminal frames.

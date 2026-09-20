@@ -6,6 +6,7 @@ fn backend() -> SocketBackend {
         grant_id: Uuid::new_v4(),
         token: "f".repeat(64),
         authority: serde_json::Value::Null,
+        browser_sockets: Default::default(),
     }
 }
 #[test]
@@ -337,6 +338,8 @@ mod transport {
         revoked: bool,
         revision: u64,
         commands: Vec<VesselCommand>,
+        browser_socket: Option<Uuid>,
+        disconnected: Vec<(Uuid, Uuid, Uuid)>,
     }
     struct Fixture {
         root: PathBuf,
@@ -368,9 +371,20 @@ mod transport {
                     async move {
                         assert_eq!(headers["authorization"], format!("Bearer {LOCAL_TOKEN}"));
                         assert_eq!(request.protocol, VESSEL_API_VERSION);
+                        let command = match request.command {
+                            VesselCommand::Socket { socket, command } => {
+                                observed.lock().unwrap().browser_socket = Some(socket.socket_id);
+                                *command
+                            }
+                            VesselCommand::HostBrowserDisconnected { session_id, incarnation, socket } => {
+                                observed.lock().unwrap().disconnected.push((session_id, incarnation, socket.socket_id));
+                                return Json(VesselResponse { protocol: VESSEL_API_VERSION, result: serde_json::Value::Null, error: None, outcome_unknown: false });
+                            }
+                            command => command,
+                        };
                         let VesselCommand::Granted {
                             expected_vessel_id, grant_id, token, command,
-                        } = request.command else { panic!("exchange must wrap the public command") };
+                        } = command else { panic!("exchange must wrap the public command") };
                         assert_eq!(expected_vessel_id, Some(vessel));
                         assert_eq!(grant_id, grant);
                         assert_eq!(token, GRANT_TOKEN);
@@ -628,6 +642,50 @@ mod transport {
             assert!(!response.outcome_unknown);
             response.result
         }
+    }
+
+    #[tokio::test]
+    async fn browser_socket_provenance_and_disconnect_cross_private_exchange() {
+        let fixture = Fixture::new().await;
+        let token = fixture.mint().await;
+        let mut wire = fixture.browser(ORIGIN, &token).await;
+        wire.hello(fixture.vessel).await;
+        let session_id = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let id = wire
+            .command(VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation: Some(incarnation),
+                command: VoyageCommand::HostBrowser {
+                    operation: voyage_protocol::host_browser::HostBrowserOperation::Status,
+                },
+            }))
+            .await;
+        wire.reply(id).await;
+        let socket = fixture
+            .authority
+            .lock()
+            .unwrap()
+            .browser_socket
+            .expect("trusted socket envelope");
+        assert!(!socket.is_nil());
+        // Revocation must not block trusted cleanup delivery.
+        fixture.authority.lock().unwrap().revoked = true;
+        drop(wire);
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if fixture.authority.lock().unwrap().disconnected.contains(&(
+                    session_id,
+                    incarnation,
+                    socket,
+                )) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("disconnect notification reaches private supervisor despite revocation");
     }
 
     #[tokio::test]
@@ -975,4 +1033,67 @@ fn sidebar_allowlist_admits_only_public_lifecycle_operations() {
             original: None
         },
     })));
+}
+
+#[tokio::test]
+async fn host_browser_requires_registered_live_socket_and_public_envelopes_are_refused() {
+    let backend = backend();
+    let socket_id = Uuid::new_v4();
+    let request = || VesselRequest {
+        protocol: VESSEL_API_VERSION,
+        command: VesselCommand::Voyage(VoyageRequest {
+            session_id: Uuid::new_v4(),
+            incarnation: Some(Uuid::new_v4()),
+            command: VoyageCommand::HostBrowser {
+                operation: voyage_protocol::host_browser::HostBrowserOperation::Status,
+            },
+        }),
+    };
+    assert!(allowed(&request().command));
+    assert!(
+        backend
+            .socket_command(request(), socket_id)
+            .await
+            .error
+            .is_some()
+    );
+    let state = std::sync::Arc::new(BrowserSocketState::default());
+    state
+        .closed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    backend
+        .browser_sockets
+        .lock()
+        .unwrap()
+        .insert(socket_id, state);
+    assert!(
+        backend
+            .socket_command(request(), socket_id)
+            .await
+            .error
+            .is_some()
+    );
+    backend.disconnected(socket_id);
+    assert!(
+        !backend
+            .browser_sockets
+            .lock()
+            .unwrap()
+            .contains_key(&socket_id)
+    );
+    let private = VesselCommand::HostBrowserDisconnected {
+        session_id: Uuid::new_v4(),
+        incarnation: Uuid::new_v4(),
+        socket: voyage_protocol::host_browser::HostBrowserSocket { socket_id },
+    };
+    assert!(private_envelope(&private));
+    assert!(!allowed(&private));
+    assert!(backend.exchange(private).await.error.is_some());
+    let private = VesselCommand::Socket {
+        socket: voyage_protocol::host_browser::HostBrowserSocket { socket_id },
+        command: Box::new(VesselCommand::Capabilities),
+    };
+    assert!(private_envelope(&private));
+    assert!(!allowed(&private));
+    assert!(backend.exchange(private).await.error.is_some());
 }

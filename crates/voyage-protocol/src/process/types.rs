@@ -19,6 +19,14 @@ pub enum RuntimeCommand {
     },
     /// Follow/resume the ordinary owner for an explicitly authorized local share.
     /// No browser effect, sharing authority, or agent turn is created.
+    HostBrowser {
+        operation: crate::host_browser::HostBrowserOperation,
+        socket: crate::host_browser::HostBrowserSocket,
+    },
+    /// Private socket-loss fence, independent of revoked grant authority.
+    HostBrowserDisconnected {
+        socket: crate::host_browser::HostBrowserSocket,
+    },
     PrepareBrowser,
     Browser {
         operation: crate::browser::BrowserOperation,
@@ -284,6 +292,7 @@ impl RuntimeCommand {
     /// Immutable identity of a journalled mutation, excluding resolution itself.
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
+            Self::HostBrowser { operation, .. } => operation.mutation_id(),
             Self::Browser { operation } => operation.mutation_id(),
             Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }

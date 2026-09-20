@@ -177,6 +177,9 @@ pub(super) async fn command(
     let Some(directory) = state.process_directory else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
+    if private_envelope(&request.command) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     if request.protocol != VESSEL_API_VERSION
         || headers.get_all("authorization").iter().count() != 1
         || headers.get_all("x-voyage-grant").iter().count() != 1
@@ -317,19 +320,45 @@ struct SocketBackend {
     grant_id: Uuid,
     token: String,
     authority: serde_json::Value,
+    browser_sockets: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<Uuid, std::sync::Arc<BrowserSocketState>>>,
+    >,
 }
 impl SocketBackend {
     async fn exchange(&self, command: VesselCommand) -> VesselResponse {
+        self.exchange_socket(command, None).await
+    }
+    async fn exchange_socket(
+        &self,
+        command: VesselCommand,
+        socket: Option<voyage_protocol::host_browser::HostBrowserSocket>,
+    ) -> VesselResponse {
+        if private_envelope(&command) {
+            return VesselResponse {
+                protocol: VESSEL_API_VERSION,
+                result: serde_json::Value::Null,
+                error: Some("private envelope refused".into()),
+                outcome_unknown: false,
+            };
+        }
+        let command = VesselCommand::Granted {
+            expected_vessel_id: self.expected_vessel_id,
+            grant_id: self.grant_id,
+            token: self.token.clone(),
+            command: Box::new(command),
+        };
+        let command = match socket {
+            Some(socket) => VesselCommand::Socket {
+                socket,
+                command: Box::new(command),
+            },
+            None => command,
+        };
         vessel::process::exchange(
             &self.directory,
             &VesselRequest {
                 protocol: VESSEL_API_VERSION,
-                command: VesselCommand::Granted {
-                    expected_vessel_id: self.expected_vessel_id,
-                    grant_id: self.grant_id,
-                    token: self.token.clone(),
-                    command: Box::new(command),
-                },
+                command,
             },
         )
         .await
@@ -356,6 +385,103 @@ fn socket_authority(mut capabilities: serde_json::Value) -> serde_json::Value {
 }
 
 impl vessel::duplex::Backend for SocketBackend {
+    fn connected(&self, connection: vessel::duplex::Connection) {
+        if let Ok(mut states) = self.browser_sockets.lock() {
+            states.insert(connection.socket_id, Default::default());
+        }
+    }
+    fn disconnected(&self, socket_id: Uuid) {
+        let state = self
+            .browser_sockets
+            .lock()
+            .ok()
+            .and_then(|mut states| states.remove(&socket_id));
+        let Some(state) = state else {
+            return;
+        };
+        state
+            .closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let directory = self.directory.clone();
+        tokio::spawn(async move {
+            // Existing command holds this lock through its private exchange. New
+            // admission is already fenced, including work queued before Drop.
+            let sessions = state.sessions.lock().await;
+            for &(session_id, incarnation) in sessions.iter() {
+                let request = VesselRequest {
+                    protocol: VESSEL_API_VERSION,
+                    command: VesselCommand::HostBrowserDisconnected {
+                        session_id,
+                        incarnation,
+                        socket: voyage_protocol::host_browser::HostBrowserSocket { socket_id },
+                    },
+                };
+                // Cleanup is idempotent; no user effect is replayed. Failure is
+                // not evidence of cleanup; runtime must also fence dead owners.
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(20),
+                    vessel::process::exchange(&directory, &request),
+                )
+                .await;
+            }
+        });
+    }
+    fn socket_command(
+        &self,
+        request: VesselRequest,
+        socket_id: Uuid,
+    ) -> vessel::duplex::BackendFuture<VesselResponse> {
+        let backend = self.clone();
+        let state = self
+            .browser_sockets
+            .lock()
+            .ok()
+            .and_then(|states| states.get(&socket_id).cloned());
+        Box::pin(async move {
+            if request.protocol != VESSEL_API_VERSION {
+                return browser_refusal();
+            }
+            if !matches!(
+                &request.command,
+                VesselCommand::Voyage(VoyageRequest {
+                    command: VoyageCommand::HostBrowser { .. },
+                    ..
+                })
+            ) {
+                return backend.exchange(request.command).await;
+            }
+            let Some(state) = state else {
+                return browser_refusal();
+            };
+            let mut sessions = state.sessions.lock().await;
+            if state.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                return browser_refusal();
+            }
+            if let VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation,
+                command: VoyageCommand::HostBrowser { operation },
+            }) = &request.command
+            {
+                let Some(incarnation) = incarnation.filter(|id| !id.is_nil()) else {
+                    return browser_refusal();
+                };
+                if !operation.valid() || session_id.is_nil() {
+                    return browser_refusal();
+                }
+                if sessions.len() >= 32 && !sessions.contains(&(*session_id, incarnation)) {
+                    return browser_refusal();
+                }
+                sessions.insert((*session_id, incarnation));
+            }
+            backend
+                .exchange_socket(
+                    request.command,
+                    Some(voyage_protocol::host_browser::HostBrowserSocket { socket_id }),
+                )
+                .await
+        })
+    }
     fn command(&self, request: VesselRequest) -> vessel::duplex::BackendFuture<VesselResponse> {
         let backend = self.clone();
         Box::pin(async move { backend.exchange(request.command).await })
@@ -431,6 +557,7 @@ pub(super) async fn socket(
         grant_id,
         token: token.into(),
         authority: serde_json::Value::Null,
+        browser_sockets: Default::default(),
     };
     let initial = match tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -478,4 +605,26 @@ fn socket_capacity() -> std::sync::Arc<tokio::sync::Semaphore> {
     CAPACITY
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(64)))
         .clone()
+}
+
+#[derive(Default)]
+struct BrowserSocketState {
+    closed: std::sync::atomic::AtomicBool,
+    sessions: tokio::sync::Mutex<std::collections::HashSet<(Uuid, Uuid)>>,
+}
+fn private_envelope(command: &VesselCommand) -> bool {
+    matches!(
+        command,
+        VesselCommand::Socket { .. }
+            | VesselCommand::Granted { .. }
+            | VesselCommand::HostBrowserDisconnected { .. }
+    )
+}
+fn browser_refusal() -> VesselResponse {
+    VesselResponse {
+        protocol: VESSEL_API_VERSION,
+        result: serde_json::Value::Null,
+        error: Some("invalid or closed browser socket".into()),
+        outcome_unknown: false,
+    }
 }

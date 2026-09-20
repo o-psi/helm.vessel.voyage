@@ -9,6 +9,13 @@ use voyage_protocol::{
 
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
+        VoyageCommand::HostBrowser { operation } => {
+            ensure!(operation.valid(), "invalid host browser operation");
+            let socket = super::service::HOST_BROWSER_SOCKET
+                .try_with(|socket| *socket)
+                .map_err(|_| anyhow::anyhow!("host browser requires authenticated socket"))?;
+            RuntimeCommand::HostBrowser { operation, socket }
+        }
         VoyageCommand::PrepareBrowser => RuntimeCommand::PrepareBrowser,
         VoyageCommand::Browser { operation } => RuntimeCommand::Browser { operation },
         VoyageCommand::Clear {
@@ -469,6 +476,30 @@ impl Supervisor {
             !exact || request.incarnation.is_some(),
             "operation requires observed incarnation"
         );
+        if let VoyageCommand::HostBrowser { operation } = &request.command {
+            let incarnation = request.incarnation.expect("checked above");
+            ensure!(operation.valid(), "invalid host browser operation");
+            ensure!(
+                operation
+                    .binding()
+                    .is_none_or(|binding| binding.incarnation == incarnation),
+                "browser binding incarnation mismatch"
+            );
+            if let voyage_protocol::host_browser::HostBrowserOperation::Start {
+                incarnation: requested,
+                ..
+            } = operation
+            {
+                ensure!(
+                    *requested == incarnation,
+                    "browser start incarnation mismatch"
+                );
+            }
+            ensure!(
+                authorization.is_some(),
+                "host browser requires authenticated principal"
+            );
+        }
         // Persist the immutable inference intent before forwarding. This is not
         // an applied receipt: the owning Voyage remains the configuration authority.
         // Resolution checks the same envelope but never dispatches it automatically.
@@ -614,6 +645,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::SetModel { .. }
         | VoyageCommand::Archive { .. }
         | VoyageCommand::Delete { .. } => Some(ProcessRight::Lifecycle),
+        VoyageCommand::HostBrowser { operation } => Some(operation.required_right()),
         VoyageCommand::PrepareBrowser | VoyageCommand::Browser { .. } => {
             Some(ProcessRight::Execute)
         }
