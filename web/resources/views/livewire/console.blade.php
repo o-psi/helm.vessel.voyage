@@ -14,13 +14,13 @@
         <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
 </div><flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text><flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
     </flux:sidebar>
-    <flux:main class="flex min-h-0 min-w-0 flex-col p-0!" role="main" aria-label="Conversation">
+    <flux:main class="browser-workspace flex min-h-0 min-w-0 flex-col p-0!" role="main" aria-label="Conversation">
+            <div class="browser-conversation">
             <div class="sr-only"><flux:heading id="voyage-title" level="1">Choose a voyage</flux:heading><flux:text id="voyage-vessel" hidden /></div>
             <flux:sidebar.toggle class="fixed start-3 top-3 z-20 lg:hidden" icon="bars-2" aria-label="Open voyage navigation" />
             <flux:callout id="notice-panel" class="mx-4 mt-2" role="status" hidden><flux:callout.text id="notice" /></flux:callout>
             <div id="pending" class="space-y-2 px-4 pt-2 empty:hidden" aria-label="Unconfirmed commands"></div>
-            <flux:button id="host-browser-toggle" type="button" variant="ghost" disabled>Browser</flux:button>
-            <section id="host-browser-panel" aria-label="Executing-host browser" hidden></section>
+            <flux:button id="host-browser-toggle" type="button" variant="ghost" aria-expanded="false" aria-controls="host-browser-panel" disabled>Browser<span id="host-browser-activity" aria-label="Browser activity in this voyage" hidden></span></flux:button>
             <div id="conversation" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-8 pt-14 sm:px-8 lg:pt-10" tabindex="0" aria-label="Conversation messages">
                 <flux:button id="earlier" class="mx-auto mb-4" hidden>Load earlier messages</flux:button>
                 <flux:text id="conversation-empty" class="mx-auto max-w-4xl">Choose a voyage from any connected Vessel.</flux:text>
@@ -88,6 +88,11 @@
                 <input id="picture-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden aria-label="Choose pictures" />
                 <flux:text id="inference-summary" class="sr-only" />
             </form>
+            </div>
+            <aside id="host-browser-panel" tabindex="-1" aria-labelledby="host-browser-title" hidden>
+                <header class="browser-panel-heading"><div><h2 id="host-browser-title">Browser</h2><span id="host-browser-voyage"></span></div><flux:button id="host-browser-close" type="button" variant="ghost" aria-label="Close browser viewer" title="Close viewer; keep browser running">Close ×</flux:button></header>
+                <div id="host-browser-content"></div>
+            </aside>
     </flux:main>
     <div hidden>@include('console.account-enrollment')</div>
     <flux:modal name="sidebar-action" class="w-full md:max-w-2xl" :dismissible="false">

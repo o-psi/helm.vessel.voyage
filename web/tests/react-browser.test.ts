@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import React, {act} from 'react';
 import {createRoot} from 'react-dom/client';
 import {JSDOM} from 'jsdom';
-import {HostBrowser} from '../resources/react/HostBrowser.tsx';
+import {HostBrowser, browserActivity} from '../resources/react/HostBrowser.tsx';
 import type {Tab} from '../resources/react/workspace.ts';
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -41,27 +41,29 @@ test('selected React browser uses shared controls, live revision fences and deta
         await render(); assert.equal(sent.length,0);
         await click('Browser');
         assert.equal(dom.window.document.querySelector('[aria-expanded]')?.getAttribute('aria-expanded'),'true');
-        assert.ok(dom.window.document.querySelector('[aria-label="Navigate browser"]'));
-        assert.equal(sent.length,0, 'opening the panel does not start a browser');
+        assert.ok(dom.window.document.querySelector('video'));
+        assert.ok(sent.some(item=>item.operation.action==='start'), 'one click opens and connects the viewer');
+        assert.equal(sent.find(item=>item.operation.action==='start').operation.expected_revision,7);
         tab = {...tab,snapshot:{revision:9}}; await render();
-        await click('Start / Connect');
-        assert.equal(sent.find(item=>item.operation.action==='start').operation.expected_revision,9);
+        assert.equal(peers.length,1, 'snapshot refresh does not remount the viewer');
         assert.ok(sent.every(item=>item.name==='first' && item.session_id==='session-one' && item.incarnation==='owner-one'));
         assert.equal(peers.length,1);
         client = socket('replacement'); await render();
-        assert.equal(sent.at(-1).name,'first'); assert.equal(sent.at(-1).operation.action,'detach'); assert.equal(peers[0].closed,true);
-        await click('Start / Connect');
+        assert.ok(sent.some(item=>item.name==='first' && item.operation.action==='detach')); assert.equal(peers[0].closed,true);
         tab = {...tab,stale:true}; client = null; await render();
         assert.match(dom.window.document.body.textContent!,/Browser detached/);
         assert.equal(sent.at(-1).name,'replacement'); assert.equal(sent.at(-1).operation.action,'detach');
         client = socket('second'); tab = {...tab,key:'two',vessel:'vessel-two',session:'session-two',incarnation:'owner-two',stale:false}; await render();
         assert.equal(dom.window.document.querySelector('video'),null,'switching tasks requires explicit reopening');
-        await click('Browser'); await click('Start / Connect');
+        await click('Browser');
         assert.equal(sent.at(-1).session_id,'session-two'); assert.equal(sent.at(-1).incarnation,'owner-two');
         await click('Browser'); assert.equal(sent.at(-1).operation.action,'detach');
-        await click('Browser'); await click('Start / Connect'); await click('Disconnect viewer');
+        await click('Browser');
+        await act(async()=>{dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await tick();});
+        assert.equal(dom.window.document.activeElement?.textContent,'Browser','Escape restores the discoverable action');
+        await click('Browser'); await click('Close ×');
         assert.equal(dom.window.document.querySelector('video'),null);
-        await click('Browser'); await click('Start / Connect');
+        await click('Browser');
         await act(async()=>root.unmount()); await tick();
         assert.equal(sent.at(-1).operation.action,'detach');
         assert.ok(!sent.some(item=>item.operation.action==='close'));
@@ -72,4 +74,14 @@ test('selected React browser uses shared controls, live revision fences and deta
         names.forEach((name,index)=>{const descriptor=saved[index];if(descriptor)Object.defineProperty(globalThis,name,descriptor);else delete (globalThis as any)[name];});
         dom.window.close();
     }
+});
+
+
+test('browser activity uses current voyage tool metadata, not assistant prose', () => {
+    assert.equal(browserActivity({messages:[{role:'assistant',content:'Try host_browser'}]}),false);
+    assert.equal(browserActivity({messages:[{role:'assistant',tool_calls:[{id:'call',function:{name:'host_browser'}}]}]}),true);
+    assert.equal(browserActivity({messages:[{role:'tool',name:'functions.host_browser',content:'result'}]}),true);
+    assert.equal(browserActivity({messages:[],run:{tool_previews:[{name:'host_browser'}]}}),true);
+    assert.equal(browserActivity({messages:[{role:'tool',name:'shell'}]}),false);
+    assert.equal(browserActivity(null),false);
 });

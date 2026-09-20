@@ -120,7 +120,7 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
                 <a className="preview-label" href={bootstrap.legacyUrl} title="Return to the existing console">React preview · existing console ↗</a>
             </footer>
         </aside>
-        <main aria-label="Conversation">{!active && <section className="conversation"><div className="transcript"><div className="thread empty">Choose a voyage from any connected Vessel. <button onClick={()=>setSettings({})}>New voyage</button></div></div><Composer workspace={workspace} legacyUrl={bootstrap.legacyUrl} onSettings={()=>setSettings({})}/></section>}
+        <main className="voyage-workspace" aria-label="Conversation">{!active && <section className="conversation"><div className="transcript"><div className="thread empty">Choose a voyage from any connected Vessel. <button onClick={()=>setSettings({})}>New voyage</button></div></div><Composer workspace={workspace} legacyUrl={bootstrap.legacyUrl} onSettings={()=>setSettings({})}/></section>}
             {selected && <HostBrowser key={selected.key} tab={selected} client={fleet.connections.get(selected.vessel)?.client}/> }
             {[...workspace.tabs.values()].map(tab=><Conversation key={tab.key} tab={tab} workspace={workspace} active={active===tab.key} legacyUrl={bootstrap.legacyUrl} onSettings={()=>setSettings({tab})}/>)}
         </main>

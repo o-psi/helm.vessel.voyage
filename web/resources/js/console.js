@@ -76,13 +76,33 @@ export function mount(root) {
     let messages = [], decisions = [], earliest = 0, revision = null;
     let composition, newChatSending = false;
     let browserViewer = null;
-    function closeBrowser() { browserViewer?.dispose(); browserViewer = null; $('host-browser-panel').hidden = true; }
+    function closeBrowser() {
+        const hadFocus = $('host-browser-panel').contains(document.activeElement);
+        browserViewer?.dispose(); browserViewer = null;
+        $('host-browser-panel').hidden = true;
+        $('host-browser-toggle').setAttribute('aria-expanded', 'false');
+        if (hadFocus) $('host-browser-toggle').focus();
+    }
+    $('host-browser-close').addEventListener('click', closeBrowser);
+    root.addEventListener('keydown', event => {
+        if ($('host-browser-panel').hidden) return;
+        if (event.key === 'Escape') { event.preventDefault(); closeBrowser(); $('host-browser-toggle').focus(); }
+        if (event.key !== 'Tab' || !window.matchMedia('(max-width: 1000px)').matches) return;
+        const panel = $('host-browser-panel');
+        const nodes = [...panel.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')].filter(node => !node.hidden && !node.closest('[hidden]'));
+        const first = nodes[0], last = nodes.at(-1);
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first?.focus(); }
+    });
     $('host-browser-toggle').addEventListener('click', () => {
         if (browserViewer) { closeBrowser(); return; }
-        if (!client || !selected || !incarnation || !snapshot) return;
+        if (!client || !selected || !incarnation || !snapshot || stale) return;
         const browserIncarnation = incarnation;
         $('host-browser-panel').hidden = false;
-        browserViewer = mountHostBrowser($('host-browser-panel'), {
+        $('host-browser-toggle').setAttribute('aria-expanded', 'true');
+        $('host-browser-voyage').textContent = $('voyage-title').textContent;
+        $('host-browser-panel').focus();
+        browserViewer = mountHostBrowser($('host-browser-content'), {
             client, sessionId:selected, incarnation,
             context:() => ({incarnation:browserIncarnation, revision:snapshot.revision}), onClose:closeBrowser,
         });
@@ -121,7 +141,11 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('host-browser-toggle').disabled = !client || !selected || !incarnation || !snapshot;
+            $('host-browser-toggle').disabled = !client || !selected || !incarnation || !snapshot || stale;
+            const browserName = name => typeof name === 'string' && /^(?:functions\.)?host_browser$/.test(name);
+            const activity = messages.some(message => (message.tool_calls || []).some(call => browserName(call.name ?? call.function?.name)) || (['tool', 'function'].includes(message.role) && browserName(message.name))) || (snapshot?.run?.tool_previews || []).some(call => browserName(call.name));
+            $('host-browser-activity').hidden = !activity;
+            $('host-browser-toggle').title = selected ? `Browser · ${$('voyage-title').textContent}` : 'Choose a voyage to use its browser';
             const newChatSettings = !selected && client && !busy && !newChatSending;
             const reviewed = !selected ? settings?.configuration() : null;
             $('attach-picture').disabled = busy || newChatSending || !selectedVessel;
