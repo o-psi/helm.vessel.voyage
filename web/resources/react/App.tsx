@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState, useSyncExternalStore} from 'react';
+import {ToolGroup,threadRows} from './ToolGroup';
 import {Connections} from './Connections';
 import {ImagePart,Output} from './MessageParts';
 import {VoyageActions} from './VoyageActions';
@@ -45,24 +46,21 @@ export function Conversation({tab, workspace, active, legacyUrl,onSettings}: {ta
     const run = tab.snapshot?.run, scroll = useRef<HTMLDivElement>(null), following = useRef(true);
     const [showJump,setShowJump] = useState(false);
     useEffect(() => {if(active && following.current && scroll.current) scroll.current.scrollTop=scroll.current.scrollHeight;},[active,tab.snapshot]);
+    const renderMessage=(message:any)=>{return <article key={message.message_index} className={`message ${message.role}`}>
+                    {['tool','function'].includes(message.role) ? <pre>{content(message.content)}</pre> : <><span className="sr-only">{message.role}</span><div className="prose" dangerouslySetInnerHTML={{__html:prose(message.parts?.length?message.parts.filter((part:any)=>part.type==='text').map((part:any)=>part.text).join('\n'):content(message.content))}}/></>}
+                    {message.interrupted_attempt&&<small className="message-meta">Interrupted attempt</small>}
+                    {message.parts?.filter((part:any)=>part.type==='image').map((part:any,index:number)=><ImagePart key={part.attachment?.id||index} attachment={part.attachment} tab={tab} workspace={workspace}/>)}
+                    {message.projection_truncated && <button disabled={tab.busy} onClick={()=>void workspace.expand(tab.key,message.message_index)}>Read complete message</button>}
+                </article>;};
     return <section className="conversation" hidden={!active} aria-label={tab.title}>
         <h1 className="sr-only">{tab.title}</h1>
         {tab.notice && <aside className="notice" role="status">{tab.notice}<button onClick={() => void workspace.reconcile(tab.key)}>Check receipts</button></aside>}
         <div className="transcript" ref={scroll} tabIndex={0} aria-label="Conversation messages" onScroll={() => {const el=scroll.current!;following.current=el.scrollHeight-el.scrollTop-el.clientHeight<80;setShowJump(!following.current);}}><div className="thread">
             {!tab.snapshot && <p className="empty">Waiting for a current Vessel snapshot…</p>}
             {tab.snapshot?.message_offset > 0 && <button className="history-link" disabled={tab.busy} onClick={async()=>{const el=scroll.current!;const height=el.scrollHeight;following.current=false;await workspace.earlier(tab.key);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-height;});}}>Load earlier messages</button>}
-            {(tab.snapshot?.messages || []).filter((message:any) => message.role !== 'system').map((message:any,index:number) => {
-                const tool=['tool','function'].includes(message.role);
-                return <article key={message.message_index ?? index} className={`message ${message.role}`}>
-                    {tool ? <details className="tool-entry"><summary>{message.name || 'Tool result'}</summary><pre>{content(message.content)}</pre></details> : <><span className="sr-only">{message.role}</span><div className="prose" dangerouslySetInnerHTML={{__html:prose(message.parts?.length?message.parts.filter((part:any)=>part.type==='text').map((part:any)=>part.text).join('\n'):content(message.content))}}/></>}
-                    {message.interrupted_attempt&&<small className="message-meta">Interrupted attempt</small>}
-                    {message.parts?.filter((part:any)=>part.type==='image').map((part:any,index:number)=><ImagePart key={part.attachment?.id||index} attachment={part.attachment} tab={tab} workspace={workspace}/>)}
-                    {message.tool_calls?.map((call:any,i:number) => <details className="tool-entry" key={call.id || i}><summary>{call.function?.name || call.name || 'Tool call'}</summary><pre>{content(call.function?.arguments || call.arguments)}</pre></details>)}
-                    {message.projection_truncated && <button disabled={tab.busy} onClick={()=>void workspace.expand(tab.key,message.message_index)}>Read complete message</button>}
-                </article>;
-            })}
+            {threadRows(tab.snapshot?.messages||[]).map(row=>row.entries?<ToolGroup key={row.key} entries={row.entries} running={['running','starting','cancelling'].includes(run?.state)} messageStart={run?.message_start} decisions={tab.decisions.length>0} renderMessage={renderMessage}/>:<React.Fragment key={row.key}>{renderMessage(row.message)}</React.Fragment>)}
             <Output tab={tab} workspace={workspace}/>
-            {(run?.tool_previews || []).map((preview:any,index:number) => <details className="tool-entry" key={index}><summary>Tool preview · {preview.name || 'Tool'}</summary><pre>{content(preview.arguments)}</pre></details>)}
+            {(run?.tool_previews || []).filter((preview:any)=>!(tab.snapshot?.messages||[]).some((message:any)=>message.tool_calls?.some((call:any)=>call.id===preview.call_id))).map((preview:any,index:number) => <details className="tool-entry" key={index}><summary>Tool preview · {preview.name || 'Tool'}</summary><pre>{content(preview.arguments)}</pre></details>)}
             {(run?.reasoning_previews||[]).map((preview:any,index:number)=><details className="tool-entry" key={index}><summary>{preview.kind==='summary'?'Reasoning summary':'Provider thinking'} · {preview.finalized?'finalized disclosure':'streaming · provisional'}</summary><pre>{preview.text}</pre>{preview.truncated&&<small>Preview truncated</small>}</details>)}
         </div></div>
         {showJump && <button className="jump" onClick={() => {following.current=true;setShowJump(false);scroll.current?.scrollTo({top:scroll.current.scrollHeight});}}>Jump to latest ↓</button>}
