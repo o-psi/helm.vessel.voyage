@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BrowserSession, videoPoint} from '../../helm/browser-view/viewer.mjs';
+import {BrowserSession, videoPoint, mountBrowserViewer} from '../../helm/browser-view/viewer.mjs';
 import {mountHostBrowser, hostBrowserAdapter} from '../resources/js/host-browser.js';
 const nil = '00000000-0000-0000-0000-000000000000';
 const binding = {incarnation:'inc',browser_id:'browser',attachment_id:'viewer',tab_id:'tab',document_epoch:1,viewport_epoch:1,controller_epoch:1,capture_epoch:1};
@@ -84,14 +84,14 @@ test('mounted Web UI sends transient navigation/text/dialog/resize/tab and clear
     const dom = new JSDOM('<section id="viewer"></section>',{url:'https://helm.example'});
     const root = dom.window.document.querySelector('section'), sent=[];
     const client={exchange:async request => { sent.push(request); return {protocol:1,error:null,outcome_unknown:false,result:{session_id:'session',incarnation:'inc',result:{status:status()}}}; }};
-    const viewer=mountHostBrowser(root,{client,sessionId:'session',incarnation:'inc',context:()=>({incarnation:'inc',revision:1})});
+    const viewer=mountBrowserViewer(root,{...hostBrowserAdapter({client,sessionId:'session',incarnation:'inc',context:()=>({incarnation:'inc',revision:1})}),autoConnect:false});
     try {
-        viewer.session.accept(status()); viewer.session.streaming=true; viewer.session.notify();
+        viewer.session.accept(status({dialog:{type:'prompt',message:'Prompt'}})); viewer.session.streaming=true; viewer.session.notify();
         const input=[]; viewer.session.input=value=>{input.push(value);return true;};
-        const click=label=>[...root.querySelectorAll('button')].find(node=>node.textContent===label).click();
+        const click=label=>[...root.querySelectorAll('button')].find(node=>node.getAttribute('aria-label')===label).click();
         const address=root.querySelector('input[type=url]'); address.value='https://example.com'; root.querySelector('form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
         const text=root.querySelector('textarea'); text.value='日本語'; click('Send text');
-        root.querySelector('input:not([type=url])').value='private response'; click('Accept dialog'); click('Resize'); click('New tab'); click('Tab 1'); click('Close tab 1');
+        root.querySelector('input:not([type=url])').value='private response'; click('Accept dialog'); click('Resize'); click('New tab'); click('Tab 1'); click('Close Tab 1');
         assert.deepEqual(input.map(value=>value.type),['navigate','text','dialog','resize','tab','tab','tab']);
         assert.equal(text.value,''); assert.equal(address.value,'');
         await viewer.session.transport({action:'status'});
@@ -171,4 +171,121 @@ test('authorized offer can provide viewer-only RTC configuration',async()=>{
     const f=fixture(op=>({status:status(),value:op.signal?.type==='request_offer'?{type:'offer',sdp:'offer',rtc_configuration:rtc}:null}));
     const original=f.session.peer;f.session.peer=config=>{seen=config;return original(config);};
     await f.session.connect();assert.deepEqual(seen,rtc);f.session.dispose();
+});
+
+async function mounted(options = {}) {
+    const {JSDOM} = await import('jsdom');
+    const dom = new JSDOM('<section></section>', {url:'https://helm.invalid', pretendToBeVisual:true});
+    const root = dom.window.document.querySelector('section');
+    const f = fixture();
+    const viewer = mountBrowserViewer(root, {transport:f.session.transport, peer:f.session.peer,
+        context:f.session.context, uuid:f.session.uuid, autoConnect:false, ...options});
+    const find = label => [...root.querySelectorAll('button')].find(node => node.getAttribute('aria-label') === label);
+    const update = changes => { viewer.session.accept(status(changes)); viewer.session.streaming = true; viewer.session.notify(); };
+    return {dom,root,viewer,find,update,...f,cleanup(){viewer.dispose();f.session.dispose();dom.window.close();}};
+}
+test('accessible browser chrome has one private primary action and secondary options hidden', async()=>{
+    const f = await mounted();
+    try {
+        f.update({mode:'agent',controller:null});
+        assert.equal(f.root.querySelector('[role=status]').textContent,'Agent working');
+        assert.ok(f.find('Take control privately')); assert.equal(f.find('Take control'),undefined);
+        assert.equal(f.find('Start / Connect'),undefined);
+        assert.equal(f.root.querySelector('details').open,false);
+        assert.ok(f.root.querySelector('details').contains(f.find('Resize')));
+        assert.ok(f.root.querySelector('details').contains(f.find('Close browser')));
+        assert.equal(f.root.querySelector('.browser-dialog').hidden,true);
+        assert.equal(f.root.querySelector('form').getAttribute('aria-label'),'Browser navigation');
+        assert.equal(f.find('Back').disabled,true);
+        assert.equal(f.root.querySelector('input[type=url]').readOnly,true);
+        let mode; f.viewer.session.control = async value => {mode=value;};
+        f.find('Take control privately').click(); assert.equal(mode,'private');
+        f.update({mode:'private'});
+        assert.equal(f.root.querySelector('[role=status]').textContent,'You control privately');
+        assert.match(f.root.querySelector('.browser-privacy').textContent,/Agent observation is paused/);
+        f.find('Return to agent').click(); assert.equal(mode,'agent');
+        f.update({mode:'private',controller:'other'});
+        assert.equal(f.root.querySelector('[role=status]').textContent,'Watching');
+        f.viewer.disconnect(); assert.equal(f.root.querySelector('[role=status]').textContent,'Disconnected');
+    } finally { f.cleanup(); }
+});
+test('mount automatically connects once and explicit retry never replays uncertain effects', async()=>{
+    let calls=0;
+    const f = await mounted({autoConnect:true, transport:async()=>{calls++;throw Error('private diagnostic');}});
+    try {
+        await tick(); assert.equal(calls,1);
+        assert.equal(f.find('Retry connection').hidden,false);
+        assert.doesNotMatch(f.root.textContent,/private diagnostic/);
+        await f.viewer.session.refresh(); assert.equal(calls,1);
+        f.find('Retry connection').click(); await tick(); assert.equal(calls,2);
+    } finally { f.cleanup(); }
+    const good = await mounted({autoConnect:true});
+    try { await tick(); assert.deepEqual(good.sent.map(op=>op.action),['status','signal','signal']); }
+    finally { good.cleanup(); }
+});
+test('history and readable bound metadata use inert sanitized text with UUID fallback', async()=>{
+    const f=await mounted();
+    try {
+        const title='<img src="https://untrusted.invalid/icon">\u202eTitle';
+        f.update({page:{url:'https://example.test/path',loading:false,can_go_back:true,can_go_forward:false},tab_details:[{id:'other',title:'Wrong binding'},{id:'tab',title}]});
+        assert.equal(f.root.querySelector('input[type=url]').value,'https://example.test/path');
+        assert.equal(f.root.querySelectorAll('img,iframe,script,link').length,0);
+        assert.equal(f.root.querySelector('.browser-tab button').textContent,title.replace('\u202e',''));
+        assert.equal(f.find('Back').disabled,false); assert.equal(f.find('Forward').disabled,true);
+        const inputs=[];f.viewer.session.input=value=>{inputs.push(value);return true;};
+        f.find('Back').click(); f.find('Reload').click();
+        f.update({page:{loading:true,can_go_forward:true}}); f.find('Stop loading').click(); f.find('Forward').click();
+        assert.deepEqual(inputs.map(x=>x.direction),['back','reload','stop','forward']);
+        assert.equal(f.root.querySelector('.browser-tab button').textContent,'Tab 1');
+        f.update({mode:'private',controller:'other',page:{url:'secret'},tab_details:[{id:'tab',title:'secret'}],dialog:{type:'prompt',message:'secret'}});
+        assert.doesNotMatch(f.root.textContent,/secret/); assert.equal(f.root.querySelector('input[type=url]').value,'');
+    } finally {f.cleanup();}
+});
+test('private drafts clear on fence changes; address edits survive polls; dialog only while present',async()=>{
+    const f=await mounted();
+    try {
+        f.update({mode:'private',dialog:{type:'prompt',message:'Website asks <b>name</b>'}});
+        const address=f.root.querySelector('input[type=url]'), text=f.root.querySelector('textarea'), response=f.root.querySelector('.browser-dialog input');
+        assert.equal(f.root.querySelector('.browser-dialog').hidden,false);
+        assert.equal(f.root.querySelector('.browser-dialog b'),null);
+        address.focus(); address.value='https://draft.test';text.value='private';response.value='private';
+        f.viewer.session.notify(); assert.equal(address.value,'https://draft.test');
+        f.update({mode:'agent',controller:null,binding:{...binding,controller_epoch:2}});
+        assert.equal(address.value,'');assert.equal(text.value,'');assert.equal(response.value,'');
+        assert.equal(f.root.querySelector('.browser-dialog').hidden,true);
+    } finally {f.cleanup();}
+});
+test('keyboard focus can leave remote surface and More; close callback disposes viewer',async()=>{
+    let closed=0;const f=await mounted({onClose:()=>closed++});
+    try {
+        f.update({mode:'private'});const video=f.root.querySelector('video'), inputs=[];
+        f.viewer.session.input=value=>{inputs.push(value);return true;};
+        video.focus();video.dispatchEvent(new f.dom.window.KeyboardEvent('keydown',{key:'Tab',cancelable:true}));
+        assert.equal(inputs[0].key,'Tab');
+        video.dispatchEvent(new f.dom.window.KeyboardEvent('keydown',{key:'Escape',cancelable:true}));
+        assert.equal(f.dom.window.document.activeElement,f.find('Return to agent'));
+        const more=f.root.querySelector('details');more.open=true;f.find('Resize').focus();
+        more.dispatchEvent(new f.dom.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        assert.equal(more.open,false);assert.equal(f.dom.window.document.activeElement,more.querySelector('summary'));
+        f.find('Close viewer').click();assert.equal(closed,1);assert.equal(f.root.children.length,0);assert.equal(f.viewer.session.closed,true);
+    } finally {f.cleanup();}
+});
+test('Stop bypasses pending navigation and polling can discover website dialogs',async()=>{
+    let release;
+    const f=fixture(op=>op.action==='input' && op.input.type==='navigate' ? new Promise(r=>release=r) : {status:status({dialog:{type:'alert',message:'Waiting'}})});
+    f.session.accept(status());f.session.streaming=true;
+    f.session.input({type:'navigate',url:'https://example.test'});
+    await f.session.refresh();assert.equal(f.session.status.dialog.type,'alert');
+    f.session.streaming=true;f.session.input({type:'history',direction:'stop'});await tick();
+    assert.deepEqual(f.sent.filter(op=>op.action==='input').map(op=>op.input.type),['navigate','history']);
+    release({status:status()});await tick();f.session.dispose();
+});
+test('missing media has a bounded error and does not automatically reconnect',async()=>{
+    const f=fixture();f.session.timeout=15;
+    await f.session.connect();const calls=f.sent.length;
+    await new Promise(r=>setTimeout(r,25));
+    assert.equal(f.session.status,null);assert.match(f.session.message,/Live video did not arrive/);
+    assert.equal(f.sent.filter(op=>op.action==='signal').length,2);
+    assert.equal(f.sent.length,calls+1); // best-effort detach, never replay
+    f.session.dispose();
 });

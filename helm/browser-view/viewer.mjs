@@ -21,13 +21,13 @@ export class BrowserSession {
     }
     notify(message) { if (message) this.message = message; this.changed(this); }
     clearVideo() {
-        this.generation++; this.queue = [];
+        this.generation++; this.queue = []; clearTimeout(this.mediaTimer);
         const pc = this.pc; this.pc = null;
         if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
         if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
         this.streaming = false;
     }
-    disconnect(message = 'Browser disconnected. Connect explicitly to resume.') {
+    disconnect(message = 'Browser disconnected. Retry connection to resume.') {
         const detach = this.attached && this.status?.binding ? this.operation('detach') : null;
         this.clearVideo(); this.status = null; this.attached = false; this.notify(message);
         if (detach && !this.closed) Promise.resolve().then(() => this.transport(detach)).catch(() => {});
@@ -61,12 +61,12 @@ export class BrowserSession {
         if (this.busy || this.closed) return;
         this.busy = true; this.notify();
         try { return await action(); }
-        catch { this.disconnect('Browser operation interrupted or unconfirmed. Nothing was replayed. Connect to refresh.'); }
+        catch { this.disconnect('Browser operation interrupted or unconfirmed. Nothing was replayed. Retry connection to refresh.'); }
         finally { this.busy = false; this.notify(); }
     }
     async refresh() {
-        if (this.busy || this.pumping || this.closed || !this.status) return;
-        await this.exclusive(async () => { await this.call({action:'status'}); if (this.attached && !this.pc) await this.negotiate(); });
+        if (this.busy || this.closed || !this.status) return;
+        await this.exclusive(async () => { await this.call({action:'status'}); if (this.attached && !this.pc && !this.pumping) await this.negotiate(); });
     }
     async connect() {
         return this.exclusive(async () => {
@@ -91,15 +91,16 @@ export class BrowserSession {
         const current = () => !this.closed && generation === this.generation && binding === mediaFence(this.status);
         if (reply.value?.type !== 'offer' || typeof reply.value.sdp !== 'string' || bytes(reply.value.sdp) > 65536) throw Error('offer');
         const pc = this.pc = this.peer(reply.value.rtc_configuration ?? this.rtcConfiguration);
+        this.mediaTimer = setTimeout(() => { if (current() && !this.streaming) this.disconnect('Live video did not arrive. Retry connection to resume.'); }, this.timeout);
         pc.ontrack = event => {
             if (!current() || pc !== this.pc) { event.track.stop(); return; }
             const stream = event.streams[0] || new MediaStream([event.track]);
-            this.video.srcObject = stream; this.streaming = true;
-            this.video.play()?.catch(() => { if (current()) this.notify('Use the video play control to start playback'); });
+            clearTimeout(this.mediaTimer); this.video.srcObject = stream; this.streaming = true;
+            this.video.play()?.catch(() => { if (current()) this.disconnect('Video playback was blocked. Retry connection to resume.'); });
             this.notify();
         };
         pc.onconnectionstatechange = () => {
-            if (current() && ['failed','closed','disconnected'].includes(pc.connectionState)) this.disconnect('Video connection lost. Connect explicitly to resume.');
+            if (current() && ['failed','closed','disconnected'].includes(pc.connectionState)) this.disconnect('Video connection lost. Retry connection to resume.');
         };
         await pc.setRemoteDescription({type:'offer',sdp:reply.value.sdp});
         if (!current()) return;
@@ -131,10 +132,10 @@ export class BrowserSession {
         if (this.queue.length >= 32) { this.disconnect('Browser input too slow. Input cleared; reconnect required.'); return false; }
         // Website modal replies must interrupt the pointer/navigation that opened
         // the dialog; putting them behind that operation deadlocks human control.
-        if (input.type === 'dialog') {
+        if (input.type === 'dialog' || input.type === 'history' && input.direction === 'stop') {
             const generation = this.generation;
             void this.call(this.operation('input',{sequence:++this.sequence,input}),generation)
-                .catch(() => { if (generation === this.generation) this.disconnect('Dialog response unconfirmed; not replayed.'); });
+                .catch(() => { if (generation === this.generation) this.disconnect('Browser interruption unconfirmed; not replayed.'); });
             return true;
         }
         this.queue.push({input, binding:fingerprint(this.status.binding), generation:this.generation});
@@ -162,53 +163,119 @@ export class BrowserSession {
     }
 }
 
-export function mountBrowserViewer(root, options) {
+// Host metadata is always inert text; never load page HTML, icons or URLs locally.
+const displayText = (value, limit = 512) => typeof value === 'string'
+    ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '').slice(0, limit) : '';
+
+export function mountBrowserViewer(root, options = {}) {
     const doc = root.ownerDocument;
     root.classList.add('host-browser-viewer');
-    const element = (tag, text, parent = root) => { const node = doc.createElement(tag); if (text) node.textContent = text; parent.append(node); return node; };
-    const toolbar = element('div'); toolbar.className = 'browser-toolbar';
-    const status = element('p'); status.setAttribute('role','status'); status.setAttribute('aria-live','polite');
+    root.setAttribute('aria-label', 'Host browser');
+    const element = (tag, text, parent = root, className = '') => {
+        const node = doc.createElement(tag); if (text) node.textContent = text;
+        if (className) node.className = className; parent.append(node); return node;
+    };
     const sensitive = [];
-    const button = (label, action, parent = toolbar, control = false) => { const node = element('button',label,parent); node.type = 'button'; node.onclick = action; if (control) sensitive.push(node); return node; };
-    const connect = button('Start / Connect', () => session.connect());
-    const human = button('Take control', () => session.control('human'));
-    const privateMode = button('Private control', () => session.control('private'));
-    const agent = button('Return to agent', () => session.control('agent'));
-    button('Disconnect viewer', () => { session.dispose(); options.onClose?.(); });
-    button('Close browser', () => session.exclusive(async () => { if (!session.attached) return; session.clearVideo(); await session.call(session.operation('close')); }));
-    const form = element('form'); form.className = 'browser-toolbar';
-    const address = element('input',null,form); address.type = 'url'; address.placeholder = 'https://…'; address.setAttribute('aria-label','Navigate browser'); address.autocomplete = 'off'; sensitive.push(address);
+    const button = (label, action, parent, control = false, glyph = null) => {
+        const node = element('button', glyph || label, parent); node.type = 'button';
+        node.setAttribute('aria-label', label); node.title = label; node.onclick = action;
+        if (control) sensitive.push(node); return node;
+    };
+    const header = element('div', null, root, 'browser-header');
+    const status = element('span', 'Disconnected', header, 'browser-status');
+    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
+    const primary = button('Take control privately', () => session.control(session.controls && session.status?.mode === 'private' ? 'agent' : 'private'), header);
+    primary.className = 'browser-primary';
+    const more = element('details', null, header, 'browser-more');
+    const summary = element('summary', 'More', more); summary.setAttribute('aria-label', 'More browser options');
+    const menu = element('div', null, more, 'browser-menu');
+    const textLabel = element('label', 'Compose text (IME)', menu);
+    const text = element('textarea', null, textLabel); text.rows = 2; text.autocomplete = 'off'; text.spellcheck = false;
+    text.setAttribute('aria-label', 'Text for remote browser'); sensitive.push(text);
+    button('Send text', () => { const value = text.value; text.value = ''; if (value && bytes(value) <= 16384) session.input({type:'text',text:value}); }, menu, true);
+    const sizeLabel = element('label', 'Resolution', menu);
+    const size = element('select', null, sizeLabel); size.setAttribute('aria-label', 'Remote viewport size'); sensitive.push(size);
+    for (const value of ['1280×720','1920×1080','1024×768','640×480']) { const option = element('option', value, size); option.value = value; }
+    button('Resize', () => { const [width,height] = size.value.split('×').map(Number); session.input({type:'resize',width,height}); }, menu, true);
+    const closeBrowser = button('Close browser', () => session.exclusive(async () => {
+        if (!session.controls) return; session.clearVideo(); await session.call(session.operation('close'));
+    }), menu, true);
+    closeBrowser.className = 'browser-destructive';
+    button('Disconnect viewer', () => { session.disconnect(); more.open = false; }, menu);
+    button('Close viewer', () => { dispose(); options.onClose?.(); }, header, false, '×');
+    more.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); more.open = false; summary.focus(); } });
+    const tabs = element('div', null, root, 'browser-tabs'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Browser tabs');
+    const form = element('form', null, root, 'browser-navigation'); form.setAttribute('aria-label', 'Browser navigation');
+    const back = button('Back', () => session.input({type:'history',direction:'back'}), form, true, '←');
+    const forward = button('Forward', () => session.input({type:'history',direction:'forward'}), form, true, '→');
+    const reload = button('Reload', () => session.input({type:'history',direction:session.status?.page?.loading ? 'stop' : 'reload'}), form, true, '↻');
+    const address = element('input', null, form, 'browser-address'); address.type = 'url'; address.placeholder = 'Enter an https:// address';
+    address.setAttribute('aria-label', 'Address'); address.autocomplete = 'off'; address.spellcheck = false;
     const go = button('Go', () => {}, form, true); go.type = 'submit';
-    form.onsubmit = event => { event.preventDefault(); const url = address.value; address.value = ''; if (/^https?:\/\//.test(url) && bytes(url) <= 8192 && !/[\x00-\x1f\x7f]/.test(url)) session.input({type:'navigate',url}); };
-    const tabs = element('div'); tabs.className = 'browser-toolbar'; tabs.setAttribute('aria-label','Browser tabs');
-    const video = element('video'); video.autoplay = true; video.muted = true; video.playsInline = true; video.tabIndex = 0; video.setAttribute('aria-label','Remote browser video; focus for keyboard control');
-    const editor = element('div'); editor.className = 'browser-toolbar';
-    const text = element('textarea',null,editor); text.rows = 1; text.placeholder = 'Type or compose text (IME)'; text.setAttribute('aria-label','Text for remote browser'); text.autocomplete = 'off'; text.spellcheck = false; sensitive.push(text);
-    button('Send text', () => { const value = text.value; text.value = ''; if (value && bytes(value) <= 16384) session.input({type:'text',text:value}); },editor,true);
-    const dialog = element('input',null,editor); dialog.placeholder = 'Dialog response (optional)'; dialog.setAttribute('aria-label','Remote dialog response'); dialog.autocomplete = 'off'; sensitive.push(dialog);
-    button('Accept dialog', () => { const value = dialog.value; dialog.value = ''; if (bytes(value) <= 16384) session.input({type:'dialog',accept:true,text:value || null}); },editor,true);
-    button('Dismiss dialog', () => { dialog.value = ''; session.input({type:'dialog',accept:false,text:null}); },editor,true);
-    const size = element('select',null,editor); size.setAttribute('aria-label','Remote viewport size'); sensitive.push(size);
-    for (const value of ['1280×720','1920×1080','1024×768','640×480']) { const option = element('option',value,size); option.value = value; }
-    button('Resize', () => { const [width,height] = size.value.split('×').map(Number); session.input({type:'resize',width,height}); },editor,true);
-    let tabFingerprint = '', previousFence = '';
+    form.onsubmit = event => {
+        event.preventDefault(); const url = address.value;
+        if (/^https?:\/\//.test(url) && bytes(url) <= 8192 && !/[\x00-\x1f\x7f]/.test(url) && session.input({type:'navigate',url})) { address.value = ''; video.focus(); }
+    };
+    const privacy = element('p', 'Taking control is private: agent observation is paused until you return control.', root, 'browser-privacy');
+    const viewport = element('div', null, root, 'browser-viewport');
+    const video = element('video', null, viewport); video.autoplay = true; video.muted = true; video.playsInline = true; video.tabIndex = 0;
+    video.setAttribute('aria-label', 'Remote browser. Escape releases keyboard focus; use More to compose text.');
+    const empty = element('div', null, viewport, 'browser-empty');
+    const explanation = element('p', 'Opening browser…', empty);
+    const retry = button('Retry connection', () => session.connect(), empty);
+    const dialogPanel = element('section', null, root, 'browser-dialog'); dialogPanel.hidden = true;
+    dialogPanel.setAttribute('role', 'region'); dialogPanel.setAttribute('aria-label', 'Website dialog');
+    const dialogMessage = element('p', null, dialogPanel); dialogMessage.setAttribute('role', 'status');
+    const dialog = element('input', null, dialogPanel); dialog.setAttribute('aria-label', 'Website dialog response'); dialog.autocomplete = 'off'; sensitive.push(dialog);
+    button('Accept dialog', () => { const value = dialog.value; dialog.value = ''; if (bytes(value) <= 16384) session.input({type:'dialog',accept:true,text:value || null}); }, dialogPanel, true);
+    button('Dismiss dialog', () => { dialog.value = ''; session.input({type:'dialog',accept:false,text:null}); }, dialogPanel, true);
+    let tabFingerprint = '', previousFence = '', dialogFingerprint = '';
+    const keys = new Set();
     const session = new BrowserSession({...options,video,changed:current => {
-        status.textContent = current.message + (current.status?.mode === 'private' ? ' · Private: agent observation withheld; return explicitly.' : '');
-        connect.disabled = current.busy || current.closed;
-        human.disabled = privateMode.disabled = !current.attached || current.busy;
-        agent.disabled = !current.controls || current.busy;
-        for (const node of sensitive) node.disabled = !current.controls || current.busy || !current.streaming;
-        const fence = fingerprint(current.status?.binding);
-        if (fence !== previousFence) { previousFence = fence; text.value = dialog.value = address.value = ''; }
-        const key = JSON.stringify([current.status?.tabs,current.controls,current.busy,current.streaming,current.status?.binding?.tab_id]);
+        const attached = current.attached && current.status?.running;
+        const privateControl = current.controls && current.status?.mode === 'private';
+        status.textContent = !attached ? 'Disconnected' : privateControl ? 'You control privately' : current.status?.mode === 'agent' ? 'Agent working' : 'Watching';
+        root.dataset.state = !attached ? 'disconnected' : privateControl ? 'private' : current.status?.mode === 'agent' ? 'agent' : 'watching';
+        primary.textContent = privateControl ? 'Return to agent' : 'Take control privately';
+        primary.setAttribute('aria-label', primary.textContent); primary.title = primary.textContent;
+        primary.disabled = !attached || current.busy || current.closed;
+        privacy.textContent = privateControl ? 'Private control · Agent observation is paused. Return to agent explicitly when finished.' : 'Taking control is private: agent observation is paused until you return control.';
+        const metadata = current.status?.mode === 'private' && !current.controls ? null : current.status;
+        const enabled = current.controls && !current.busy && current.streaming;
+        for (const node of sensitive) node.disabled = !enabled;
+        address.readOnly = !enabled; address.disabled = !attached;
+        back.disabled = !enabled || metadata?.page?.can_go_back !== true;
+        forward.disabled = !enabled || metadata?.page?.can_go_forward !== true;
+        reload.textContent = metadata?.page?.loading ? '■' : '↻';
+        reload.setAttribute('aria-label', metadata?.page?.loading ? 'Stop loading' : 'Reload'); reload.title = reload.getAttribute('aria-label');
+        const fence = fingerprint(current.status?.binding) + mediaFence(current.status);
+        if (fence !== previousFence) { previousFence = fence; text.value = dialog.value = address.value = ''; keys.clear(); more.open = false; }
+        if (doc.activeElement !== address) address.value = displayText(metadata?.page?.url, 8192);
+        empty.hidden = Boolean(current.streaming);
+        explanation.textContent = current.busy ? 'Opening browser…' : !attached ? current.message : current.status?.mode === 'private' && !current.controls ? 'Private control is active. Agent observation is paused.' : 'Waiting for live video…';
+        retry.hidden = Boolean(attached) || current.busy; retry.disabled = current.busy || current.closed;
+        const remoteDialog = current.controls ? current.status?.dialog : null;
+        const nextDialog = JSON.stringify([fence,remoteDialog]);
+        if (nextDialog !== dialogFingerprint) { dialogFingerprint = nextDialog; dialog.value = ''; }
+        dialogPanel.hidden = !remoteDialog;
+        dialogMessage.textContent = displayText(remoteDialog?.message, 4096);
+        dialog.hidden = remoteDialog?.type !== 'prompt';
+        const details = metadata?.tab_details || [];
+        const key = JSON.stringify([current.status?.tabs,details,enabled,current.status?.binding?.tab_id]);
         if (key !== tabFingerprint) {
+            const focused = doc.activeElement?.dataset?.tabAction;
             tabFingerprint = key; tabs.replaceChildren();
-            button('New tab', () => session.input({type:'tab',operation:'new',tab_id:null}),tabs).disabled = !current.controls || current.busy || !current.streaming;
             (current.status?.tabs || []).forEach((id,index) => {
-                const node = button(`Tab ${index + 1}`, () => session.input({type:'tab',operation:'select',tab_id:id}),tabs);
-                node.setAttribute('aria-pressed',String(id === current.status?.binding?.tab_id)); node.disabled = !current.controls || current.busy || !current.streaming;
-                button(`Close tab ${index + 1}`, () => session.input({type:'tab',operation:'close',tab_id:id}),tabs).disabled = node.disabled;
+                const detail = details.find(item => item.id === id);
+                const title = displayText(detail?.title) || displayText(detail?.url) || `Tab ${index + 1}`;
+                const item = element('div', null, tabs, 'browser-tab');
+                const node = button(title, () => session.input({type:'tab',operation:'select',tab_id:id}), item);
+                node.dataset.tabAction = `select:${id}`; node.setAttribute('aria-pressed', String(id === current.status?.binding?.tab_id)); node.disabled = !enabled;
+                const close = button(`Close ${title}`, () => session.input({type:'tab',operation:'close',tab_id:id}), item, false, '×');
+                close.dataset.tabAction = `close:${id}`; close.disabled = !enabled;
             });
+            const add = button('New tab', () => session.input({type:'tab',operation:'new',tab_id:null}), tabs, false, '+'); add.disabled = !enabled; add.dataset.tabAction = 'new';
+            if (focused) [...tabs.querySelectorAll('button')].find(node => node.dataset.tabAction === focused)?.focus();
         }
         options.changed?.(current);
     }});
@@ -224,8 +291,8 @@ export function mountBrowserViewer(root, options) {
     video.onpointermove = event => { if (moveTimer) return; moveTimer = setTimeout(() => { moveTimer = null; },40); pointer(event,false,true); };
     video.oncontextmenu = event => event.preventDefault();
     video.addEventListener('wheel',event => { if (!session.controls) return; event.preventDefault(); const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? video.videoHeight : 1; const clamp = value => Math.max(-16384,Math.min(16384,Math.round(value * factor))); session.input({type:'scroll',delta_x:clamp(event.deltaX),delta_y:clamp(event.deltaY)}); },{passive:false});
-    const keys = new Set();
     const key = (event, pressed) => {
+        if (event.key === 'Escape') { event.preventDefault(); primary.focus(); return; }
         if (!session.controls || event.isComposing || event.key === 'Process' || event.key === 'Dead') return;
         if (bytes(event.key) > 128 || /[\x00-\x1f\x7f]/.test(event.key)) return;
         event.preventDefault();
@@ -234,9 +301,12 @@ export function mountBrowserViewer(root, options) {
     };
     video.onkeydown = event => key(event,true); video.onkeyup = event => key(event,false);
     video.onblur = () => { for (const key of keys) session.input({type:'key',key,pressed:false}); keys.clear(); };
-    const hidden = () => { if (doc.hidden) session.disconnect('Viewer hidden. Connect explicitly to resume.'); };
+    const hidden = () => { if (doc.hidden) session.disconnect('Viewer hidden. Retry connection to resume.'); };
     doc.addEventListener('visibilitychange',hidden);
     const timer = setInterval(() => session.refresh(),2000);
+    let disposed = false;
+    const dispose = () => { if (disposed) return; disposed = true; clearInterval(timer); clearTimeout(moveTimer); doc.removeEventListener('visibilitychange',hidden); session.dispose(); root.replaceChildren(); };
     session.notify();
-    return {session,disconnect:() => session.disconnect(),dispose:() => { clearInterval(timer); clearTimeout(moveTimer); doc.removeEventListener('visibilitychange',hidden); session.dispose(); root.replaceChildren(); }};
+    if (options.autoConnect !== false) void session.connect();
+    return {session,disconnect:() => session.disconnect(),dispose};
 }
