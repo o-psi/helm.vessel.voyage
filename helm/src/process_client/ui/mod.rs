@@ -70,7 +70,7 @@ pub(super) struct App {
     stop_review: Option<run_controls::StopReview>,
     viewport: std::cell::Cell<Option<(u16, u16)>>,
     observation_target: tokio::sync::watch::Sender<Option<Target>>,
-    browsers: BTreeMap<Target, crate::process_client::browser::Handle>,
+    browsers: BTreeMap<Target, crate::process_client::host_browser::Handle>,
     browser_opened: std::collections::BTreeSet<Target>,
     browser_retired: Vec<tokio::task::JoinHandle<std::result::Result<(), String>>>,
     working: effects::Working,

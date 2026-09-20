@@ -8,14 +8,14 @@ async fn browser_commands_without_a_local_resource_do_not_start_one_implicitly()
             .panel
             .as_ref()
             .unwrap()
-            .contains("No local browser shared")
+            .contains("No host browser viewer attached")
     );
     assert!(
         app.views[&target]
             .panel
             .as_ref()
             .unwrap()
-            .contains("consent")
+            .contains("explicit controls")
     );
     for command in ["takeover", "private", "invalid", "return"] {
         assert!(
@@ -25,8 +25,12 @@ async fn browser_commands_without_a_local_resource_do_not_start_one_implicitly()
         assert!(app.browsers.is_empty());
         assert!(app.browser_retired.is_empty());
     }
-    app.browser_command(target, "/browser close").unwrap();
-    assert!(app.status.contains("No Voyage cancellation"));
+    assert!(app.browser_command(target, "/browser close").is_err());
+    app.browser_command(target, "/browser detach").unwrap();
+    assert!(
+        app.status
+            .contains("No browser close or Voyage cancellation")
+    );
     app.poll_browsers();
     assert!(app.finish_browsers().await.is_ok());
     app.selected = None;

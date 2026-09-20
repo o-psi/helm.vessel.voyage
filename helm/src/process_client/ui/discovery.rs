@@ -89,8 +89,8 @@ pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     ("host_resources", "Show machine cleanup records", ""),
     (
         "browser",
-        "Share a local browser",
-        "open | status | takeover | private | close | reconcile",
+        "View the Voyage host browser",
+        "open | status | takeover | private | agent | close | detach",
     ),
     ("terminals", "Browse program terminals", ""),
     (
@@ -186,7 +186,7 @@ pub(super) fn scope(name: &str) -> &'static str {
         "account" | "model" | "thinking" | "service" | "configure" => "executing host · next run",
         "stop" | "cancel" => "exact active run",
         "approve" | "deny" | "answer" => "exact pending request",
-        "browser" => "Helm local consent + voyage policy",
+        "browser" => "Voyage host browser + socket-bound control",
         _ => "selected voyage",
     }
 }

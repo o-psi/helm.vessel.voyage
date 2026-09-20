@@ -243,6 +243,35 @@ impl Client {
         Ok(reply.result)
     }
 
+    /// Narrow human host-browser channel: pinned socket, no HTTP fallback or replay.
+    pub(super) async fn host_browser(
+        &self,
+        socket_id: uuid::Uuid,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+        operation: voyage_protocol::host_browser::HostBrowserOperation,
+    ) -> Result<Value> {
+        ensure!(operation.valid(), "Invalid host browser operation");
+        let command = VesselCommand::Voyage(VoyageRequest {
+            session_id,
+            incarnation: Some(incarnation),
+            command: VoyageCommand::HostBrowser { operation },
+        });
+        let value = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.socket.exchange_bound(self, socket_id, command),
+        )
+        .await
+        .context("Host browser deadline elapsed; outcome unknown, never replay")??;
+        let reply: VoyageReply = serde_json::from_value(value)
+            .map_err(|_| anyhow::anyhow!("Invalid host browser response"))?;
+        ensure!(
+            reply.session_id == session_id && reply.incarnation == incarnation,
+            "Host browser response identity mismatch"
+        );
+        Ok(reply.result)
+    }
+
     pub async fn voyage(
         &self,
         session_id: uuid::Uuid,

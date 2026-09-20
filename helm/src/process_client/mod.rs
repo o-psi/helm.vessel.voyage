@@ -36,6 +36,7 @@ mod artifacts;
 
 /// Explicit human-authorized local browser resources, never an agent runtime.
 pub mod browser;
+mod host_browser;
 
 #[cfg(all(test, unix))]
 mod commands_final_tests;

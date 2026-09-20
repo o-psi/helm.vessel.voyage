@@ -1,6 +1,6 @@
-//! Browser commands are local human UI operations, never user-message or model-tool envelopes.
+//! Human host-browser controls never enter model-visible conversation history.
 use super::*;
-use crate::process_client::browser::{Control, Handle};
+use crate::process_client::host_browser::{Control, Handle};
 use anyhow::{Context, Result, ensure};
 
 impl App {
@@ -10,7 +10,7 @@ impl App {
             "" | "open" => {
                 ensure!(
                     self.clients.available(target.route),
-                    "Connect this Vessel before opening a local browser"
+                    "Connect this Vessel before opening a browser viewer"
                 );
                 let view = self
                     .views
@@ -18,85 +18,77 @@ impl App {
                     .context("Selected voyage unavailable")?;
                 ensure!(
                     !view.archived() && !view.deleted(),
-                    "Restore the voyage before sharing a browser"
+                    "Restore the voyage before opening its browser"
                 );
                 ensure!(
                     !self.browsers.get(&target).is_some_and(|h| h.finished()),
-                    "Previous browser ended. Use /browser close to observe cleanup before reopening"
+                    "Previous viewer ended. Use /browser detach before opening a fresh viewer"
                 );
                 if !self.browsers.contains_key(&target) {
                     ensure!(
                         self.browsers.len() < 4,
-                        "At most four local browser resources; close one before opening another"
+                        "At most four browser viewers; detach one first"
                     );
+                    let revision = view
+                        .snapshot
+                        .as_ref()
+                        .context("Refresh the voyage before opening its viewer")?
+                        .revision;
                     let handle = Handle::start(
                         self.clients[target.route].clone(),
                         target.session,
                         view.process.incarnation,
-                        format!("{} — {}", view.title(), self.route_label(target.route)),
+                        revision,
                     );
                     self.browsers.insert(target, handle);
                     self.browser_opened.remove(&target);
-                } else {
-                    let path = self.browsers[&target].state.borrow().launcher.clone();
-                    if let Some(path) = path {
-                        self.open_browser_launcher(path);
-                    }
                 }
                 self.show_browser_panel(target);
             }
             "status" => self.show_browser_panel(target),
-            "takeover" | "private" => {
+            "takeover" | "private" | "agent" | "close" => {
+                let control = match action {
+                    "takeover" => Control::Human,
+                    "private" => Control::Private,
+                    "agent" => Control::Agent,
+                    _ => Control::Close,
+                };
                 self.browsers
                     .get(&target)
-                    .context("Open this voyage's local browser first")?
-                    .control(if action == "private" {
-                        Control::Private
-                    } else {
-                        Control::Human
-                    })?;
-                self.status="Local browser takeover requested. Companion confirms when automation is fenced".into();
+                    .context("Open and connect this voyage's browser viewer first")?
+                    .control(control)?;
+                self.status = if action == "close" {
+                    "Remote browser close requested; Voyage continues independently"
+                } else {
+                    "Host browser control requested; remote status is authoritative"
+                }
+                .into();
             }
-            "reconcile" => {
-                ensure!(
-                    !self.browsers.get(&target).is_some_and(|h| !h.finished()),
-                    "Close the local browser before reconciling its retained cleanup"
-                );
-                let client = self.clients[target.route].clone();
-                let incarnation = self
-                    .views
-                    .get(&target)
-                    .context("Selected voyage unavailable")?
-                    .process
-                    .incarnation;
-                let sender = self.sender.clone();
-                self.browser_retired.push(tokio::spawn(async move {
-                    let result=crate::process_client::browser::reconcile(client,target.session,incarnation).await.map_err(|_|"Browser reconciliation refused or unavailable. Original evidence retained; no effects replayed".into());
-                    let completion=result.clone().map(|_|());
-                    let _=sender.send(Update::Browser {target,result}).await;
-                    completion
-                }));
-                self.status =
-                    "Reconciling observed local cleanup only; uncertain effects are not repeated"
-                        .into();
-            }
-            "close" => {
+            "detach" => {
                 if let Some(mut handle) = self.browsers.remove(&target) {
                     handle.stop();
                     self.browser_opened.remove(&target);
                     let sender = self.sender.clone();
                     self.browser_retired.push(tokio::spawn(async move {
-                        let result=handle.finish().await.map(|_|"Local browser closed; Voyage continues independently".to_owned())
-                            .map_err(|_|"Local browser cleanup or action outcome remains unresolved; retained receipts were not erased".to_owned());
-                        let completion=result.clone().map(|_|());
-                        let _=sender.send(Update::Browser {target,result}).await;
+                        let result = handle
+                            .finish()
+                            .await
+                            .map(|_| {
+                                "Viewer detached; host browser remains owned by Voyage".to_owned()
+                            })
+                            .map_err(|_| {
+                                "Viewer cleanup unresolved; effects were not replayed".to_owned()
+                            });
+                        let completion = result.clone().map(|_| ());
+                        let _ = sender.send(Update::Browser { target, result }).await;
                         completion
                     }));
                 }
-                self.status = "Closing this local browser. No Voyage cancellation was sent".into();
+                self.status =
+                    "Detaching viewer. No browser close or Voyage cancellation was sent".into();
             }
             _ => anyhow::bail!(
-                "Browser commands: /browser [open|status|takeover|private|close|reconcile]. Return to agent requires explicit review in the local companion"
+                "Browser commands: /browser [open|status|takeover|private|agent|close|detach]. Close is remote; detach leaves the host browser running"
             ),
         }
         Ok(())
@@ -118,20 +110,20 @@ impl App {
                 .as_ref()
                 .map(|p| {
                     format!(
-                        "\n\nLocal launcher (open manually if needed):\n{}",
+                        "\n\nOne-use local launcher (open manually if needed):\n{}",
                         safe(&p.display().to_string())
                     )
                 })
                 .unwrap_or_default();
             format!(
-                "# Local browser\n\n{}\n\nBrowser placement: this computer.\nVoyage: {}\nVessel: {}\n\nThe companion displays the same browser the agent uses. Review local origins, then explicitly Share / Return to agent. Page content can reach this Voyage and its model provider.\n\nF6 opens the companion. /browser takeover or /browser private fences local automation. /browser close closes the owned browser, not the Voyage.\n\nChanging voyages never redirects this browser. Reconnect requires explicit fresh sharing.{}",
+                "# Host browser\n\n{}\n\nBrowser placement: Voyage executing host.\nVoyage: {}\nVessel: {}\n\nF6 opens the shared viewer. Start/Connect, navigation, tabs, private/human/agent control and video are in the viewer.\n\n/browser detach closes only this viewer. /browser close explicitly closes the remote browser. Disconnecting Helm leaves the host browser running. Changing voyages never redirects this viewer. A stale socket refuses effects without replay.{}",
                 safe(&state.summary),
                 safe(&target.session.to_string()),
                 self.route_label(target.route),
                 launcher
             )
         } else {
-            "# Local browser\n\nNo local browser shared with this voyage. Press F6 or /browser open.\n\nFirst run `helm browser setup` locally. Browser sharing and return-to-agent require explicit local companion consent; provider credentials stay on the Voyage host.".into()
+            "# Host browser\n\nNo host browser viewer attached. Press F6 or /browser open. The browser runs on the Voyage host, not this computer. Opening a viewer does not grant agent control; review the explicit controls in the viewer.".into()
         };
         if let Some(view) = self.views.get_mut(&target) {
             view.panel = Some(text);
@@ -141,6 +133,14 @@ impl App {
     pub(super) fn poll_browsers(&mut self) {
         let targets = self.browsers.keys().copied().collect::<Vec<_>>();
         for target in targets {
+            if self.views.get(&target).is_none_or(|view| {
+                view.process.incarnation != self.browsers[&target].incarnation
+                    || view.deleted()
+                    || view.archived()
+            }) {
+                self.browsers[&target].stop();
+                continue;
+            }
             let launcher = self.browsers[&target].state.borrow().launcher.clone();
             if !self.browser_opened.contains(&target)
                 && let Some(path) = launcher
@@ -152,7 +152,7 @@ impl App {
                 .views
                 .get(&target)
                 .and_then(|v| v.panel.as_ref())
-                .is_some_and(|p| p.starts_with("# Local browser\n"))
+                .is_some_and(|p| p.starts_with("# Host browser\n"))
             {
                 let changed = self
                     .browsers
@@ -189,7 +189,7 @@ impl App {
         }
         ensure!(
             !failed,
-            "Local browser cleanup or effects remain unresolved; receipts retained"
+            "Host browser viewer cleanup remains unresolved; no effects replayed"
         );
         Ok(())
     }

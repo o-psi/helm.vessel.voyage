@@ -30,7 +30,7 @@ pub enum ConnectedCommand {
         #[command(subcommand)]
         command: super::inbox::InboxCommand,
     },
-    /// Open a locally controlled browser companion for this voyage; sharing requires local consent.
+    /// Open the shared viewer for this voyage’s executing-host browser.
     Browser {
         session: Uuid,
         /// Submit retained positive local cleanup evidence; never replay a browser effect.
@@ -232,7 +232,7 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
                     );
                     Ok(())
                 } else {
-                    super::browser::run_connected(clients[0].clone(), session).await
+                    super::host_browser::run_connected(clients[0].clone(), session).await
                 }
             }
             ConnectedCommand::Terminal {
