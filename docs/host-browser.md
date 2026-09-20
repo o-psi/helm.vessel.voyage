@@ -176,3 +176,11 @@ ignored. Corrected current-artifact report records lines 75.2771%, functions
 narrowed. JS/Python/browser journeys are separate evidence, not Rust coverage.
 Mixed shared-target report was retained; only all 16 current Cargo executables
 were used for the published summary, with no LLVM export diagnostics.
+
+Linux distribution verification used stripped **development** binaries (not an
+optimized release claim), packaged under ignored target with worker/dependency
+hash inventory. Namespace-isolated installer checks passed install, upgrade,
+status, executable hashes and worker/guardian/Playwright sidecar preservation;
+host services were untouched. The unstripped development package initially exceeded
+bootstrap size bounds and was refused; limits were not weakened. Hosted nightly
+optimized artifact inspection remains a separate delivery gate.
