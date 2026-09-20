@@ -22,7 +22,10 @@ export function publicAddress(ip) {
   if (net.isIP(ip) === 6) {
     // Only global unicast; mapped IPv4, local, transition, documentation ranges denied.
     const s = ip.toLowerCase();
-    return /^[23][0-9a-f]{3}:/.test(s) && !s.startsWith('2001:') && !s.startsWith('2002:') && !s.startsWith('3fff:');
+    const second=parseInt(s.split(':')[1]||'0',16);
+    // IANA special-use space is 2001::/23, not the entire public 2001::/16.
+    // Keep protocol assignments, documentation and transition ranges denied.
+    return /^[23][0-9a-f]{3}:/.test(s) && !(s.startsWith('2001:')&&(second<0x200||second===0xdb8)) && !s.startsWith('2002:') && !s.startsWith('3fff:');
   }
   if (net.isIP(ip) !== 4) return false;
   const [a,b,c] = ip.split('.').map(Number);

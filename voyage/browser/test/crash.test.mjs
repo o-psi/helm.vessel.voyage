@@ -102,7 +102,9 @@ for(const scenario of ['sigkill','hung-eof','hung-term','shutdown'])test(`actual
     // A dispatched external effect cannot be declared reconciled by killing PIDs.
     await fs.writeFile(path.join(home,'receipts',receiptName),receipt,{mode:0o600});
     before=await snapshot(token,known,tmp,home);
-    const browsers=before.processes.filter(p=>Array.isArray(p.cmd)&&p.cmd.some(a=>a.startsWith('--user-data-dir='))&&!p.cmd.some(a=>a.startsWith('--type=')));
+    // Chromium may rewrite its process title into one argv entry on this host.
+    // Ownership still comes from the observed descendant identities above.
+    const browsers=before.processes.filter(p=>Array.isArray(p.cmd)&&/(?:^|\s)--user-data-dir=/.test(p.cmd.join(' '))&&!/(?:^|\s)--type=/.test(p.cmd.join(' ')));
     assert.equal(browsers.length,2,'both task and encoder Chromium must actually be running');
     assert.ok(before.processes.some(p=>p.pgrp!==initial.pgrp),'must observe Chromium outside Node process group');
     const node=before.processes.find(p=>p.ppid===child.pid&&p.cmd.includes(worker));

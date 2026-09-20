@@ -163,7 +163,15 @@ impl Tool for HostBrowserTool {
             .0
             .agent(Uuid::new_v4(), request, context)
             .await
-            .map_err(failed)?;
+            .map_err(|error| {
+                if let Some(refusal) =
+                    error.downcast_ref::<crate::host_browser::BeforeEffectRefusal>()
+                {
+                    ToolError::Failed(refusal.to_string())
+                } else {
+                    failed(error)
+                }
+            })?;
         if bytes_output {
             let encoded = value["data_base64"]
                 .as_str()

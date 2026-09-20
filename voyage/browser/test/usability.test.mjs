@@ -66,3 +66,19 @@ test('human browser chrome exposes titles/history and preserves navigation fence
  await call('input',{viewer,seq:2,action:{kind:'history',direction:'forward'}});assert.equal(w.status().page.url,origin+'/two');
  await call('input',{viewer,seq:3,action:{kind:'history',direction:'reload'}});assert.equal(w.status().page.title,'Second page');
 });
+
+test('inspection labels visible controls and pre-effect refusal keeps browser usable',{timeout:30000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'browser-elements-'));const w=new Worker();
+ t.after(async()=>{await w.dispose();await fs.rm(root,{recursive:true,force:true});});
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[],ice_servers:[]}});await call('open');
+ await w.page.setContent('<input type="hidden" name="search"><label for="q">Search encyclopedia</label><input id="q" type="search"><button>Search</button><input style="visibility:hidden"><input disabled aria-label="disabled">');
+ let found=await call('agent',{action:{kind:'inspect'}});assert.equal(found.elements.length,3);
+ const input=found.elements.find(e=>e.type==='search');assert.equal(input.text,'Search encyclopedia');
+ await call('agent',{action:{kind:'fill',ref:input.ref,text:'Voyage'}});assert.equal(await w.page.locator('#q').inputValue(),'Voyage');
+ await w.page.locator('#q').evaluate(e=>e.hidden=true);
+ const id=randomUUID();const reply=await w.request({id,op:'agent',...w.status(),action:{kind:'fill',ref:input.ref,text:'must not appear'}});
+ assert.deepEqual(reply.error,{code:'element_hidden',state:'refused'});assert.equal(w.journal.records.get(id).state,'refused');
+ await w.page.locator('#q').evaluate(e=>e.hidden=false);found=await call('agent',{action:{kind:'inspect'}});
+ await call('agent',{action:{kind:'fill',ref:found.elements.find(e=>e.type==='search').ref,text:'Recovered'}});
+ assert.equal(await w.page.locator('#q').inputValue(),'Recovered');
+});

@@ -53,7 +53,8 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             else if(command.op==='accounts')result={accounts:[{id,connection_id:id,identity_generation:1,label:'Personal account',state:'ready',availability:'available'},{id:'alternate-account',connection_id:id,identity_generation:2,label:'Work account',state:'ready',availability:'available'},{id:'unavailable-account',connection_id:id,identity_generation:1,label:'Unavailable account',state:'ready',availability:'unavailable'}],connections:[{id,revision:1,transports:['openai_responses']}]};
             else {
                 let value;
-                if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
+                if(command.op==='host_browser')value={status:{available:false,running:false,binding:null}};
+                else if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='root_grant'?{kind:'root_grant',root_grant:{path:'/fixture/config',permission:'write',lifetime:'current_run',reason:'Configure Boost'}}:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
@@ -73,6 +74,14 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     try {
         assert.equal($('#cancel').hidden,true,'cancel is hidden before selection');
         mount(root);await until(()=>$('#voyages button'));$('#voyages button').click();await until(()=>!$('#send').disabled);
+        window.matchMedia=()=>({matches:false});
+        $('#host-browser-toggle').click();await until(()=>requests.some(c=>c.op==='host_browser'));
+        const oldSocket=sockets.at(-1),oldBrowserCalls=requests.filter(c=>c.op==='host_browser').length;
+        oldSocket.close();
+        await until(()=>sockets.at(-1)!==oldSocket&&requests.filter(c=>c.op==='host_browser').length>oldBrowserCalls);
+        assert.equal($('#host-browser-panel').hidden,false,'viewer remounts after socket replacement');
+        assert.equal(requests.filter(c=>c.op==='host_browser'&&c.operation.action==='input').length,0,'reconnect never replays input');
+        $('#host-browser-close').click();await until(()=>!$('#send').disabled);
         const observe = (options={}) => {
             const socket=sockets.at(-1); const previous=socket.subscription;
             cursor++;

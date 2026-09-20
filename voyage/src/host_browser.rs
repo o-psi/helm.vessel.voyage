@@ -23,6 +23,31 @@ const MAX_FRAME: usize = 4 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(25);
 type Pending = Arc<std::sync::Mutex<HashMap<Uuid, oneshot::Sender<Value>>>>;
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "Browser action refused before interaction ({0}); inspect the page for fresh visible elements"
+)]
+pub(crate) struct BeforeEffectRefusal(&'static str);
+
+fn worker_reply(reply: Value) -> Result<Value> {
+    if reply["ok"] == true {
+        return Ok(reply["result"].clone());
+    }
+    if reply["error"]["state"] == "refused" {
+        let code = match reply["error"]["code"].as_str() {
+            Some("stale_reference") => Some("stale_reference"),
+            Some("element_hidden") => Some("element_hidden"),
+            Some("element_disabled") => Some("element_disabled"),
+            Some("element_not_editable") => Some("element_not_editable"),
+            _ => None,
+        };
+        if let Some(code) = code {
+            return Err(BeforeEffectRefusal(code).into());
+        }
+    }
+    anyhow::bail!("browser operation refused or outcome unknown")
+}
+
 /// Loaded exclusively from executing-host configuration, never portable launch settings.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -352,13 +377,7 @@ impl Worker {
         let received = tokio::time::timeout(DEADLINE, rx).await;
         guard.complete = true;
         match received {
-            Ok(Ok(reply)) => {
-                ensure!(
-                    reply["ok"] == true,
-                    "browser operation refused or outcome unknown"
-                );
-                Ok(reply["result"].clone())
-            }
+            Ok(Ok(reply)) => worker_reply(reply),
             _ => {
                 self.failed.store(true, Ordering::Release);
                 anyhow::bail!("browser outcome unknown; never replay")
@@ -906,10 +925,20 @@ impl HostBrowser {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("browser not running"))?;
         let status = self.inner.lock().await.status.clone();
-        ensure!(
-            binding == self.binding(&status, binding.attachment_id)?,
-            "stale browser binding"
-        );
+        let mut media_binding = binding.clone();
+        let live_binding = self.binding(&status, binding.attachment_id)?;
+        // Navigation/resize may overlap media setup. They do not change viewer
+        // authority or the capture stream. Input retains every exact fence.
+        if matches!(
+            operation,
+            HostBrowserOperation::Attach { .. }
+                | HostBrowserOperation::Signal { .. }
+                | HostBrowserOperation::Detach { .. }
+        ) {
+            media_binding.document_epoch = live_binding.document_epoch;
+            media_binding.viewport_epoch = live_binding.viewport_epoch;
+        }
+        ensure!(media_binding == live_binding, "stale browser binding");
         let attach = matches!(operation, HostBrowserOperation::Attach { .. });
         let attachment = if attach {
             ensure!(
@@ -1194,15 +1223,25 @@ impl HostBrowser {
             id,
             self.session,
             Some(&digest),
-            Some(if result.is_ok() {
-                "completed"
-            } else {
-                "unknown"
-            }),
+            Some(
+                if result
+                    .as_ref()
+                    .is_err_and(|e| e.is::<BeforeEffectRefusal>())
+                {
+                    "refused"
+                } else if result.is_ok() {
+                    "completed"
+                } else {
+                    "unknown"
+                },
+            ),
         )?;
         let value = match result {
             Ok(value) => value,
             Err(error) => {
+                if error.is::<BeforeEffectRefusal>() {
+                    return Err(error);
+                }
                 worker.failed.store(true, Ordering::Release);
                 let _ = self.close().await;
                 return Err(error);
@@ -1261,6 +1300,30 @@ fn input_action(input: HostBrowserInput) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_proven_pre_effect_element_refusals_are_recoverable() {
+        for code in [
+            "stale_reference",
+            "element_hidden",
+            "element_disabled",
+            "element_not_editable",
+        ] {
+            let error = worker_reply(json!({"ok":false,"error":{"state":"refused","code":code}}))
+                .unwrap_err();
+            assert!(error.is::<BeforeEffectRefusal>());
+            for state in ["unknown", "dispatched", "completed"] {
+                let error = worker_reply(json!({"ok":false,"error":{"state":state,"code":code}}))
+                    .unwrap_err();
+                assert!(!error.is::<BeforeEffectRefusal>());
+            }
+        }
+        let error = worker_reply(
+            json!({"ok":false,"error":{"state":"refused","code":"arbitrary private text"}}),
+        )
+        .unwrap_err();
+        assert!(!error.is::<BeforeEffectRefusal>());
+        assert!(!error.to_string().contains("private text"));
+    }
     #[tokio::test]
     async fn unavailable_does_not_allocate() {
         let dir = tempfile::tempdir().unwrap();

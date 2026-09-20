@@ -7,6 +7,9 @@ import { Journal, UUID, privateDir } from './journal.mjs';
 import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
 import { encoderRuntime, LatestFrameQueue } from './encoder.mjs';
 
+class BeforeEffect extends Refusal {}
+const beforeEffect = code => { throw new BeforeEffect(code); };
+
 const MAX_TEXT=16384, MAX_BYTES=2*1024*1024;
 const text=(v,max=MAX_TEXT)=>{if(typeof v!=='string'||Buffer.byteLength(v)>max)refuse('invalid_text');return v;};
 const number=(v,min,max)=>{if(!Number.isInteger(v)||v<min||v>max)refuse('invalid_number');return v;};
@@ -20,7 +23,7 @@ export class Worker {
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;
   }
   status(){return {agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
-  exact(req){if(req.browser!==this.browser||digest(req.epochs)!==digest(this.epochs))refuse('stale_binding');}
+  exact(req){const epochs={...req.epochs};if(['join','offer','answer','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();}
   advance(...keys){for(const k of keys)this.epochs[k]++;this.invalidate();}
   checkAgent(){if(this.mode!=='agent')refuse('agent_fenced');}
@@ -52,7 +55,7 @@ export class Worker {
         this.admission=admit.catch(()=>{});await admit;
         return {id,ok:true,result:await scheduled};
       }finally{this.pending--;}
-    }catch(e){return {id:typeof id==='string'?id:null,ok:false,error:{code:e instanceof Refusal?e.code:'worker_error'}};}
+    }catch(e){return {id:typeof id==='string'?id:null,ok:false,error:{code:e instanceof Refusal?e.code:'worker_error',state:e.receiptState||'unknown'}};}
   }
   async init(config){
     if(!config||!path.isAbsolute(config.root||'')||!path.isAbsolute(config.executable||''))refuse('invalid_config');
@@ -85,7 +88,8 @@ export class Worker {
       await this.refreshMetadata();await this.finishReceipt(r,'completed');return {status:this.status(),value};
     }catch(e){
       const code=e instanceof Refusal?e.code:'outcome_unknown';
-      await this.finishReceipt(r,dispatched?'unknown':'refused',code);throw new Refusal(code);
+      const state=!dispatched||e instanceof BeforeEffect?'refused':'unknown';
+      await this.finishReceipt(r,state,code);const error=new Refusal(code);error.receiptState=state;throw error;
     }
   }
   async refreshMetadata(){
@@ -209,7 +213,7 @@ export class Worker {
     const effect=this.perform(action,stamp);this.effects.add(effect);void effect.finally(()=>this.effects.delete(effect)).catch(()=>{});
     try{const value=await bounded(Promise.race([effect,fenced]));this.guard(stamp);this.checkAgent();return value;}finally{this.fenceWaiters.delete(cancel);await effect.catch(()=>{});}
   }
-  async ref(id){text(id,128);const h=this.refs.get(id);if(!h)refuse('stale_reference');return h;}
+  async ref(id){text(id,128);const h=this.refs.get(id);if(!h)beforeEffect('stale_reference');return h;}
   async perform(a,stamp){
     if(!a||typeof a!=='object')refuse('invalid_action');const page=this.page,documentEpoch=this.epochs.document;
     const guard=()=>{this.guard(stamp);if(page!==this.page)refuse('tab_changed');if(documentEpoch!==this.epochs.document)refuse('document_changed');};
@@ -219,14 +223,29 @@ export class Worker {
         this.invalidate();
         const body=await page.locator('body').innerText({timeout:3000});guard();
         const handles=await page.$$('a,button,input,textarea,select,[role="button"],[contenteditable="true"]');guard();const elements=[];
-        for(const h of handles.slice(0,128)){const info=await h.evaluate(e=>({tag:e.tagName.toLowerCase(),text:(e.innerText||e.getAttribute('aria-label')||e.getAttribute('placeholder')||'').slice(0,256)}));guard();const ref=randomUUID();this.refs.set(ref,h);elements.push({ref,...info});}
-        for(const h of handles.slice(128))await h.dispose();return {text:body.slice(0,MAX_TEXT),elements,downloads:[...this.downloads.keys()]};
+        for(const h of handles){
+          if(elements.length>=128){await h.dispose();continue;}
+          const info=await h.evaluate(e=>{
+            const style=getComputedStyle(e),rect=e.getBoundingClientRect();
+            if(e.type==='hidden'||!rect.width||!rect.height||style.visibility==='hidden'||style.visibility==='collapse'||e.closest('[inert]'))return null;
+            const label=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
+            return {tag:e.tagName.toLowerCase(),type:e.getAttribute('type')||null,
+              text:(e.getAttribute('aria-label')||label||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||'').slice(0,256),
+              disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true};
+          });guard();
+          if(!info){await h.dispose();continue;}const ref=randomUUID();this.refs.set(ref,h);elements.push({ref,...info});
+        }
+        return {text:body.slice(0,MAX_TEXT),elements,downloads:[...this.downloads.keys()]};
       }
       case 'click':case 'fill':{
-        const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box)refuse('element_hidden');
+        const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
+        if(!await h.isEnabled())beforeEffect('element_disabled');guard();
+        if(a.kind==='fill'&&!await h.isEditable())beforeEffect('element_not_editable');guard();
         if(a.kind==='fill')text(a.text);
         this.agentCursor={x:box.x+box.width/2,y:box.y+box.height/2,width:this.config.width,height:this.config.height,at:Date.now()};
-        await page.mouse.click(box.x+box.width/2,box.y+box.height/2,{timeout:3000});guard();
+        await page.mouse.click(box.x+box.width/2,box.y+box.height/2,{timeout:3000});
+        if(a.kind==='click'){this.guard(stamp);if(page!==this.page)refuse('tab_changed');return null;}
+        guard();
         if(a.kind==='fill'){await page.keyboard.press('ControlOrMeta+A');guard();await page.keyboard.insertText(a.text);}return null;
       }
       case 'scroll':await page.mouse.wheel(number(a.x,-16384,16384),number(a.y,-16384,16384));return null;

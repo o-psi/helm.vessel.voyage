@@ -22,7 +22,7 @@ export class BrowserSession {
     }
     notify(message) { if (message) this.message = message; this.changed(this); }
     clearVideo() {
-        this.generation++; this.queue = []; clearTimeout(this.mediaTimer);
+        this.generation++; this.queue = []; clearTimeout(this.mediaTimer); this.stopVideoReadiness?.(); this.stopVideoReadiness = null;
         const pc = this.pc; this.pc = null;
         if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
         if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
@@ -106,7 +106,18 @@ export class BrowserSession {
         pc.ontrack = event => {
             if (!current() || pc !== this.pc) { event.track.stop(); return; }
             const stream = event.streams[0] || new MediaStream([event.track]);
-            clearTimeout(this.mediaTimer); this.video.srcObject = stream; this.streaming = true;
+            this.video.srcObject = stream;
+            // ontrack precedes ICE/media delivery. Only decoded pixels establish
+            // readiness; otherwise keep the bounded no-video deadline running.
+            const ready = () => {
+                if (!current() || pc !== this.pc || this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
+                clearTimeout(this.mediaTimer); this.streaming = true;
+                this.stopVideoReadiness?.(); this.stopVideoReadiness = null; this.notify();
+            };
+            this.video.addEventListener('loadeddata', ready);
+            this.video.addEventListener('resize', ready);
+            this.stopVideoReadiness = () => { this.video.removeEventListener('loadeddata', ready); this.video.removeEventListener('resize', ready); };
+            ready();
             this.video.play()?.catch(() => { if (current()) this.disconnect('Video playback was blocked. Retry connection to resume.'); });
             this.notify();
         };

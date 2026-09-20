@@ -10,10 +10,10 @@ import {Worker} from '../worker.mjs';
 import {publicAddress} from '../security.mjs';
 const executable=process.env.CHROMIUM||'/usr/bin/chromium';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-test('address classification',()=>{for(const ip of ['127.0.0.1','::1','::ffff:127.0.0.1','10.1.2.3','169.254.169.254','100.64.0.1','192.168.1.1'])assert.equal(publicAddress(ip),false);assert.equal(publicAddress('8.8.8.8'),true);});
+test('address classification',()=>{for(const ip of ['127.0.0.1','::1','::ffff:127.0.0.1','10.1.2.3','169.254.169.254','100.64.0.1','192.168.1.1','2001::1','2001:01ff::1','2001:0db8::1','2002:0808:0808::1','3fff::1'])assert.equal(publicAddress(ip),false);for(const ip of ['8.8.8.8','2001:500:88:200::8','2001:0200::1','2606:4700:4700::1111'])assert.equal(publicAddress(ip),true);});
 test('sandboxed worker, decoded media, interruption, fences and receipts',{timeout:90000},async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker333-'));const w=new Worker();let receiver;
- const sockets=new Set();const server=http.createServer((req,res)=>{if(req.url==='/blocked')return;res.setHeader('Content-Type','text/html');res.end(`<body style="background:#159;color:white"><h1>Synthetic worker</h1><input aria-label="entry"><button onclick="document.querySelector('h1').textContent='clicked'">Click</button><button onclick="alert('synthetic dialog')">Dialog</button><canvas width="320" height="160"></canvas><script>let i=0;setInterval(()=>{let c=document.querySelector('canvas').getContext('2d');c.fillStyle=i++%2?'red':'blue';c.fillRect(0,0,320,160)},50)</script></body>`);});
+ const sockets=new Set();const server=http.createServer((req,res)=>{if(req.url==='/blocked')return;res.setHeader('Content-Type','text/html');res.end(`<body style="background:#159;color:white"><h1>Synthetic worker</h1><input aria-label="entry"><button onclick="document.querySelector('h1').textContent='clicked'">Click</button><button onclick="alert('synthetic dialog')">Dialog</button><canvas width="320" height="160"></canvas></body>`);});
  server.on('connection',s=>{sockets.add(s);s.on('close',()=>sockets.delete(s));});await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
  t.after(async()=>{await receiver?.close();await w.dispose();for(const s of sockets)s.destroy();await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});});
  const call=async(op,args={})=>{const result=await w.request({id:randomUUID(),op,...w.status(),...args});assert.equal(result.ok,true,JSON.stringify(result));return result.result;};
@@ -25,9 +25,11 @@ test('sandboxed worker, decoded media, interruption, fences and receipts',{timeo
  const sandbox=await w.task.newPage();await sandbox.goto('chrome://sandbox');const sandboxText=await sandbox.locator('body').innerText();assert.match(sandboxText,/Seccomp-BPF sandbox\s+Yes/);await sandbox.close();
  const viewer=randomUUID(),other=randomUUID();await call('join',{viewer});await call('join',{viewer:other});
  receiver=await chromium.launch({executablePath:executable,headless:true,chromiumSandbox:true,args:['--disable-features=WebRtcHideLocalIpsWithMdns','--disable-background-networking','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1']});const rp=await receiver.newPage();
- const offer=(await call('offer',{viewer,signal_seq:1})).value;
+ const priorDocument={...w.epochs};await call('agent',{action:{kind:'navigate',url:origin+'/next'}});
+ const offer=(await call('offer',{viewer,signal_seq:1,epochs:priorDocument})).value;
  const answer=await rp.evaluate(async offer=>{const pc=globalThis.pc=new RTCPeerConnection({iceServers:[]});const video=document.createElement('video');video.autoplay=true;video.muted=true;document.body.append(video);pc.ontrack=e=>{video.srcObject=e.streams[0];void video.play();};await pc.setRemoteDescription(offer);await pc.setLocalDescription(await pc.createAnswer());await new Promise(r=>{if(pc.iceGatheringState==='complete')return r();pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete')r();};});return {type:pc.localDescription.type,sdp:pc.localDescription.sdp};},offer);
- await call('answer',{viewer,signal_seq:2,description:answer});
+ // Delay answer beyond initial static screencast frames: every new viewer still needs pixels.
+ await sleep(700);await call('answer',{viewer,signal_seq:2,description:answer});
  let decoded=0;for(let i=0;i<60;i++){decoded=await rp.evaluate(async()=>{let n=0;for(const s of (await pc.getStats()).values())if(s.type==='inbound-rtp')n+=s.framesDecoded||0;return n;});if(decoded>5)break;await sleep(100);}assert.ok(decoded>5,`decoded ${decoded}`);console.log('decoded frames',decoded);
  const rp2=await receiver.newPage();
  const offer2=(await call('offer',{viewer:other,signal_seq:1})).value;

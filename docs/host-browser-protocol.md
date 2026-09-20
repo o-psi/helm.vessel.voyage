@@ -62,7 +62,10 @@ viewport_epoch: u64, controller_epoch: u64, capture_epoch: u64 }`.
 All UUIDs non-nil for operations and all epochs > 0. Status may expose an unbound
 binding with nil attachment_id; replace it with a fresh ID when attaching. Runtime
 must validate exact live browser, tab/document/viewport/controller/capture fences,
-principal and socket before effects (including signaling), not just structure.
+principal and socket before page input. Attach, detach and signaling retain exact
+browser/tab/controller/capture, principal and socket bindings, but tolerate a
+new document or viewport on that same capture stream. This permits navigation to
+overlap media negotiation without retargeting queued input.
 
 `HostBrowserSignal` (`type` tag, strict):
 - `RequestOffer` (`request_offer`): worker creates offer.

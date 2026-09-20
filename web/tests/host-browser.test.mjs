@@ -7,7 +7,7 @@ const binding = {incarnation:'inc',browser_id:'browser',attachment_id:'viewer',t
 const status = (changes = {}) => ({available:true,running:true,binding:{...binding},mode:'human',controller:'viewer',tabs:['tab'],...changes});
 const tick = () => new Promise(resolve => setTimeout(resolve,0));
 function fixture(transport) {
-    const sent = [], peers = [], video = {srcObject:null,play:() => Promise.resolve()};
+    const sent = [], peers = [], video = {srcObject:null,readyState:2,videoWidth:640,videoHeight:480,addEventListener(){},removeEventListener(){},play:() => Promise.resolve()};
     const peer = () => {
         const pc = {iceGatheringState:'complete',connectionState:'new',close(){this.closed=true;},async setRemoteDescription(value){this.remote=value;},async createAnswer(){return {type:'answer',sdp:'answer'};},async setLocalDescription(value){this.localDescription=value;}};
         peers.push(pc); return pc;
@@ -304,4 +304,12 @@ test('stale conversation independently reads browser owner before attaching',asy
  const adapter=hostBrowserAdapter({client,sessionId:'s',incarnation:'old',context:()=>({revision:2,refresh:true})});
  await adapter.transport({action:'status'});
  assert.equal(sent[0].op,'snapshot');assert.equal(sent[1].incarnation,'fresh');assert.equal(adapter.context().revision,8);
+});
+
+test('track without decoded pixels retains deadline and disables interaction',async()=>{
+    const {session,peers,video}=fixture();session.timeout=30;video.readyState=0;video.videoWidth=video.videoHeight=0;
+    await session.connect();peers[0].ontrack({streams:[{getTracks:()=>[]}],track:{stop(){}}});
+    assert.equal(session.streaming,false);assert.equal(session.input({type:'text',text:'not sent'}),false);
+    await new Promise(resolve=>setTimeout(resolve,45));
+    assert.equal(session.attached,false);assert.match(session.message,/Live video did not arrive/);session.dispose();
 });

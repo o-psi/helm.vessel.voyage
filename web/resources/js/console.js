@@ -75,8 +75,9 @@ export function mount(root) {
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     let composition, newChatSending = false;
-    let browserViewer = null, browserBackground = [];
-    function closeBrowser() {
+    let browserViewer = null, browserBackground = [], browserRequested = false;
+    function closeBrowser({reconnect=false}={}) {
+        if (!reconnect) browserRequested = false;
         const hadFocus = $('host-browser-panel').contains(document.activeElement);
         browserViewer?.dispose(); browserViewer = null;
         browserBackground.forEach(([node,previous])=>node.inert=previous);browserBackground=[];
@@ -96,9 +97,9 @@ export function mount(root) {
         if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last?.focus(); }
         else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first?.focus(); }
     });
-    $('host-browser-toggle').addEventListener('click', () => {
-        if (browserViewer) { closeBrowser(); return; }
-        if (!client || !selected || !incarnation || !snapshot || stale) return;
+    function openBrowser() {
+        if (!client || !selected) return;
+        browserRequested = true;
         const browserIncarnation = incarnation, browserSession = selected, browserVessel = selectedVessel;
         $('host-browser-panel').hidden = false;
         $('host-browser-toggle').setAttribute('aria-expanded', 'true');
@@ -107,8 +108,11 @@ export function mount(root) {
         if(window.matchMedia('(max-width: 1000px)').matches){browserBackground=[$('conversation'),$('composer'),$('decisions')].filter(Boolean).map(node=>[node,node.inert]);browserBackground.forEach(([node])=>node.inert=true);$('host-browser-panel').setAttribute('role','dialog');$('host-browser-panel').setAttribute('aria-modal','true');}
         browserViewer = mountHostBrowser($('host-browser-content'), {
             client, sessionId:selected, incarnation,
-            context:() => ({incarnation:browserIncarnation, revision:snapshot.revision}), onClose:closeBrowser, externalClose:true, onCapture:async file=>{if(selected!==browserSession||selectedVessel!==browserVessel||incarnation!==browserIncarnation)throw Error("Voyage changed; capture not attached");if(!await composition.attach([file],()=>selected===browserSession&&selectedVessel===browserVessel&&incarnation===browserIncarnation))throw Error("Capture not attached");},
+            context:() => ({incarnation:browserIncarnation, revision:snapshot?.revision, refresh:true}), onClose:closeBrowser, externalClose:true, onCapture:async file=>{if(selected!==browserSession||selectedVessel!==browserVessel||incarnation!==browserIncarnation)throw Error("Voyage changed; capture not attached");if(!await composition.attach([file],()=>selected===browserSession&&selectedVessel===browserVessel&&incarnation===browserIncarnation))throw Error("Capture not attached");},
         });
+    }
+    $('host-browser-toggle').addEventListener('click', () => {
+        if (browserRequested) closeBrowser(); else openBrowser();
     });
     const admittedDrafts = new Map();
     const sentDraft = command_id => admittedDrafts.get(command_id);
@@ -143,7 +147,7 @@ export function mount(root) {
     function controls() {
         try {
             const enabled = actionable();
-            $('host-browser-toggle').disabled = !client || !selected || !incarnation || !snapshot || stale;
+            $('host-browser-toggle').disabled = !client || !selected;
             const browserName = name => typeof name === 'string' && /^(?:functions\.)?host_browser$/.test(name);
             const activity = messages.some(message => (message.tool_calls || []).some(call => browserName(call.name ?? call.function?.name)) || (['tool', 'function'].includes(message.role) && browserName(message.name))) || (snapshot?.run?.tool_previews || []).some(call => browserName(call.name));
             $('host-browser-activity').hidden = !activity;
@@ -185,7 +189,7 @@ export function mount(root) {
     function connectionsChanged() {
         const connection = fleet.connections.get(selectedVessel);
         if (client !== connection?.client) {
-            closeBrowser();
+            closeBrowser({reconnect:true});
             stopStream(); generation++; client = connection?.client; journal = connection?.journal;
             stale = true; refreshing = false;
         }
@@ -201,6 +205,7 @@ export function mount(root) {
         else if (!client) state(`${connection?.name || 'Vessel'} · ${connection?.status || 'Unavailable'}`);
         else if (stale) state('Loading voyage…');
         renderVoyages(); controls(); settings?.renderPending();
+        if (browserRequested && client && selected && !browserViewer) openBrowser();
         if (selected && client && stale) refresh();
     }
     const sidebar = sidebarActions(root, {changed: () => { voyageFingerprint = null; fleet.poll(); refresh(); }});

@@ -130,3 +130,17 @@ eight-second process deadline. A deadline exit is unresolved cleanup, not proof
 of descendant termination; supervisor process-tree containment remains required.
 Queued shutdown arriving with EOF may return parent_disconnected rather than a
 success receipt; orderly callers wait for the shutdown reply before closing stdin.
+
+Element preflight refusal responses carry `error.state = refused` and a bounded
+code; only stale references, hidden/disabled controls and noneditable fill targets
+are recoverable by the parent without closing the worker. The worker records the
+refusal before returning it. Other errors remain unknown, including failures after
+a click or text effect. Inspect returns visible controls with labels/type metadata.
+
+Join/offer/answer/disconnect allow document/viewport changes on the same tab and
+capture/controller epochs; page input still checks every epoch. The encoder
+refreshes current pixels for connected receivers, including static pages, and
+clears them during privacy reset. Public IPv6 classification excludes IANA
+2001::/23 protocol assignments and 2001:db8::/32 documentation space rather than
+the entire 2001::/16. Mixed public/private DNS answers remain refused. See the
+[IANA special-purpose registry](https://www.iana.org/assignments/iana-ipv6-special-registry).

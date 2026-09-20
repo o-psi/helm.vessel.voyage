@@ -236,3 +236,31 @@ coverage is 74.4258% lines / 71.0456% functions / 71.0895% regions, down about
 narrowed; only 60 net counted lines were added, so differing executed paths also
 contribute and the decline is not attributed solely to new code. All 16 current
 Cargo executable objects were selected; corrected export had no diagnostics.
+
+### Live acceptance corrections
+
+Inspection exposes visible controls with input types and associated labels. A
+hidden, disabled, noneditable or stale element can be refused before any page
+interaction; its durable receipt explicitly says `refused`. Only these typed,
+proven pre-effect refusals preserve the browser for fresh inspection. Unknown
+effects still fence the runtime and must never be replayed automatically.
+
+Media readiness requires decoded pixels, not merely a negotiated track. The
+encoder refreshes its current canvas only while a receiver is connected, so
+static pages remain available after negotiation; privacy reset clears that canvas
+and closes old peers. A bounded missing-frame deadline exposes a viewer failure.
+
+The legacy Web console also preserves an open viewer through authenticated socket
+renewal and fetches its own current snapshot. It never replays browser input.
+Media signaling may span document/viewport changes; browser, tab, control and
+capture identity remain exact, and input keeps all epoch fences.
+
+Local verification for this correction: 1,737 workspace Rust tests passed, two
+ignored; corrected current-object coverage is 75.4265% lines, 72.1998% functions
+and 72.0574% regions. The browser worker suite passed 18 tests, with the TURN case
+skipped because coturn was unavailable. Both static-page viewers decoded repeated
+frames; all four crash scenarios observed descendant cleanup. Web checks passed
+110 JavaScript and 31 React tests, type checking and bundle generation. The real
+supervised Linux journey passed both mounted/native viewers, private control,
+suspended native/Web owner preparation, reconnect and observed cleanup. These are
+local checks; the deployed public-site acceptance record is maintained in #333.
