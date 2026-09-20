@@ -40,6 +40,7 @@ fn worker_reply(reply: Value) -> Result<Value> {
             Some("element_disabled") => Some("element_disabled"),
             Some("element_not_editable") => Some("element_not_editable"),
             Some("element_obscured") => Some("element_obscured"),
+            Some("observation_unavailable") => Some("observation_unavailable"),
             _ => None,
         };
         if let Some(code) = code {
@@ -1302,13 +1303,14 @@ fn input_action(input: HostBrowserInput) -> Result<Value> {
 mod tests {
     use super::*;
     #[test]
-    fn only_proven_pre_effect_element_refusals_are_recoverable() {
+    fn only_proven_effect_free_refusals_are_recoverable() {
         for code in [
             "stale_reference",
             "element_hidden",
             "element_disabled",
             "element_not_editable",
             "element_obscured",
+            "observation_unavailable",
         ] {
             let error = worker_reply(json!({"ok":false,"error":{"state":"refused","code":code}}))
                 .unwrap_err();

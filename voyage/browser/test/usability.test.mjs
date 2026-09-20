@@ -90,3 +90,20 @@ test('inspection labels visible controls and pre-effect refusal keeps browser us
  const compact=await call('agent',{action:{kind:'screenshot',max_bytes:Math.floor(fullBytes*.9)}});assert.ok(Buffer.from(compact.data_base64,'base64').length<fullBytes*.9);
 
 });
+
+test('inspection during a slow navigation preserves the page and can be retried',{timeout:30000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'browser-observation-'));const w=new Worker();const sockets=new Set();let response;
+ const server=http.createServer((req,res)=>{response=res;res.setHeader('Content-Type','text/html');res.write('<html><head><title>Observed destination</title>');});
+ server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
+ t.after(async()=>{await w.dispose();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));await fs.rm(root,{recursive:true,force:true});});
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],ice_servers:[]}});await call('open');
+ await w.page.goto(origin+'/destination',{waitUntil:'commit'});const page=w.page,browser=w.browser;
+ const id=randomUUID();const refused=await w.request({id,op:'agent',...w.status(),action:{kind:'inspect'}});
+ assert.deepEqual(refused.error,{code:'observation_unavailable',state:'refused'});assert.equal(w.journal.records.get(id).state,'refused');assert.equal(w.page,page);assert.equal(w.browser,browser);assert.equal(w.page.isClosed(),false);assert.equal(w.refs.size,0);
+ response.end('</head><body><h1>Search result</h1><input aria-label="query"></body></html>');await page.waitForLoadState('domcontentloaded');
+ const observed=await call('agent',{action:{kind:'inspect'}});assert.equal(observed.document.url,origin+'/destination');assert.equal(observed.document.title,'Observed destination');assert.match(observed.text,/Search result/);
+ await call('agent',{action:{kind:'fill',ref:observed.elements[0].ref,text:'Still usable'}});assert.equal(await page.locator('input').inputValue(),'Still usable');
+ const viewer=randomUUID();await call('join',{viewer});await call('control',{viewer,mode:'private'});
+ const fenced=await w.request({id:randomUUID(),op:'agent',...w.status(),action:{kind:'inspect'}});assert.equal(fenced.error.code,'agent_fenced');assert.equal(fenced.result,undefined);
+});

@@ -160,3 +160,11 @@ images too large even at the lowest quality.
 The encoder marks webpage content as detailed video and prefers preserving
 resolution over frame rate under bandwidth pressure. Pointer mapping still uses
 the authoritative CSS viewport and remains correct if a receiver adapts frames.
+## Read-only observation failures
+
+`inspect` includes `document.url` (without URL credentials) and `document.title`
+before its larger control list in JSON previews. Inspection and screenshot errors with unchanged agent authority return
+`observation_unavailable` / `refused`, withholding partial output and discarding
+references while preserving the browser. This class does not apply to navigation,
+clicks, fills, uploads, downloads or control/privacy fencing. Callers may issue a
+new observation; they must not replay a prior external effect to recover a read.

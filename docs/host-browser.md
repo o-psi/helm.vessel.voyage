@@ -281,3 +281,11 @@ same exclusions). The complete Web suite and 18 worker checks passed (one TURN
 check unavailable). The supervised native/Web journey again passed with decoded
 media, private input, suspension/resume and observed cleanup. Actual public-site
 results and installed build identity remain in issue #333's acceptance record.
+## Observation recovery
+
+Inspection returns the observed URL and document title with its page text and
+element references. If inspection or screenshot capture fails while a page is
+loading, an `observation_unavailable` refusal discards partial observations and
+keeps the browser open. The agent may retry the read without repeating a click or
+form submission. Control/privacy fences and uncertain external effects retain
+their existing handling.

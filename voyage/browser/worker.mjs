@@ -211,7 +211,13 @@ export class Worker {
   async agent(action){
     this.requireOpen();this.checkAgent();const stamp=this.epochs.control;
     let cancel;const fenced=new Promise((_,reject)=>{cancel=()=>reject(new Refusal('control_fenced'));this.fenceWaiters.add(cancel);});
-    const effect=this.perform(action,stamp);this.effects.add(effect);void effect.finally(()=>this.effects.delete(effect)).catch(()=>{});
+    const effect=this.perform(action,stamp).catch(error=>{
+      if(!['inspect','screenshot'].includes(action?.kind))throw error;
+      // A failed read has no external effect to replay. Keep authority fences
+      // strict, discard partial references, and let the caller observe again.
+      this.guard(stamp);this.checkAgent();this.requireOpen();this.invalidate();
+      beforeEffect('observation_unavailable');
+    });this.effects.add(effect);void effect.finally(()=>this.effects.delete(effect)).catch(()=>{});
     try{const value=await bounded(Promise.race([effect,fenced]));this.guard(stamp);this.checkAgent();return value;}finally{this.fenceWaiters.delete(cancel);await effect.catch(()=>{});}
   }
   async ref(id){text(id,128);const h=this.refs.get(id);if(!h)beforeEffect('stale_reference');return h;}
@@ -236,7 +242,11 @@ export class Worker {
           });guard();
           if(!info){await h.dispose();continue;}const ref=randomUUID();this.refs.set(ref,h);elements.push({ref,...info});
         }
-        return {text:body.slice(0,MAX_TEXT),elements,downloads:[...this.downloads.keys()]};
+        const title=(await page.title()).slice(0,256);guard();
+        const location=new URL(page.url());location.username='';location.password='';
+        // Document identity sorts before large control lists in Rust's JSON
+        // projection, so bounded model previews retain the navigation result.
+        return {document:{url:location.href.slice(0,8192),title},text:body.slice(0,MAX_TEXT),elements,downloads:[...this.downloads.keys()]};
       }
       case 'click':case 'fill':{
         const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
