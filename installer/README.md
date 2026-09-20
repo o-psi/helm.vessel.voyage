@@ -132,6 +132,26 @@ VOYAGE_VERSION=v0.1.0 sh install.sh upgrade --start
 VOYAGE_RELEASE_DIR=/absolute/extracted-release sh install.sh install --start
 ```
 
+With **no arguments**, the shell bootstrap selects `install --start`, including
+when piped to `sh`; it does not open the wizard. Explicit arguments are preserved:
+use `sh install.sh install --no-start` to leave an inactive service inactive, or
+`sh install.sh install --dry-run` to validate without publication. Run the bundled
+`voyage-installer` with no arguments for the interactive review/apply/cancel wizard.
+
+Before installation, the bootstrap rejects root, requires Python 3.11+ and checks
+that the systemd user manager responds within ten seconds. Published downloads
+additionally require curl, Linux x86-64 and glibc 2.39+ (not musl/Alpine). Trusted
+local source overrides may use another libc baseline or Linux ARM64. The release
+endpoint remains `o-psi/voyage`, which GitHub currently redirects to
+`o-psi/helm.vessel.voyage`; changing a documentation URL does not change acquisition.
+
+After successful explicit installation (not dry-run), the bootstrap prints:
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+cd /path/to/your/project && helm
+```
+Replace the project placeholder; no shell startup file is modified.
+
 The version above is an example, not a claim that it is published. Download setup
 requires published GitHub release assets, `curl` and Python 3.11 or later. Local
 release setup works before publication. Checksums establish integrity against the

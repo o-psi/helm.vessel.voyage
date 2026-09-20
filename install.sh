@@ -7,11 +7,14 @@ case "$(uname -s)/$(uname -m)" in
     Linux/aarch64|Linux/arm64) target=aarch64-unknown-linux-gnu ;;
     *) fail 'installation currently supports Linux with a systemd user manager only.' ;;
 esac
+# The bootstrap defaults to unattended installation; Rust retains its wizard.
+[ "$#" -ne 0 ] || set -- install --start
 wizard=1
 local_source=0
 dev=0
 rollback=0
 source_free=0
+dry_run=0
 expect_bin=0
 for argument in "$@"; do
     if [ "$expect_bin" -eq 1 ]; then
@@ -25,12 +28,40 @@ for argument in "$@"; do
         --help|-h|--version|status|service-status|service-stop|service-uninstall) wizard=0; source_free=1 ;;
         install-user-service) wizard=0; source_free=1 ;;
         --dev) dev=1 ;;
+        --dry-run) dry_run=1 ;;
     esac
 done
 [ "$dev/$local_source" != 1/1 ] || fail "--dev conflicts with --bin-dir."
 if [ "$wizard" -eq 1 ] && ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
     fail 'the wizard needs an interactive terminal; use install --dry-run or install --start for explicit command-line installation.'
 fi
+preflight() {
+    [ "$(id -u)" -ne 0 ] || fail 'run as your ordinary user, not root or sudo.'
+    command -v python3 >/dev/null 2>&1 || fail 'required utility missing: python3 (3.11 or newer).'
+    python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || fail 'Python 3.11 or newer is required.'
+    command -v systemctl >/dev/null 2>&1 || fail 'systemctl is required; use a Linux system with a systemd user manager.'
+    python3 - <<'PYTHON'
+import subprocess
+try:
+    result = subprocess.run(['systemctl', '--user', 'show-environment'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            timeout=10)
+except (OSError, subprocess.TimeoutExpired):
+    raise SystemExit('Voyage installer: cannot reach the systemd user manager within 10 seconds.')
+if result.returncode:
+    raise SystemExit('Voyage installer: no reachable systemd user manager; run from a normal user login session (not sudo).')
+PYTHON
+}
+# Informational/local maintenance commands retain the installer's own checks.
+[ "$source_free" -eq 1 ] || preflight
+next_steps() {
+    [ "$source_free/$dry_run/$wizard" = 0/0/0 ] || return 0
+    printf '\nNext steps (shell startup files were not changed):\n'
+    printf '  export PATH="$HOME/.local/bin:$PATH"\n'
+    printf '  cd /path/to/your/project && helm\n'
+    printf 'Replace /path/to/your/project with your project directory.\n'
+    printf 'If Helm is already running, close and relaunch it.\n'
+}
 launch() {
     if [ "$wizard" -eq 1 ]; then
         "$@" </dev/tty >/dev/tty 2>/dev/tty
@@ -53,17 +84,32 @@ if [ -n "${VOYAGE_RELEASE_DIR:-}" ]; then
     case "$VOYAGE_RELEASE_DIR" in /*) release_dir=$VOYAGE_RELEASE_DIR ;; *) release_dir="$PWD/$VOYAGE_RELEASE_DIR" ;; esac
     [ ! -d "$release_dir/bin" ] || release_dir="$release_dir/bin"
     launch_local "$release_dir/voyage-installer" "$release_dir" "$@"
-    exit "$?"
+    next_steps
+    exit 0
 fi
 if [ -n "${VOYAGE_INSTALLER_BIN:-}" ]; then
     case "$VOYAGE_INSTALLER_BIN" in /*) installer=$VOYAGE_INSTALLER_BIN ;; *) installer="$PWD/$VOYAGE_INSTALLER_BIN" ;; esac
     [ -f "$installer" ] && [ -x "$installer" ] || fail 'VOYAGE_INSTALLER_BIN must name an executable file.'
     launch_local "$installer" "$(dirname -- "$installer")" "$@"
-    exit "$?"
+    next_steps
+    exit 0
 fi
 for utility in curl python3; do
     command -v "$utility" >/dev/null 2>&1 || fail "required utility missing: $utility"
 done
+# Published GNU binaries require glibc 2.39+. Trusted local builds above
+# may use a different baseline and are checked by their own installer.
+python3 - <<'PYTHON'
+import os
+try:
+    name, version = os.confstr('CS_GNU_LIBC_VERSION').split()
+    supported = name == 'glibc' and tuple(map(int, version.split('.'))) >= (2, 39)
+except (AttributeError, OSError, TypeError, ValueError):
+    supported = False
+if not supported:
+    raise SystemExit('Voyage installer: published binaries require glibc 2.39 or newer; musl/Alpine is not supported. Use a compatible Linux host or an explicit local build.')
+PYTHON
+[ "$target" = x86_64-unknown-linux-gnu ] || fail 'published releases currently support Linux x86_64 only; use VOYAGE_RELEASE_DIR for a trusted local ARM64 build.'
 fetch() {
     curl --disable --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
         --connect-timeout 10 --max-time 300 --max-filesize "${3:-536870912}" --output "$2" "$1"
@@ -159,3 +205,4 @@ for name in names:
         raise SystemExit(f'Release binary checksum mismatch: {name}')
 PY
 launch_local "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$tmp/${asset%.tar.gz}/bin" "$@"
+next_steps

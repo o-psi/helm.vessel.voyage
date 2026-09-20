@@ -303,3 +303,12 @@ cargo test -p voyage -p voyage-protocol -p vessel -p helm --locked root_ -j 8
 The Linux sandbox case launches bubblewrap and requires working user namespaces;
 setup failure is a failing check, never an unsandboxed fallback. This does not
 exercise live provider billing or certify native macOS/Windows behavior.
+
+## Bootstrap-only checks
+
+Run `python3 packaging/test_bootstrap.py -v` for offline bootstrap regressions,
+including POSIX shell syntax, no-argument defaults, explicit argument forwarding,
+preflight refusals and success-only guidance. These use fake installer/systemctl
+executables: they do not establish real service activation or hosted downloads.
+See the [installer guide](../installer/README.md)
+for bootstrap prerequisites and the distinction from the Rust wizard.
