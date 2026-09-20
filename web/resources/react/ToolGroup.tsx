@@ -25,7 +25,7 @@ function Entry({entry,running,messageStart,decisions,renderMessage}:{entry:ToolE
     const status=actionStatus(entry.call||{},entry.result,active,decisions);
     const label=[status,actionDuration(entry.result),entry.call?actionDescription(entry.call):entry.result?.name||'Tool result'].filter(Boolean).join(' · ');
     const args=entry.call?.function?.arguments??entry.call?.arguments;
-    return <details className="tool-entry" open={open} onToggle={event=>setOpen(event.currentTarget.open)} data-tool-id={entry.key}><summary>{label}</summary>{open&&<div className="tool-body">{args!=null&&<pre>{typeof args==='string'?args:JSON.stringify(args,null,2)}</pre>}{entry.request?.projection_truncated&&renderMessage({...entry.request,content:'',parts:[],tool_calls:[]})}{entry.result&&renderMessage(entry.result)}</div>}</details>;
+    return <details className="tool-entry" open={open} onToggle={event=>setOpen(event.currentTarget.open)} data-tool-id={entry.key}><summary><span className="tool-summary-text">{label}</span></summary>{open&&<div className="tool-body">{args!=null&&<pre>{typeof args==='string'?args:JSON.stringify(args,null,2)}</pre>}{entry.request?.projection_truncated&&renderMessage({...entry.request,content:'',parts:[],tool_calls:[]})}{entry.result&&renderMessage(entry.result)}</div>}</details>;
 }
 export function ToolGroup({entries,running,messageStart,decisions,renderMessage}:{entries:ToolEntry[];running:boolean;messageStart:number;decisions:boolean;renderMessage:(message:any)=>React.ReactNode}){
     const [older,setOlder]=useState(false);const count=Math.max(0,entries.length-3);

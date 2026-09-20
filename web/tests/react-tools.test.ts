@@ -11,14 +11,23 @@ test('tool calls and results become one group with no duplicate result messages'
 test('older actions hide by default; results mount only on expansion and disclosure survives rerender',async()=>{
  const dom=new JSDOM('<div id="root"></div>');const previous={window:globalThis.window,document:globalThis.document};Object.assign(globalThis,{window:dom.window,document:dom.window.document,IS_REACT_ACT_ENVIRONMENT:true});
  const {createRoot}=await import('react-dom/client');const root=createRoot(document.querySelector('#root')!);const entries=threadRows(messages)[0].entries!;
+ entries[4].call={...entries[4].call,function:{name:'shell',arguments:JSON.stringify({command:'first line\nsecond line\nthird line'})}};
  const render=()=>React.createElement(ToolGroup,{entries,running:false,messageStart:0,decisions:false,renderMessage:(message:any)=>React.createElement('pre',null,message.content)});
  try{
   await React.act(async()=>root.render(render()));assert.equal(document.querySelectorAll('.tool-group > div[hidden]').length,2);assert.doesNotMatch(document.body.textContent!,/result-4|command-4/);
   const detail=document.querySelector<HTMLDetailsElement>('[data-tool-id="call-4"]')!;
-  await React.act(async()=>{detail.open=true;detail.dispatchEvent(new dom.window.Event('toggle'));});assert.match(detail.textContent!,/result-4/);
+  await React.act(async()=>{detail.open=true;detail.dispatchEvent(new dom.window.Event('toggle'));});assert.match(detail.textContent!,/result-4/);assert.match(detail.querySelector('.tool-summary-text')!.textContent!,/first line\nsecond line\nthird line/);
   await React.act(async()=>root.render(render()));assert.equal(detail.open,true);
   await React.act(async()=>{document.querySelector<HTMLButtonElement>('.tool-group-heading button')!.click();});assert.equal(document.querySelectorAll('.tool-group > div[hidden]').length,0);
   await React.act(async()=>{document.querySelector<HTMLButtonElement>('.tool-group-heading button')!.click();});assert.equal(document.querySelectorAll('.tool-group > div[hidden]').length,2);
   await React.act(async()=>{detail.open=false;detail.dispatchEvent(new dom.window.Event('toggle'));});assert.doesNotMatch(detail.textContent!,/result-4/);
  }finally{await React.act(async()=>root.unmount());Object.assign(globalThis,previous);dom.window.close();}
+});
+
+
+test('tool summary clamps to two lines only while collapsed',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const css=readFileSync(new URL('../resources/react/style.css',import.meta.url),'utf8');
+ assert.match(css,/\.tool-entry:not\(\[open\]\)>summary>\.tool-summary-text\{[^}]*-webkit-line-clamp:2;[^}]*max-height:3em;[^}]*overflow:hidden/);
+ assert.match(css,/\.tool-summary-text\{[^}]*overflow-wrap:anywhere;[^}]*line-height:1\.5/);
 });
