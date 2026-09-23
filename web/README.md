@@ -55,8 +55,9 @@ The console never executes agents on the web host.
 
 ## Development
 
-Requires PHP 8.3+ with Laravel extensions, Composer, and a Node version supported
-by the locked Vite release (Node 20.19+ or 22.12+). Flux Pro also requires private Composer authentication for composer.fluxui.dev; keep auth.json out of Git (it is ignored).
+Requires PHP 8.3+ with Laravel extensions, Composer, and a Node version allowed
+by `package.json`'s `engines`. Flux Pro also requires private Composer
+authentication for composer.fluxui.dev; keep auth.json out of Git (it is ignored).
 
 ```sh
 cd web
@@ -77,12 +78,22 @@ configured. OAuth sign-in creates a personal tenant with no inherited connection
 
 ## Deployment
 
-The dedicated unprivileged Debian 13 CT is named `helm-web`: 2 cores, 2 GiB RAM,
-512 MiB swap and a 16 GiB root disk. DHCP attaches to the existing bridge. Container
-nesting is enabled for Debian systemd mount compatibility; no host devices are
-passed through. It starts at host boot.
+The public Helm Web origin runs in Proxmox CT 106, the dedicated unprivileged
+Debian 13 CT named `helm-web`. The laptop remains a Vessel host and serves its
+public Vessel API; browser console traffic connects directly to that API after
+Helm Web login. The CT has 2 cores, 2 GiB RAM, 512 MiB swap and a 16 GiB root
+disk. DHCP attaches to the existing bridge. Container nesting is enabled for
+Debian systemd mount compatibility; no host devices are passed through. It
+starts at host boot.
 
 Application: `/srv/helm/app`, owned by the unprivileged `helm` deployment account.
+Private runtime state is under `/srv/helm/runtime`, outside the application source;
+preserve it and the production `.env` across source updates. The initial CT source
+was copied from the laptop's live working tree, including uncommitted changes.
+Future changes to `web/` require an explicit deployment to CT 106 and a private
+backup before replacing that source; a local edit or Git push does not update the
+running website. Deploy matching PHP source and built assets together.
+
 Nginx serves only `public/`, on `127.0.0.1:80`. PHP-FPM runs as `www-data`.
 The deployment account's home must permit traversal (`chmod 755 /srv/helm`).
 Only `storage`, `bootstrap/cache` and the SQLite database directory need group
@@ -98,9 +109,15 @@ SESSION_SECURE_COOKIE=true
 LOG_LEVEL=warning
 ```
 
-Generate the application key once, retain it across upgrades, then run migrations
-with `--force`, `npm ci`, `npm run build` and `php artisan optimize`. Run Composer
-and build commands as `helm`. Reapply shared directory permissions after caching.
+Retain the migrated `APP_KEY` exactly across CT upgrades; do not regenerate it.
+Generate a key only for a fresh installation with no existing runtime state. Run
+`php artisan migrate --force` and `php artisan optimize` on the CT as `helm`.
+The CT currently has Node 20.19.2, below `package.json`'s supported range. The
+initial deployment used matching assets built on the laptop. For later updates,
+run `npm ci` and `npm run build` on a host with supported Node, then copy the
+matching built assets to the CT; alternatively, upgrade the CT's Node before
+building there. Run Composer as `helm` and reapply shared directory permissions
+after caching.
 
 `deploy/nginx.conf` is installed in `/etc/nginx/sites-available/helm` and linked
 under `sites-enabled`. It assumes all requests arrive through the local HTTPS
@@ -129,9 +146,12 @@ mistake a resolver cache for a failed tunnel. Tunnel registration alone does not
 establish working application routing. The connector's disabled ICMP proxy is
 unneeded for this HTTP-only origin.
 
-Before upgrades, back up the application `.env`, database (using an SQLite-aware
-backup), and tunnel token to operator-controlled private storage, or take a stopped
-container backup. No off-host backup schedule is provisioned by this change.
+Before upgrades, back up the application `.env`, private runtime state and database
+(using an SQLite-aware backup), and tunnel token to operator-controlled private
+storage, or take a stopped container backup. Keep the deployed source and its
+matching assets available for rollback. No off-host backup schedule is provisioned
+by this change.
+
 Rollback application source and its matching assets together; database rollback
 requires the matching backup. Do not regenerate keys during recovery.
 
