@@ -102,6 +102,7 @@ try {
     const privateLabel=await page.locator('.browser-primary').textContent();
     const privateAccessibleLabel=await page.locator('.browser-primary').getAttribute('aria-label');
     await page.screenshot({path:`${output}/${label}-private.png`});
+    await page.getByLabel('More browser options',{exact:true}).click();
     await page.getByRole('button',{name:'Capture and annotate',exact:true}).click();
     const editor=page.getByRole('dialog',{name:'Capture viewer image',exact:true});await editor.waitFor();
     check(await editor.getByRole('button',{name:'Add to message',exact:true}).isDisabled(),`${label}: capture needs disclosure confirmation`);

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright-core';
 import { Journal, UUID, privateDir } from './journal.mjs';
 import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
-import { encoderRuntime, LatestFrameQueue } from './encoder.mjs';
+import { encoderRuntime, LatestFrameQueue } from './media-next.mjs';
 
 class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
@@ -125,9 +125,12 @@ export class Worker {
         this.viewer(req.viewer);if(!['agent','human','private'].includes(req.mode))refuse('invalid_mode');
         if(this.controller&&this.controller!==req.viewer)refuse('controller_busy');
         if(req.mode==='agent'&&this.controller!==req.viewer)refuse('not_controller');
+        const capturing=!!this.cdp;
         this.mode=req.mode;this.controller=req.mode==='agent'?null:req.viewer;
         if(req.mode==='private')for(const id of this.viewers.keys())if(id!==req.viewer)this.viewers.delete(id);
-        await this.fence();return null;
+        await this.fence([...this.viewers.keys()]);
+        if(capturing&&this.viewers.size&&this.task&&!this.page?.isClosed())await this.startCapture();
+        return null;
       }
       case 'offer':{
         this.signalSequence(req);this.requireOpen();await this.startCapture();
@@ -165,7 +168,7 @@ export class Worker {
       this.encoder=await this.encoding.newPage({viewport:{width:1280,height:720}});
       await this.encoder.route('**/*',route=>route.abort());
       await this.encoder.evaluate(encoderRuntime);
-      await this.encoder.evaluate(g=>encoder.reset(g),this.epochs.capture);
+      await this.encoder.evaluate(g=>encoder.fence({generation:g}),this.epochs.capture);
       this.frames=new LatestFrameQueue(frame=>this.encoder.evaluate(f=>encoder.frame(f),frame));this.frames.generation=this.epochs.capture;
       const page=await this.context.newPage();await this.select(this.idFor(page));
       return null;
@@ -186,24 +189,25 @@ export class Worker {
     const stamp=this.epochs.control;
     try{const file=await download.path();if(!file)return;const s=await fs.stat(file);if(s.size<=MAX_BYTES&&this.mode==='agent'&&stamp===this.epochs.control&&this.downloads.size<8){const data=await fs.readFile(file);if(this.mode==='agent'&&stamp===this.epochs.control)this.downloads.set(randomUUID(),{name:download.suggestedFilename(),data_base64:data.toString('base64')});}}catch{}finally{await download.delete().catch(()=>{});}
   }
-  async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await this.stopCapture();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);if(this.encoder)await this.encoder.evaluate(g=>encoder.reset(g),this.epochs.capture);this.guard(stamp);if(this.frames)await this.frames.fence(this.epochs.capture);this.guard(stamp);}
+  async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await this.stopCapture();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);if(this.encoder)await this.encoder.evaluate(g=>encoder.fence({generation:g}),this.epochs.capture);this.guard(stamp);if(this.frames)await this.frames.fence(this.epochs.capture);this.guard(stamp);}
   async stopCapture(){const cdp=this.cdp;this.cdp=null;if(cdp){await cdp.send('Page.stopScreencast').catch(()=>{});await cdp.detach().catch(()=>{});}}
   async startCapture(){
     if(this.cdp)return;this.requireOpen();const cdp=await this.context.newCDPSession(this.page);this.cdp=cdp;
     cdp.on('Page.screencastFrame',event=>{
-      void cdp.send('Page.screencastFrameAck',{sessionId:event.sessionId}).catch(()=>{});
-      if(this.cdp!==cdp||!this.viewers.size)return;
-      void this.frames.push({data:event.data,width:Math.round(event.metadata.deviceWidth),height:Math.round(event.metadata.deviceHeight)});
+      const delivered=this.cdp===cdp&&this.viewers.size
+        ?this.frames.push({data:event.data,width:Math.round(event.metadata.deviceWidth),height:Math.round(event.metadata.deviceHeight)})
+        :Promise.resolve();
+      void delivered.finally(()=>cdp.send('Page.screencastFrameAck',{sessionId:event.sessionId}).catch(()=>{}));
     });
     await cdp.send('Page.startScreencast',{format:'jpeg',quality:80,maxWidth:1920,maxHeight:1080,everyNthFrame:1});
   }
-  async fence(){
+  async fence(keepViewers=[]){
     this.advance('control','capture');this.downloads.clear();for(const f of this.fenceWaiters)f();this.fenceWaiters.clear();
     this.agentCursor=null;this.agentAction=null;
     const generation=this.epochs.capture;
     // Invalidate before any await. Reset encoder before draining old JPEG work.
     if(this.frames){this.frames.generation=generation;this.frames.pending=null;}
-    await Promise.all([this.stopCapture(),this.encoder?.evaluate(g=>encoder.reset(g),generation),this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
+    await Promise.all([this.stopCapture(),this.encoder?.evaluate(args=>encoder.fence(args),{generation,keepViewers}),this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
     if(this.frames)await this.frames.fence(generation);
     // Acknowledgement means the old effect settled, not merely its raced reply.
     try{await bounded(Promise.allSettled([...this.effects]),5000);}catch{this.closing=true;await this.task?.close();await Promise.allSettled([...this.effects]);refuse('effect_quarantined');}
@@ -287,12 +291,23 @@ export class Worker {
     if(!Number.isSafeInteger(req.seq)||req.seq!==viewer.seq+1)refuse('input_sequence');viewer.seq=req.seq;
     const a=req.action,stamp=this.epochs.control;if(!a)refuse('invalid_input');
     switch(a.kind){
-      case 'dialog':if(typeof a.accept!=='boolean')refuse('invalid_input');if(a.text!==undefined)text(a.text);if(!this.dialog)refuse('dialog_missing');{const d=this.dialog;this.dialog=null;await (a.accept?d.accept(a.text):d.dismiss());}break;
+      case 'dialog':if(typeof a.accept!=='boolean')refuse('invalid_input');if(a.text!=null)text(a.text);if(!this.dialog)refuse('dialog_missing');{const d=this.dialog;this.dialog=null;await (a.accept?d.accept(a.text??undefined):d.dismiss());}break;
       case 'pointer':number(a.x,0,this.config.width);number(a.y,0,this.config.height);if(!['move','down','up'].includes(a.type)||!['left','middle','right'].includes(a.button??'left'))refuse('invalid_input');await this.page.mouse.move(a.x,a.y);this.guard(stamp);if(a.type!=='move')await this.page.mouse[a.type]({button:a.button??'left'});break;
       case 'key':if(!['down','up'].includes(a.type)||!text(a.key,128)||/[\x00-\x1f]/.test(a.key))refuse('invalid_input');await this.page.keyboard[a.type](a.key);break;
       case 'text':await this.page.keyboard.insertText(text(a.text));break;
       case 'scroll':await this.page.mouse.wheel(number(a.x,-16384,16384),number(a.y,-16384,16384));break;
-      case 'resize':{const width=number(a.width,320,3840),height=number(a.height,240,2160);this.advance('viewport');await this.page.setViewportSize({width,height});this.guard(stamp);this.config.width=width;this.config.height=height;break;}
+      case 'resize':{
+        const width=number(a.width,320,3840),height=number(a.height,240,2160);
+        const capturing=!!this.cdp;
+        this.advance('viewport','capture');
+        await this.stopCapture();
+        if(this.frames)await this.frames.fence(this.epochs.capture);
+        await this.encoder?.evaluate(args=>encoder.fence(args),{generation:this.epochs.capture,keepViewers:[...this.viewers.keys()]});
+        await this.page.setViewportSize({width,height});this.guard(stamp);
+        this.config.width=width;this.config.height=height;
+        if(capturing)await this.startCapture();
+        break;
+      }
       case 'history':{
         if(!['back','forward','reload','stop'].includes(a.direction))refuse('invalid_history');
         if(a.direction==='back')await this.page.goBack({waitUntil:'domcontentloaded'});

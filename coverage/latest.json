@@ -1,9 +1,9 @@
 {
-  "measured_at_utc": "2026-09-20T19:36:41.472783+00:00",
-  "source_commit": "dd3ed55e556ca8e0e0b6dba5e18dfa5e298d1837",
+  "measured_at_utc": "2026-09-23T03:40:49.328154+00:00",
+  "source_commit": "2260f5f920d3df68b5029a367310c4367c4e053a",
   "dirty": true,
-  "source_fingerprint_sha256": "8c7b4c3a00469a270a7580b1730a3a3905fc96353acba987d22865d3c767864e",
-  "source_fingerprint_method": "SHA-256 over sorted workspace Rust source and Cargo manifests/lockfile: relative path + NUL + bytes",
+  "source_fingerprint_sha256": "76c4eb2360d573506cebbccb8ce251c90653748e1f6ff080a3060945f6145b5b",
+  "source_fingerprint_method": "SHA-256 over sorted tracked and untracked workspace code/test files (.rs, Cargo .toml/.lock, .mjs, .js, .css, .tsx, .py, .blade.php): relative path + NUL + bytes or <deleted> + NUL; ignored build outputs excluded",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10221,
-      "covered": 7371,
-      "percent": 72.11623128852362
+      "covered": 7348,
+      "percent": 71.89120438313277
     },
     "instantiations": {
-      "count": 23234,
-      "covered": 9314,
-      "percent": 40.08780235861238
+      "count": 23066,
+      "covered": 9234,
+      "percent": 40.0329489291598
     },
     "lines": {
       "count": 106331,
-      "covered": 79928,
-      "percent": 75.16904759665573
+      "covered": 79758,
+      "percent": 75.00916948020803
     },
     "mcdc": {
       "count": 0,
@@ -43,17 +43,17 @@
     },
     "regions": {
       "count": 174302,
-      "covered": 125095,
-      "notcovered": 49207,
-      "percent": 71.76911337793027
+      "covered": 124871,
+      "notcovered": 49431,
+      "percent": 71.64060079631903
     }
   },
-  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser-live-fix/observation -j 8 -- --test-threads=1",
+  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET CARGO_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report/browser-rework -j 8 -- --test-threads=1",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-instr-profile=$TARGET/browser-live-fix.profdata",
+    "-instr-profile=$TARGET/browser-rework.profdata",
     "-object",
     "$TARGET/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
     "-object",
@@ -86,7 +86,6 @@
     "$TARGET/debug/vessel",
     "-object",
     "$TARGET/debug/voyage",
-    "-path-equivalence=$REUSED_WORKSPACE,$WORKSPACE",
     "-ignore-filename-regex",
     "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^($WORKSPACE|$REUSED_WORKSPACE)(/.*)?/(tests|examples|benches)/|^($WORKSPACE|$REUSED_WORKSPACE)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$TARGET/",
     "-summary-only"
@@ -100,9 +99,9 @@
     "Historical shared-target objects outside current Cargo executable set"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests passed with umask 077 and serial tests after final Rust browser observation edits. Earlier superseded/parallel attempts are retained separately; no pass claimed for them.",
-    "All 16 current Cargo test/binary executables included; reused installer/storage artifact source was byte-verified against dd3ed55 and the current checkout; identical exclusions apply to current and reused paths. All other reported files belong to this workspace. Mixed shared-target report retained; corrected export has zero diagnostics. Protocol source timestamp refreshed when switching from a coordinated peer worktree to invalidate stale shared artifacts.",
-    "Linux only. Browser JavaScript, process journeys and live-provider acceptance are separate from this measurement.",
-    "Compared with prior: lines +0.0014pp, functions +0.0000pp, regions +0.0011pp. No scope exclusions narrowed."
+    "Full workspace default-feature Rust tests passed with owner-only temporary files and serial test execution after the final code/test edits. An earlier attempt with the default umask failed private-storage permission checks and is not counted as passing.",
+    "The standard shared-target report included historical objects. Corrected export selected the 13 current Cargo test executables and three current binaries from this run; 467 reported files resolve to this worktree, with zero export diagnostics. Raw mixed report is retained only under target/.",
+    "Linux only. Browser JavaScript, real Chromium journeys, process cleanup and live-provider acceptance are separate from this measurement.",
+    "Compared with the preceding record: lines -0.1599 percentage points, functions -0.2250, regions -0.1285. Totals and exclusions are unchanged; execution path variation and the intervening browser read-failure Rust change are possible contributors. No measurement scope was narrowed."
   ]
 }

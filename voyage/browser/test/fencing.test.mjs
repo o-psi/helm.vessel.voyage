@@ -18,7 +18,8 @@ test('private acknowledgement waits for old select to settle without changing ac
   w.stopCapture=async()=>{if(++calls===1){entered();await new Promise(r=>release=r);}};
   const selecting=call('agent',{action:{kind:'tabs',operation:'select',tab}});await started;
   let acknowledged=false;const privateMode=call('control',{viewer,mode:'private'}).then(r=>{acknowledged=true;return r;});
-  await new Promise(r=>setTimeout(r,30));assert.equal(acknowledged,false);release();
+  for(let i=0;i<100&&w.mode!=='private';i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(w.mode,'private');assert.equal(acknowledged,false);release();
   assert.equal((await selecting).error.code,'control_fenced');assert.equal((await privateMode).ok,true);assert.equal(w.page,old);assert.notEqual(w.active,tab);
  }finally{w.page=null;await w.dispose();await fs.rm(root,{recursive:true,force:true});}
 });

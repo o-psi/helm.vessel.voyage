@@ -40,26 +40,35 @@ test('sandboxed worker, decoded media, interruption, fences and receipts',{timeo
  const blocked=w.request({id:randomUUID(),op:'agent',browser:w.browser,epochs:{...w.epochs},action:{kind:'navigate',url:origin+'/blocked'}});await sleep(200);
  const started=Date.now();await call('control',{viewer,mode:'private'});assert.ok(Date.now()-started<3000);assert.equal((await blocked).error.code,'control_fenced');assert.deepEqual(w.status().viewers,[viewer]);
  assert.equal((await w.request({id:randomUUID(),op:'agent',browser:w.browser,epochs:{...w.epochs},action:{kind:'inspect'}})).error.code,'agent_fenced');
- assert.equal(await w.encoder.evaluate(()=>encoder.peerCount()),0);
+ assert.equal(await w.encoder.evaluate(()=>encoder.peerCount()),1,'controller keeps its media peer while other viewers are excluded');
+ await call('input',{viewer,seq:1,action:{kind:'resize',width:400,height:600}});
+ let receivedSize;
+ for(let i=0;i<40;i++){
+   receivedSize=await rp.evaluate(()=>{const video=document.querySelector('video');return [video.videoWidth,video.videoHeight];});
+   if(receivedSize[0]===400&&receivedSize[1]===600)break;
+   await sleep(100);
+ }
+ assert.deepEqual(receivedSize,[400,600],'responsive resize must replace the WebRTC track dimensions');
+ await w.stopCapture();await w.frames.fence(w.epochs.capture);
  // Hold an actual JPEG decode across reset; late bitmap completion must not draw.
  const jpeg=(await w.page.screenshot({type:'jpeg'})).toString('base64');
  const generation=w.epochs.capture;
  await w.encoder.evaluate(()=>{const original=globalThis.createImageBitmap;globalThis.createImageBitmap=async(...args)=>{const bitmap=await original(...args);await new Promise(r=>globalThis.releaseBitmap=r);return bitmap;};});
  const stale=w.encoder.evaluate(f=>encoder.frame(f),{data:jpeg,width:640,height:480,generation});
  await w.encoder.waitForFunction(()=>typeof releaseBitmap==='function');
- await w.encoder.evaluate(g=>encoder.reset(g),generation+1);
+ await w.encoder.evaluate(g=>encoder.fence({generation:g}),generation+1);
  await w.encoder.evaluate(()=>releaseBitmap());await stale;
  assert.equal(await w.encoder.evaluate(()=>document.querySelector('canvas').getContext('2d').getImageData(10,10,1,1).data[3]),0);
- await w.encoder.evaluate(g=>encoder.reset(g),generation);
+ await w.encoder.evaluate(g=>encoder.fence({generation:g}),generation);
 
- await call('input',{viewer,seq:1,action:{kind:'navigate',url:origin}});
+ await call('input',{viewer,seq:2,action:{kind:'navigate',url:origin}});
  // A native modal blocks click completion; the dialog interrupt lane must still run.
  const box=await w.page.locator('button').nth(1).boundingBox();
- await call('input',{viewer,seq:2,action:{kind:'pointer',type:'down',x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2),button:'left'}});
- const pending=w.request({id:randomUUID(),op:'input',browser:w.browser,epochs:{...w.epochs},viewer,seq:3,action:{kind:'pointer',type:'up',x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2),button:'left'}});for(let i=0;i<30&&!w.dialog;i++)await sleep(50);assert.ok(w.dialog);
- await call('input',{viewer,seq:4,action:{kind:'dialog',accept:true}});assert.equal((await pending).ok,true);
- const request={id:randomUUID(),op:'input',browser:w.browser,epochs:{...w.epochs},viewer,seq:5,action:{kind:'text',text:'PRIVATE-SENTINEL'}};
- assert.equal((await w.request(request)).ok,true);assert.equal((await w.request(request)).result.content_withheld,true);assert.equal((await w.request({...request,seq:6})).error.code,'id_conflict');
+ await call('input',{viewer,seq:3,action:{kind:'pointer',type:'down',x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2),button:'left'}});
+ const pending=w.request({id:randomUUID(),op:'input',browser:w.browser,epochs:{...w.epochs},viewer,seq:4,action:{kind:'pointer',type:'up',x:Math.round(box.x+box.width/2),y:Math.round(box.y+box.height/2),button:'left'}});for(let i=0;i<30&&!w.dialog;i++)await sleep(50);assert.ok(w.dialog);
+ await call('input',{viewer,seq:5,action:{kind:'dialog',accept:true}});assert.equal((await pending).ok,true);
+ const request={id:randomUUID(),op:'input',browser:w.browser,epochs:{...w.epochs},viewer,seq:6,action:{kind:'text',text:'PRIVATE-SENTINEL'}};
+ assert.equal((await w.request(request)).ok,true);assert.equal((await w.request(request)).result.content_withheld,true);assert.equal((await w.request({...request,seq:7})).error.code,'id_conflict');
  await call('disconnect',{viewer});assert.equal(w.mode,'private');assert.equal(w.controller,viewer);await call('join',{viewer});await call('control',{viewer,mode:'agent'});
  const receipts=await fs.readdir(path.join(root,'receipts'));for(const file of receipts)assert.doesNotMatch(await fs.readFile(path.join(root,'receipts',file),'utf8'),/PRIVATE-SENTINEL/);
  await call('agent',{action:{kind:'tabs',operation:'new'}});assert.equal(w.tabs.size,2);

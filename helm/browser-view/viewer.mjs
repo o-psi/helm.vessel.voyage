@@ -1,367 +1,505 @@
 import {mountCapture} from './capture.mjs';
 const NIL = '00000000-0000-0000-0000-000000000000';
-const fingerprint = binding => JSON.stringify(binding);
-const mediaFence = status => JSON.stringify([status?.binding?.incarnation,status?.binding?.browser_id,status?.binding?.attachment_id,status?.binding?.capture_epoch,status?.binding?.controller_epoch,status?.mode,status?.controller]);
 const bytes = value => new TextEncoder().encode(value).length;
+const peerKey = status => JSON.stringify([
+    status?.binding?.incarnation, status?.binding?.browser_id,
+    status?.binding?.attachment_id, status?.binding?.tab_id,
+]);
+const bindingKey = status => JSON.stringify(status?.binding);
 
-export function videoPoint(video, clientX, clientY, viewport = null) {
-    const rect = video.getBoundingClientRect(), width = video.videoWidth, height = video.videoHeight;
-    if (!width || !height || !rect.width || !rect.height) return null;
-    const scale = Math.min(rect.width / width, rect.height / height);
-    const x = (clientX - rect.left - (rect.width - width * scale) / 2) / scale;
-    const y = (clientY - rect.top - (rect.height - height * scale) / 2) / scale;
-    if (x < 0 || y < 0 || x >= width || y >= height) return null;
-    // WebRTC may downscale its encoded frames. Input is in the executing
-    // browser's CSS viewport, not the receiver's changing video resolution.
-    const target = Number.isSafeInteger(viewport?.width) && Number.isSafeInteger(viewport?.height) && viewport.width >= 320 && viewport.width <= 3840 && viewport.height >= 240 && viewport.height <= 2160 ? viewport : {width,height};
-    return {x:Math.min(target.width-1,Math.floor(x / width * target.width)),y:Math.min(target.height-1,Math.floor(y / height * target.height))};
+export function screenPoint(video, x, y, viewport) {
+    const rect = video.getBoundingClientRect();
+    if (!rect.width || !rect.height || !video.videoWidth || !video.videoHeight) return null;
+    const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
+    const left = rect.left + (rect.width - video.videoWidth * scale) / 2;
+    const top = rect.top + (rect.height - video.videoHeight * scale) / 2;
+    const px = (x - left) / scale, py = (y - top) / scale;
+    if (px < 0 || py < 0 || px >= video.videoWidth || py >= video.videoHeight) return null;
+    const width = Number.isSafeInteger(viewport?.width) ? viewport.width : video.videoWidth;
+    const height = Number.isSafeInteger(viewport?.height) ? viewport.height : video.videoHeight;
+    return {x: Math.min(width - 1, Math.floor(px / video.videoWidth * width)),
+        y: Math.min(height - 1, Math.floor(py / video.videoHeight * height))};
 }
 
-// All state is attachment-local and memory-only. Transport errors are deliberately
-// reduced to fixed messages, never displayed/logged with their private payloads.
-export class BrowserSession {
-    constructor({transport, context, video, changed = () => {}, peer = config => new RTCPeerConnection(config), rtcConfiguration = {}, uuid = () => crypto.randomUUID(), timeout = 10000}) {
+// One mounted viewer owns one attachment. Commands are never replayed after an
+// unknown result; a read-only status request is the only automatic recovery.
+export class BrowserConnection {
+    constructor({transport, context, video, changed = () => {}, peer = config => new RTCPeerConnection(config),
+        rtcConfiguration = {}, uuid = () => crypto.randomUUID(), timeout = 25000}) {
         Object.assign(this, {transport, context, video, changed, peer, rtcConfiguration, uuid, timeout});
-        this.status = null; this.foregroundRevision = 0; this.generation = 0; this.sequence = 0; this.queue = []; this.busy = false; this.closed = false; this.message = 'Browser disconnected';
+        this.status = null; this.phase = 'idle'; this.issue = null; this.sequence = 0;
+        this.queue = []; this.sending = false; this.urgentPromise = null; this.busy = false; this.closed = false;
+        this.epoch = 0; this.mediaEpoch = 0; this.lastFrame = 0; this.streaming = false;
+        this.wasHidden = !!video?.ownerDocument?.hidden;
     }
-    notify(message) { if (message) this.message = message; this.changed(this); }
-    clearVideo() {
-        this.generation++; this.queue = []; clearTimeout(this.mediaTimer); this.stopVideoReadiness?.(); this.stopVideoReadiness = null;
-        const pc = this.pc; this.pc = null;
-        if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
-        if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
-        this.streaming = false; this.streamRevision = (this.streamRevision || 0) + 1;
+    emit() { this.changed(this); }
+    operation(action, fields = {}) { return {action, command_id:this.uuid(), binding:{...this.status.binding}, ...fields}; }
+    get attached() { return !!this.status?.binding && this.status.binding.attachment_id !== NIL; }
+    get controls() { return this.attached && ['human','private'].includes(this.status?.mode)
+        && this.status.controller === this.status.binding.attachment_id; }
+    get canInput() { return this.controls && this.streaming && !this.busy && !this.issue && !this.closed; }
+    discardQueued(reason) {
+        this.queue.splice(0).forEach(item => item.reject?.(Error(reason)));
     }
-    disconnect(message = 'Browser disconnected. Retry connection to resume.') {
-        const detach = this.attached && this.status?.binding ? this.operation('detach') : null;
-        this.clearVideo(); this.status = null; this.attached = false; this.notify(message);
-        if (detach && !this.closed) Promise.resolve().then(() => this.transport(detach)).catch(() => {});
+    accept(status) {
+        const previous = this.status;
+        if (previous && bindingKey(previous) !== bindingKey(status)) this.discardQueued('input_fenced');
+        if (previous && peerKey(previous) !== peerKey(status)) this.clearMedia();
+        this.status = status;
+        if (this.attached && Number.isSafeInteger(status.input_sequence)) this.sequence = Math.max(this.sequence,status.input_sequence);
+        if (!status.available) this.phase = 'unavailable';
+        else if (!status.running) this.phase = 'stopped';
+        else if (this.streaming) this.phase = 'live';
+        else if (this.phase !== 'connecting' && this.phase !== 'recovering') this.phase = 'waiting-video';
+        this.emit();
     }
-    async call(operation, generation = this.generation, current = () => true) {
-        if (this.closed) throw Error('closed');
+    async request(operation, epoch = this.epoch) {
+        if (this.closed) throw Error('viewer_closed');
         let timer;
         try {
-            const reply = await Promise.race([this.transport(operation), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('slow')), this.timeout); })]);
-            if (this.closed || generation !== this.generation || !current()) throw Error('stale');
-            if (!reply?.status || (reply.status.running && !['agent','human','private'].includes(reply.status.mode))) throw Error('invalid');
-            this.accept(reply.status);
+            const reply = await Promise.race([this.transport(operation), new Promise((_, reject) => {
+                timer = setTimeout(() => reject(Error('reply_timeout')), this.timeout);
+            })]);
+            if (this.closed || epoch !== this.epoch) throw Error('stale_viewer');
+            if (!reply?.status || typeof reply.status.available !== 'boolean' || typeof reply.status.running !== 'boolean') throw Error('invalid_status');
+            // An interrupt can finish before the page action that opened its
+            // native dialog. Do not roll the UI back to that older reply.
+            if (operation.action !== 'input' || operation.sequence >= this.sequence) this.accept(reply.status);
             return reply;
         } finally { clearTimeout(timer); }
     }
-    accept(status) {
-        const old = this.status;
-        if (old && fingerprint(old.binding) !== fingerprint(status.binding)) this.queue = [];
-        if (old && mediaFence(old) !== mediaFence(status)) this.clearVideo();
-        this.status = status;
-        this.attached = Boolean(status.binding && status.binding.attachment_id !== NIL);
-        this.notify(!status.available ? 'Browser unavailable on this host' : !status.running ? 'Browser stopped' : `Browser · ${status.mode} control`);
+    fail(kind) {
+        this.discardQueued('input_unconfirmed');
+        this.issue = kind;
+        this.phase = kind === 'input-unknown' ? 'needs-review' : 'error';
+        this.emit();
     }
-    operation(action, fields = {}) {
-        return {action, command_id:this.uuid(), binding:{...this.status.binding}, ...fields};
+    clearMedia() {
+        this.mediaEpoch++;
+        clearTimeout(this.mediaDeadline); clearTimeout(this.disconnectDeadline);
+        this.rejectFrame?.(Error('media_closed')); this.rejectFrame = null;
+        this.stopFrameWatch?.(); this.stopFrameWatch = null;
+        const pc = this.pc; this.pc = null;
+        if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
+        if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
+        this.streaming = false; this.lastFrame = 0;
     }
-    get controls() {
-        return this.attached && ['human','private'].includes(this.status?.mode) && this.status.controller === this.status.binding.attachment_id;
-    }
-    async exclusive(action) {
+    async connect({start = true} = {}) {
         if (this.busy || this.closed) return;
-        this.foregroundRevision++; this.busy = true; this.notify();
-        try { return await action(); }
-        catch { this.disconnect('Browser operation interrupted or unconfirmed. Nothing was replayed. Retry connection to refresh.'); }
-        finally { this.busy = false; this.notify(); }
-    }
-    async refresh() {
-        if (this.busy || this.refreshing || this.closed || !this.status) return;
-        const generation = this.generation, revision = this.foregroundRevision;
-        const current = () => generation === this.generation && revision === this.foregroundRevision && !this.closed;
-        this.refreshing = true;
+        const epoch = ++this.epoch; this.busy = true; this.issue = null; this.phase = 'connecting'; this.emit();
         try {
-            // Polls do not lock controls or repaint them as busy. A foreground
-            // action invalidates an older poll before it can restore stale state.
-            await this.call({action:'status'}, generation, current);
-            if (this.attached && !this.pc && !this.pumping) await this.exclusive(() => this.negotiate());
-        } catch {
-            if (current()) this.disconnect('Browser status unavailable. Retry connection to refresh.');
-        } finally { this.refreshing = false; }
-    }
-    async connect() {
-        return this.exclusive(async () => {
-            this.clearVideo();
-            await this.call({action:'status'});
+            await this.request({action:'status'},epoch);
             if (!this.status.available) return;
             if (!this.status.running) {
-                const {incarnation, revision} = this.context();
-                await this.call({action:'start',command_id:this.uuid(),incarnation,expected_revision:revision});
+                if (!start) return;
+                const {incarnation,revision} = this.context();
+                await this.request({action:'start',command_id:this.uuid(),incarnation,expected_revision:revision},epoch);
             }
-            if (!this.attached) { await this.call(this.operation('attach', {binding:{...this.status.binding,attachment_id:this.uuid()}})); this.sequence = 0; }
-            if (!this.attached) throw Error('attach');
-            // A remounted viewer on the same socket must continue the acknowledged
-            // attachment sequence, never guess zero or replay old input.
-            this.sequence = Number.isSafeInteger(this.status.input_sequence) ? this.status.input_sequence : this.sequence;
-            await this.negotiate();
-        });
+            if (!this.attached) {
+                await this.request(this.operation('attach',{binding:{...this.status.binding,attachment_id:this.uuid()}}),epoch);
+                this.sequence = Number.isSafeInteger(this.status.input_sequence) ? this.status.input_sequence : 0;
+            }
+            if (!this.attached) throw Error('attachment_missing');
+            await this.startMedia(epoch);
+        } catch {
+            if (epoch === this.epoch && !this.closed && !this.issue) this.fail('connect-unknown');
+        } finally { if (epoch === this.epoch) { this.busy = false; this.emit(); } }
     }
-    async negotiate() {
-        const reply = await this.call(this.operation('signal', {signal:{type:'request_offer'}}));
-        const generation = this.generation, binding = mediaFence(this.status);
-        const current = () => !this.closed && generation === this.generation && binding === mediaFence(this.status);
-        if (reply.value?.type !== 'offer' || typeof reply.value.sdp !== 'string' || bytes(reply.value.sdp) > 65536) throw Error('offer');
+    async startMedia(epoch = this.epoch) {
+        if (!this.attached || !this.status?.running || this.closed) return;
+        this.clearMedia(); this.phase = 'waiting-video'; this.emit();
+        const reply = await this.request(this.operation('signal',{signal:{type:'request_offer'}}),epoch);
+        if (reply.value?.type !== 'offer' || typeof reply.value.sdp !== 'string' || bytes(reply.value.sdp) > 65536) throw Error('invalid_offer');
+        const key = peerKey(this.status), mediaEpoch = this.mediaEpoch;
+        const current = () => !this.closed && epoch === this.epoch && mediaEpoch === this.mediaEpoch && key === peerKey(this.status);
         const pc = this.pc = this.peer(reply.value.rtc_configuration ?? this.rtcConfiguration);
-        this.mediaTimer = setTimeout(() => { if (current() && !this.streaming) this.disconnect('Live video did not arrive. Retry connection to resume.'); }, this.timeout);
+        let ready, rejectReady;
+        const firstFrame = new Promise((resolve,reject) => { ready = resolve; rejectReady = reject; });
+        void firstFrame.catch(() => {});
+        this.rejectFrame = rejectReady;
+        const frame = () => {
+            if (!current() || !this.video.videoWidth || !this.video.videoHeight || this.video.readyState < 2) return;
+            this.lastFrame = Date.now(); this.streaming = true; this.phase = 'live'; this.issue = null;
+            clearTimeout(this.mediaDeadline); this.rejectFrame = null; ready(); this.emit();
+        };
+        this.mediaDeadline = setTimeout(() => rejectReady(Error('first_frame_timeout')), this.timeout);
         pc.ontrack = event => {
-            if (!current() || pc !== this.pc) { event.track.stop(); return; }
-            const stream = event.streams[0] || new MediaStream([event.track]);
-            this.video.srcObject = stream;
-            // ontrack precedes ICE/media delivery. Only decoded pixels establish
-            // readiness; otherwise keep the bounded no-video deadline running.
-            const ready = () => {
-                if (!current() || pc !== this.pc || this.video.readyState < 2 || !this.video.videoWidth || !this.video.videoHeight) return;
-                clearTimeout(this.mediaTimer); this.streaming = true;
-                this.stopVideoReadiness?.(); this.stopVideoReadiness = null; this.notify();
+            if (!current()) { event.track.stop(); return; }
+            this.video.srcObject = event.streams[0] || new MediaStream([event.track]);
+            this.video.addEventListener('loadeddata',frame); this.video.addEventListener('resize',frame);
+            const watch = () => {
+                if (!current()) return;
+                frame();
+                if (this.video.requestVideoFrameCallback) this.frameCallback = this.video.requestVideoFrameCallback(watch);
             };
-            this.video.addEventListener('loadeddata', ready);
-            this.video.addEventListener('resize', ready);
-            this.stopVideoReadiness = () => { this.video.removeEventListener('loadeddata', ready); this.video.removeEventListener('resize', ready); };
-            ready();
-            this.video.play()?.catch(() => { if (current()) this.disconnect('Video playback was blocked. Retry connection to resume.'); });
-            this.notify();
+            if (this.video.requestVideoFrameCallback) this.frameCallback = this.video.requestVideoFrameCallback(watch);
+            this.stopFrameWatch = () => {
+                this.video.removeEventListener('loadeddata',frame); this.video.removeEventListener('resize',frame);
+                if (this.video.cancelVideoFrameCallback && this.frameCallback) this.video.cancelVideoFrameCallback(this.frameCallback);
+            };
+            this.video.play()?.catch(() => rejectReady(Error('playback_blocked')));
+            frame();
         };
         pc.onconnectionstatechange = () => {
-            if (current() && ['failed','closed','disconnected'].includes(pc.connectionState)) this.disconnect('Video connection lost. Retry connection to resume.');
+            if (!current()) return;
+            if (pc.connectionState === 'connected') { clearTimeout(this.disconnectDeadline); if (this.streaming) this.phase = 'live'; this.emit(); }
+            else if (pc.connectionState === 'disconnected') {
+                this.phase = 'recovering'; this.emit();
+                clearTimeout(this.disconnectDeadline);
+                this.disconnectDeadline = setTimeout(() => { if (current() && pc.connectionState === 'disconnected') this.mediaFailed(); },5000);
+            } else if (['failed','closed'].includes(pc.connectionState)) this.mediaFailed();
         };
-        await pc.setRemoteDescription({type:'offer',sdp:reply.value.sdp});
-        if (!current()) return;
-        const answer = await pc.createAnswer();
-        if (!current()) return;
-        await pc.setLocalDescription(answer);
-        if (!current()) return;
-        if (pc.iceGatheringState !== 'complete') await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => finish(Error('ice timeout')), this.timeout);
-            const finish = error => { clearTimeout(timer); pc.removeEventListener('icegatheringstatechange', check); error ? reject(error) : resolve(); };
-            const check = () => { if (!current()) finish(Error('stale')); else if (pc.iceGatheringState === 'complete') finish(); };
-            pc.addEventListener('icegatheringstatechange', check); check();
-        });
-        if (!current()) return;
-        const sdp = pc.localDescription?.sdp;
-        if (!sdp || bytes(sdp) > 65536) throw Error('answer');
-        await this.call(this.operation('signal',{signal:{type:'answer',sdp}}), generation);
+        try {
+            await pc.setRemoteDescription({type:'offer',sdp:reply.value.sdp});
+            if (!current()) return;
+            await pc.setLocalDescription(await pc.createAnswer());
+            if (!current()) return;
+            if (pc.iceGatheringState !== 'complete') await new Promise((resolve,reject) => {
+                const timer = setTimeout(() => done(Error('ice_timeout')),this.timeout);
+                const done = error => {clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',check);error ? reject(error) : resolve();};
+                const check = () => {if (!current()) done(Error('stale_viewer')); else if (pc.iceGatheringState === 'complete') done();};
+                pc.addEventListener('icegatheringstatechange',check);check();
+            });
+            if (!current()) return;
+            const sdp = pc.localDescription?.sdp;
+            if (!sdp || bytes(sdp)>65536) throw Error('invalid_answer');
+            await this.request(this.operation('signal',{signal:{type:'answer',sdp}}),epoch);
+            await firstFrame;
+        } catch (error) {
+            if (current()) {this.clearMedia();this.fail('video-unavailable');}
+            throw error;
+        }
+    }
+    mediaFailed() {this.clearMedia();this.fail('video-unavailable');}
+    async refresh() {
+        if (this.closed || this.busy || this.refreshing || this.sending || this.queue.length) return;
+        if (!this.status) return;
+        this.refreshing = true;
+        const epoch = this.epoch;
+        try {
+            await this.request({action:'status'},epoch);
+            if (this.attached && this.status.running && !this.pc && !this.issue) await this.startMedia(epoch);
+            const hidden=!!this.video.ownerDocument?.hidden;
+            if(hidden)this.wasHidden=true;
+            else if(this.wasHidden){this.lastFrame=Date.now();this.wasHidden=false;}
+            if (this.streaming && this.lastFrame && !hidden && Date.now()-this.lastFrame > 8000) this.mediaFailed();
+        } catch { if (epoch === this.epoch && !this.closed) this.fail('status-unavailable'); }
+        finally { this.refreshing = false; }
+    }
+    async recover() {
+        if (this.closed || this.busy) return;
+        this.issue = null;
+        if (!this.status || !this.attached || !this.status.running) return this.connect({start:false});
+        this.phase = 'recovering'; this.emit();
+        try {await this.request({action:'status'});if(this.attached && this.status.running && !this.pc)await this.startMedia();}
+        catch {this.fail('status-unavailable');}
     }
     async control(mode) {
-        if (!this.attached || !['agent','human','private'].includes(mode)) return;
-        return this.exclusive(async () => {
-            this.clearVideo();
-            await this.call(this.operation('control',{mode}));
-            await this.negotiate();
+        if (!this.attached || this.busy || !['agent','human','private'].includes(mode)) return;
+        this.busy = true; this.phase = 'switching'; this.emit();
+        try {
+            await this.request(this.operation('control',{mode}));
+            // The new media owner keeps this authorized receiver. A tab/browser
+            // change can still replace the peer and is reconciled here.
+            if (!this.pc) await this.startMedia();
+            this.issue = null;
+        } catch { this.fail('control-unknown'); }
+        finally {this.busy = false;this.emit();}
+    }
+    enqueue(input, resolve = null, reject = null) {
+        if (!this.canInput) return false;
+        if (this.queue.length >= 32) {this.fail('input-unknown');return false;}
+        this.queue.push({input,key:bindingKey(this.status),epoch:this.epoch,resolve,reject});
+        void this.flush(); return true;
+    }
+    input(input) {return this.enqueue(input);}
+    confirmedInput(input) {
+        return new Promise((resolve,reject) => {
+            if (!this.enqueue(input,resolve,reject)) reject(Error('input_unavailable'));
         });
     }
-    input(input) {
-        if (!this.controls || this.busy || !this.streaming || this.closed) return false;
-        this.foregroundRevision++;
-        if (this.queue.length >= 32) { this.disconnect('Browser input too slow. Input cleared; reconnect required.'); return false; }
-        // Website modal replies must interrupt the pointer/navigation that opened
-        // the dialog; putting them behind that operation deadlocks human control.
-        if (input.type === 'dialog' || input.type === 'history' && input.direction === 'stop') {
-            const generation = this.generation;
-            void this.call(this.operation('input',{sequence:++this.sequence,input}),generation)
-                .catch(() => { if (generation === this.generation) this.disconnect('Browser interruption unconfirmed; not replayed.'); });
-            return true;
+    async urgentInput(input) {
+        if (!this.canInput || this.urgentPromise) return false;
+        this.discardQueued('input_superseded');
+        if (this.sending) {
+            // Native page dialogs can block the in-flight pointer/navigation
+            // reply. The worker has a separate interrupt lane for this input.
+            const action=this.operation('input',{sequence:++this.sequence,input});
+            const epoch=this.epoch;
+            const pending=this.request(action,epoch).then(()=>true).catch(()=>{
+                if(epoch===this.epoch&&!this.closed)this.fail('input-unknown');return false;
+            })
+                .finally(()=>{if(this.urgentPromise===pending)this.urgentPromise=null;});
+            this.urgentPromise=pending;
+            return pending;
         }
-        this.queue.push({input, binding:fingerprint(this.status.binding), generation:this.generation});
-        this.pump(); return true;
+        return new Promise(resolve => {
+            this.queue.unshift({input,key:bindingKey(this.status),epoch:this.epoch,
+                resolve:() => resolve(true),reject:() => resolve(false)});
+            void this.flush();
+        });
     }
-    async pump() {
-        if (this.pumping) return;
-        this.pumping = true;
-        const generation = this.generation;
+    async flush() {
+        if (this.sending) return;
+        this.sending = true;
+        let next;
         try {
             while (this.queue.length) {
-                const next = this.queue.shift();
-                if (!this.controls || next.generation !== this.generation || next.binding !== fingerprint(this.status.binding)) continue;
-                await this.call(this.operation('input',{sequence:++this.sequence,input:next.input}), next.generation);
+                next = this.queue.shift();
+                if (!this.canInput || next.epoch !== this.epoch || next.key !== bindingKey(this.status)) {next.reject?.(Error('input_fenced'));continue;}
+                await this.request(this.operation('input',{sequence:++this.sequence,input:next.input}),next.epoch);
+                next.resolve?.(true);next = null;
+                if(this.urgentPromise)await this.urgentPromise;
             }
-        } catch { if (generation === this.generation) this.disconnect('Input outcome unconfirmed. Input cleared; nothing replayed.'); }
-        finally { this.pumping = false; this.notify(); }
+        } catch {next?.reject?.(Error('input_unconfirmed'));if(!this.closed&&next?.epoch===this.epoch)this.fail('input-unknown');}
+        finally {this.sending = false;this.emit();}
     }
-    dispose() {
-        if (this.closed) return;
-        const detach = this.attached ? this.operation('detach') : null;
-        this.closed = true; this.disconnect();
-        // Best effort only; server socket loss is the authoritative cleanup path.
-        if (detach) Promise.resolve().then(() => this.transport(detach)).catch(() => {});
+    async closeBrowser() {
+        if (!this.controls || this.busy) return;
+        this.busy = true;this.emit();
+        try {await this.request(this.operation('close'));this.clearMedia();this.issue=null;this.phase='stopped';}
+        catch {this.fail('close-unknown');}
+        finally {this.busy=false;this.emit();}
     }
+    disconnect() {
+        const detach = this.attached && !this.closed ? this.operation('detach') : null;
+        this.epoch++;this.clearMedia();this.discardQueued('viewer_disconnected');this.phase = 'disconnected';this.issue = null;this.emit();
+        if (detach) void Promise.resolve().then(() => this.transport(detach)).catch(() => {});
+    }
+    dispose() {if(this.closed)return;this.disconnect();this.closed=true;this.emit();}
 }
 
-// Host metadata is always inert text; never load page HTML, icons or URLs locally.
-const displayText = (value, limit = 512) => typeof value === 'string'
-    ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '').slice(0, limit) : '';
+
+const safe = (value, limit = 512) => typeof value === 'string'
+    ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,'').slice(0,limit) : '';
 
 export function mountBrowserViewer(root, options = {}) {
     const doc = root.ownerDocument;
-    root.classList.add('host-browser-viewer');
-    root.setAttribute('aria-label', 'Host browser');
-    const element = (tag, text, parent = root, className = '') => {
-        const node = doc.createElement(tag); if (text) node.textContent = text;
-        if (className) node.className = className; parent.append(node); return node;
+    root.classList.add('host-browser-viewer','browser-next');
+    root.setAttribute('aria-label','Voyage browser');
+    const node = (tag, parent, className = '', content = '') => {
+        const element = doc.createElement(tag);
+        if (className) element.className = className;
+        if (content) element.textContent = content;
+        parent.append(element);return element;
     };
-    const sensitive = [];
-    const button = (label, action, parent, control = false, glyph = null) => {
-        const node = element('button', glyph || label, parent); node.type = 'button';
-        node.setAttribute('aria-label', label); node.title = label; node.onclick = action;
-        if (control) sensitive.push(node); return node;
+    const button = (label, parent, action, className = '', content = label) => {
+        const element = node('button',parent,className,content);
+        element.type = 'button';element.setAttribute('aria-label',label);element.title = label;
+        element.addEventListener('click',action);return element;
     };
-    const header = element('div', null, root, 'browser-header');
-    const status = element('span', 'Disconnected', header, 'browser-status');
-    status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-    let capture;
-    const captureButton = button('Capture and annotate', () => capture?.open(), header);
-    const primary = button('Take control privately', () => session.control(session.controls && session.status?.mode === 'private' ? 'agent' : 'private'), header);
-    primary.className = 'browser-primary';
-    const more = element('details', null, header, 'browser-more');
-    const summary = element('summary', 'More', more); summary.setAttribute('aria-label', 'More browser options');
-    const menu = element('div', null, more, 'browser-menu');
-    const textLabel = element('label', 'Compose text (IME)', menu);
-    const text = element('textarea', null, textLabel); text.rows = 2; text.autocomplete = 'off'; text.spellcheck = false;
-    text.setAttribute('aria-label', 'Text for remote browser'); sensitive.push(text);
-    button('Send text', () => { const value = text.value; text.value = ''; if (value && bytes(value) <= 16384) session.input({type:'text',text:value}); }, menu, true);
-    const sizeLabel = element('label', 'Resolution', menu);
-    const size = element('select', null, sizeLabel); size.setAttribute('aria-label', 'Remote viewport size'); sensitive.push(size);
-    for (const value of ['1280×720','1920×1080','1024×768','640×480']) { const option = element('option', value, size); option.value = value; }
-    button('Resize', () => { const [width,height] = size.value.split('×').map(Number); session.input({type:'resize',width,height}); }, menu, true);
-    const closeBrowser = button('Close browser', () => session.exclusive(async () => {
-        if (!session.controls) return; session.clearVideo(); await session.call(session.operation('close'));
-    }), menu, true);
-    closeBrowser.className = 'browser-destructive';
-    button('Disconnect viewer', () => { session.disconnect(); more.open = false; }, menu);
-    if (!options.externalClose) button('Close viewer', () => { dispose(); options.onClose?.(); }, header, false, '×');
-    more.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); more.open = false; summary.focus(); } });
-    const tabs = element('div', null, root, 'browser-tabs'); tabs.setAttribute('role', 'group'); tabs.setAttribute('aria-label', 'Browser tabs');
-    const form = element('form', null, root, 'browser-navigation'); form.setAttribute('aria-label', 'Browser navigation');
-    const back = button('Back', () => session.input({type:'history',direction:'back'}), form, true, '←');
-    const forward = button('Forward', () => session.input({type:'history',direction:'forward'}), form, true, '→');
-    const reload = button('Reload', () => session.input({type:'history',direction:session.status?.page?.loading ? 'stop' : 'reload'}), form, true, '↻');
-    const address = element('input', null, form, 'browser-address'); address.type = 'url'; address.placeholder = 'Enter an https:// address';
-    address.setAttribute('aria-label', 'Address'); address.autocomplete = 'off'; address.spellcheck = false;
-    const go = button('Go', () => {}, form, true); go.type = 'submit';
-    form.onsubmit = event => {
-        event.preventDefault(); const url = address.value;
-        if (/^https?:\/\//.test(url) && bytes(url) <= 8192 && !/[\x00-\x1f\x7f]/.test(url) && session.input({type:'navigate',url})) { address.value = ''; video.focus(); }
-    };
-    const privacy = element('p', 'Taking control is private: agent observation is paused until you return control.', root, 'browser-privacy');
-    const viewport = element('div', null, root, 'browser-viewport');
-    const video = element('video', null, viewport); video.autoplay = true; video.muted = true; video.playsInline = true; video.tabIndex = 0;
-    video.setAttribute('aria-label', 'Remote browser. Escape releases keyboard focus; use More to compose text.');
-    const cursor = element('span', '↖', viewport, 'browser-agent-cursor'); cursor.hidden = true; cursor.setAttribute('aria-hidden','true');
-    const empty = element('div', null, viewport, 'browser-empty');
-    const explanation = element('p', 'Opening browser…', empty);
-    const retry = button('Retry connection', () => session.connect(), empty);
-    const startPage = element('section',null,viewport,'browser-start-page');
-    element('h3','Where would you like to go?',startPage);
-    const startHint = element('p','Ask the agent to open a site, or take private control to browse.',startPage);
-    const useAddress = button('Enter an address',async()=>{ if(!session.controls)await session.control('private'); if(session.controls){address.focus();address.select();} },startPage);
-    const recent = element('div',null,startPage,'browser-recent');
-    const recentPages = new Map(); let recentKey='';
+    const chrome = node('header',root,'browser-next-chrome');
+    const identity = node('div',chrome,'browser-next-identity');
+    node('span',identity,'browser-next-name','BROWSER');
+    const status = node('span',identity,'browser-next-status','Opening…');
+    status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const actions = node('div',chrome,'browser-next-actions');
+    const primary = button('Take control privately',actions,() => void connection.control(connection.controls ? 'agent':'private'),'browser-primary browser-next-primary');
+    const scale = button('View at actual size',actions,() => {actual = !actual;scaleChosen=true;paintScale();},'browser-next-scale','100%');
+    const more = node('details',actions,'browser-next-more');
+    const summary = node('summary',more,'','More');summary.setAttribute('aria-label','More browser options');
+    const menu = node('div',more,'browser-next-menu');
+    const captureButton = button('Capture and annotate',menu,() => {capture?.open();more.open=false;});
+    const disconnect = button('Disconnect viewer',menu,() => {connection.disconnect();more.open=false;});
+    const closeBrowser = button('Close browser',menu,() => {void connection.closeBrowser();more.open=false;},'browser-next-danger');
+    if (!options.externalClose) button('Close viewer',actions,() => {dispose();options.onClose?.();},'browser-next-close','×');
 
-    const dialogPanel = element('section', null, root, 'browser-dialog'); dialogPanel.hidden = true;
-    dialogPanel.setAttribute('role', 'region'); dialogPanel.setAttribute('aria-label', 'Website dialog');
-    const dialogMessage = element('p', null, dialogPanel); dialogMessage.setAttribute('role', 'status');
-    const dialog = element('input', null, dialogPanel); dialog.setAttribute('aria-label', 'Website dialog response'); dialog.autocomplete = 'off'; sensitive.push(dialog);
-    button('Accept dialog', () => { const value = dialog.value; dialog.value = ''; if (bytes(value) <= 16384) session.input({type:'dialog',accept:true,text:value || null}); }, dialogPanel, true);
-    button('Dismiss dialog', () => { dialog.value = ''; session.input({type:'dialog',accept:false,text:null}); }, dialogPanel, true);
-    let tabFingerprint = '', previousFence = '', dialogFingerprint = '';
-    const keys = new Set();
-    const session = new BrowserSession({...options,video,changed:current => {
-        const attached = current.attached && current.status?.running;
-        const privateControl = current.controls && current.status?.mode === 'private';
-        status.textContent = !attached ? 'Disconnected' : privateControl ? 'You control privately' : current.status?.mode === 'agent' && current.status?.agent_active !== false ? 'Agent working' : 'Watching';
-        root.dataset.state = !attached ? 'disconnected' : privateControl ? 'private' : current.status?.mode === 'agent' ? 'agent' : 'watching';
-        primary.textContent = privateControl ? 'Return to agent' : 'Take control privately';
-        primary.setAttribute('aria-label', primary.textContent); primary.title = primary.textContent;
-        primary.disabled = !attached || current.busy || current.closed;
-        captureButton.disabled = !current.streaming || current.busy || current.closed;
-        if (!current.streaming) capture?.reset();
-        privacy.textContent = privateControl ? 'Private control · Agent observation is paused. Return to agent explicitly when finished.' : 'Taking control is private: agent observation is paused until you return control.';
-        const metadata = current.status?.mode === 'private' && !current.controls ? null : current.status;
-        const actionLabels={inspect:'Reading page',navigate:'Opening page',click:'Clicking',fill:'Filling a field',scroll:'Scrolling',tabs:'Changing tabs',screenshot:'Capturing page',upload:'Uploading',download:'Downloading'};
-        if(current.status?.agent_active&&actionLabels[current.status?.agent_action]) status.textContent='Agent · '+actionLabels[current.status.agent_action];
-        const point=current.status?.mode==='agent'?current.status.agent_cursor:null;
-        cursor.hidden=!point||Date.now()-point.at>2500||!current.streaming;
-        if(!cursor.hidden&&video.videoWidth){const box=video.getBoundingClientRect(),wrap=viewport.getBoundingClientRect();const scale=Math.min(box.width/video.videoWidth,box.height/video.videoHeight);cursor.style.left=`${box.left-wrap.left+(box.width-video.videoWidth*scale)/2+point.x/point.width*video.videoWidth*scale}px`;cursor.style.top=`${box.top-wrap.top+(box.height-video.videoHeight*scale)/2+point.y/point.height*video.videoHeight*scale}px`;}
-        startHint.textContent = privateControl ? 'Enter a website address above to start browsing privately.' : 'Ask the agent to open a site, or take private control to browse.';
-        const blank=attached&&(!metadata?.page?.url||metadata.page.url==='about:blank');
-        startPage.hidden=!blank||current.status?.mode==='private'&&!current.controls;
-        useAddress.disabled=current.busy||!attached;
-        // Only nonprivate public-origin browsing is kept, in this viewer's memory.
-        if(metadata?.page?.url&&current.status?.mode!=='private'&&metadata.page.url!=='about:blank'){
-            try{const u=new URL(metadata.page.url);if(['https:','http:'].includes(u.protocol)&&!u.username&&!u.password){recentPages.set(u.origin,{url:u.origin,title:displayText(metadata.page.title)||u.hostname});if(recentPages.size>5)recentPages.delete(recentPages.keys().next().value);}}catch{}
-        }
-        const nextRecent=JSON.stringify([...recentPages.values()]);
-        if(nextRecent!==recentKey){recentKey=nextRecent;recent.replaceChildren();if(recentPages.size){element('h4','Recent sites in this view',recent);for(const item of [...recentPages.values()].reverse())button(item.title,async()=>{if(!session.controls)await session.control('private');session.input({type:'navigate',url:item.url});},recent);}}
-        const enabled = current.controls && !current.busy && current.streaming;
-        for (const node of sensitive) node.disabled = !enabled;
-        address.readOnly = !enabled; address.disabled = !attached;
-        back.disabled = !enabled || metadata?.page?.can_go_back !== true;
-        forward.disabled = !enabled || metadata?.page?.can_go_forward !== true;
-        reload.textContent = metadata?.page?.loading ? '■' : '↻';
-        reload.setAttribute('aria-label', metadata?.page?.loading ? 'Stop loading' : 'Reload'); reload.title = reload.getAttribute('aria-label');
-        const fence = fingerprint(current.status?.binding) + mediaFence(current.status) + current.streamRevision;
-        if (fence !== previousFence) { capture?.reset(); previousFence = fence; text.value = dialog.value = address.value = ''; keys.clear(); more.open = false; }
-        if (doc.activeElement !== address) address.value = metadata?.page?.url === 'about:blank' ? '' : displayText(metadata?.page?.url, 8192);
-        empty.hidden = Boolean(current.streaming);
-        explanation.textContent = current.busy ? 'Opening browser…' : !attached ? current.message : current.status?.mode === 'private' && !current.controls ? 'Private control is active. Agent observation is paused.' : 'Waiting for live video…';
-        retry.hidden = Boolean(attached) || current.busy; retry.disabled = current.busy || current.closed;
-        const remoteDialog = current.controls ? current.status?.dialog : null;
-        const nextDialog = JSON.stringify([fence,remoteDialog]);
-        if (nextDialog !== dialogFingerprint) { dialogFingerprint = nextDialog; dialog.value = ''; }
-        dialogPanel.hidden = !remoteDialog;
-        dialogMessage.textContent = displayText(remoteDialog?.message, 4096);
-        dialog.hidden = remoteDialog?.type !== 'prompt';
-        const details = metadata?.tab_details || [];
-        const key = JSON.stringify([current.status?.tabs,details,enabled,current.status?.binding?.tab_id]);
-        if (key !== tabFingerprint) {
-            const focused = doc.activeElement?.dataset?.tabAction;
-            tabFingerprint = key; tabs.replaceChildren();
-            (current.status?.tabs || []).forEach((id,index) => {
-                const detail = details.find(item => item.id === id);
-                const title = displayText(detail?.title) || displayText(detail?.url) || `Tab ${index + 1}`;
-                const item = element('div', null, tabs, 'browser-tab');
-                const node = button(title, () => session.input({type:'tab',operation:'select',tab_id:id}), item);
-                node.dataset.tabAction = `select:${id}`; node.setAttribute('aria-pressed', String(id === current.status?.binding?.tab_id)); node.disabled = !enabled;
-                const close = button(`Close ${title}`, () => session.input({type:'tab',operation:'close',tab_id:id}), item, false, '×');
-                close.dataset.tabAction = `close:${id}`; close.disabled = !enabled;
-            });
-            const add = button('New tab', () => session.input({type:'tab',operation:'new',tab_id:null}), tabs, false, '+'); add.disabled = !enabled; add.dataset.tabAction = 'new';
-            if (focused) [...tabs.querySelectorAll('button')].find(node => node.dataset.tabAction === focused)?.focus();
-        }
-        options.changed?.(current);
-    }});
-    capture = mountCapture({root,video,canCapture:()=>session.streaming&&!session.closed,onCapture:options.onCapture});
-    const pointer = (event, pressed, moving = false) => {
-        if (!session.controls) return;
-        const point = videoPoint(video,event.clientX,event.clientY,session.status?.viewport); if (!point) return;
+    const tabs = node('div',root,'browser-next-tabs');tabs.setAttribute('role','group');tabs.setAttribute('aria-label','Browser tabs');
+    const navigation = node('form',root,'browser-next-navigation');navigation.setAttribute('aria-label','Browser navigation');
+    const back = button('Back',navigation,() => void navigateAction({type:'history',direction:'back'}),'browser-next-icon','←');
+    const forward = button('Forward',navigation,() => void navigateAction({type:'history',direction:'forward'}),'browser-next-icon','→');
+    const reload = button('Reload',navigation,() => void navigateAction({type:'history',direction:connection.status?.page?.loading?'stop':'reload'}),'browser-next-icon','↻');
+    const address = node('input',navigation,'browser-next-address');address.type='text';address.inputMode='url';
+    address.placeholder='Search or enter a website address';address.setAttribute('aria-label','Website address');
+    address.autocomplete='off';address.spellcheck=false;
+    const go = button('Go to address',navigation,() => {},'browser-next-go','Go');go.type='submit';
+    navigation.addEventListener('submit',async event => {
         event.preventDefault();
-        if (!moving && pressed) { video.focus(); video.setPointerCapture?.(event.pointerId); }
-        session.input({type:'pointer',...point,button:moving ? null : ['left','middle','right'][event.button] || null,pressed});
+        let url = address.value.trim();if(!url)return;
+        if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+        try {const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||bytes(url)>8192)return;}
+        catch {return;}
+        if (await navigateAction({type:'navigate',url})) video.focus();
+    });
+
+    const stage = node('div',root,'browser-next-stage');
+    const scroll = node('div',stage,'browser-next-scroll');
+    const video = node('video',scroll,'browser-next-video');
+    video.autoplay=true;video.muted=true;video.playsInline=true;video.tabIndex=0;
+    video.setAttribute('aria-label','Remote browser. Escape returns to browser controls.');
+    const cursor = node('span',stage,'browser-next-cursor','↖');cursor.hidden=true;cursor.setAttribute('aria-hidden','true');
+    const welcome = node('div',stage,'browser-next-welcome');
+    node('span',welcome,'browser-next-welcome-mark','↗');
+    node('h3',welcome,'','Your voyage’s browser');
+    node('p',welcome,'','Enter an address above, or ask the agent to open a site. The browser stays with this voyage when you leave this view.');
+    button('Browse privately',welcome,async () => {await connection.control('private');address.focus();},'browser-next-welcome-action');
+    const recovery = node('section',stage,'browser-next-recovery');recovery.hidden=true;
+    recovery.setAttribute('role','status');
+    const recoveryTitle = node('h3',recovery);
+    const recoveryBody = node('p',recovery);
+    const recoveryAction = button('Check browser status',recovery,() => void (connection.phase==='stopped'?connection.connect({start:true}):connection.recover()));
+
+    const footer = node('footer',root,'browser-next-footer');
+    const modeHint = node('span',footer,'browser-next-mode-hint');
+    const compose = node('form',footer,'browser-next-compose');
+    const composed = node('textarea',compose);composed.rows=1;composed.placeholder='Type or paste into the browser';
+    composed.setAttribute('aria-label','Text for remote browser');composed.autocomplete='off';composed.spellcheck=false;
+    const sendText = button('Send text to browser',compose,() => {},'','Send');sendText.type='submit';
+    compose.addEventListener('submit',async event => {
+        event.preventDefault();const value=composed.value;
+        if (!value || bytes(value)>16384 || !connection.canInput) return;
+        sendText.disabled=true;
+        try {await connection.confirmedInput({type:'text',text:value});if(composed.value===value)composed.value='';video.focus();}
+        catch { /* Keep the text so the user can inspect the page before deciding. */ }
+        finally {render();}
+    });
+    const dialogPanel = node('section',stage,'browser-next-dialog');dialogPanel.hidden=true;
+    dialogPanel.setAttribute('aria-label','Website dialog');
+    const dialogMessage = node('p',dialogPanel);
+    const dialogInput = node('input',dialogPanel);dialogInput.setAttribute('aria-label','Website dialog response');
+    button('Accept dialog',dialogPanel,() => {void connection.urgentInput({type:'dialog',accept:true,text:dialogInput.value||null});dialogInput.value='';});
+    button('Dismiss dialog',dialogPanel,() => {void connection.urgentInput({type:'dialog',accept:false,text:null});dialogInput.value='';});
+
+    let actual=false, scaleChosen=false, capture=null, resizeTimer=null, resizeTarget='', disposed=false, tabFingerprint='', frameFence='';
+    const connection = new BrowserConnection({...options,video,changed:() => {render();options.changed?.(connection);}});
+    capture = mountCapture({root,video,canCapture:()=>connection.streaming&&!connection.closed,onCapture:options.onCapture});
+    function paintScale() {
+        const viewport=connection.status?.viewport;
+        const useActual=actual&&viewport?.width&&viewport?.height;
+        root.dataset.scale=useActual?'actual':'fit';
+        video.style.width=useActual?`${viewport.width}px`:'';
+        video.style.height=useActual?`${viewport.height}px`:'';
+        scale.textContent=actual?'Fit':'100%';
+        scale.setAttribute('aria-label',actual?'Fit page in view':'View at actual size');
+        scale.title=scale.getAttribute('aria-label');
+        scale.setAttribute('aria-pressed',String(actual));
+    }
+    async function navigateAction(input) {
+        if (!connection.attached || connection.busy) return false;
+        if (!connection.controls) await connection.control('private');
+        if (!connection.canInput) return false;
+        if (input.type==='history'&&input.direction==='stop') return connection.urgentInput(input);
+        try {await connection.confirmedInput(input);return true;}catch{return false;}
+    }
+    function scheduleViewport() {
+        if (!connection.canInput || connection.status?.mode!=='private'
+            || connection.status?.dialog || connection.sending || connection.queue.length) return;
+        const width=Math.max(320,Math.min(3840,Math.round(scroll.clientWidth)));
+        const height=Math.max(240,Math.min(2160,Math.round(scroll.clientHeight)));
+        if (!width || !height || Math.abs((connection.status?.viewport?.width||0)-width)<20 && Math.abs((connection.status?.viewport?.height||0)-height)<20) return;
+        const target=`${width}×${height}`;if(target===resizeTarget)return;
+        resizeTarget=target;clearTimeout(resizeTimer);
+        resizeTimer=setTimeout(async()=>{
+            try {if(connection.canInput&&!connection.status?.dialog)await connection.confirmedInput({type:'resize',width,height});}
+            catch {} finally {resizeTarget='';}
+        },250);
+    }
+    function renderTabs() {
+        const current=connection.status;
+        const details=current?.tab_details||[];
+        const key=JSON.stringify([current?.tabs,details,current?.binding?.tab_id,connection.busy,connection.attached]);
+        if(key===tabFingerprint)return;tabFingerprint=key;tabs.replaceChildren();
+        (current?.tabs||[]).forEach((id,index)=>{
+            const detail=details.find(item=>item.id===id);
+            const title=safe(detail?.title||detail?.url)||`Tab ${index+1}`;
+            const tab=node('div',tabs,'browser-next-tab');
+            const select=button(title,tab,() => void navigateAction({type:'tab',operation:'select',tab_id:id}));
+            select.setAttribute('aria-pressed',String(id===current?.binding?.tab_id));
+            select.disabled=!connection.attached||connection.busy;
+            const close=button(`Close ${title}`,tab,() => void navigateAction({type:'tab',operation:'close',tab_id:id}),'browser-next-tab-close','×');
+            close.disabled=!connection.attached||connection.busy||(current?.tabs?.length||0)<2;
+        });
+        const add=button('New tab',tabs,() => void navigateAction({type:'tab',operation:'new',tab_id:null}),'browser-next-new-tab','+');
+        add.disabled=!connection.attached||connection.busy;
+    }
+    function render() {
+        if(disposed)return;
+        const current=connection.status, phase=connection.phase, privateControl=connection.controls&&current?.mode==='private';
+        root.dataset.state=phase==='live'?(privateControl?'private':current?.mode==='agent'?'agent':'watching'):phase;
+        status.textContent=phase==='live' ? privateControl?'Private control · Agent paused':current?.agent_active?'Agent working':'Watching browser'
+            :phase==='switching'?'Switching control…':phase==='connecting'?'Opening browser…':phase==='recovering'?'Restoring video…'
+            :phase==='stopped'?'Browser stopped':phase==='unavailable'?'Browser unavailable':phase==='waiting-video'?'Waiting for video…'
+            :phase==='needs-review'?'Action needs review':'Browser connection needs attention';
+        primary.textContent=privateControl||connection.controls?'Return to agent':'Take control privately';
+        primary.setAttribute('aria-label',primary.textContent);primary.title=primary.textContent;
+        primary.disabled=!connection.attached||connection.busy||connection.closed;
+        captureButton.disabled=!connection.streaming||connection.busy;
+        closeBrowser.disabled=!connection.controls||connection.busy;
+        disconnect.disabled=!connection.attached||connection.busy;
+        if(!connection.streaming)capture?.reset();
+        const metadata=current?.mode==='private'&&!connection.controls?null:current;
+        const page=metadata?.page;
+        if(doc.activeElement!==address)address.value=page?.url==='about:blank'?'':safe(page?.url,8192);
+        address.disabled=!connection.attached||connection.busy;
+        go.disabled=address.disabled;
+        back.disabled=!connection.attached||connection.busy||page?.can_go_back!==true;
+        forward.disabled=!connection.attached||connection.busy||page?.can_go_forward!==true;
+        reload.disabled=!connection.attached||connection.busy;
+        reload.textContent=page?.loading?'■':'↻';reload.setAttribute('aria-label',page?.loading?'Stop loading':'Reload');
+        const blank=connection.attached&&(!page?.url||page.url==='about:blank');
+        welcome.hidden=!blank||phase==='unavailable';
+        recovery.hidden=!connection.issue&&phase!=='stopped'&&phase!=='unavailable'&&phase!=='disconnected';
+        if(!recovery.hidden){
+            const issue=connection.issue;
+            recoveryTitle.textContent=issue==='input-unknown'?'Your last action was not confirmed':issue==='control-unknown'?'Control change was not confirmed'
+                :issue==='video-unavailable'?'Live video stopped':phase==='stopped'?'This browser is stopped':phase==='unavailable'?'Browser unavailable on this host':'Could not confirm this voyage’s browser';
+            recoveryBody.textContent=issue==='input-unknown'?'The page may have changed. Check its current state before acting again. Your action will not be repeated.'
+                :issue==='video-unavailable'?'The voyage may still be running. Recheck the media connection without repeating page actions.'
+                :phase==='stopped'?'Start a browser for this voyage when it is available.'
+                :phase==='unavailable'?'This Voyage host cannot start a browser with its current configuration.'
+                :'The Vessel connection alone does not confirm this voyage or its browser. Check the voyage state and try again.';
+            recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';
+            recoveryAction.disabled=connection.busy;
+        }
+        modeHint.textContent=privateControl?'Private: your input stays out of agent history. Return control when finished.'
+            :connection.controls?'You control this browser.':'Take private control to type, paste, and navigate.';
+        compose.hidden=!connection.controls;
+        composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;
+        const dialog=connection.controls?current?.dialog:null;
+        dialogPanel.hidden=!dialog;dialogMessage.textContent=safe(dialog?.message,4096);dialogInput.hidden=dialog?.type!=='prompt';
+        const fence=JSON.stringify([current?.binding?.browser_id,current?.binding?.tab_id,current?.binding?.controller_epoch,current?.mode]);
+        if(fence!==frameFence){frameFence=fence;capture?.reset();dialogInput.value='';}
+        const point=current?.mode==='agent'?current?.agent_cursor:null;
+        cursor.hidden=!point||Date.now()-point.at>2500||!connection.streaming;
+        if(!cursor.hidden&&current?.viewport){cursor.style.left=`${point.x/current.viewport.width*100}%`;cursor.style.top=`${point.y/current.viewport.height*100}%`;}
+        if(!scaleChosen)actual=privateControl&&scroll.clientWidth<680
+            &&Math.abs((current?.viewport?.width||0)-scroll.clientWidth)<20;
+        renderTabs();paintScale();scheduleViewport();
+    }
+    const pointer = (event, pressed, moving=false) => {
+        if(!connection.canInput)return;
+        const point=screenPoint(video,event.clientX,event.clientY,connection.status?.viewport);if(!point)return;
+        event.preventDefault();if(pressed){video.focus();video.setPointerCapture?.(event.pointerId);}
+        connection.input({type:'pointer',...point,button:moving?null:['left','middle','right'][event.button]||null,pressed});
     };
-    video.onpointerdown = event => pointer(event,true); video.onpointerup = event => pointer(event,false);
-    let moveTimer;
-    video.onpointermove = event => { if (moveTimer) return; moveTimer = setTimeout(() => { moveTimer = null; },40); pointer(event,false,true); };
-    video.oncontextmenu = event => event.preventDefault();
-    video.addEventListener('wheel',event => { if (!session.controls) return; event.preventDefault(); const factor = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? (session.status?.viewport?.height || video.videoHeight) : 1; const clamp = value => Math.max(-16384,Math.min(16384,Math.round(value * factor))); session.input({type:'scroll',delta_x:clamp(event.deltaX),delta_y:clamp(event.deltaY)}); },{passive:false});
-    const key = (event, pressed) => {
-        if (event.key === 'Escape') { event.preventDefault(); primary.focus(); return; }
-        if (!session.controls || event.isComposing || event.key === 'Process' || event.key === 'Dead') return;
-        if (bytes(event.key) > 128 || /[\x00-\x1f\x7f]/.test(event.key)) return;
-        event.preventDefault();
-        if (pressed) keys.add(event.key); else keys.delete(event.key);
-        session.input({type:'key',key:event.key,pressed});
+    video.onpointerdown=event=>pointer(event,true);video.onpointerup=event=>pointer(event,false);
+    let moveAt=0;video.onpointermove=event=>{if(Date.now()-moveAt<40)return;moveAt=Date.now();pointer(event,false,true);};
+    video.oncontextmenu=event=>event.preventDefault();
+    video.addEventListener('wheel',event=>{
+        if(!connection.canInput)return;event.preventDefault();
+        const factor=event.deltaMode===1?16:event.deltaMode===2?connection.status?.viewport?.height||720:1;
+        const bounded=value=>Math.max(-16384,Math.min(16384,Math.round(value*factor)));
+        connection.input({type:'scroll',delta_x:bounded(event.deltaX),delta_y:bounded(event.deltaY)});
+    },{passive:false});
+    const keys=new Set();
+    const key=(event,pressed)=>{
+        if(event.key==='Escape'){event.preventDefault();primary.focus();return;}
+        if(!connection.canInput||event.isComposing||['Process','Dead'].includes(event.key)||bytes(event.key)>128||/[\x00-\x1f\x7f]/.test(event.key))return;
+        event.preventDefault();pressed?keys.add(event.key):keys.delete(event.key);
+        connection.input({type:'key',key:event.key,pressed});
     };
-    video.onkeydown = event => key(event,true); video.onkeyup = event => key(event,false);
-    video.onblur = () => { for (const key of keys) session.input({type:'key',key,pressed:false}); keys.clear(); };
-    const hidden = () => { if (doc.hidden) session.disconnect('Viewer hidden. Retry connection to resume.'); };
-    doc.addEventListener('visibilitychange',hidden);
-    const timer = setInterval(() => session.refresh(),2000);
-    let disposed = false;
-    const dispose = () => { if (disposed) return; disposed = true; clearInterval(timer); clearTimeout(moveTimer); doc.removeEventListener('visibilitychange',hidden); capture.dispose(); session.dispose(); recentPages.clear(); root.replaceChildren(); };
-    session.notify();
-    if (options.autoConnect !== false) void session.connect();
-    return {session,disconnect:() => session.disconnect(),dispose};
+    video.onkeydown=event=>key(event,true);video.onkeyup=event=>key(event,false);
+    video.onblur=()=>{for(const name of keys)connection.input({type:'key',key:name,pressed:false});keys.clear();};
+    composed.addEventListener('input',()=>{sendText.disabled=!connection.canInput||!composed.value;});
+    const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>{
+        if(!scaleChosen){actual=connection.controls&&connection.status?.mode==='private'&&scroll.clientWidth<680
+            &&Math.abs((connection.status?.viewport?.width||0)-scroll.clientWidth)<20;paintScale();}
+        scheduleViewport();
+    }):null;observer?.observe(scroll);
+    const refresh=setInterval(()=>void connection.refresh(),2000);
+    function dispose(){if(disposed)return;disposed=true;clearInterval(refresh);clearTimeout(resizeTimer);observer?.disconnect();capture?.dispose();connection.dispose();root.replaceChildren();}
+    render();if(options.autoConnect!==false)void connection.connect();
+    return {session:connection,disconnect:()=>connection.disconnect(),dispose};
 }
+
+export {BrowserConnection as BrowserSession, screenPoint as videoPoint};

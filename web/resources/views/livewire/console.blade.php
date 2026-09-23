@@ -92,7 +92,7 @@
             </form>
             </div>
             <aside id="host-browser-panel" tabindex="-1" aria-labelledby="host-browser-title" hidden>
-                <header class="browser-panel-heading"><div><h2 id="host-browser-title">Browser</h2><span id="host-browser-voyage"></span></div><flux:button id="host-browser-close" type="button" variant="ghost" aria-label="Close browser viewer" title="Close viewer; keep browser running">Close ×</flux:button></header>
+                <header class="browser-panel-heading"><div><h2 id="host-browser-title">Browser</h2><span id="host-browser-voyage"></span></div><div class="browser-panel-actions"><flux:button id="host-browser-expand" type="button" variant="ghost" aria-pressed="false">Expand browser</flux:button><flux:button id="host-browser-close" type="button" variant="ghost" aria-label="Close browser viewer" title="Close viewer; keep browser running">Close ×</flux:button></div></header>
                 <div id="host-browser-content"></div>
             </aside>
     </flux:main>

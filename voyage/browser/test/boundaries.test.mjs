@@ -9,7 +9,7 @@ import {randomUUID} from 'node:crypto';
 import {networkProxy,digest} from '../security.mjs';
 import {Journal} from '../journal.mjs';
 import {Worker} from '../worker.mjs';
-import {LatestFrameQueue} from '../encoder.mjs';
+import {LatestFrameQueue} from '../media-next.mjs';
 test('public-web proxy denies loopback unless explicitly granted; replacement revokes',async()=>{
  const server=http.createServer((_,r)=>r.end('fixture'));await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;
  const proxy=await networkProxy(new Map(),true);

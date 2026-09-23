@@ -127,7 +127,7 @@ Private mode is an **agent/history/other-viewer exclusion boundary**, not a ban 
 the trusted host's media processing: private pixels must pass through capture and
 encoding to reach the private controller. They are memory-only media, not model
 tool results or recordings. Task JavaScript is not executed inside the encoder;
-task-page pixels necessarily are processed there. Closing old peers and clearing
+task-page pixels necessarily are processed there. Closing unauthorized peers and clearing
 queued frames precede private acknowledgment. No claim is made that host operators
 cannot access private input or that already delivered frames can be recalled.
 
@@ -248,7 +248,9 @@ effects still fence the runtime and must never be replayed automatically.
 Media readiness requires decoded pixels, not merely a negotiated track. The
 encoder refreshes its current canvas only while a receiver is connected, so
 static pages remain available after negotiation; privacy reset clears that canvas
-and closes old peers. A bounded missing-frame deadline exposes a viewer failure.
+and excludes unauthorized peers. The authorized controller retains its media
+peer through control and viewport changes. A bounded missing-frame deadline
+exposes a viewer failure.
 
 The legacy Web console also preserves an open viewer through authenticated socket
 renewal and fetches its own current snapshot. It never replays browser input.
@@ -281,6 +283,33 @@ same exclusions). The complete Web suite and 18 worker checks passed (one TURN
 check unavailable). The supervised native/Web journey again passed with decoded
 media, private input, suspension/resume and observed cleanup. Actual public-site
 results and installed build identity remain in issue #333's acceptance record.
+
+## Browser replacement cutover
+
+The current rework replaces `helm/browser-view/viewer.mjs` and its CSS, and
+replaces the worker's former `encoder.mjs` entry point with `media-next.mjs`.
+There is one active host-browser viewer and one worker media implementation in
+the packaged path. The independent, opt-in local-browser execution path remains
+subject to its separate consent boundary; it is not a second implementation of
+this Voyage-owned browser.
+
+The browser is the primary workspace surface on desktop, with conversation
+beside it; mobile opens a full-screen browser. Tabs, navigation, Fit/100%,
+private control, and text composition stay in the main chrome. Capture,
+disconnect and destructive closure live under More. Private takeover fences
+other viewers and clears old pixels before acknowledgement while preserving the
+authorized media peer. The browser viewport follows the available stage in
+private mode. Recoverable media and transport states are shown in the viewer,
+and uncertain input is never resent automatically.
+
+The media worker still uses CDP JPEG screencast frames delivered to a trusted
+Chromium canvas for VP8/WebRTC. The replacement bounds that delivery and changes
+the media track on viewport resize without renegotiating the peer. Lower latency
+native capture is a separate measured target; this delivery must not be described
+as eliminating the second Chromium or JPEG decode. The acceptance record in
+#333 tracks real browser journeys, decoded video, cleanup, packaging and hosted
+build evidence for this cutover.
+
 ## Observation recovery
 
 Inspection returns the observed URL and document title with its page text and

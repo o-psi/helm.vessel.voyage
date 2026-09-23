@@ -38,7 +38,8 @@ Viewer/control operations (parent-authenticated human only):
   mode remains private (no implicit return). Parent must call on socket loss.
 - `control`, `viewer`, `mode`: `human`/`private` acquires sole controller or changes
   its mode; `agent` explicitly returns, only current controller. Every transition
-  revokes transports/capture and advances epochs. Private reconnect requires same
+  fences capture, clears pixels, excludes unauthorized receivers and advances epochs.
+  The authorized viewer's media peer stays connected on the same tab. Private reconnect requires same
   controller identity retained by parent; private disconnect retains controller ID.
 - `offer`, `viewer`, `signal_seq`: returns `{type:"offer",sdp}` and current epochs. Each viewer
   gets independent sender transport. `signal_seq` starts at 1 and is consecutive across offer/answer for that viewer; sequences are consumed even on dispatched failure. `answer`, `viewer`, `description:{type:"answer",sdp}`.
@@ -103,8 +104,9 @@ has no task content and uses real host ICE candidates (mDNS obfuscation disabled
 only in the separate encoder process). Parent must authorize candidate disclosure;
 TURN credentials never belong in agent-visible config or logs.
 
-An offer is needed again after control, tab switch or policy changes because all
-old peers are closed. Private disconnect keeps the controller identity and private
+An offer is needed again after a tab/browser change or a disconnected media peer.
+Control and viewport changes preserve the authorized peer and replace its video
+track when dimensions change. Private disconnect keeps the controller identity and private
 mode. No automatic return. Control acknowledges only after encoder reset, capture
 stop and draining current bounded JPEG delivery. It interrupts pending agent
 observations immediately; previously sent website effects remain uncertain.
@@ -160,6 +162,15 @@ images too large even at the lowest quality.
 The encoder marks webpage content as detailed video and prefers preserving
 resolution over frame rate under bandwidth pressure. Pointer mapping still uses
 the authoritative CSS viewport and remains correct if a receiver adapts frames.
+
+`media-next.mjs` is the only encoder module. The worker acknowledges CDP
+screencast frames after bounded delivery into a one-current/one-newest frame
+queue, so a slow encoder does not accumulate unlimited JPEG frames. A generation
+fence discards old frames before a private or capture change. The trusted
+Chromium canvas encoder remains separate from the task browser and sends VP8
+over WebRTC; this still requires two Chromium processes and JPEG decode. The
+replacement improves backpressure, privacy fencing and responsive track
+replacement but does not yet establish a lower-latency native capture pipeline.
 ## Read-only observation failures
 
 `inspect` includes `document.url` (without URL credentials) and `document.title`

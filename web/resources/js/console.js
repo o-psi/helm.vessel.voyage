@@ -75,11 +75,20 @@ export function mount(root) {
     let client, journal, selectedVessel = null, selected = null, snapshot = null, incarnation = null, generation = 0, stale = true, busy = false, refreshing = false;
     let messages = [], decisions = [], earliest = 0, revision = null;
     let composition, newChatSending = false;
-    let browserViewer = null, browserBackground = [], browserRequested = false;
+    let browserViewer = null, browserBackground = [], browserRequested = false, browserExpandedPrevious = null;
+    function setBrowserExpanded(expanded) {
+        const workspace = root.querySelector('.browser-workspace');
+        workspace.classList.toggle('browser-expanded',expanded);
+        $('host-browser-expand').textContent = expanded ? 'Show chat' : 'Expand browser';
+        $('host-browser-expand').setAttribute('aria-pressed',String(expanded));
+        if (expanded && browserExpandedPrevious === null) {browserExpandedPrevious = $('conversation').inert;$('conversation').inert = true;}
+        if (!expanded && browserExpandedPrevious !== null) {$('conversation').inert = browserExpandedPrevious;browserExpandedPrevious = null;}
+    }
     function closeBrowser({reconnect=false}={}) {
         if (!reconnect) browserRequested = false;
         const hadFocus = $('host-browser-panel').contains(document.activeElement);
         browserViewer?.dispose(); browserViewer = null;
+        setBrowserExpanded(false);
         browserBackground.forEach(([node,previous])=>node.inert=previous);browserBackground=[];
         $('host-browser-panel').removeAttribute('aria-modal');$('host-browser-panel').removeAttribute('role');
         $('host-browser-panel').hidden = true;
@@ -87,6 +96,7 @@ export function mount(root) {
         if (hadFocus) $('host-browser-toggle').focus();
     }
     $('host-browser-close').addEventListener('click', closeBrowser);
+    $('host-browser-expand').addEventListener('click', () => setBrowserExpanded(!root.querySelector('.browser-workspace').classList.contains('browser-expanded')));
     root.addEventListener('keydown', event => {
         if ($('host-browser-panel').hidden || event.defaultPrevented) return;
         if (event.key === 'Escape') { event.preventDefault(); closeBrowser(); $('host-browser-toggle').focus(); }

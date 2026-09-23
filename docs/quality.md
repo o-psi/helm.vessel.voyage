@@ -338,6 +338,14 @@ qualification additionally sets `TURN_SERVER` to an existing coturn binary and
 not passing. Crash qualification is a separate adverse gate, not inferred from
 normal browser closure.
 
+The replacement browser UX also uses `node web/tests/browser-next-browser.mjs`
+for the shared viewer at desktop/mobile sizes and
+`node web/tests/browser-layout-browser.mjs` for the production React shell.
+`npm test --prefix web`, `npm run typecheck --prefix web` and
+`npm run build --prefix web` check the client source. These browser journeys use
+real Chromium; layout fixtures do not replace the supervised decoded-media
+journey or native Helm executable built from the same source checkout.
+
 ## Execution profiles
 
 `cargo test -p helm -p vessel --locked profiles -j 8` covers profile storage,

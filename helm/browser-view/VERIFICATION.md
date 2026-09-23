@@ -1,37 +1,37 @@
-# #333 viewer integration checkpoint
+# Browser replacement verification (#333)
 
-Scope: only shared `helm/browser-view/` modules and existing Helm Web console.
-No commits, Rust changes, main-worktree edits, or nested agents. Parent owns
-integration, workspace coverage and hosted follow-through.
+The shared `viewer.mjs`/`viewer.css` are the only host-browser viewer modules
+used by Helm Web and native Helm. `voyage/browser/media-next.mjs` replaces the
+former encoder module. The independent opt-in local-browser feature retains its
+separate consent boundary. See [the contract](CONTRACT.md),
+[worker contract](../../voyage/browser/CONTRACT.md), and
+[host-browser design](../../docs/host-browser.md).
 
-Implemented: real RTCPeerConnection offer/answer and MediaStream video; complete
-ICE answer; authenticated Vessel socket adapter; Start/Connect, human/private/agent
-control, navigation, UUID tabs, pointer/wheel/key, IME text composer, dialogs and
-viewport controls. Input bindings are captured at enqueue, sequences consecutive,
-queue bounded, stale callbacks fenced, media cleared on capture/control/identity
-change or loss. Document/tab/viewport changes invalidate queued input but do not
-unnecessarily recreate media. Payloads never enter IntentJournal/localStorage or
-connection diagnostic content. No implicit private return or reconnect.
+Local Linux checks for this cutover:
 
-Verified in isolated browser333-viewer checkout:
-- Node 24.21.0: `node --test tests/*.test.mjs` from web: 77 passed, 0 failed,
-  0 skipped (10 focused viewer/adapter tests included).
-- Node 24.21.0: `node node_modules/vite/bin/vite.js build`: passed.
-- `git diff --check`: passed.
-- Default host Node 20 cannot load current jsdom/undici. Node 24 executable was
-  installed only under ignored target/browser-viewer-tools. Existing Composer
-  vendor assets reused through ignored web/vendor symlink; no dependency changes.
-- Full output retained locally in ignored target/browser-viewer-tests.log.
+- `npm test --prefix web`: 100 JavaScript and 32 React tests passed.
+- `npm run typecheck --prefix web` and `npm run build --prefix web`: passed.
+- `node web/tests/browser-next-browser.mjs` and
+  `node web/tests/browser-layout-browser.mjs`: real Chromium desktop and mobile
+  viewer/layout journeys passed with no horizontal overflow.
+- `node --test voyage/browser/test/*.test.mjs`: 19 passed, zero failed; the
+  relay-only case was skipped because `TURN_SERVER` was not set. The suite
+  includes decoded WebRTC, private viewer exclusion, track resize, bounded
+  input, stale fencing and crash cleanup.
+- `python3 voyage/tests/host_browser.py --binaries /absolute/path/to/built/bin`:
+  passed with Helm rebuilt from this checkout. Two real supervised Voyages used
+  mounted Web and native Helm viewers, decoded media, private typing/dialogs,
+  suspended owner preparation and observed cleanup.
+- `python3 packaging/test_browser_assets.py -v`: four passed; the new media
+  module is in the staged asset inventory and the removed module is absent.
+- Workspace Rust coverage after final code/test edits: 1,755 passed, zero
+  failed, two ignored. The corrected current-object totals are 75.0092%
+  lines, 71.8912% functions and 71.6406% regions; full metadata is in
+  [coverage/latest.json](../../coverage/latest.json).
 
-Integration contract warning: protocol worktree now explicitly requires a fresh
-caller-supplied non-nil attachment_id on Attach. Viewer follows this. At final
-inspection runtime human_effect still checked `attachment_id.is_nil()` and minted
-an ID, which conflicts with protocol.valid(). Runtime owner must reconcile this;
-viewer does not weaken validation or send both forms. Offer expects unwrapped
-`value:{type:'offer',sdp}`. Stopped status may have null mode/binding.
-
-Actual remote WebRTC decode/end-to-end worker + runtime + Web/native integration
-has NOT been verified here. The focused peer test checks negotiation and actual
-ontrack MediaStream assignment using a peer test double; it is not native browser
-or network qualification. Parent must complete integrated testing after runtime
-and worker integration. No Rust coverage claim is made.
+This is local Linux and loopback browser evidence. It does not establish native
+macOS/Windows behavior, public network/TURN connectivity, installed public-site
+acceptance or a successful hosted artifact. Issue #333 retains those gates and
+the exact delivery identities. The media path still uses CDP JPEG frames and a
+separate trusted Chromium canvas encoder; the replacement adds bounded frame
+delivery and responsive track replacement without claiming a native capture path.

@@ -18,13 +18,14 @@ export function browserActivity(snapshot: any): boolean {
 // Only the selected voyage and its exact live socket may own a viewer.
 export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; onCapture?: (file: File, guard?: () => boolean) => Promise<boolean>}) {
     const [open, setOpen] = useState(false);
+    const [expanded, setExpanded] = useState(false);
     const root = useRef<HTMLDivElement>(null), panel = useRef<HTMLElement>(null), toggle = useRef<HTMLButtonElement>(null);
     const latest = useRef(tab);
     latest.current = tab;
     const id = useId();
     const activity = browserActivity(tab.snapshot);
     const ready = Boolean(client);
-    const close = () => { setOpen(false); toggle.current?.focus(); };
+    const close = () => { setExpanded(false);setOpen(false); toggle.current?.focus(); };
     useEffect(() => {
         if (!open || !ready || !root.current) return;
         let alive = true;
@@ -55,13 +56,20 @@ export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; on
         document.addEventListener('keydown', key);
         return () => {document.removeEventListener('keydown', key);background.forEach((node,i)=>node.inert=previous[i]);};
     }, [open]);
+    useEffect(() => {
+        if (!open || !expanded || window.matchMedia?.('(max-width: 1000px)').matches) return;
+        const conversation = panel.current?.closest('.voyage-workspace')?.querySelector<HTMLElement>(':scope > .conversation');
+        if (!conversation) return;
+        const previous = conversation.inert; conversation.inert = true;
+        return () => {conversation.inert = previous;};
+    }, [open, expanded]);
     return <div className="react-host-browser">
         <button ref={toggle} className="task-browser-action" type="button" aria-expanded={open} aria-controls={id} aria-describedby={activity ? `${id}-activity` : undefined} title={`Browser · ${tab.title}`} onClick={() => open ? close() : setOpen(true)}>
             Browser{activity && <span className="browser-activity" aria-hidden="true"/>}
         </button>
         {activity && <span id={`${id}-activity`} className="sr-only">Browser activity in this voyage</span>}
-        {open && <aside ref={panel} tabIndex={-1} id={id} className="task-browser-panel" aria-labelledby={`${id}-title`}>
-            <header className="task-browser-heading"><div><h2 id={`${id}-title`}>Browser</h2><span>{tab.title}</span></div><button type="button" aria-label="Close browser viewer" title="Close viewer; keep browser running" onClick={close}>Close ×</button></header>
+        {open && <aside ref={panel} tabIndex={-1} id={id} className={`task-browser-panel${expanded?' expanded':''}`} aria-labelledby={`${id}-title`}>
+            <header className="task-browser-heading"><div><h2 id={`${id}-title`}>Browser</h2><span>{tab.title}</span></div><div className="task-browser-heading-actions"><button className="expand-browser" type="button" hidden={window.matchMedia?.('(max-width: 1000px)').matches} aria-pressed={expanded} onClick={() => setExpanded(value => !value)}>{expanded?'Show chat':'Expand browser'}</button><button type="button" aria-label="Close browser viewer" title="Close viewer; keep browser running" onClick={close}>Close ×</button></div></header>
             {!ready && <p role="status">Vessel disconnected. The browser will reconnect when this Vessel connection returns.</p>}
             <div className="task-browser-content" ref={root}/>
         </aside>}

@@ -40,10 +40,10 @@ async function mode(page, label, expected, media=true){
  if(media)await decoded(page,expected);
 }
 async function navigate(page,url){
- await page.getByRole('textbox',{name:'Address',exact:true}).fill(url);
- await page.getByRole('button',{name:'Go',exact:true}).click();
+ await page.getByRole('textbox',{name:'Website address',exact:true}).fill(url);
+ await page.getByRole('button',{name:'Go to address',exact:true}).click();
  // Mounted receiver exposes its queue; native UI is checked through observed media and fixture visits.
- if(await page.evaluate(()=>!!window.mounted))await page.waitForFunction(()=>!window.mounted.session.pumping && window.mounted.session.status?.running);
+ if(await page.evaluate(()=>!!window.mounted))await page.waitForFunction(()=>!window.mounted.session.sending && window.mounted.session.status?.running);
  await new Promise(r=>setTimeout(r,2500));
  await decoded(page,'after navigation');
 }
@@ -53,18 +53,18 @@ async function more(page,label){
  await page.getByRole('button',{name:label,exact:true}).click();
 }
 async function address(page,suffix){
- await page.waitForFunction(url=>document.querySelector('[aria-label="Address"]').value===url,cfg.site+suffix);
+ await page.waitForFunction(url=>document.querySelector('[aria-label="Website address"]').value===url,cfg.site+suffix);
  await decoded(page,'history '+suffix);
 }
 async function layout(page,label){
  for(const [size,width,height] of [['desktop',1280,800],['mobile',390,844]]){
   await page.setViewportSize({width,height});
   await decoded(page,label+' '+size);
-  assert.equal(await page.locator('.browser-header').evaluate(e=>getComputedStyle(e).display),'flex','production CSS must load');
+  assert.equal(await page.locator('.browser-next-chrome').evaluate(e=>getComputedStyle(e).display),'flex','production CSS must load');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth && document.querySelector('.host-browser-viewer').scrollWidth<=innerWidth),'horizontal overflow');
   assert.ok(await page.getByRole('button',{name:'Take control privately',exact:true}).isVisible());
   assert.ok(await page.getByRole('button',{name:'Close viewer',exact:true}).isVisible());
-  for(const name of ['Send text','Resize','Disconnect viewer','Close browser'])assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),false,'advanced controls belong under More');
+  for(const name of ['Disconnect viewer','Close browser','Capture and annotate'])assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),false,'secondary controls belong under More');
   assert.equal(await page.getByRole('button',{name:'Start / Connect',exact:true}).count(),0);
   const screenshot=path.join(cfg.screenshots || path.dirname(cfg.evidence),path.basename(path.dirname(cfg.evidence))+'-'+label+'-'+size+'.png');
   await page.screenshot({path:screenshot});
@@ -164,7 +164,12 @@ try{
  // The fixture only adapts transport; UI, operation sequencing and RTC are production code.
  for(const p of [a,b]){
   const page=await browser.newPage();p.page=page;const operations=[];
-  await page.exposeFunction('hostTransport',async operation=>{operations.push({action:operation.action,signal:operation.signal?.type});const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;return result;});
+  await page.exposeFunction('hostTransport',async operation=>{
+   const entry={action:operation.action,signal:operation.signal?.type,sequence:operation.sequence,input_kind:operation.input?.type};
+   operations.push(entry);
+   try{const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;return result;}
+   catch(error){entry.error=String(error).slice(0,500);throw error;}
+  });
   await page.goto(cfg.site+'/receiver');
   await page.evaluate(async item=>{const {mountBrowserViewer}=await import('/viewer.mjs');window.mounted=mountBrowserViewer(document.querySelector('main'),{context:()=>({incarnation:item.incarnation,revision:0}),transport:window.hostTransport});},p.item);
   await decoded(page,'mounted automatic '+p.item.label);
@@ -186,23 +191,25 @@ try{
    await page.getByRole('button',{name:'Stop loading',exact:true}).click();
   }
   await page.getByRole('button',{name:'Reload',exact:true}).click();
-  await page.waitForFunction(()=>!window.mounted.session.pumping && window.mounted.session.queue.length===0);
+  await page.waitForFunction(()=>!window.mounted.session.sending && window.mounted.session.queue.length===0);
   await decoded(page,'history reload');
   await navigate(page,cfg.site+'/private');
-  await page.getByLabel('More browser options',{exact:true}).click();
   await page.getByRole('textbox',{name:'Text for remote browser',exact:true}).fill('SYNTHETIC_PRIVATE_INPUT_333');
-  await page.getByRole('button',{name:'Send text',exact:true}).click();
-  await page.waitForFunction(()=>!window.mounted.session.pumping);
+  await page.getByRole('button',{name:'Send text to browser',exact:true}).click();
+  await page.waitForFunction(()=>!window.mounted.session.sending);
   assert.equal(await page.evaluate(()=>window.mounted.session.status?.mode),'private');
   assert.equal((await (p===a?b:a).op('status')).status.mode,'agent');
-  await page.getByLabel('More browser options',{exact:true}).click();
   evidence.steps.push({ime_private_sent:true,other_voyage_remained_agent:true});save();
-  await page.getByRole('textbox',{name:'Address',exact:true}).fill(cfg.site+'/modal');
-  await page.getByRole('button',{name:'Go',exact:true}).click();
+  await page.getByRole('textbox',{name:'Website address',exact:true}).fill(cfg.site+'/modal');
+  await page.getByRole('button',{name:'Go to address',exact:true}).click();
   await page.getByRole('region',{name:'Website dialog',exact:true}).waitFor();
   await page.getByRole('textbox',{name:'Website dialog response',exact:true}).fill('synthetic response');
   await page.getByRole('button',{name:'Accept dialog',exact:true}).click();
-  await page.getByRole('region',{name:'Website dialog',exact:true}).waitFor({state:'hidden'});
+  try {await page.getByRole('region',{name:'Website dialog',exact:true}).waitFor({state:'hidden'});}
+  catch(error){evidence.steps.push({dialog_failure:p.item.label,state:await page.evaluate(()=>{
+   const s=window.mounted.session;return {phase:s.phase,issue:s.issue,busy:s.busy,sending:s.sending,streaming:s.streaming,
+    can_input:s.canInput,queue:s.queue.length,sequence:s.sequence,dialog:s.status?.dialog,mode:s.status?.mode};}),
+   recent_operations:operations.slice(-12)});save();throw error;}
   await mode(page,'Return to agent','agent');
   assert.equal(operations.filter(o=>o.action==='start').length,0,'no incidental host restart');
   assert.equal(operations.filter(o=>o.action==='attach').length,0,'reuse pre-attached fixture without duplicate attachment');

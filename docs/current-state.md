@@ -96,6 +96,14 @@ Helm Web's Browser panel and native Helm F6 / `/browser` use one shared graphica
 WebRTC viewer. Native Helm opens it in the ordinary browser; terminal video is not
 required. Viewer detach does not close the host browser. Human/private control,
 tab/document/viewport fences, exact receipts and observed cleanup remain explicit.
+The browser is the larger desktop pane and a full-screen mobile panel. The shared
+viewer exposes tabs, navigation, private control and text composition directly;
+secondary capture, viewer disconnect and browser closure are under More. Its
+media peer stays connected through control and viewport changes on one tab, and
+uncertain input is never automatically replayed. The worker still encodes CDP
+JPEG frames through a separate trusted Chromium canvas into WebRTC; its frame
+queue is bounded. See the [viewer contract](../helm/browser-view/CONTRACT.md)
+and [worker contract](../voyage/browser/CONTRACT.md).
 
 Local synthetic evidence includes two real Voyages, mounted production viewer,
 native local-owner/access-file launchers, decoded video and private-input history

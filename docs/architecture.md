@@ -7,10 +7,10 @@ for supported paths, verification and deployment limits.
 ## Browser direction for v1.0.2
 
 Issue #333 targets Voyage-owned browsers on the Vessel host, with WebRTC live
-viewing and human control in both Helm clients. This is implementation work, not
-a claim that the target is delivered. See [host-browser design](host-browser.md).
-The existing local browser described below remains current until replacement is
-verified.
+viewing and human control in both Helm clients. See the [host-browser design](host-browser.md)
+and [current state](current-state.md) for the implemented scope and verification.
+The explicit local-browser feature keeps its separate consent boundary, but it
+is not the default Helm browser path.
 
 ## Three programs
 

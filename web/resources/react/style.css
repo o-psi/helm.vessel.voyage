@@ -10,23 +10,27 @@
 /* The transcript remains mounted and owns its scroll; the viewer occupies a column. */
 .voyage-workspace{position:relative;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr)}
 .voyage-workspace>.conversation{grid-column:1;grid-row:1;min-width:0}
-.voyage-workspace:has(.task-browser-panel){grid-template-columns:minmax(280px,1fr) minmax(340px,1fr)}
+.voyage-workspace:has(.task-browser-panel){grid-template-columns:minmax(300px,32%) minmax(0,1fr)}
+.voyage-workspace:has(.task-browser-panel.expanded){grid-template-columns:0 minmax(0,1fr)}
+.voyage-workspace:has(.task-browser-panel.expanded)>.conversation{visibility:hidden;overflow:hidden}
 .react-host-browser{display:contents}
 .task-browser-action{position:absolute;right:16px;top:10px;z-index:2;display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;background:var(--page);padding:7px 12px}
-.voyage-workspace:has(.task-browser-panel) .task-browser-action{right:calc(50% + 16px)}
+.voyage-workspace:has(.task-browser-panel) .task-browser-action{display:none}
 .browser-activity{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent)}
 .task-browser-panel{grid-column:2;grid-row:1;min-height:0;min-width:0;display:flex;flex-direction:column;background:var(--page);border-left:1px solid var(--line);overflow:hidden}
-.task-browser-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.task-browser-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;padding:5px 12px;border-bottom:1px solid var(--line)}
+.task-browser-heading-actions{display:flex;align-items:center;gap:6px;flex:none}
 .task-browser-heading>div{min-width:0}.task-browser-heading h2{font-size:15px;margin:0}.task-browser-heading span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
-.task-browser-heading>button{flex:none;border:1px solid var(--line);border-radius:6px;padding:6px 10px}
-.task-browser-content{flex:1;min-height:0;overflow:auto}.task-browser-panel .host-browser-viewer{max-height:none;min-height:100%}.task-browser-panel .host-browser-viewer video{width:100%;height:auto;max-height:65dvh}
+.task-browser-heading-actions button{flex:none;border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+.task-browser-content{flex:1;min-height:0;overflow:hidden}.task-browser-panel .host-browser-viewer{max-height:none;height:100%}
 @media(max-width:1000px){
  .voyage-workspace:has(.task-browser-panel){grid-template-columns:minmax(0,1fr)}
  .voyage-workspace:has(.task-browser-panel) .task-browser-action{right:16px}
  .task-browser-panel{position:fixed;inset:0;z-index:100;border:0;height:100dvh}
+ .task-browser-heading-actions .expand-browser{display:none}
 }
 
 /* Constrain flex descendants so horizontally scrollable options never widen mobile viewport. */
-.voyage-workspace,.conversation,.composer,.composer-box,.composer-toolbar{min-width:0;max-width:100%}.composer-options{width:0;min-width:0;overflow-x:auto}.task-browser-action{min-height:44px;min-width:88px}.task-browser-heading>button{min-height:44px}
+.voyage-workspace,.conversation,.composer,.composer-box,.composer-toolbar{min-width:0;max-width:100%}.composer-options{width:0;min-width:0;overflow-x:auto}.task-browser-action{min-height:44px;min-width:88px}.task-browser-heading-actions button{min-height:40px}
 /* Visually hidden labels must remain clipped within their scrollable owner. */
 .composer-options{position:relative;contain:inline-size}.access-picker{position:relative}.composer{overflow:clip}
