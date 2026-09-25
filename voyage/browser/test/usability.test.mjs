@@ -19,7 +19,7 @@ test('two isolated workers: upload/download, key, viewport, tabs, proxied WebSoc
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
  t.after(async()=>{await Promise.all([a.dispose(),b.dispose()]);for(const s of sockets)s.destroy();await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});});
  const ca=callFor(a),cb=callFor(b);
- for(const [w,call,name]of [[a,ca,'a'],[b,cb,'b']]){await call('init',{config:{root:path.join(root,name),executable,public_web:false,origins:[{origin,private_network:true},{origin:origin.replace('http:','https:'),private_network:true}],ice_servers:[],width:640,height:480}});await call('open');await call('agent',{action:{kind:'navigate',url:origin}});}
+ for(const [w,call,name]of [[a,ca,'a'],[b,cb,'b']]){await call('init',{config:{root:path.join(root,name),executable,public_web:false,origins:[{origin,private_network:true},{origin:origin.replace('http:','https:'),private_network:true}],width:640,height:480}});await call('open');await call('agent',{action:{kind:'navigate',url:origin}});}
  assert.notEqual(a.browser,b.browser);assert.notEqual(a.task,b.task);
  await a.page.evaluate(()=>{localStorage.setItem('isolation','A');document.cookie='isolation=A';});
  assert.equal(await b.page.evaluate(()=>localStorage.getItem('isolation')),null);assert.equal(await b.page.evaluate(()=>document.cookie),'');
@@ -58,7 +58,7 @@ test('human browser chrome exposes titles/history and preserves navigation fence
  const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end(`<title>${req.url==='/one'?'First page':'Second page'}</title><h1>Browser chrome</h1>`);});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`;
  t.after(async()=>{await w.dispose();await new Promise(r=>server.close(r));await fs.rm(root,{recursive:true,force:true});});
- const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],ice_servers:[]}});await call('open');
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}]}});await call('open');
  await call('agent',{action:{kind:'navigate',url:origin+'/one'}});await call('agent',{action:{kind:'navigate',url:origin+'/two'}});
  assert.equal(w.status().page.title,'Second page');assert.ok(w.status().page.can_go_back);assert.equal(w.status().tab_details[0].id,w.active);
  const viewer=randomUUID();await call('join',{viewer});await call('control',{viewer,mode:'private'});
@@ -70,7 +70,7 @@ test('human browser chrome exposes titles/history and preserves navigation fence
 test('inspection labels visible controls and pre-effect refusal keeps browser usable',{timeout:30000},async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'browser-elements-'));const w=new Worker();
  t.after(async()=>{await w.dispose();await fs.rm(root,{recursive:true,force:true});});
- const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[],ice_servers:[]}});await call('open');
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[]}});await call('open');
  await w.page.setContent('<input type="hidden" name="search"><label for="q">Search encyclopedia</label><input id="q" type="search"><button>Search</button><input style="visibility:hidden"><input disabled aria-label="disabled">');
  let found=await call('agent',{action:{kind:'inspect'}});assert.equal(found.elements.length,3);
  const input=found.elements.find(e=>e.type==='search');assert.equal(input.text,'Search encyclopedia');
@@ -97,7 +97,7 @@ test('inspection during a slow navigation preserves the page and can be retried'
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
  t.after(async()=>{await w.dispose();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));await fs.rm(root,{recursive:true,force:true});});
- const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],ice_servers:[]}});await call('open');
+ const call=callFor(w);await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}]}});await call('open');
  await w.page.goto(origin+'/destination',{waitUntil:'commit'});const page=w.page,browser=w.browser;
  const id=randomUUID();const refused=await w.request({id,op:'agent',...w.status(),action:{kind:'inspect'}});
  assert.deepEqual(refused.error,{code:'observation_unavailable',state:'refused'});assert.equal(w.journal.records.get(id).state,'refused');assert.equal(w.page,page);assert.equal(w.browser,browser);assert.equal(w.page.isClosed(),false);assert.equal(w.refs.size,0);

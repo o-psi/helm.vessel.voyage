@@ -9,7 +9,6 @@ import {randomUUID} from 'node:crypto';
 import {networkProxy,digest} from '../security.mjs';
 import {Journal} from '../journal.mjs';
 import {Worker} from '../worker.mjs';
-import {LatestFrameQueue} from '../media-next.mjs';
 test('public-web proxy denies loopback unless explicitly granted; replacement revokes',async()=>{
  const server=http.createServer((_,r)=>r.end('fixture'));await new Promise(r=>server.listen(0,'127.0.0.1',r));const url=`http://127.0.0.1:${server.address().port}`;
  const proxy=await networkProxy(new Map(),true);
@@ -18,10 +17,6 @@ test('public-web proxy denies loopback unless explicitly granted; replacement re
 });
 test('durable crash receipt never replays, changed IDs refuse',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'journal333-'));try{const j=new Journal(root);await j.init();const req={id:randomUUID(),op:'agent',text:'secret'};await j.begin(req);const loaded=new Journal(root);await loaded.init();assert.equal(loaded.previous(req).state,'unknown');assert.throws(()=>loaded.previous({...req,text:'changed'}),/id_conflict/);assert.doesNotMatch(await fs.readFile(path.join(root,req.id+'.json'),'utf8'),/secret/);}finally{await fs.rm(root,{recursive:true,force:true});}
-});
-test('bounded latest frame queue drops backlog and fences',async()=>{
- let release;const delivered=[];const q=new LatestFrameQueue(async f=>{delivered.push(f);if(delivered.length===1)await new Promise(r=>release=r);});
- q.push({data:'one'});q.push({data:'two'});q.push({data:'three'});const done=q.fence(7);release();await done;assert.equal(delivered.length,1);assert.equal(q.replaced,1);await q.push({data:'new'});assert.equal(delivered[1].generation,7);
 });
 test('unobserved cleanup retains ownership lock',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'cleanup333-'));const w=new Worker();try{const r=await w.request({id:randomUUID(),op:'init',config:{root,executable:'/usr/bin/chromium',public_web:false,origins:[]}});assert.equal(r.ok,true);w.task={close:async()=>{throw Error('unobserved');}};await assert.rejects(w.dispose(),/cleanup_failed/);await fs.stat(path.join(root,'worker.lock'));w.task=null;await w.dispose();}finally{await fs.rm(root,{recursive:true,force:true});}
@@ -36,7 +31,7 @@ test('input ledger stays bounded without durable per-input writes; evicted seque
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'input333-'));const w=new Worker();
  try{
   assert.equal((await w.request({id:randomUUID(),op:'init',config:{root,executable:'/usr/bin/chromium',public_web:false,origins:[]}})).ok,true);
-  const viewer=randomUUID();w.viewers.set(viewer,{seq:0,signalSeq:0});w.controller=viewer;w.mode='human';w.task={close:async()=>{}};w.page={isClosed:()=>false,keyboard:{insertText:async()=>{}}};
+  const viewer=randomUUID();w.viewers.set(viewer,{seq:0});w.controller=viewer;w.mode='human';w.task={close:async()=>{}};w.page={isClosed:()=>false,keyboard:{insertText:async()=>{}}};
   let first;
   for(let seq=1;seq<=2100;seq++){const req={id:randomUUID(),op:'input',browser:w.browser,epochs:{...w.epochs},viewer,seq,action:{kind:'text',text:'synthetic'}};if(seq===1)first=req;assert.equal((await w.request(req)).ok,true);}
   assert.equal(w.ephemeral.size,2048);assert.equal((await fs.readdir(path.join(root,'receipts'))).length,1);

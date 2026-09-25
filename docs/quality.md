@@ -324,27 +324,21 @@ python3 -m unittest discover -s packaging -p test_package_linux.py -v
 cargo test -p voyage-installer --locked browser_assets_are_verified -j 8
 ```
 
-These checks verify staging and integrity, not browser execution or WebRTC.
-Actual decoded media, both Helm client journeys, private takeover, multiple
-voyages, relay/network behavior and observed cleanup remain separate acceptance
-obligations documented in [host-browser design](host-browser.md).
+These checks verify staging and integrity, not browser execution. Browser
+execution and cleanup use `npm test --prefix voyage/browser` after pinned npm
+preparation, and `python3 voyage/tests/host_browser.py --binaries
+/absolute/path/to/built/bin` with actual locally built Helm, Vessel and Voyage.
+The process journey checks both Helm clients, DOM replay, private takeover,
+multiple voyages, suspended-owner preparation and observed cleanup. Crash
+qualification remains a separate adverse check.
 
-Actual Linux host-browser journeys use `node --test voyage/browser/test/*.test.mjs`
-(after pinned npm preparation) and `python3 voyage/tests/host_browser.py --binaries
-/absolute/path/to/built/bin`. The latter checks production mounted/native viewers,
-actual decoded frames, suspended-owner preparation and observed cleanup. Relay
-qualification additionally sets `TURN_SERVER` to an existing coturn binary and
-`TURN_TEST_ROOT` to an ignored evidence directory; an unset relay test is skipped,
-not passing. Crash qualification is a separate adverse gate, not inferred from
-normal browser closure.
-
-The replacement browser UX also uses `node web/tests/browser-next-browser.mjs`
-for the shared viewer at desktop/mobile sizes and
+The viewer also uses `node web/tests/browser-next-browser.mjs` for real Chromium
+DOM replay and element input at desktop/mobile sizes and
 `node web/tests/browser-layout-browser.mjs` for the production React shell.
-`npm test --prefix web`, `npm run typecheck --prefix web` and
-`npm run build --prefix web` check the client source. These browser journeys use
-real Chromium; layout fixtures do not replace the supervised decoded-media
-journey or native Helm executable built from the same source checkout.
+`node --test web/tests/host-browser.test.mjs`, `npm run typecheck --prefix web`
+and `npm run build --prefix web` check the client. The browser journeys do not
+certify arbitrary public websites, native macOS/Windows behavior or resource
+budgets on a deployed host.
 
 ## Execution profiles
 

@@ -1,57 +1,11 @@
 # Shared Voyage browser viewer
 
-`viewer.mjs` and `viewer.css` are the single browser UI for Helm Web and the
-native Helm loopback page. `mountBrowserViewer(root, options)` mounts the same
-controls in either client. Helm presents and forwards typed operations; it does
-not execute page actions or own the browser process. The mounted viewer holds no
-credential store or persistent action journal.
+`viewer.mjs` and `viewer.css` are the only host-browser UI used by Helm Web and native Helm. `mountBrowserViewer(root, options)` presents one authenticated attachment. `transport(operation)` returns `{status,value?}` through Vessel; `context()` supplies the current incarnation and revision for Start. Helm does not run the website or own the browser process.
 
-`transport(operation)` sends one `HostBrowserOperation` over the authenticated
-Vessel connection and returns `{status, value?}`. The adapter verifies the voyage
-session and incarnation. `context()` supplies current `{incarnation, revision}`
-for Start. A mount owns one attachment and one RTCPeerConnection at a time.
-Unmounting or socket loss calls `disconnect()`/`dispose()`; it never closes the
-Voyage browser or returns private control to the agent.
+The viewer reads status, starts an available stopped browser when opened, attaches, then polls the read-only `mirror` operation. It decompresses bounded rrweb events and rebuilds the full page in a sandboxed, script-free iframe. A restrictive iframe CSP permits only embedded resources and inline styles. Script, forms, page network fetches and page-provided controls cannot acquire Helm authority. The website remains live in Chromium on the Voyage host. The viewer resynchronizes after a missing cursor, page change or control fence. It shows recovery when the page cannot be observed; input is enabled only after a full snapshot is rebuilt.
 
-The viewer first reads status, starts an available stopped browser only when
-opening the viewer, attaches, then requests a WebRTC offer. It answers over the
-same authenticated socket after complete ICE gathering. The first decoded frame,
-not an `ontrack` event alone, makes the browser interactive. A short ICE
-disconnection is allowed to recover; an ended stream or missing frames shows a
-recovery action. No page content or private input is logged or stored as model
-history. Host supplied RTC configuration may include authorized TURN service;
-there is no default STUN service or page supplied peer configuration.
+A click, form edit, select or wheel event in the replay is translated to a typed operation with the recorder node ID. The worker resolves that ID on the real page. Canvas/video/iframe areas display bounded visual fallback images and use named-element relative clicks. Native file selection and controller-only downloads use size-bounded authenticated operations. Tabs, address, history, resize, dialogs and private control use the same input sequence and binding fences. The viewer never runs site scripts or turns a replay node into a local website effect.
 
-The production UI gives the browser the larger share of desktop space, with
-conversation beside it; the mobile browser occupies a full screen panel. Tabs,
-address, Back/Forward, Reload/Stop, Fit/100% and private control are visible.
-Capture, viewer disconnect and browser closure are secondary actions. Explicit
-text composition supports paste and IME. Private control resizes the browser
-viewport to the available stage. Website dialogs have immediate controls. The
-viewer shows the last known status and a recovery action after an uncertain
-effect; it never presents uncertainty as a stopped browser.
+Status is authoritative. Every effect has a fresh command UUID and the complete observed binding. Input has consecutive sequences. Old queued input is discarded on a binding change. Dialog and Stop may interrupt a blocked page action while preserving sequence order. An uncertain effect is shown for review and never replayed. Viewer disposal detaches; it does not close the Voyage browser or return private control to the agent. Browser closure is a separate explicit action.
 
-Status is authoritative: `{available, running, binding, mode, controller,
-tabs, tab_details, page, viewport, dialog, agent_active, agent_action,
-agent_cursor, input_sequence}`. Only the attached private controller may receive
-private metadata. Every effect carries a new command UUID and the complete
-observed binding. Input uses consecutive attachment local sequences. Queued
-input is fenced by its original binding and rejected when that binding changes.
-The dialog and Stop controls can interrupt a page action whose reply is blocked
-by a native dialog or loading page. They retain consecutive input sequence and
-ignore any older reply arriving after the interrupt. A timed out or rejected effect is not
-replayed. A status read is the only automatic recovery operation.
-
-The media peer is preserved through control and viewport changes for the same
-browser/tab/attachment. The worker clears old pixels and excludes unauthorized
-viewers before acknowledging a private takeover. A tab or browser identity
-change replaces the peer. Page coordinates map decoded frame dimensions to the
-authoritative browser CSS viewport; a receiver that adapts video resolution does
-not change click targets.
-
-`BrowserConnection` is the transport/media state machine, and `screenPoint`
-maps input coordinates. `BrowserSession` and `videoPoint` remain export aliases
-for existing adapters. `externalClose:true` lets a shell provide the panel close
-button. Capture and annotation use the shared local frozen frame editor; draft
-insertion requires a successful `onCapture(File)` response, and opening the
-browser does not capture or submit an image.
+The browser occupies the larger desktop pane and a full screen mobile panel. Tabs, navigation, private control, text composition, uploads, downloads and recovery are accessible in both clients. The smaller visual fallbacks do not promise smooth video or complete cross-origin frame interaction. See [host-browser design](../../docs/host-browser.md) and [protocol](../../docs/host-browser-protocol.md).

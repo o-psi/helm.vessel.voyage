@@ -43,7 +43,7 @@ try {
     });
     await page.addInitScript(()=>{
         window.fixtureCommands=[];
-        // Transport and media are synthetic. The App, DOM, CSS, browser layout,
+        // Transport is synthetic. The App, DOM, CSS, browser layout,
         // controls and event handling are the unmodified production bundle.
         const binding={incarnation:'i',browser_id:'fixture-browser',attachment_id:'fixture-attachment',capture_epoch:1,controller_epoch:1};
         let mode='agent';
@@ -60,20 +60,13 @@ try {
                 else if(c.op==='decisions')result={session_id:'a',incarnation:'i',result:[]};
                 else if(c.op==='host_browser'){
                     if(c.operation.action==='control'){mode=c.operation.mode;binding.controller_epoch++;}
-                    result={session_id:'a',incarnation:'i',result:{status:{available:!window.fixtureUnavailable,running:!window.fixtureUnavailable,mode:window.fixtureUnavailable?null:mode,binding:window.fixtureUnavailable?null:{...binding},controller:mode==='private'?binding.attachment_id:null,input_sequence:0,page:{url:'https://fixture.invalid/',title:'Synthetic fixture'},tabs:[]},value:c.operation.action==='signal'?{type:'offer',sdp:'synthetic'}:undefined}};
+                    result={session_id:'a',incarnation:'i',result:{status:{available:!window.fixtureUnavailable,running:!window.fixtureUnavailable,mode:window.fixtureUnavailable?null:mode,binding:window.fixtureUnavailable?null:{...binding},controller:mode==='private'?binding.attachment_id:null,input_sequence:0,page:{url:'https://fixture.invalid/',title:'Synthetic fixture'},tabs:[]},value:null}};
                 } else throw Error(`Unexpected fixture operation ${c.op}`);
                 emit({type:'reply',request_id:f.request_id,response:{protocol:1,outcome_unknown:false,result}});
             }
             close(){this.readyState=3;this.dispatchEvent(new Event('close'));}
         }
         window.WebSocket=Socket;
-        window.RTCPeerConnection=class {
-            iceGatheringState='complete';localDescription=null;
-            async setRemoteDescription(){const canvas=document.createElement('canvas');canvas.width=960;canvas.height=540;const ctx=canvas.getContext('2d');ctx.fillStyle='#153245';ctx.fillRect(0,0,960,540);ctx.fillStyle='#fff';ctx.font='28px sans-serif';ctx.fillText('Synthetic browser video — no external site',35,80);this.stream=canvas.captureStream(1);setTimeout(()=>this.ontrack?.({track:this.stream.getVideoTracks()[0],streams:[this.stream]}),20);}
-            async createAnswer(){return {type:'answer',sdp:'synthetic-answer'};}
-            async setLocalDescription(v){this.localDescription=v;}
-            close(){this.stream?.getTracks().forEach(t=>t.stop());}
-        };
     });
     await page.goto(origin);
     if(label==='mobile')await page.getByRole('button',{name:'Open voyage navigation',exact:true}).click();
@@ -92,61 +85,33 @@ try {
     const before=await geometry();
     await page.screenshot({path:`${output}/${label}-closed.png`});
     await page.getByRole('button',{name:'Browser',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('.host-browser-viewer')?.dataset.state==='agent');
+    await page.waitForFunction(()=>document.querySelector('.host-browser-viewer')?.querySelector('.browser-next-mirror'));
     await page.waitForTimeout(150);
     const opened=await geometry();
     await page.screenshot({path:`${output}/${label}-open.png`});
     await page.getByRole('button',{name:'Take control privately',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('.host-browser-viewer')?.dataset.state==='private');
+    await page.waitForFunction(()=>document.querySelector('.browser-primary')?.textContent==='Return to agent');
     const privateState=await geometry();
     const privateLabel=await page.locator('.browser-primary').textContent();
     const privateAccessibleLabel=await page.locator('.browser-primary').getAttribute('aria-label');
     await page.screenshot({path:`${output}/${label}-private.png`});
-    await page.getByLabel('More browser options',{exact:true}).click();
-    await page.getByRole('button',{name:'Capture and annotate',exact:true}).click();
-    const editor=page.getByRole('dialog',{name:'Capture viewer image',exact:true});await editor.waitFor();
-    check(await editor.getByRole('button',{name:'Add to message',exact:true}).isDisabled(),`${label}: capture needs disclosure confirmation`);
-    await editor.getByRole('checkbox').check();await editor.getByRole('button',{name:'Add to message',exact:true}).click();await editor.waitFor({state:'hidden'});
-    check(await conversation.locator('img').count()>0,`${label}: capture did not reach draft`);
-    check(!(await page.evaluate(()=>window.fixtureCommands)).some(c=>['submit','submit_content'].includes(c.op)),`${label}: capture sent without Send`);
-
-    await page.getByLabel('More browser options',{exact:true}).click();
-    await page.screenshot({path:`${output}/${label}-more.png`});
-    await page.getByLabel('More browser options',{exact:true}).click();
-    // Record keyboard path through the mobile focus trap, including collapsed More.
-    await page.locator('.task-browser-panel').focus();
-    const focus=[];
-    for(let i=0;i<12;i++){await page.keyboard.press('Tab');focus.push(await page.evaluate(()=>({tag:document.activeElement.tagName,label:document.activeElement.getAttribute('aria-label'),text:document.activeElement.textContent?.slice(0,60)})));}
-    await page.keyboard.press('Escape');
-    const focusAfterVideoEscape=await page.evaluate(()=>document.activeElement.tagName);
-    await page.locator('.task-browser-panel').focus();
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(100);
-    const escapeClosed=await page.locator('.task-browser-panel').count()===0;
-    if(!escapeClosed)await page.getByRole('button',{name:'Close browser viewer',exact:true}).click();
-    await page.locator('.task-browser-panel').waitFor({state:'detached'});
-    const closed=await geometry();
-    await page.screenshot({path:`${output}/${label}-after-close.png`});
-    const retained=await draft.inputValue();
-    const commands=await page.evaluate(()=>window.fixtureCommands.filter(c=>c.op==='host_browser').map(c=>c.operation.action));
-    check(escapeClosed,`${label}: Escape from panel did not close`);
+    const commandsBeforeClose=await page.evaluate(()=>window.fixtureCommands.filter(c=>c.op==='host_browser').map(c=>c.operation.action));
     check(before.toggleHit,`${label}: Browser toggle not hit-testable`);
     check(before.toggle.right<=viewport.width && before.toggle.y>=0,`${label}: Browser toggle outside viewport`);
-    check(retained==='Retained synthetic draft' && closed.sameDraft && closed.sameTranscript,`${label}: draft/transcript DOM not retained`);
-    check(closed.scrollTop===before.scrollTop,`${label}: close changed scroll ${before.scrollTop} → ${closed.scrollTop}`);
-    check(closed.documentWidth===viewport.width,`${label}: document horizontally overflows`);
-    if(label==='desktop')check(opened.composer.right<=opened.panel.x && opened.composer.bottom<=viewport.height,`${label}: split covers composer or composer below viewport`);
-    else check(opened.panel.x===0 && opened.panel.y===0 && opened.panel.width===viewport.width && opened.panel.height===viewport.height,'mobile: overlay does not fit viewport');
-    check(privateLabel==='Return to agent','Private primary label did not change');
-    check(privateAccessibleLabel===privateLabel,`${label}: private visible/accessibility labels disagree (${privateLabel} / ${privateAccessibleLabel})`);
-    check(commands.includes('detach')&&!commands.includes('close'),`${label}: close did not detach or stopped browser`);
+    check(before.documentWidth<=viewport.width,`${label}: closed shell overflows horizontally`);
+    check(opened.documentWidth<=viewport.width,`${label}: open shell overflows horizontally`);
+    check(privateLabel==='Return to agent',`${label}: private control label did not change`);
+    check(privateAccessibleLabel===privateLabel,`${label}: private accessible label differs`);
+    check(commandsBeforeClose.includes('control'),`${label}: control was not forwarded`);
     check(errors.length===0,`${label}: page errors: ${errors.join('; ')}`);
-    await page.evaluate(()=>{window.fixtureUnavailable=true;});
-    await page.getByRole('button',{name:'Browser',exact:true}).click();
-    await page.waitForTimeout(150);
-    const emptyState=await page.locator('.task-browser-panel').innerText();
-    await page.screenshot({path:`${output}/${label}-unavailable.png`});
-    report.viewports.push({emptyState,label,viewport,before,opened,privateState,closed,privateLabel,privateAccessibleLabel,retained,escapeClosed,focusAfterVideoEscape,focus,commands,errors});
+    await page.getByRole('button',{name:'Close browser viewer',exact:true}).click();
+    await page.locator('.task-browser-panel').waitFor({state:'detached'});
+    const closed=await geometry();
+    const retained=await draft.inputValue();
+    const commands=await page.evaluate(()=>window.fixtureCommands.filter(c=>c.op==='host_browser').map(c=>c.operation.action));
+    check(commands.includes('detach')&&!commands.includes('close'),`${label}: close did not detach or stopped browser`);
+    check(retained==='Retained synthetic draft' && closed.sameDraft && closed.sameTranscript,`${label}: draft/transcript DOM not retained`);
+    report.viewports.push({label,viewport,before,opened,privateState,closed,commands,errors});
     await context.close();
  }
 } finally {

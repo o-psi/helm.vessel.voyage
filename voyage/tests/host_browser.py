@@ -1,8 +1,8 @@
 """Offline #333 Linux process/browser journey. No Cargo build or personal state.
 
 Runs two real Vessel-supervised voyages, scripted provider, loopback website and
-Chromium RTC viewers, then real automatic suspension and fresh native/Web
-owner preparation with decoded media and explicit close. Evidence stays in a private temporary directory. Requires
+Chromium DOM viewers, then real automatic suspension and fresh native/Web
+owner preparation with replayed pages and explicit close. Evidence stays in a private temporary directory. Requires
 existing playwright-core and ws; never installs dependencies. Nonzero on any
 journey/cleanup failure; pre-teardown status is retained separately from cleanup.
 """
@@ -47,7 +47,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
         self.server.visits.append(self.path)
         if self.path in self.server.modules or self.path == '/receiver':
             data = (self.server.modules[self.path].read_bytes() if self.path in self.server.modules else
-                    b'<!doctype html><meta name=viewport content="width=device-width, initial-scale=1"><link rel=stylesheet href=/viewer.css><style>html,body{margin:0;height:100%;overflow:hidden}main{box-sizing:border-box;height:100dvh!important}</style><main id=viewer></main>')
+                    b'<!doctype html><meta name=viewport content="width=device-width, initial-scale=1"><link rel=stylesheet href=/viewer.css><script src=/rrweb-vendor.mjs></script><style>html,body{margin:0;height:100%;overflow:hidden}main{box-sizing:border-box;height:100dvh!important}</style><main id=viewer></main>')
             self.send_response(200)
             self.send_header('Content-Type', 'text/javascript' if self.path.endswith(('.mjs', '.js')) else 'text/css' if self.path.endswith('.css') else 'text/html')
             self.send_header('Content-Length', str(len(data)))
@@ -119,9 +119,8 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     server.modules = {'/viewer.css': repo/'helm/browser-view/viewer.css', '/viewer.mjs': repo/'helm/browser-view/viewer.mjs',
                       '/helm/browser-view/viewer.mjs': repo/'helm/browser-view/viewer.mjs'}
-    for name in ('capture.mjs','capture.css'):
-        server.modules['/'+name]=repo/'helm/browser-view'/name
-        server.modules['/helm/browser-view/'+name]=repo/'helm/browser-view'/name
+    server.modules['/rrweb-vendor.mjs'] = repo/'voyage/browser/rrweb-vendor.mjs'
+    server.modules['/voyage/browser/rrweb-vendor.mjs'] = repo/'voyage/browser/rrweb-vendor.mjs'
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
         server.modules['/web/resources/js/'+name] = repo/'web/resources/js'/name
     server.site = f'http://127.0.0.1:{server.server_port}'
@@ -200,7 +199,7 @@ def main():
                   'access': 'unrestricted', 'context_window': 0, 'account': binding,
                   'host_browser_launch': {'node': str(args.node.resolve()), 'worker': str(repo/'voyage/browser/worker.mjs'),
                       'chromium': str(args.chromium), 'config': {'public_web': True, 'origins': [{'origin': server.site, 'private_network': True}],
-                       'ice_servers': [], 'relay_only': False, 'width': 1280, 'height': 720}}}
+                       'width': 1280, 'height': 720}}}
         config_path = root/'config.json'
         config_path.write_text(json.dumps({'version': 1, 'workspace': str(workspace), 'config': config,
             'explicit': {'access': 'unrestricted'}, 'selection': None, 'confirmation': None}))
@@ -332,7 +331,7 @@ def main():
             report['journey'] = 'passed'
         (root/'report.json').write_text(json.dumps(report, indent=2))
     assert report.get('journey') == 'passed' and not report['cleanup'].get('forced_pids') and not owned(), str(root)
-    print('PASS: two real voyages, shared mounted viewer, native local/access-file launchers, decoded RTC, private UI control, history/title, modal/IME, conversation fence, actual suspended native/Web preparation and cleanup')
+    print('PASS: two real voyages, shared mounted viewer, native local/access-file launchers, replayed DOM, private UI control, history/title, modal/IME, conversation fence, actual suspended native/Web preparation and cleanup')
 
 
 if __name__ == '__main__':

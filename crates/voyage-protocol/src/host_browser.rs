@@ -3,8 +3,6 @@ use crate::process::ProcessRight;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const MAX_SDP_BYTES: usize = 64 * 1024;
-pub const MAX_ICE_BYTES: usize = 8 * 1024;
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
 
 /// Private transport provenance; never accepted inside a public VoyageCommand.
@@ -39,32 +37,6 @@ impl HostBrowserBinding {
             && self.capture_epoch > 0
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-pub enum HostBrowserSignal {
-    RequestOffer {},
-    Answer {
-        sdp: String,
-    },
-    Ice {
-        candidate: String,
-        sdp_mid: Option<String>,
-        sdp_mline_index: Option<u16>,
-    },
-}
-impl HostBrowserSignal {
-    pub fn valid(&self) -> bool {
-        match self {
-            Self::RequestOffer {} => true,
-            Self::Answer { sdp } => !sdp.is_empty() && sdp.len() <= MAX_SDP_BYTES,
-            Self::Ice {
-                candidate, sdp_mid, ..
-            } => {
-                candidate.len() <= MAX_ICE_BYTES && sdp_mid.as_ref().is_none_or(|s| s.len() <= 256)
-            }
-        }
-    }
-}
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HostBrowserButton {
@@ -87,11 +59,37 @@ pub enum HostBrowserInput {
     History {
         direction: HostBrowserHistory,
     },
-    Pointer {
-        x: u32,
-        y: u32,
-        button: Option<HostBrowserButton>,
-        pressed: bool,
+    Click {
+        node_id: u64,
+        button: HostBrowserButton,
+    },
+    SurfaceClick {
+        node_id: u64,
+        x: u16,
+        y: u16,
+        button: HostBrowserButton,
+    },
+    Fill {
+        node_id: u64,
+        text: String,
+    },
+    Select {
+        node_id: u64,
+        value: String,
+    },
+    Wheel {
+        node_id: u64,
+        delta_x: i32,
+        delta_y: i32,
+    },
+    Upload {
+        node_id: u64,
+        name: String,
+        mime_type: String,
+        data_base64: String,
+    },
+    Download {
+        download_id: Uuid,
     },
     Key {
         key: String,
@@ -124,7 +122,32 @@ impl HostBrowserInput {
     pub fn valid(&self) -> bool {
         match self {
             Self::History { .. } => true,
-            Self::Pointer { x, y, .. } => *x <= 16384 && *y <= 16384,
+            Self::Click { node_id, .. } => *node_id > 0,
+            Self::SurfaceClick { node_id, x, y, .. } => {
+                *node_id > 0 && *x <= 10_000 && *y <= 10_000
+            }
+            Self::Fill { node_id, text } => *node_id > 0 && text.len() <= MAX_TEXT_BYTES,
+            Self::Select { node_id, value } => *node_id > 0 && value.len() <= MAX_TEXT_BYTES,
+            Self::Wheel {
+                node_id,
+                delta_x,
+                delta_y,
+            } => *node_id > 0 && delta_x.unsigned_abs() <= 16384 && delta_y.unsigned_abs() <= 16384,
+            Self::Upload {
+                node_id,
+                name,
+                mime_type,
+                data_base64,
+            } => {
+                *node_id > 0
+                    && !name.is_empty()
+                    && name.len() <= 255
+                    && !name.contains('/')
+                    && !name.contains('\\')
+                    && mime_type.len() <= 128
+                    && data_base64.len() <= 2_796_204
+            }
+            Self::Download { download_id } => !download_id.is_nil(),
             Self::Key { key, .. } => {
                 !key.is_empty() && key.len() <= 128 && !key.chars().any(char::is_control)
             }
@@ -177,6 +200,11 @@ pub enum HostBrowserOperation {
         command_id: Uuid,
         binding: HostBrowserBinding,
     },
+    /// Read-only, cursor-based page mirror observation. Never journal content.
+    Mirror {
+        binding: HostBrowserBinding,
+        since: u64,
+    },
     Detach {
         command_id: Uuid,
         binding: HostBrowserBinding,
@@ -185,11 +213,6 @@ pub enum HostBrowserOperation {
         command_id: Uuid,
         binding: HostBrowserBinding,
         mode: HostBrowserControlMode,
-    },
-    Signal {
-        command_id: Uuid,
-        binding: HostBrowserBinding,
-        signal: HostBrowserSignal,
     },
     Input {
         command_id: Uuid,
@@ -214,29 +237,28 @@ impl HostBrowserOperation {
             _ => ProcessRight::Observe,
         }
     }
-    /// Exact IDs for effects; Signal/Input receipts belong to a bounded live
+    /// Exact IDs for effects; Input receipts belong to a bounded live
     /// attachment ledger, never the process lifetime durable tombstone store.
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
-            Self::Status {} | Self::Receipt { .. } => None,
+            Self::Status {} | Self::Mirror { .. } | Self::Receipt { .. } => None,
             Self::Start { command_id, .. }
             | Self::Attach { command_id, .. }
             | Self::Detach { command_id, .. }
             | Self::Control { command_id, .. }
-            | Self::Signal { command_id, .. }
             | Self::Input { command_id, .. }
             | Self::Close { command_id, .. } => Some(*command_id),
         }
     }
     pub fn is_ephemeral(&self) -> bool {
-        matches!(self, Self::Signal { .. } | Self::Input { .. })
+        matches!(self, Self::Input { .. })
     }
     pub fn binding(&self) -> Option<&HostBrowserBinding> {
         match self {
             Self::Attach { binding, .. }
+            | Self::Mirror { binding, .. }
             | Self::Detach { binding, .. }
             | Self::Control { binding, .. }
-            | Self::Signal { binding, .. }
             | Self::Input { binding, .. }
             | Self::Close { binding, .. } => Some(binding),
             _ => None,
@@ -252,8 +274,8 @@ impl HostBrowserOperation {
         }
         match self {
             Self::Start { incarnation, .. } => !incarnation.is_nil(),
+            Self::Mirror { since, .. } => *since <= 9_007_199_254_740_991,
             Self::Receipt { command_id } => !command_id.is_nil(),
-            Self::Signal { signal, .. } => signal.valid(),
             Self::Input {
                 sequence, input, ..
             } => *sequence > 0 && input.valid(),
@@ -281,8 +303,9 @@ mod tests {
             .valid()
         );
         assert!(
-            !HostBrowserSignal::Answer {
-                sdp: "a".repeat(MAX_SDP_BYTES + 1)
+            !HostBrowserInput::Click {
+                node_id: 0,
+                button: HostBrowserButton::Left
             }
             .valid()
         );
@@ -394,9 +417,7 @@ mod tests {
             }
             .valid()
         );
-        assert!(
-            serde_json::from_str::<HostBrowserSignal>(r#"{"type":"offer","sdp":"x"}"#).is_err()
-        );
+        assert!(serde_json::from_str::<HostBrowserOperation>(r#"{"action":"signal"}"#).is_err());
         assert!(
             serde_json::from_str::<HostBrowserInput>(r#"{"type":"text","text":"x","script":"x"}"#)
                 .is_err()

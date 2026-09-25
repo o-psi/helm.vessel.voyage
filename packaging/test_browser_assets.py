@@ -18,7 +18,9 @@ class BrowserAssets(unittest.TestCase):
         for name, data in {
             'worker.mjs': 'export {};',
             'guardian.py': '# guardian',
-            'media-next.mjs': 'export {};',
+            'mirror-source.mjs': 'export {};',
+            'rrweb-vendor.mjs': 'export {};',
+            'rrweb-LICENSE': 'MIT License',
             'package.json': json.dumps({'dependencies': {'playwright-core': '1.63.0'}}),
             'package-lock.json': '{}',
             'node_modules/playwright-core/package.json': '{"version":"1.63.0"}',
@@ -29,7 +31,7 @@ class BrowserAssets(unittest.TestCase):
 
     def test_stage_exact_hashed_members(self):
         assets = browser_assets.stage(self.source, self.dest)
-        self.assertEqual(len(assets), 6)
+        self.assertEqual(len(assets), 8)
         for name, info in assets.items():
             self.assertEqual(info['sha256'], hashlib.sha256((self.dest / name).read_bytes()).hexdigest())
             self.assertEqual((self.dest / name).stat().st_mode & 0o777, 0o644)
@@ -45,8 +47,8 @@ class BrowserAssets(unittest.TestCase):
             browser_assets.stage(self.source, self.dest)
 
     def test_symlink_and_bounds_refused(self):
-        (self.source / 'media-next.mjs').unlink()
-        (self.source / 'media-next.mjs').symlink_to(self.source / 'worker.mjs')
+        (self.source / 'mirror-source.mjs').unlink()
+        (self.source / 'mirror-source.mjs').symlink_to(self.source / 'worker.mjs')
         with self.assertRaises(ValueError):
             browser_assets.stage(self.source, self.dest)
 

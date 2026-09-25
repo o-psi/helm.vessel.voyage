@@ -110,7 +110,7 @@ export function mount(root) {
     function openBrowser() {
         if (!client || !selected) return;
         browserRequested = true;
-        const browserIncarnation = incarnation, browserSession = selected, browserVessel = selectedVessel;
+        const browserIncarnation = incarnation;
         $('host-browser-panel').hidden = false;
         $('host-browser-toggle').setAttribute('aria-expanded', 'true');
         $('host-browser-voyage').textContent = $('voyage-title').textContent;
@@ -118,7 +118,7 @@ export function mount(root) {
         if(window.matchMedia('(max-width: 1000px)').matches){browserBackground=[$('conversation'),$('composer'),$('decisions')].filter(Boolean).map(node=>[node,node.inert]);browserBackground.forEach(([node])=>node.inert=true);$('host-browser-panel').setAttribute('role','dialog');$('host-browser-panel').setAttribute('aria-modal','true');}
         browserViewer = mountHostBrowser($('host-browser-content'), {
             client, sessionId:selected, incarnation,
-            context:() => ({incarnation:browserIncarnation, revision:snapshot?.revision, refresh:true}), onClose:closeBrowser, externalClose:true, onCapture:async file=>{if(selected!==browserSession||selectedVessel!==browserVessel||incarnation!==browserIncarnation)throw Error("Voyage changed; capture not attached");if(!await composition.attach([file],()=>selected===browserSession&&selectedVessel===browserVessel&&incarnation===browserIncarnation))throw Error("Capture not attached");},
+            context:() => ({incarnation:browserIncarnation, revision:snapshot?.revision, refresh:true}), onClose:closeBrowser, externalClose:true,
         });
     }
     $('host-browser-toggle').addEventListener('click', () => {

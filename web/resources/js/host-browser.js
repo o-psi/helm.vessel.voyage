@@ -1,3 +1,4 @@
+import '../../../voyage/browser/rrweb-vendor.mjs';
 import {mountBrowserViewer} from '../../../helm/browser-view/viewer.mjs';
 import {request, voyageResult} from './vessel-client.js';
 
@@ -46,5 +47,5 @@ export function hostBrowserAdapter({client, sessionId, incarnation, context}) {
 }
 
 export function mountHostBrowser(root, options) {
-    return mountBrowserViewer(root, {...hostBrowserAdapter(options), onClose:options.onClose, externalClose:options.externalClose, onCapture:options.onCapture});
+    return mountBrowserViewer(root, {...hostBrowserAdapter(options), onClose:options.onClose, externalClose:options.externalClose});
 }

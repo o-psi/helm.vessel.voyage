@@ -179,9 +179,10 @@ impl Adapter {
                 "Browser owner mismatch"
             );
         }
+        let read_only_mirror = matches!(&op, Op::Mirror { .. });
         let result = self.dispatch(op).await;
         // Unknown outcomes poison this viewer; opening a new viewer is an explicit human action.
-        if result.is_err() {
+        if result.is_err() && !read_only_mirror {
             self.stop.cancel();
         }
         let value = result?;
@@ -257,6 +258,7 @@ async fn operation(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Byte
     let interrupt = matches!(
         &op,
         Op::Status {}
+            | Op::Mirror { .. }
             | Op::Control { .. }
             | Op::Detach { .. }
             | Op::Close { .. }
@@ -302,7 +304,7 @@ async fn page(State(a): State<Arc<Adapter>>, headers: HeaderMap) -> Response {
     }
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], PAGE).into_response()
 }
-const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Voyage host browser</title><link rel="stylesheet" href="/viewer.css"><main id="viewer"></main><script type="module" src="/native.mjs"></script>"#;
+const PAGE: &str = r#"<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Voyage host browser</title><link rel="stylesheet" href="/viewer.css"><main id="viewer"></main><script src="/rrweb-vendor.mjs"></script><script type="module" src="/native.mjs"></script>"#;
 const SCRIPT: &str = r#"import {mountBrowserViewer} from '/viewer.mjs';
 const token=location.hash.slice(1); history.replaceState(null,'',location.pathname);
 const root=document.getElementById('viewer');
@@ -319,11 +321,11 @@ try {
    if(lost) throw Error('Socket lost; explicitly open a fresh viewer');
    try {
    const response=await fetch('/operation',{method:'POST',credentials:'omit',cache:'no-store',headers,body:JSON.stringify(operation)});
-   if(!response.ok){viewer?.disconnect();throw Error('Viewer disconnected or operation refused; never replayed');}
+   if(!response.ok){if(operation.action!=='mirror')viewer?.disconnect();throw Error('Viewer operation refused');}
    const reply=await response.json();
    Object.assign(auth,reply.context);
    return reply.result;
-   } catch(error) {disconnect();throw error;}
+   } catch(error) {if(operation.action!=='mirror')disconnect();throw error;}
  }});
  window.addEventListener('pagehide',()=>{clearInterval(heartbeat);viewer.dispose();},{once:true});
 } catch { root.textContent='Viewer unavailable. Return to Helm and explicitly open a fresh viewer. Host browser has not been closed.'; }
@@ -369,16 +371,15 @@ async fn run(
         .route("/alive", post(alive)).route("/bootstrap", post(bootstrap)).route("/operation", post(operation))
         .route("/native.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], SCRIPT) }))
         .route("/viewer.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../browser-view/viewer.mjs")) }))
-        .route("/capture.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../browser-view/capture.mjs")) }))
-        .route("/capture.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../browser-view/capture.css")) }))
+        .route("/rrweb-vendor.mjs", get(|| async { ([(header::CONTENT_TYPE,"text/javascript")], include_str!("../../../voyage/browser/rrweb-vendor.mjs")) }))
         .route("/viewer.css", get(|| async { ([(header::CONTENT_TYPE,"text/css")], include_str!("../../browser-view/viewer.css")) }))
-        .layer(DefaultBodyLimit::max(384 * 1024))
+        .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
         .layer(axum::middleware::map_response(|mut response: Response| async move {
             let h = response.headers_mut();
             h.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
             h.insert(header::REFERRER_POLICY, "no-referrer".parse().unwrap());
             h.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
-            h.insert(header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src blob:; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'".parse().unwrap());
+            h.insert(header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; media-src data: blob:; img-src 'self' data: blob:; font-src data: blob:; frame-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'".parse().unwrap());
             response
         })).with_state(a.clone());
     let base = super::cli::default_directory();

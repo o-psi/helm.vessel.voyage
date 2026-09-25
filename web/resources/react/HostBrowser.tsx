@@ -16,7 +16,7 @@ export function browserActivity(snapshot: any): boolean {
 }
 
 // Only the selected voyage and its exact live socket may own a viewer.
-export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; onCapture?: (file: File, guard?: () => boolean) => Promise<boolean>}) {
+export function HostBrowser({tab, client}: {tab: Tab; client: any}) {
     const [open, setOpen] = useState(false);
     const [expanded, setExpanded] = useState(false);
     const root = useRef<HTMLDivElement>(null), panel = useRef<HTMLElement>(null), toggle = useRef<HTMLButtonElement>(null);
@@ -28,14 +28,13 @@ export function HostBrowser({tab, client, onCapture}: {tab: Tab; client: any; on
     const close = () => { setExpanded(false);setOpen(false); toggle.current?.focus(); };
     useEffect(() => {
         if (!open || !ready || !root.current) return;
-        let alive = true;
         const viewer = mountHostBrowser(root.current, {
             client, sessionId: tab.session, incarnation: tab.incarnation,
             context: () => ({revision: latest.current.snapshot?.revision, refresh:latest.current.stale || !latest.current.incarnation}),
-            onClose: close, externalClose:true, onCapture: onCapture ? async (file: File) => { const ok = await onCapture(file,()=>alive && latest.current.key===tab.key && latest.current.incarnation===tab.incarnation); if(!ok)throw Error("Capture not added"); } : undefined,
+            onClose: close, externalClose:true,
         });
         // Shared viewer auto-connects on mount; disposal detaches, never closes the browser.
-        return () => {alive=false;viewer.dispose();};
+        return () => {viewer.dispose();};
     }, [open, ready, client, tab.vessel, tab.session, tab.incarnation]);
     useEffect(() => {
         if (!open) return;

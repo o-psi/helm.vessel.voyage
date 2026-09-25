@@ -400,12 +400,12 @@ still applies. Native macOS/Windows support is explicitly refused, not certified
 
 ### Host-browser target (#333)
 
-[Host-browser design](host-browser.md) moves task website execution to a
-Voyage-owned worker on the Vessel host. WebRTC viewing does not grant arbitrary
-CDP or host execution. Private input must fence agent observations and other
-viewers before acknowledgement. The host still sees browser credentials; it is not
-a secrecy boundary against the executing-account owner. Chromium sandbox plus
-DNS-pinned proxy checks are defense in depth, **not an OS egress sandbox**. Disk,
-CPU/memory and private-network/metadata access must be qualified before broad
-production claims. The current implementation work and synthetic media tests do
-not establish native-platform or public proxy/NAT deployment security.
+[Host-browser design](host-browser.md) puts task website execution in a
+Voyage-owned worker on the Vessel host. Helm receives bounded DOM observations
+and sends typed element actions; reconstructed page scripts cannot execute in
+Helm. Private control fences agent observations and other viewers before
+acknowledgement. The executing host can see browser credentials. Chromium
+sandbox, replay CSP and DNS-pinned proxy checks are defense in depth, **not an
+OS egress sandbox**. Disk, CPU/memory and private-network/metadata access need
+separate qualification before broad production claims. Linux loopback checks do
+not establish native-platform or public deployment security.

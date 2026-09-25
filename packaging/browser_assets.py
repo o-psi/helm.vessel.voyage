@@ -14,7 +14,7 @@ def stage(source: Path, destination: Path) -> dict:
     package = source / 'package.json'
     if not package.exists():
         return {}
-    required = ['worker.mjs', 'guardian.py', 'package.json', 'package-lock.json',
+    required = ['worker.mjs', 'mirror-source.mjs', 'rrweb-vendor.mjs', 'rrweb-LICENSE', 'guardian.py', 'package.json', 'package-lock.json',
                 'node_modules/playwright-core/package.json']
     for name in required:
         if not (source / name).is_file():
@@ -23,7 +23,7 @@ def stage(source: Path, destination: Path) -> dict:
     installed = json.loads((source / required[-1]).read_text())['version']
     if dependencies.get('playwright-core') != installed:
         raise ValueError('Browser dependency does not match pinned version')
-    paths = list(source.glob('*.mjs')) + list(source.glob('*.py')) + [package, source / 'package-lock.json']
+    paths = list(source.glob('*.mjs')) + list(source.glob('*.py')) + [package, source / 'package-lock.json', source / 'rrweb-LICENSE']
     paths += list((source / 'node_modules' / 'playwright-core').rglob('*'))
     inventory, total = {}, 0
     for path in sorted(paths):

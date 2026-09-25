@@ -25,24 +25,30 @@ async function connect(item, attach=true){
  const status=await p.op('status');assert.equal(status.status.running,true,JSON.stringify(status));p.binding={...status.status.binding,attachment_id:randomUUID()};await p.op('attach');return p;
 }
 async function decoded(page, label){
- let stats;
+ let state;
  for(let tries=0;tries<150;tries++) {
-  stats=await page.evaluate(async()=>{const video=document.querySelector('video');const pc=window.mounted?.session.pc || window.observedPeers?.findLast(p=>p.connectionState==='connected');return {width:video?.videoWidth||0,height:video?.videoHeight||0,rtp:pc?[...(await pc.getStats()).values()].filter(s=>s.type==='inbound-rtp'&&s.kind==='video').map(s=>({framesDecoded:s.framesDecoded||0,bytesReceived:s.bytesReceived||0})):[]};});
-  if(stats.width>0&&stats.rtp.some(s=>s.framesDecoded>2))break;
+  state=await page.evaluate(()=>{const frame=document.querySelector('.browser-next-mirror iframe');
+   const body=frame?.contentDocument?.body;
+   return {ready:document.querySelector('.host-browser-viewer')?.dataset.state==='live'||['agent','private','watching'].includes(document.querySelector('.host-browser-viewer')?.dataset.state),
+    document:!!body,heading:body?.querySelector('h1')?.textContent||'',text:body?.innerText?.slice(0,120)||'',url:document.querySelector('[aria-label="Website address"]')?.value||'',phase:window.mounted?.session.phase,issue:window.mounted?.session.issue,error:window.mounted?.session.lastError,rrweb:!!window.rrweb,streaming:window.mounted?.session.streaming};});
+  if(state.ready&&state.document&&(!state.url.includes(cfg.site)||state.heading==='Synthetic voyage browser'))break;
   await new Promise(r=>setTimeout(r,200));
  }
- assert.ok(stats.width>0&&stats.height>0&&stats.rtp.some(s=>s.framesDecoded>2&&s.bytesReceived>0),JSON.stringify({label,media_not_decoded:stats}));
- evidence.steps.push({label,decoded:stats});save();
+ assert.ok(state.ready&&state.document&&(!state.url.includes(cfg.site)||state.heading==='Synthetic voyage browser'),JSON.stringify({label,dom_not_replayed:state}));
+ evidence.steps.push({label,dom:state});save();
 }
 async function mode(page, label, expected, media=true){
  await page.getByRole('button',{name:label,exact:true}).click();
- await page.waitForFunction(expected=>document.querySelector('.host-browser-viewer')?.dataset.state===expected && !document.querySelector('.browser-primary').disabled,expected);
+ await page.waitForFunction(expected=>document.querySelector('.host-browser-viewer')?.dataset.state===expected && !document.querySelector('.browser-primary').disabled,expected).catch(async error=>{
+  const diagnostic=await page.evaluate(()=>({state:document.querySelector('.host-browser-viewer')?.dataset.state,status:document.querySelector('.browser-next-status')?.textContent,primary:document.querySelector('.browser-primary')?.textContent,enabled:!document.querySelector('.browser-primary')?.disabled,operations:window.operations?.slice(-8)}));
+  evidence.mode_failure={label,expected,diagnostic};save();throw error;
+ });
  if(media)await decoded(page,expected);
 }
 async function navigate(page,url){
  await page.getByRole('textbox',{name:'Website address',exact:true}).fill(url);
  await page.getByRole('button',{name:'Go to address',exact:true}).click();
- // Mounted receiver exposes its queue; native UI is checked through observed media and fixture visits.
+ // Mounted receiver exposes its queue; native UI is checked through the replayed page and fixture visits.
  if(await page.evaluate(()=>!!window.mounted))await page.waitForFunction(()=>!window.mounted.session.sending && window.mounted.session.status?.running);
  await new Promise(r=>setTimeout(r,2500));
  await decoded(page,'after navigation');
@@ -64,7 +70,7 @@ async function layout(page,label){
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth && document.querySelector('.host-browser-viewer').scrollWidth<=innerWidth),'horizontal overflow');
   assert.ok(await page.getByRole('button',{name:'Take control privately',exact:true}).isVisible());
   assert.ok(await page.getByRole('button',{name:'Close viewer',exact:true}).isVisible());
-  for(const name of ['Disconnect viewer','Close browser','Capture and annotate'])assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),false,'secondary controls belong under More');
+  for(const name of ['Disconnect viewer','Close browser'])assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),false,'secondary controls belong under More');
   assert.equal(await page.getByRole('button',{name:'Start / Connect',exact:true}).count(),0);
   const screenshot=path.join(cfg.screenshots || path.dirname(cfg.evidence),path.basename(path.dirname(cfg.evidence))+'-'+label+'-'+size+'.png');
   await page.screenshot({path:screenshot});
@@ -74,18 +80,21 @@ async function layout(page,label){
 }
 async function native(item,observer){
  const page=await browser.newPage();
- // Observe, never replace, the real BrowserSession's native RTCPeerConnection.
- await page.addInitScript(()=>{window.observedPeers=[];const Native=window.RTCPeerConnection;window.RTCPeerConnection=new Proxy(Native,{construct(target,args){const pc=new target(...args);window.observedPeers.push(pc);return pc;}});});
  await page.goto(new URL('file://'+item.launcher).href);
  await page.getByRole('button',{name:'Take control privately',exact:true}).waitFor();
  assert.equal(new URL(page.url()).hash,'','bootstrap must remove launch secret from history');
  await decoded(page,'native '+item.native_route);
+ evidence.nativeStage='before private '+item.native_route;save();
  await mode(page,'Take control privately','private');
+ evidence.nativeStage='before navigate '+item.native_route;save();
  await navigate(page,cfg.site+'/native-'+item.native_route);
+ evidence.nativeStage='before agent '+item.native_route;save();
  await mode(page,'Return to agent','agent');
+ evidence.nativeStage='before agent replay '+item.native_route;save();
  await decoded(page,'native return '+item.native_route);
+ evidence.nativeStage='before close '+item.native_route;save();
  await page.getByRole('button',{name:'Close viewer',exact:true}).click();
- await page.waitForFunction(()=>!document.querySelector('video'));
+ await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
  await new Promise(r=>setTimeout(r,300));
  assert.equal((await observer.op('status')).status.running,true,'viewer disconnect must not close host');
  evidence.steps.push({native_route:item.native_route,authenticated:true,disconnect_preserved_host:true});save();
@@ -94,8 +103,7 @@ async function native(item,observer){
 async function suspendedNative(item){
  const page=await browser.newPage();
  await page.addInitScript(()=>{
-  window.observedPeers=[];window.operations=[];
-  const Native=window.RTCPeerConnection;window.RTCPeerConnection=new Proxy(Native,{construct(target,args){const pc=new target(...args);window.observedPeers.push(pc);return pc;}});
+  window.operations=[];
   const fetchNative=window.fetch;window.fetch=async(...args)=>{
    const response=await fetchNative(...args);
    if(args[0]==='/operation'){
@@ -156,26 +164,26 @@ async function suspendedWeb(item){
  await page.evaluate(()=>window.mounted.dispose());await page.close();
 }
 try{
- browser=await chromium.launch({executablePath:cfg.chromium,headless:true,chromiumSandbox:true,args:['--disable-background-networking','--disable-features=WebRtcHideLocalIpsWithMdns']});
+ browser=await chromium.launch({executablePath:cfg.chromium,headless:true,chromiumSandbox:true,args:['--disable-background-networking']});
  if(cfg.mode==='suspended-native'){for(const item of cfg.sessions)await suspendedNative(item);}
  else if(cfg.mode==='suspended-web'){for(const item of cfg.sessions)await suspendedWeb(item);}
  else {
  const a=await connect(cfg.sessions[0]), b=await connect(cfg.sessions[1]);assert.notEqual(a.binding.browser_id,b.binding.browser_id);
- // The fixture only adapts transport; UI, operation sequencing and RTC are production code.
+ // The fixture only adapts transport; UI, replay and operation sequencing are production code.
  for(const p of [a,b]){
   const page=await browser.newPage();p.page=page;const operations=[];
   await page.exposeFunction('hostTransport',async operation=>{
-   const entry={action:operation.action,signal:operation.signal?.type,sequence:operation.sequence,input_kind:operation.input?.type};
+   const entry={action:operation.action,sequence:operation.sequence,input_kind:operation.input?.type};
    operations.push(entry);
-   try{const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;return result;}
-   catch(error){entry.error=String(error).slice(0,500);throw error;}
+   try{const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;entry.reply={running:result.status?.running,reset:result.value?.reset,encoding:result.value?.encoding,size:result.value?.data_base64?.length};evidence.operations=operations;save();return result;}
+   catch(error){entry.error=String(error).slice(0,500);evidence.operations=operations;save();throw error;}
   });
   await page.goto(cfg.site+'/receiver');
   await page.evaluate(async item=>{const {mountBrowserViewer}=await import('/viewer.mjs');window.mounted=mountBrowserViewer(document.querySelector('main'),{context:()=>({incarnation:item.incarnation,revision:0}),transport:window.hostTransport});},p.item);
   await decoded(page,'mounted automatic '+p.item.label);
   await new Promise(r=>setTimeout(r,2200));
   assert.equal(operations.filter(o=>o.action==='start').length,0,'running host must not restart');
-  assert.equal(operations.filter(o=>o.signal==='request_offer').length,1,'mount must autoConnect exactly once');
+  assert.equal(operations.filter(o=>o.action==='mirror').length>0,true,'mount must request the live page');
   await layout(page,p.item.label);
   await mode(page,'Take control privately','private');
   await navigate(page,cfg.site+'/history-one');
@@ -194,7 +202,7 @@ try{
   await page.waitForFunction(()=>!window.mounted.session.sending && window.mounted.session.queue.length===0);
   await decoded(page,'history reload');
   await navigate(page,cfg.site+'/private');
-  await page.getByRole('textbox',{name:'Text for remote browser',exact:true}).fill('SYNTHETIC_PRIVATE_INPUT_333');
+  await page.getByRole('textbox',{name:'Text for browser',exact:true}).fill('SYNTHETIC_PRIVATE_INPUT_333');
   await page.getByRole('button',{name:'Send text to browser',exact:true}).click();
   await page.waitForFunction(()=>!window.mounted.session.sending);
   assert.equal(await page.evaluate(()=>window.mounted.session.status?.mode),'private');
@@ -214,7 +222,7 @@ try{
   assert.equal(operations.filter(o=>o.action==='start').length,0,'no incidental host restart');
   assert.equal(operations.filter(o=>o.action==='attach').length,0,'reuse pre-attached fixture without duplicate attachment');
   await page.getByRole('button',{name:'Close viewer',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('video'));
+  await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
   await new Promise(r=>setTimeout(r,300));
   assert.equal((await p.op('status')).status.running,true,'close viewer must preserve host');
   evidence.steps.push({mounted:p.item.label,automatic_connections:1,history:true,modal:true,ime:true,close_viewer_preserved_host:true});save();

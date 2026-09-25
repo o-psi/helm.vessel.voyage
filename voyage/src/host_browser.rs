@@ -66,7 +66,7 @@ impl std::fmt::Debug for Launch {
     }
 }
 fn default_config() -> Value {
-    json!({"public_web":true,"origins":[],"ice_servers":[],"relay_only":false,"width":1280,"height":720})
+    json!({"public_web":true,"origins":[],"width":1280,"height":720})
 }
 impl Launch {
     pub fn discover() -> Option<Self> {
@@ -97,70 +97,6 @@ impl Launch {
     }
 }
 
-fn validate_viewer_ice(config: &Value) -> Result<()> {
-    let Some(value) = config.get("viewer_rtc_configuration") else {
-        return Ok(());
-    };
-    let object = value
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("invalid viewer ICE configuration"))?;
-    ensure!(
-        object
-            .keys()
-            .all(|k| matches!(k.as_str(), "iceServers" | "iceTransportPolicy")),
-        "invalid viewer ICE field"
-    );
-    ensure!(
-        value
-            .get("iceTransportPolicy")
-            .is_none_or(|p| p == "all" || p == "relay"),
-        "invalid viewer ICE policy"
-    );
-    let servers = value["iceServers"]
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("viewer ICE servers required"))?;
-    ensure!(servers.len() <= 4, "viewer ICE server bound");
-    for server in servers {
-        let fields = server
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("invalid ICE server"))?;
-        ensure!(
-            fields
-                .keys()
-                .all(|k| matches!(k.as_str(), "urls" | "username" | "credential")),
-            "invalid ICE server field"
-        );
-        let urls = server["urls"]
-            .as_array()
-            .ok_or_else(|| anyhow::anyhow!("ICE URLs required"))?;
-        ensure!(!urls.is_empty() && urls.len() <= 4, "ICE URL bound");
-        for url in urls {
-            let url = url
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("invalid ICE URL"))?;
-            ensure!(
-                url.len() <= 2048
-                    && (url.starts_with("turn:") || url.starts_with("turns:"))
-                    && !url.chars().any(|c| c.is_whitespace() || c.is_control()),
-                "invalid ICE URL"
-            );
-        }
-        for key in ["username", "credential"] {
-            ensure!(
-                server[key]
-                    .as_str()
-                    .is_some_and(|v| v.len() <= 4096 && !v.chars().any(char::is_control)),
-                "invalid ICE credential"
-            );
-        }
-    }
-    ensure!(
-        value["iceTransportPolicy"] != "relay" || !servers.is_empty(),
-        "relay-only viewer needs TURN"
-    );
-    Ok(())
-}
-
 /// Pipe ownership is independent of a caller's cancellation. An interrupt command
 /// can be written while a prior ordinary operation awaits its reply.
 struct Worker {
@@ -177,10 +113,11 @@ struct Worker {
 struct ExchangeGuard {
     failed: Arc<AtomicBool>,
     complete: bool,
+    effectful: bool,
 }
 impl Drop for ExchangeGuard {
     fn drop(&mut self) {
-        if !self.complete {
+        if !self.complete && self.effectful {
             self.failed.store(true, Ordering::Release);
         }
     }
@@ -345,6 +282,7 @@ impl Worker {
             && (request["action"]["kind"] == "dialog"
                 || (request["action"]["kind"] == "history"
                     && request["action"]["direction"] == "stop")));
+        let effectful = request["op"] != "mirror";
         let _permit = if interrupt {
             None
         } else {
@@ -375,14 +313,18 @@ impl Worker {
         let mut guard = ExchangeGuard {
             failed: self.failed.clone(),
             complete: false,
+            effectful,
         };
         let received = tokio::time::timeout(DEADLINE, rx).await;
         guard.complete = true;
         match received {
             Ok(Ok(reply)) => worker_reply(reply),
             _ => {
-                self.failed.store(true, Ordering::Release);
-                anyhow::bail!("browser outcome unknown; never replay")
+                if effectful {
+                    self.failed.store(true, Ordering::Release);
+                    anyhow::bail!("browser outcome unknown; never replay")
+                }
+                anyhow::bail!("browser mirror unavailable; request a new snapshot")
             }
         }
     }
@@ -451,7 +393,6 @@ impl Drop for Worker {
 }
 
 struct Viewer {
-    signal_sequence: u64,
     input_sequence: u64,
     socket: Uuid,
     principal: Uuid,
@@ -573,7 +514,6 @@ impl HostBrowser {
         let launch = self.launch.as_ref().ok_or_else(|| {
             anyhow::anyhow!("host browser unavailable; install packaged worker, Node and Chromium")
         })?;
-        validate_viewer_ice(&launch.config)?;
         let root = self.root()?;
         // Only this exclusive Voyage owner may retire its own prior guardian
         // evidence before a new launch. A worker lock still refuses uncertain reuse.
@@ -715,7 +655,7 @@ impl HostBrowser {
             .as_str()
             .is_some_and(|id| id == attachment.to_string());
         let disclose = !private || (controller && i.viewers.contains_key(&attachment));
-        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"viewport":if disclose {i.status["viewport"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
+        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"viewport":if disclose {i.status["viewport"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"downloads":if controller && disclose {i.status["downloads"].clone()} else {json!([])},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
     }
     // No payloads, URLs, SDP, private input or observations enter durable receipts.
     fn receipt(
@@ -831,6 +771,72 @@ impl HostBrowser {
                 .unwrap_or(Uuid::nil());
             return Ok(json!({"status":self.projection(attachment).await}));
         }
+        if let HostBrowserOperation::Mirror { binding, since } = &operation {
+            let (worker, status) = {
+                let i = self.inner.lock().await;
+                let viewer = i
+                    .viewers
+                    .get(&binding.attachment_id)
+                    .ok_or_else(|| anyhow::anyhow!("browser attachment missing"))?;
+                ensure!(
+                    viewer.socket == socket
+                        && viewer.principal == principal
+                        && !i.disconnected.contains(&socket),
+                    "browser attachment authority mismatch"
+                );
+                if let Some(a) = &viewer.authority {
+                    a.check()?;
+                }
+                (
+                    i.worker
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("browser not running"))?,
+                    i.status.clone(),
+                )
+            };
+            let live = self.binding(&status, binding.attachment_id)?;
+            if *binding != live {
+                return Ok(
+                    json!({"status":self.projection(binding.attachment_id).await,
+                    "value":{"reset":true,"cursor":0,"events":[]}}),
+                );
+            }
+            let fence = self.fence.load(Ordering::Acquire);
+            let value = worker
+                .exchange(json!({"id":Uuid::new_v4(),"op":"mirror",
+                "browser":status["browser"],"epochs":status["epochs"],
+                "viewer":binding.attachment_id,"since":since}))
+                .await?;
+            ensure!(
+                fence == self.fence.load(Ordering::Acquire),
+                "browser mirror fenced"
+            );
+            {
+                let i = self.inner.lock().await;
+                let viewer = i
+                    .viewers
+                    .get(&binding.attachment_id)
+                    .ok_or_else(|| anyhow::anyhow!("browser attachment removed"))?;
+                ensure!(
+                    viewer.socket == socket
+                        && viewer.principal == principal
+                        && !i.disconnected.contains(&socket),
+                    "browser mirror authority changed"
+                );
+                if let Some(a) = &viewer.authority {
+                    a.check()?;
+                }
+            }
+            self.update_status(&value).await;
+            let projected = self.projection(binding.attachment_id).await;
+            ensure!(
+                projected["binding"] == serde_json::to_value(binding)?
+                    && (projected["mode"] != "private"
+                        || projected["controller"] == json!(binding.attachment_id)),
+                "browser mirror authority changed"
+            );
+            return Ok(json!({"status":projected,"value":value["value"]}));
+        }
         let id = operation
             .mutation_id()
             .ok_or_else(|| anyhow::anyhow!("missing browser mutation"))?;
@@ -840,10 +846,7 @@ impl HostBrowser {
                 &json!({"operation":operation,"socket":socket,"principal":principal})
             )?)
         );
-        let ephemeral = matches!(
-            &operation,
-            HostBrowserOperation::Input { .. } | HostBrowserOperation::Signal { .. }
-        );
+        let ephemeral = matches!(&operation, HostBrowserOperation::Input { .. });
         if ephemeral {
             let mut inner = self.inner.lock().await;
             ensure!(
@@ -933,9 +936,7 @@ impl HostBrowser {
         // authority or the capture stream. Input retains every exact fence.
         if matches!(
             operation,
-            HostBrowserOperation::Attach { .. }
-                | HostBrowserOperation::Signal { .. }
-                | HostBrowserOperation::Detach { .. }
+            HostBrowserOperation::Attach { .. } | HostBrowserOperation::Detach { .. }
         ) {
             media_binding.document_epoch = live_binding.document_epoch;
             media_binding.viewport_epoch = live_binding.viewport_epoch;
@@ -973,7 +974,6 @@ impl HostBrowser {
             i.viewers.insert(
                 id,
                 Viewer {
-                    signal_sequence: 0,
                     input_sequence: 0,
                     socket,
                     principal,
@@ -1006,25 +1006,6 @@ impl HostBrowser {
         }
         let mut request = json!({"id":operation.mutation_id(),"browser":status["browser"],"epochs":status["epochs"],"viewer":attachment});
         let detach = matches!(operation, HostBrowserOperation::Detach { .. });
-        let request_offer = matches!(
-            &operation,
-            HostBrowserOperation::Signal {
-                signal: HostBrowserSignal::RequestOffer {},
-                ..
-            }
-        );
-        if matches!(operation, HostBrowserOperation::Signal { .. }) {
-            let mut inner = self.inner.lock().await;
-            let viewer = inner
-                .viewers
-                .get_mut(&attachment)
-                .ok_or_else(|| anyhow::anyhow!("browser viewer missing"))?;
-            viewer.signal_sequence = viewer
-                .signal_sequence
-                .checked_add(1)
-                .ok_or_else(|| anyhow::anyhow!("browser signal sequence exhausted"))?;
-            request["signal_seq"] = json!(viewer.signal_sequence);
-        }
         match operation {
             HostBrowserOperation::Attach { .. } => request["op"] = json!("join"),
             HostBrowserOperation::Detach { .. } => {
@@ -1039,16 +1020,6 @@ impl HostBrowser {
                 request["op"] = json!("control");
                 request["mode"] = serde_json::to_value(mode)?;
             }
-            HostBrowserOperation::Signal { signal, .. } => match signal {
-                HostBrowserSignal::RequestOffer {} => request["op"] = json!("offer"),
-                HostBrowserSignal::Answer { sdp } => {
-                    request["op"] = json!("answer");
-                    request["description"] = json!({"type":"answer","sdp":sdp});
-                }
-                HostBrowserSignal::Ice { .. } => {
-                    anyhow::bail!("complete ICE negotiation required; trickle unsupported")
-                }
-            },
             HostBrowserOperation::Input {
                 sequence, input, ..
             } => {
@@ -1098,7 +1069,7 @@ impl HostBrowser {
         }
         // Worker effects carry current status; do not queue a status request behind an in-flight agent.
 
-        // Socket loss or grant withdrawal can occur while SDP/inputs are pending.
+        // Socket loss or grant withdrawal can occur while input is pending.
         {
             let i = self.inner.lock().await;
             ensure!(
@@ -1111,18 +1082,7 @@ impl HostBrowser {
                 a.check()?;
             }
         }
-        let mut output = value.get("value").unwrap_or(&value).clone();
-        if request_offer {
-            // Explicit host-provided viewer ICE configuration is private signaling,
-            // never status/history. Do not disclose encoder-only TURN credentials.
-            if let Some(config) = self
-                .launch
-                .as_ref()
-                .and_then(|l| l.config.get("viewer_rtc_configuration"))
-            {
-                output["rtc_configuration"] = config.clone();
-            }
-        }
+        let output = value.get("value").unwrap_or(&value).clone();
         Ok(
             json!({"status":self.projection(if detach {Uuid::nil()}else{attachment}).await,"value":output}),
         )
@@ -1272,13 +1232,38 @@ impl HostBrowser {
 fn input_action(input: HostBrowserInput) -> Result<Value> {
     Ok(match input {
         HostBrowserInput::History { direction } => json!({"kind":"history","direction":direction}),
-        HostBrowserInput::Pointer {
+        HostBrowserInput::Click { node_id, button } => {
+            json!({"kind":"element","action":"click","node_id":node_id,"button":button})
+        }
+        HostBrowserInput::SurfaceClick {
+            node_id,
             x,
             y,
             button,
-            pressed,
         } => {
-            json!({"kind":"pointer","type":if button.is_none(){"move"}else if pressed{"down"}else{"up"},"x":x,"y":y,"button":button.unwrap_or(HostBrowserButton::Left)})
+            json!({"kind":"element","action":"surface_click","node_id":node_id,"x":x,"y":y,"button":button})
+        }
+        HostBrowserInput::Fill { node_id, text } => {
+            json!({"kind":"element","action":"fill","node_id":node_id,"text":text})
+        }
+        HostBrowserInput::Select { node_id, value } => {
+            json!({"kind":"element","action":"select","node_id":node_id,"value":value})
+        }
+        HostBrowserInput::Wheel {
+            node_id,
+            delta_x,
+            delta_y,
+        } => json!({"kind":"element","action":"wheel","node_id":node_id,"x":delta_x,"y":delta_y}),
+        HostBrowserInput::Upload {
+            node_id,
+            name,
+            mime_type,
+            data_base64,
+        } => {
+            json!({"kind":"element","action":"upload","node_id":node_id,"name":name,"mime_type":mime_type,"data_base64":data_base64})
+        }
+        HostBrowserInput::Download { download_id } => {
+            json!({"kind":"download","download_id":download_id})
         }
         HostBrowserInput::Key { key, pressed } => {
             json!({"kind":"key","type":if pressed{"down"}else{"up"},"key":key})
@@ -1374,8 +1359,16 @@ mod tests {
         drop(ExchangeGuard {
             failed: failed.clone(),
             complete: false,
+            effectful: true,
         });
         assert!(failed.load(Ordering::Acquire));
+        failed.store(false, Ordering::Release);
+        drop(ExchangeGuard {
+            failed: failed.clone(),
+            complete: false,
+            effectful: false,
+        });
+        assert!(!failed.load(Ordering::Acquire));
     }
     #[tokio::test]
     async fn disconnect_tombstone_refuses_late_status() {
@@ -1400,20 +1393,20 @@ mod tests {
 mod launch_privacy_tests {
     use super::*;
     #[test]
-    fn diagnostic_configuration_withholds_turn_credentials() {
+    fn diagnostic_configuration_withholds_host_configuration() {
         let launch = Launch {
             node: "/usr/bin/node".into(),
             worker: "/private/worker.mjs".into(),
             chromium: "/usr/bin/chromium".into(),
-            config: json!({"ice_servers":[{"credential":"turn-secret-sentinel"}]}),
+            config: json!({"origins":[{"origin":"https://private.invalid","private_network":true}]}),
         };
-        assert!(!format!("{launch:?}").contains("turn-secret-sentinel"));
+        assert!(!format!("{launch:?}").contains("private.invalid"));
         let config = crate::Config {
             host_browser_launch: Some(launch),
             ..Default::default()
         };
         let display = config.diagnostic_toml().unwrap();
-        assert!(!display.contains("turn-secret-sentinel"));
+        assert!(!display.contains("private.invalid"));
         assert!(!display.contains("/private/worker"));
     }
 }
@@ -1451,7 +1444,6 @@ mod viewer_metadata_tests {
             inner.viewers.insert(
                 owner,
                 Viewer {
-                    signal_sequence: 0,
                     input_sequence: 0,
                     socket: Uuid::new_v4(),
                     principal: Uuid::new_v4(),

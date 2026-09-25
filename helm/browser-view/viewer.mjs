@@ -1,505 +1,534 @@
-import {mountCapture} from './capture.mjs';
 const NIL = '00000000-0000-0000-0000-000000000000';
 const bytes = value => new TextEncoder().encode(value).length;
-const peerKey = status => JSON.stringify([
+const bindingKey = status => JSON.stringify(status?.binding);
+const pageKey = status => JSON.stringify([
     status?.binding?.incarnation, status?.binding?.browser_id,
     status?.binding?.attachment_id, status?.binding?.tab_id,
+    status?.binding?.document_epoch, status?.binding?.controller_epoch,
+    status?.binding?.capture_epoch,
 ]);
-const bindingKey = status => JSON.stringify(status?.binding);
-
-export function screenPoint(video, x, y, viewport) {
-    const rect = video.getBoundingClientRect();
-    if (!rect.width || !rect.height || !video.videoWidth || !video.videoHeight) return null;
-    const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
-    const left = rect.left + (rect.width - video.videoWidth * scale) / 2;
-    const top = rect.top + (rect.height - video.videoHeight * scale) / 2;
-    const px = (x - left) / scale, py = (y - top) / scale;
-    if (px < 0 || py < 0 || px >= video.videoWidth || py >= video.videoHeight) return null;
-    const width = Number.isSafeInteger(viewport?.width) ? viewport.width : video.videoWidth;
-    const height = Number.isSafeInteger(viewport?.height) ? viewport.height : video.videoHeight;
-    return {x: Math.min(width - 1, Math.floor(px / video.videoWidth * width)),
-        y: Math.min(height - 1, Math.floor(py / video.videoHeight * height))};
-}
-
-// One mounted viewer owns one attachment. Commands are never replayed after an
-// unknown result; a read-only status request is the only automatic recovery.
-export class BrowserConnection {
-    constructor({transport, context, video, changed = () => {}, peer = config => new RTCPeerConnection(config),
-        rtcConfiguration = {}, uuid = () => crypto.randomUUID(), timeout = 25000}) {
-        Object.assign(this, {transport, context, video, changed, peer, rtcConfiguration, uuid, timeout});
-        this.status = null; this.phase = 'idle'; this.issue = null; this.sequence = 0;
-        this.queue = []; this.sending = false; this.urgentPromise = null; this.busy = false; this.closed = false;
-        this.epoch = 0; this.mediaEpoch = 0; this.lastFrame = 0; this.streaming = false;
-        this.wasHidden = !!video?.ownerDocument?.hidden;
-    }
-    emit() { this.changed(this); }
-    operation(action, fields = {}) { return {action, command_id:this.uuid(), binding:{...this.status.binding}, ...fields}; }
-    get attached() { return !!this.status?.binding && this.status.binding.attachment_id !== NIL; }
-    get controls() { return this.attached && ['human','private'].includes(this.status?.mode)
-        && this.status.controller === this.status.binding.attachment_id; }
-    get canInput() { return this.controls && this.streaming && !this.busy && !this.issue && !this.closed; }
-    discardQueued(reason) {
-        this.queue.splice(0).forEach(item => item.reject?.(Error(reason)));
-    }
-    accept(status) {
-        const previous = this.status;
-        if (previous && bindingKey(previous) !== bindingKey(status)) this.discardQueued('input_fenced');
-        if (previous && peerKey(previous) !== peerKey(status)) this.clearMedia();
-        this.status = status;
-        if (this.attached && Number.isSafeInteger(status.input_sequence)) this.sequence = Math.max(this.sequence,status.input_sequence);
-        if (!status.available) this.phase = 'unavailable';
-        else if (!status.running) this.phase = 'stopped';
-        else if (this.streaming) this.phase = 'live';
-        else if (this.phase !== 'connecting' && this.phase !== 'recovering') this.phase = 'waiting-video';
-        this.emit();
-    }
-    async request(operation, epoch = this.epoch) {
-        if (this.closed) throw Error('viewer_closed');
-        let timer;
-        try {
-            const reply = await Promise.race([this.transport(operation), new Promise((_, reject) => {
-                timer = setTimeout(() => reject(Error('reply_timeout')), this.timeout);
-            })]);
-            if (this.closed || epoch !== this.epoch) throw Error('stale_viewer');
-            if (!reply?.status || typeof reply.status.available !== 'boolean' || typeof reply.status.running !== 'boolean') throw Error('invalid_status');
-            // An interrupt can finish before the page action that opened its
-            // native dialog. Do not roll the UI back to that older reply.
-            if (operation.action !== 'input' || operation.sequence >= this.sequence) this.accept(reply.status);
-            return reply;
-        } finally { clearTimeout(timer); }
-    }
-    fail(kind) {
-        this.discardQueued('input_unconfirmed');
-        this.issue = kind;
-        this.phase = kind === 'input-unknown' ? 'needs-review' : 'error';
-        this.emit();
-    }
-    clearMedia() {
-        this.mediaEpoch++;
-        clearTimeout(this.mediaDeadline); clearTimeout(this.disconnectDeadline);
-        this.rejectFrame?.(Error('media_closed')); this.rejectFrame = null;
-        this.stopFrameWatch?.(); this.stopFrameWatch = null;
-        const pc = this.pc; this.pc = null;
-        if (pc) { pc.ontrack = null; pc.onconnectionstatechange = null; pc.close(); }
-        if (this.video) { this.video.srcObject?.getTracks().forEach(track => track.stop()); this.video.srcObject = null; }
-        this.streaming = false; this.lastFrame = 0;
-    }
-    async connect({start = true} = {}) {
-        if (this.busy || this.closed) return;
-        const epoch = ++this.epoch; this.busy = true; this.issue = null; this.phase = 'connecting'; this.emit();
-        try {
-            await this.request({action:'status'},epoch);
-            if (!this.status.available) return;
-            if (!this.status.running) {
-                if (!start) return;
-                const {incarnation,revision} = this.context();
-                await this.request({action:'start',command_id:this.uuid(),incarnation,expected_revision:revision},epoch);
-            }
-            if (!this.attached) {
-                await this.request(this.operation('attach',{binding:{...this.status.binding,attachment_id:this.uuid()}}),epoch);
-                this.sequence = Number.isSafeInteger(this.status.input_sequence) ? this.status.input_sequence : 0;
-            }
-            if (!this.attached) throw Error('attachment_missing');
-            await this.startMedia(epoch);
-        } catch {
-            if (epoch === this.epoch && !this.closed && !this.issue) this.fail('connect-unknown');
-        } finally { if (epoch === this.epoch) { this.busy = false; this.emit(); } }
-    }
-    async startMedia(epoch = this.epoch) {
-        if (!this.attached || !this.status?.running || this.closed) return;
-        this.clearMedia(); this.phase = 'waiting-video'; this.emit();
-        const reply = await this.request(this.operation('signal',{signal:{type:'request_offer'}}),epoch);
-        if (reply.value?.type !== 'offer' || typeof reply.value.sdp !== 'string' || bytes(reply.value.sdp) > 65536) throw Error('invalid_offer');
-        const key = peerKey(this.status), mediaEpoch = this.mediaEpoch;
-        const current = () => !this.closed && epoch === this.epoch && mediaEpoch === this.mediaEpoch && key === peerKey(this.status);
-        const pc = this.pc = this.peer(reply.value.rtc_configuration ?? this.rtcConfiguration);
-        let ready, rejectReady;
-        const firstFrame = new Promise((resolve,reject) => { ready = resolve; rejectReady = reject; });
-        void firstFrame.catch(() => {});
-        this.rejectFrame = rejectReady;
-        const frame = () => {
-            if (!current() || !this.video.videoWidth || !this.video.videoHeight || this.video.readyState < 2) return;
-            this.lastFrame = Date.now(); this.streaming = true; this.phase = 'live'; this.issue = null;
-            clearTimeout(this.mediaDeadline); this.rejectFrame = null; ready(); this.emit();
-        };
-        this.mediaDeadline = setTimeout(() => rejectReady(Error('first_frame_timeout')), this.timeout);
-        pc.ontrack = event => {
-            if (!current()) { event.track.stop(); return; }
-            this.video.srcObject = event.streams[0] || new MediaStream([event.track]);
-            this.video.addEventListener('loadeddata',frame); this.video.addEventListener('resize',frame);
-            const watch = () => {
-                if (!current()) return;
-                frame();
-                if (this.video.requestVideoFrameCallback) this.frameCallback = this.video.requestVideoFrameCallback(watch);
-            };
-            if (this.video.requestVideoFrameCallback) this.frameCallback = this.video.requestVideoFrameCallback(watch);
-            this.stopFrameWatch = () => {
-                this.video.removeEventListener('loadeddata',frame); this.video.removeEventListener('resize',frame);
-                if (this.video.cancelVideoFrameCallback && this.frameCallback) this.video.cancelVideoFrameCallback(this.frameCallback);
-            };
-            this.video.play()?.catch(() => rejectReady(Error('playback_blocked')));
-            frame();
-        };
-        pc.onconnectionstatechange = () => {
-            if (!current()) return;
-            if (pc.connectionState === 'connected') { clearTimeout(this.disconnectDeadline); if (this.streaming) this.phase = 'live'; this.emit(); }
-            else if (pc.connectionState === 'disconnected') {
-                this.phase = 'recovering'; this.emit();
-                clearTimeout(this.disconnectDeadline);
-                this.disconnectDeadline = setTimeout(() => { if (current() && pc.connectionState === 'disconnected') this.mediaFailed(); },5000);
-            } else if (['failed','closed'].includes(pc.connectionState)) this.mediaFailed();
-        };
-        try {
-            await pc.setRemoteDescription({type:'offer',sdp:reply.value.sdp});
-            if (!current()) return;
-            await pc.setLocalDescription(await pc.createAnswer());
-            if (!current()) return;
-            if (pc.iceGatheringState !== 'complete') await new Promise((resolve,reject) => {
-                const timer = setTimeout(() => done(Error('ice_timeout')),this.timeout);
-                const done = error => {clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',check);error ? reject(error) : resolve();};
-                const check = () => {if (!current()) done(Error('stale_viewer')); else if (pc.iceGatheringState === 'complete') done();};
-                pc.addEventListener('icegatheringstatechange',check);check();
-            });
-            if (!current()) return;
-            const sdp = pc.localDescription?.sdp;
-            if (!sdp || bytes(sdp)>65536) throw Error('invalid_answer');
-            await this.request(this.operation('signal',{signal:{type:'answer',sdp}}),epoch);
-            await firstFrame;
-        } catch (error) {
-            if (current()) {this.clearMedia();this.fail('video-unavailable');}
-            throw error;
-        }
-    }
-    mediaFailed() {this.clearMedia();this.fail('video-unavailable');}
-    async refresh() {
-        if (this.closed || this.busy || this.refreshing || this.sending || this.queue.length) return;
-        if (!this.status) return;
-        this.refreshing = true;
-        const epoch = this.epoch;
-        try {
-            await this.request({action:'status'},epoch);
-            if (this.attached && this.status.running && !this.pc && !this.issue) await this.startMedia(epoch);
-            const hidden=!!this.video.ownerDocument?.hidden;
-            if(hidden)this.wasHidden=true;
-            else if(this.wasHidden){this.lastFrame=Date.now();this.wasHidden=false;}
-            if (this.streaming && this.lastFrame && !hidden && Date.now()-this.lastFrame > 8000) this.mediaFailed();
-        } catch { if (epoch === this.epoch && !this.closed) this.fail('status-unavailable'); }
-        finally { this.refreshing = false; }
-    }
-    async recover() {
-        if (this.closed || this.busy) return;
-        this.issue = null;
-        if (!this.status || !this.attached || !this.status.running) return this.connect({start:false});
-        this.phase = 'recovering'; this.emit();
-        try {await this.request({action:'status'});if(this.attached && this.status.running && !this.pc)await this.startMedia();}
-        catch {this.fail('status-unavailable');}
-    }
-    async control(mode) {
-        if (!this.attached || this.busy || !['agent','human','private'].includes(mode)) return;
-        this.busy = true; this.phase = 'switching'; this.emit();
-        try {
-            await this.request(this.operation('control',{mode}));
-            // The new media owner keeps this authorized receiver. A tab/browser
-            // change can still replace the peer and is reconciled here.
-            if (!this.pc) await this.startMedia();
-            this.issue = null;
-        } catch { this.fail('control-unknown'); }
-        finally {this.busy = false;this.emit();}
-    }
-    enqueue(input, resolve = null, reject = null) {
-        if (!this.canInput) return false;
-        if (this.queue.length >= 32) {this.fail('input-unknown');return false;}
-        this.queue.push({input,key:bindingKey(this.status),epoch:this.epoch,resolve,reject});
-        void this.flush(); return true;
-    }
-    input(input) {return this.enqueue(input);}
-    confirmedInput(input) {
-        return new Promise((resolve,reject) => {
-            if (!this.enqueue(input,resolve,reject)) reject(Error('input_unavailable'));
-        });
-    }
-    async urgentInput(input) {
-        if (!this.canInput || this.urgentPromise) return false;
-        this.discardQueued('input_superseded');
-        if (this.sending) {
-            // Native page dialogs can block the in-flight pointer/navigation
-            // reply. The worker has a separate interrupt lane for this input.
-            const action=this.operation('input',{sequence:++this.sequence,input});
-            const epoch=this.epoch;
-            const pending=this.request(action,epoch).then(()=>true).catch(()=>{
-                if(epoch===this.epoch&&!this.closed)this.fail('input-unknown');return false;
-            })
-                .finally(()=>{if(this.urgentPromise===pending)this.urgentPromise=null;});
-            this.urgentPromise=pending;
-            return pending;
-        }
-        return new Promise(resolve => {
-            this.queue.unshift({input,key:bindingKey(this.status),epoch:this.epoch,
-                resolve:() => resolve(true),reject:() => resolve(false)});
-            void this.flush();
-        });
-    }
-    async flush() {
-        if (this.sending) return;
-        this.sending = true;
-        let next;
-        try {
-            while (this.queue.length) {
-                next = this.queue.shift();
-                if (!this.canInput || next.epoch !== this.epoch || next.key !== bindingKey(this.status)) {next.reject?.(Error('input_fenced'));continue;}
-                await this.request(this.operation('input',{sequence:++this.sequence,input:next.input}),next.epoch);
-                next.resolve?.(true);next = null;
-                if(this.urgentPromise)await this.urgentPromise;
-            }
-        } catch {next?.reject?.(Error('input_unconfirmed'));if(!this.closed&&next?.epoch===this.epoch)this.fail('input-unknown');}
-        finally {this.sending = false;this.emit();}
-    }
-    async closeBrowser() {
-        if (!this.controls || this.busy) return;
-        this.busy = true;this.emit();
-        try {await this.request(this.operation('close'));this.clearMedia();this.issue=null;this.phase='stopped';}
-        catch {this.fail('close-unknown');}
-        finally {this.busy=false;this.emit();}
-    }
-    disconnect() {
-        const detach = this.attached && !this.closed ? this.operation('detach') : null;
-        this.epoch++;this.clearMedia();this.discardQueued('viewer_disconnected');this.phase = 'disconnected';this.issue = null;this.emit();
-        if (detach) void Promise.resolve().then(() => this.transport(detach)).catch(() => {});
-    }
-    dispose() {if(this.closed)return;this.disconnect();this.closed=true;this.emit();}
-}
-
-
+const staleBinding=(current,next)=>!!current&&!!next&&current.browser_id===next.browser_id
+    && ['document_epoch','viewport_epoch','controller_epoch','capture_epoch'].some(name=>(current[name]||0)>(next[name]||0));
 const safe = (value, limit = 512) => typeof value === 'string'
     ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,'').slice(0,limit) : '';
+const replayPolicy="default-src 'none'; img-src data: blob:; font-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; frame-src data: blob:; form-action 'none'; base-uri 'none'";
 
-export function mountBrowserViewer(root, options = {}) {
-    const doc = root.ownerDocument;
+function fenceSnapshot(event) {
+    if(event?.type!==2)return event;
+    const html=event.data?.node?.childNodes?.find(node=>node.tagName==='html');
+    const head=html?.childNodes?.find(node=>node.tagName==='head');
+    if(!Array.isArray(head?.childNodes))throw Error('invalid_full_snapshot');
+    // rrweb rebuilds the iframe document. Place the policy before any captured
+    // resource node so the rebuilt document never starts a site fetch from Helm.
+    head.childNodes.unshift({type:2,tagName:'meta',attributes:{'http-equiv':'Content-Security-Policy',content:replayPolicy},childNodes:[],id:Number.MAX_SAFE_INTEGER-1});
+    return event;
+}
+
+async function decodeMirror(value) {
+    if (value?.encoding !== 'gzip' || typeof value.data_base64 !== 'string' || value.data_base64.length > 4000000)
+        throw Error('invalid_mirror');
+    const raw = Uint8Array.from(atob(value.data_base64), char => char.charCodeAt(0));
+    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const content = await new Response(stream).text();
+    if (bytes(content) > 3000000) throw Error('mirror_limit');
+    const events = JSON.parse(content);
+    if (!Array.isArray(events) || events.length > 1024) throw Error('invalid_mirror');
+    return events;
+}
+
+// A mount owns one authenticated attachment and one script-free replay iframe.
+// Read-only mirror cursors may be repeated; page actions never are.
+export class BrowserConnection {
+    constructor({transport, context, mirror, changed = () => {}, onReplay = () => {}, onVisuals = () => {},
+        uuid = () => crypto.randomUUID(), timeout = 25000}) {
+        Object.assign(this,{transport,context,mirror,changed,onReplay,onVisuals,uuid,timeout});
+        this.status=null;this.phase='idle';this.issue=null;this.sequence=0;
+        this.queue=[];this.sending=false;this.urgentPromise=null;this.busy=false;this.closed=false;
+        this.epoch=0;this.cursor=0;this.streaming=false;this.polling=false;this.replayer=null;
+    }
+    emit(){this.changed(this);}
+    operation(action,fields={}){return {action,command_id:this.uuid(),binding:{...this.status.binding},...fields};}
+    get attached(){return !!this.status?.binding && this.status.binding.attachment_id!==NIL;}
+    get controls(){return this.attached && ['human','private'].includes(this.status?.mode)
+        && this.status.controller===this.status.binding.attachment_id;}
+    get canInput(){return this.controls&&this.streaming&&!this.busy&&!this.issue&&!this.closed;}
+    discardQueued(reason){this.queue.splice(0).forEach(item=>item.reject?.(Error(reason)));}
+    clearMirror(){
+        this.cursor=0;this.streaming=false;
+        this.replayer?.destroy();this.replayer=null;
+        this.mirror?.replaceChildren();
+        this.onVisuals([],null);
+    }
+    accept(status){
+        const previous=this.status;
+        if(staleBinding(previous?.binding,status?.binding)) return;
+        if(previous && bindingKey(previous)!==bindingKey(status))this.discardQueued('input_fenced');
+        if(previous && pageKey(previous)!==pageKey(status))this.clearMirror();
+        this.status=status;
+        if(this.attached&&Number.isSafeInteger(status.input_sequence))this.sequence=Math.max(this.sequence,status.input_sequence);
+        if(!status.available)this.phase='unavailable';
+        else if(!status.running)this.phase='stopped';
+        else if(this.streaming)this.phase='live';
+        else if(this.phase!=='connecting'&&this.phase!=='recovering')this.phase='waiting-page';
+        this.emit();
+    }
+    async request(operation,epoch=this.epoch){
+        if(this.closed)throw Error('viewer_closed');
+        let timer;
+        try{
+            const reply=await Promise.race([this.transport(operation),new Promise((_,reject)=>{
+                timer=setTimeout(()=>reject(Error('reply_timeout')),this.timeout);
+            })]);
+            if(this.closed||epoch!==this.epoch)throw Error('stale_viewer');
+            if(!reply?.status||typeof reply.status.available!=='boolean'||typeof reply.status.running!=='boolean')throw Error('invalid_status');
+            if(staleBinding(this.status?.binding,reply.status.binding))throw Error('stale_status');
+            if(operation.action!=='input'||operation.sequence>=this.sequence)this.accept(reply.status);
+            return reply;
+        }finally{clearTimeout(timer);}
+    }
+    fail(kind){this.discardQueued('input_unconfirmed');this.issue=kind;this.phase=kind==='input-unknown'?'needs-review':'error';this.emit();}
+    async connect({start=true}={}){
+        if(this.busy||this.closed)return;
+        const epoch=++this.epoch;this.busy=true;this.issue=null;this.phase='connecting';this.emit();
+        try{
+            await this.request({action:'status'},epoch);
+            if(!this.status.available)return;
+            if(!this.status.running){
+                if(!start)return;
+                const {incarnation,revision}=this.context();
+                await this.request({action:'start',command_id:this.uuid(),incarnation,expected_revision:revision},epoch);
+            }
+            if(!this.attached){
+                await this.request(this.operation('attach',{binding:{...this.status.binding,attachment_id:this.uuid()}}),epoch);
+                this.sequence=Number.isSafeInteger(this.status.input_sequence)?this.status.input_sequence:0;
+            }
+            if(!this.attached)throw Error('attachment_missing');
+            await this.pull(epoch);
+            this.schedulePoll();
+        }catch(error){this.lastError=String(error);if(epoch===this.epoch&&!this.closed&&!this.issue)this.fail('connect-unknown');}
+        finally{if(epoch===this.epoch){this.busy=false;this.emit();}}
+    }
+    schedulePoll(delay=180){
+        clearTimeout(this.pollTimer);
+        if(this.closed||!this.attached||!this.status?.running)return;
+        this.pollTimer=setTimeout(async()=>{
+            if(this.polling){this.schedulePoll(180);return;}
+            this.polling=true;
+            try{await this.pull();this.issue=null;}
+            catch(error){this.lastError=String(error);if(!this.closed){this.clearMirror();this.fail('page-unavailable');}}
+            finally{this.polling=false;this.schedulePoll(this.streaming?260:600);}
+        },delay);
+    }
+    async pull(epoch=this.epoch){
+        if(!this.attached||!this.status?.running||this.closed)return;
+        const binding={...this.status.binding}, key=pageKey(this.status), since=this.cursor;
+        const reply=await this.request({action:'mirror',binding,since},epoch);
+        if(key!==pageKey(this.status))return;
+        const value=reply.value;
+        if(!value||value.reset&&value.encoding!=='gzip'){
+            this.clearMirror();return;
+        }
+        if(!Number.isSafeInteger(value.cursor)||value.cursor<since&&!value.reset)throw Error('invalid_cursor');
+        const events=await decodeMirror(value);
+        if(key!==pageKey(this.status))return;
+        if(value.reset){
+            this.clearMirror();
+            if(!events.some(event=>event?.type===2))throw Error('missing_full_snapshot');
+            const library=globalThis.rrweb;
+            if(!library?.Replayer)throw Error('replayer_unavailable');
+            const player=new library.Replayer([],{root:this.mirror,liveMode:true,mouseTail:false,
+                showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
+            this.replayer=player;
+            // rrweb's replay iframe has sandbox="allow-same-origin". This CSP
+            // prevents the mirror from fetching the site's URLs from Helm.
+            const replayDocument=player.iframe.contentDocument;
+            const policy=replayDocument.createElement('meta');
+            policy.httpEquiv='Content-Security-Policy';
+            policy.content=replayPolicy;
+            replayDocument.head.append(policy);
+            player.iframe.referrerPolicy='no-referrer';
+            player.enableInteract();
+            player.on('fullsnapshot-rebuilded',()=>{
+                if(this.replayer!==player)return;
+                this.onReplay(player,this);
+                this.streaming=true;this.phase='live';this.issue=null;this.emit();
+                this.onVisuals(this.latestVisuals||[],player);
+            });
+            player.startLive(Date.now()-120);
+        }
+        for(const event of events)this.replayer?.addEvent(fenceSnapshot(event));
+        this.cursor=value.cursor;
+        this.latestVisuals=Array.isArray(value.visuals)?value.visuals:[];
+        this.onVisuals(this.latestVisuals,this.replayer);
+    }
+    async refresh(){
+        if(this.closed||this.refreshing||!this.status)return;
+        this.refreshing=true;
+        try{await this.request({action:'status'});if(this.attached&&this.status.running&&!this.pollTimer)this.schedulePoll();}
+        catch{if(!this.closed)this.fail('status-unavailable');}
+        finally{this.refreshing=false;}
+    }
+    async recover(){
+        if(this.closed||this.busy)return;
+        this.issue=null;this.clearMirror();
+        if(!this.status||!this.attached||!this.status.running)return this.connect({start:false});
+        this.phase='recovering';this.emit();
+        try{await this.request({action:'status'});if(this.attached&&this.status.running)await this.pull();this.schedulePoll();}
+        catch{this.fail('status-unavailable');}
+    }
+    async control(mode){
+        if(!this.attached||this.busy||!['agent','human','private'].includes(mode))return;
+        this.busy=true;this.phase='switching';this.emit();
+        let committed=false;
+        try{await this.request(this.operation('control',{mode}));committed=true;this.clearMirror();await this.pull();this.issue=null;}
+        catch{this.fail(committed?'page-unavailable':'control-unknown');}
+        finally{this.busy=false;this.emit();}
+    }
+    enqueue(input,resolve=null,reject=null){
+        if(!this.canInput)return false;
+        if(this.queue.length>=32){this.fail('input-unknown');return false;}
+        this.queue.push({input,key:bindingKey(this.status),epoch:this.epoch,resolve,reject});
+        void this.flush();return true;
+    }
+    input(input){return this.enqueue(input);}
+    confirmedInput(input){return new Promise((resolve,reject)=>{
+        if(!this.enqueue(input,resolve,reject))reject(Error('input_unavailable'));
+    });}
+    async urgentInput(input){
+        const interrupt=input?.type==='dialog'&&this.controls&&!!this.status?.dialog
+            || input?.type==='history'&&input.direction==='stop'&&this.controls;
+        if((!this.canInput&&!interrupt)||this.urgentPromise)return false;
+        this.discardQueued('input_superseded');
+        if(this.sending){
+            const action=this.operation('input',{sequence:++this.sequence,input}),epoch=this.epoch;
+            const pending=this.request(action,epoch).then(()=>true).catch(()=>{
+                if(epoch===this.epoch&&!this.closed)this.fail('input-unknown');return false;
+            }).finally(()=>{if(this.urgentPromise===pending)this.urgentPromise=null;});
+            this.urgentPromise=pending;return pending;
+        }
+        return new Promise(resolve=>{
+            this.queue.unshift({input,key:bindingKey(this.status),epoch:this.epoch,
+                resolve:()=>resolve(true),reject:()=>resolve(false)});void this.flush();
+        });
+    }
+    async flush(){
+        if(this.sending)return;
+        this.sending=true;let next;
+        try{while(this.queue.length){
+            next=this.queue.shift();
+            const interrupt=next.input?.type==='dialog'&&this.controls&&!!this.status?.dialog
+                || next.input?.type==='history'&&next.input.direction==='stop'&&this.controls;
+            if((!this.canInput&&!interrupt)||next.epoch!==this.epoch||next.key!==bindingKey(this.status)){
+                next.reject?.(Error('input_fenced'));continue;
+            }
+            const reply=await this.request(this.operation('input',{sequence:++this.sequence,input:next.input}),next.epoch);
+            next.resolve?.(reply.value);next=null;
+            if(this.urgentPromise)await this.urgentPromise;
+        }}catch{next?.reject?.(Error('input_unconfirmed'));if(!this.closed&&next?.epoch===this.epoch)this.fail('input-unknown');}
+        finally{this.sending=false;this.emit();}
+    }
+    async closeBrowser(){
+        if(!this.controls||this.busy)return;
+        this.busy=true;this.emit();
+        try{await this.request(this.operation('close'));this.clearMirror();this.issue=null;this.phase='stopped';}
+        catch{this.fail('close-unknown');}
+        finally{this.busy=false;this.emit();}
+    }
+    disconnect(){
+        const detach=this.attached&&!this.closed?this.operation('detach'):null;
+        this.epoch++;clearTimeout(this.pollTimer);this.pollTimer=null;this.clearMirror();
+        this.discardQueued('viewer_disconnected');this.phase='disconnected';this.issue=null;this.emit();
+        if(detach)void Promise.resolve().then(()=>this.transport(detach)).catch(()=>{});
+    }
+    dispose(){if(this.closed)return;this.disconnect();this.closed=true;this.emit();}
+}
+
+export function mountBrowserViewer(root,options={}){
+    const doc=root.ownerDocument;
     root.classList.add('host-browser-viewer','browser-next');
     root.setAttribute('aria-label','Voyage browser');
-    const node = (tag, parent, className = '', content = '') => {
-        const element = doc.createElement(tag);
-        if (className) element.className = className;
-        if (content) element.textContent = content;
-        parent.append(element);return element;
+    const node=(tag,parent,className='',content='')=>{
+        const element=doc.createElement(tag);if(className)element.className=className;
+        if(content)element.textContent=content;parent.append(element);return element;
     };
-    const button = (label, parent, action, className = '', content = label) => {
-        const element = node('button',parent,className,content);
-        element.type = 'button';element.setAttribute('aria-label',label);element.title = label;
-        element.addEventListener('click',action);return element;
+    const button=(label,parent,action,className='',content=label)=>{
+        const element=node('button',parent,className,content);element.type='button';
+        element.setAttribute('aria-label',label);element.title=label;element.addEventListener('click',action);return element;
     };
-    const chrome = node('header',root,'browser-next-chrome');
-    const identity = node('div',chrome,'browser-next-identity');
+    const chrome=node('header',root,'browser-next-chrome');
+    const identity=node('div',chrome,'browser-next-identity');
     node('span',identity,'browser-next-name','BROWSER');
-    const status = node('span',identity,'browser-next-status','Opening…');
-    status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-    const actions = node('div',chrome,'browser-next-actions');
-    const primary = button('Take control privately',actions,() => void connection.control(connection.controls ? 'agent':'private'),'browser-primary browser-next-primary');
-    const scale = button('View at actual size',actions,() => {actual = !actual;scaleChosen=true;paintScale();},'browser-next-scale','100%');
-    const more = node('details',actions,'browser-next-more');
-    const summary = node('summary',more,'','More');summary.setAttribute('aria-label','More browser options');
-    const menu = node('div',more,'browser-next-menu');
-    const captureButton = button('Capture and annotate',menu,() => {capture?.open();more.open=false;});
-    const disconnect = button('Disconnect viewer',menu,() => {connection.disconnect();more.open=false;});
-    const closeBrowser = button('Close browser',menu,() => {void connection.closeBrowser();more.open=false;},'browser-next-danger');
-    if (!options.externalClose) button('Close viewer',actions,() => {dispose();options.onClose?.();},'browser-next-close','×');
-
-    const tabs = node('div',root,'browser-next-tabs');tabs.setAttribute('role','group');tabs.setAttribute('aria-label','Browser tabs');
-    const navigation = node('form',root,'browser-next-navigation');navigation.setAttribute('aria-label','Browser navigation');
-    const back = button('Back',navigation,() => void navigateAction({type:'history',direction:'back'}),'browser-next-icon','←');
-    const forward = button('Forward',navigation,() => void navigateAction({type:'history',direction:'forward'}),'browser-next-icon','→');
-    const reload = button('Reload',navigation,() => void navigateAction({type:'history',direction:connection.status?.page?.loading?'stop':'reload'}),'browser-next-icon','↻');
-    const address = node('input',navigation,'browser-next-address');address.type='text';address.inputMode='url';
-    address.placeholder='Search or enter a website address';address.setAttribute('aria-label','Website address');
-    address.autocomplete='off';address.spellcheck=false;
-    const go = button('Go to address',navigation,() => {},'browser-next-go','Go');go.type='submit';
-    navigation.addEventListener('submit',async event => {
-        event.preventDefault();
-        let url = address.value.trim();if(!url)return;
-        if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-        try {const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||bytes(url)>8192)return;}
-        catch {return;}
-        if (await navigateAction({type:'navigate',url})) video.focus();
+    const status=node('span',identity,'browser-next-status','Opening…');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
+    const actions=node('div',chrome,'browser-next-actions');
+    const primary=button('Take control privately',actions,()=>void connection.control(connection.controls?'agent':'private'),'browser-primary browser-next-primary');
+    const scale=button('View at actual size',actions,()=>{actual=!actual;scaleChosen=true;paintScale();},'browser-next-scale','100%');
+    const more=node('details',actions,'browser-next-more');
+    const summary=node('summary',more,'','More');summary.setAttribute('aria-label','More browser options');
+    const menu=node('div',more,'browser-next-menu');
+    const downloads=node('div',menu,'browser-next-downloads');
+    const disconnect=button('Disconnect viewer',menu,()=>{connection.disconnect();more.open=false;});
+    const closeBrowser=button('Close browser',menu,()=>{void connection.closeBrowser();more.open=false;},'browser-next-danger');
+    if(!options.externalClose)button('Close viewer',actions,()=>{dispose();options.onClose?.();},'browser-next-close','×');
+    const tabs=node('div',root,'browser-next-tabs');tabs.setAttribute('role','group');tabs.setAttribute('aria-label','Browser tabs');
+    const navigation=node('form',root,'browser-next-navigation');navigation.setAttribute('aria-label','Browser navigation');
+    const back=button('Back',navigation,()=>void navigateAction({type:'history',direction:'back'}),'browser-next-icon','←');
+    const forward=button('Forward',navigation,()=>void navigateAction({type:'history',direction:'forward'}),'browser-next-icon','→');
+    const reload=button('Reload',navigation,()=>void navigateAction({type:'history',direction:connection.status?.page?.loading?'stop':'reload'}),'browser-next-icon','↻');
+    const address=node('input',navigation,'browser-next-address');address.type='text';address.inputMode='url';
+    address.placeholder='Search or enter a website address';address.setAttribute('aria-label','Website address');address.autocomplete='off';address.spellcheck=false;
+    const go=button('Go to address',navigation,()=>{},'browser-next-go','Go');go.type='submit';
+    navigation.addEventListener('submit',async event=>{
+        event.preventDefault();let url=address.value.trim();if(!url)return;
+        if(!/^https?:\/\//i.test(url))url=`https://${url}`;
+        try{const parsed=new URL(url);if(!['https:','http:'].includes(parsed.protocol)||parsed.username||parsed.password||bytes(url)>8192)return;}
+        catch{return;}
+        if(await navigateAction({type:'navigate',url}))connection.replayer?.iframe.focus();
     });
-
-    const stage = node('div',root,'browser-next-stage');
-    const scroll = node('div',stage,'browser-next-scroll');
-    const video = node('video',scroll,'browser-next-video');
-    video.autoplay=true;video.muted=true;video.playsInline=true;video.tabIndex=0;
-    video.setAttribute('aria-label','Remote browser. Escape returns to browser controls.');
-    const cursor = node('span',stage,'browser-next-cursor','↖');cursor.hidden=true;cursor.setAttribute('aria-hidden','true');
-    const welcome = node('div',stage,'browser-next-welcome');
-    node('span',welcome,'browser-next-welcome-mark','↗');
-    node('h3',welcome,'','Your voyage’s browser');
+    const stage=node('div',root,'browser-next-stage');
+    const scroll=node('div',stage,'browser-next-scroll');
+    const shell=node('div',scroll,'browser-next-mirror-shell');
+    const mirror=node('div',shell,'browser-next-mirror');
+    const visualLayer=node('div',shell,'browser-next-visuals');visualLayer.setAttribute('aria-hidden','true');
+    const uploadPicker=node('input',stage);uploadPicker.type='file';uploadPicker.hidden=true;
+    let uploadNode=null;
+    uploadPicker.addEventListener('change',async()=>{
+        const file=uploadPicker.files?.[0],id=uploadNode;uploadPicker.value='';uploadNode=null;
+        if(!file||!id||!connection.canInput||file.size>2*1024*1024)return;
+        const raw=new Uint8Array(await file.arrayBuffer());
+        let binary='';for(let offset=0;offset<raw.length;offset+=16384)binary+=String.fromCharCode(...raw.subarray(offset,offset+16384));
+        try{await connection.confirmedInput({type:'upload',node_id:id,name:file.name,mime_type:file.type||'application/octet-stream',data_base64:btoa(binary)});}
+        catch{}
+    });
+    const welcome=node('div',stage,'browser-next-welcome');
+    node('span',welcome,'browser-next-welcome-mark','↗');node('h3',welcome,'','Your voyage’s browser');
     node('p',welcome,'','Enter an address above, or ask the agent to open a site. The browser stays with this voyage when you leave this view.');
-    button('Browse privately',welcome,async () => {await connection.control('private');address.focus();},'browser-next-welcome-action');
-    const recovery = node('section',stage,'browser-next-recovery');recovery.hidden=true;
-    recovery.setAttribute('role','status');
-    const recoveryTitle = node('h3',recovery);
-    const recoveryBody = node('p',recovery);
-    const recoveryAction = button('Check browser status',recovery,() => void (connection.phase==='stopped'?connection.connect({start:true}):connection.recover()));
-
-    const footer = node('footer',root,'browser-next-footer');
-    const modeHint = node('span',footer,'browser-next-mode-hint');
-    const compose = node('form',footer,'browser-next-compose');
-    const composed = node('textarea',compose);composed.rows=1;composed.placeholder='Type or paste into the browser';
-    composed.setAttribute('aria-label','Text for remote browser');composed.autocomplete='off';composed.spellcheck=false;
-    const sendText = button('Send text to browser',compose,() => {},'','Send');sendText.type='submit';
-    compose.addEventListener('submit',async event => {
+    button('Browse privately',welcome,async()=>{await connection.control('private');address.focus();},'browser-next-welcome-action');
+    const recovery=node('section',stage,'browser-next-recovery');recovery.hidden=true;recovery.setAttribute('role','status');
+    const recoveryTitle=node('h3',recovery),recoveryBody=node('p',recovery);
+    const recoveryAction=button('Check browser status',recovery,()=>void(connection.phase==='stopped'?connection.connect({start:true}):connection.recover()));
+    const footer=node('footer',root,'browser-next-footer');
+    const modeHint=node('span',footer,'browser-next-mode-hint');
+    const compose=node('form',footer,'browser-next-compose');
+    const composed=node('textarea',compose);composed.rows=1;composed.placeholder='Type or paste into the browser';
+    composed.setAttribute('aria-label','Text for browser');composed.autocomplete='off';composed.spellcheck=false;
+    const sendText=button('Send text to browser',compose,()=>{},'','Send');sendText.type='submit';
+    compose.addEventListener('submit',async event=>{
         event.preventDefault();const value=composed.value;
-        if (!value || bytes(value)>16384 || !connection.canInput) return;
+        if(!value||bytes(value)>16384||!connection.canInput)return;
         sendText.disabled=true;
-        try {await connection.confirmedInput({type:'text',text:value});if(composed.value===value)composed.value='';video.focus();}
-        catch { /* Keep the text so the user can inspect the page before deciding. */ }
-        finally {render();}
+        try{await connection.confirmedInput({type:'text',text:value});if(composed.value===value)composed.value='';}
+        catch{}finally{render();}
     });
-    const dialogPanel = node('section',stage,'browser-next-dialog');dialogPanel.hidden=true;
-    dialogPanel.setAttribute('aria-label','Website dialog');
-    const dialogMessage = node('p',dialogPanel);
-    const dialogInput = node('input',dialogPanel);dialogInput.setAttribute('aria-label','Website dialog response');
-    button('Accept dialog',dialogPanel,() => {void connection.urgentInput({type:'dialog',accept:true,text:dialogInput.value||null});dialogInput.value='';});
-    button('Dismiss dialog',dialogPanel,() => {void connection.urgentInput({type:'dialog',accept:false,text:null});dialogInput.value='';});
-
-    let actual=false, scaleChosen=false, capture=null, resizeTimer=null, resizeTarget='', disposed=false, tabFingerprint='', frameFence='';
-    const connection = new BrowserConnection({...options,video,changed:() => {render();options.changed?.(connection);}});
-    capture = mountCapture({root,video,canCapture:()=>connection.streaming&&!connection.closed,onCapture:options.onCapture});
-    function paintScale() {
+    const dialogPanel=node('section',stage,'browser-next-dialog');dialogPanel.hidden=true;dialogPanel.setAttribute('aria-label','Website dialog');
+    const dialogMessage=node('p',dialogPanel);
+    const dialogInput=node('input',dialogPanel);dialogInput.setAttribute('aria-label','Website dialog response');
+    button('Accept dialog',dialogPanel,()=>{void connection.urgentInput({type:'dialog',accept:true,text:dialogInput.value||null});dialogInput.value='';});
+    button('Dismiss dialog',dialogPanel,()=>{void connection.urgentInput({type:'dialog',accept:false,text:null});dialogInput.value='';});
+    let actual=false,scaleChosen=false,resizeTimer=null,resizeTarget='',disposed=false,tabFingerprint='',downloadFingerprint='',frameFence='';
+    const visualNodes=new Map();
+    const connection=new BrowserConnection({...options,mirror,onReplay,onVisuals,changed:()=>{render();options.changed?.(connection);}});
+    function paintScale(){
         const viewport=connection.status?.viewport;
-        const useActual=actual&&viewport?.width&&viewport?.height;
-        root.dataset.scale=useActual?'actual':'fit';
-        video.style.width=useActual?`${viewport.width}px`:'';
-        video.style.height=useActual?`${viewport.height}px`:'';
-        scale.textContent=actual?'Fit':'100%';
-        scale.setAttribute('aria-label',actual?'Fit page in view':'View at actual size');
-        scale.title=scale.getAttribute('aria-label');
+        if(!viewport?.width||!viewport?.height)return;
+        const ratio=actual?1:Math.min(1,scroll.clientWidth/viewport.width,scroll.clientHeight/viewport.height);
+        const factor=Number.isFinite(ratio)&&ratio>0?ratio:1;
+        shell.style.width=`${Math.round(viewport.width*factor)}px`;
+        shell.style.height=`${Math.round(viewport.height*factor)}px`;
+        mirror.style.width=`${viewport.width}px`;mirror.style.height=`${viewport.height}px`;
+        mirror.style.transform=`scale(${factor})`;
+        visualLayer.style.width=`${viewport.width}px`;visualLayer.style.height=`${viewport.height}px`;
+        visualLayer.style.transform=`scale(${factor})`;
+        root.dataset.scale=actual?'actual':'fit';scale.textContent=actual?'Fit':'100%';
+        scale.setAttribute('aria-label',actual?'Fit page in view':'View at actual size');scale.title=scale.getAttribute('aria-label');
         scale.setAttribute('aria-pressed',String(actual));
     }
-    async function navigateAction(input) {
-        if (!connection.attached || connection.busy) return false;
-        if (!connection.controls) await connection.control('private');
-        if (!connection.canInput) return false;
-        if (input.type==='history'&&input.direction==='stop') return connection.urgentInput(input);
-        try {await connection.confirmedInput(input);return true;}catch{return false;}
+    async function navigateAction(input){
+        if(!connection.attached||connection.busy)return false;
+        if(!connection.controls)await connection.control('private');
+        if(!connection.canInput)return false;
+        if(input.type==='history'&&input.direction==='stop')return connection.urgentInput(input);
+        try{await connection.confirmedInput(input);return true;}catch{return false;}
     }
-    function scheduleViewport() {
-        if (!connection.canInput || connection.status?.mode!=='private'
-            || connection.status?.dialog || connection.sending || connection.queue.length) return;
+    function scheduleViewport(){
+        if(!connection.canInput||connection.status?.mode!=='private'||connection.status?.dialog||connection.sending||connection.queue.length)return;
         const width=Math.max(320,Math.min(3840,Math.round(scroll.clientWidth)));
         const height=Math.max(240,Math.min(2160,Math.round(scroll.clientHeight)));
-        if (!width || !height || Math.abs((connection.status?.viewport?.width||0)-width)<20 && Math.abs((connection.status?.viewport?.height||0)-height)<20) return;
+        if(!width||!height||Math.abs((connection.status?.viewport?.width||0)-width)<20&&Math.abs((connection.status?.viewport?.height||0)-height)<20)return;
         const target=`${width}×${height}`;if(target===resizeTarget)return;
         resizeTarget=target;clearTimeout(resizeTimer);
         resizeTimer=setTimeout(async()=>{
-            try {if(connection.canInput&&!connection.status?.dialog)await connection.confirmedInput({type:'resize',width,height});}
-            catch {} finally {resizeTarget='';}
+            try{if(connection.canInput&&!connection.status?.dialog)await connection.confirmedInput({type:'resize',width,height});}
+            catch{}finally{resizeTarget='';}
         },250);
     }
-    function renderTabs() {
-        const current=connection.status;
-        const details=current?.tab_details||[];
+    function renderDownloads(){
+        const fingerprint=JSON.stringify([connection.status?.downloads,connection.controls]);
+        if(fingerprint===downloadFingerprint)return;
+        downloadFingerprint=fingerprint;
+        downloads.replaceChildren();
+        for(const item of connection.status?.downloads||[]){
+            const name=safe(item.name,255)||'download';
+            button(`Download ${name}`,downloads,async()=>{
+                if(!connection.controls)return;
+                try{
+                    const value=await connection.confirmedInput({type:'download',download_id:item.id});
+                    if(!value?.data_base64||value.data_base64.length>2800000)return;
+                    const data=Uint8Array.from(atob(value.data_base64),char=>char.charCodeAt(0));
+                    const url=URL.createObjectURL(new Blob([data],{type:value.mime_type||'application/octet-stream'}));
+                    const link=doc.createElement('a');link.href=url;link.download=safe(value.name,255)||'download';
+                    doc.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+                }catch{}
+                more.open=false;
+            });
+        }
+        downloads.hidden=!downloads.childElementCount;
+    }
+    function renderTabs(){
+        const current=connection.status,details=current?.tab_details||[];
         const key=JSON.stringify([current?.tabs,details,current?.binding?.tab_id,connection.busy,connection.attached]);
         if(key===tabFingerprint)return;tabFingerprint=key;tabs.replaceChildren();
         (current?.tabs||[]).forEach((id,index)=>{
-            const detail=details.find(item=>item.id===id);
-            const title=safe(detail?.title||detail?.url)||`Tab ${index+1}`;
+            const detail=details.find(item=>item.id===id),title=safe(detail?.title||detail?.url)||`Tab ${index+1}`;
             const tab=node('div',tabs,'browser-next-tab');
-            const select=button(title,tab,() => void navigateAction({type:'tab',operation:'select',tab_id:id}));
-            select.setAttribute('aria-pressed',String(id===current?.binding?.tab_id));
-            select.disabled=!connection.attached||connection.busy;
-            const close=button(`Close ${title}`,tab,() => void navigateAction({type:'tab',operation:'close',tab_id:id}),'browser-next-tab-close','×');
+            const select=button(title,tab,()=>void navigateAction({type:'tab',operation:'select',tab_id:id}));
+            select.setAttribute('aria-pressed',String(id===current?.binding?.tab_id));select.disabled=!connection.attached||connection.busy;
+            const close=button(`Close ${title}`,tab,()=>void navigateAction({type:'tab',operation:'close',tab_id:id}),'browser-next-tab-close','×');
             close.disabled=!connection.attached||connection.busy||(current?.tabs?.length||0)<2;
         });
-        const add=button('New tab',tabs,() => void navigateAction({type:'tab',operation:'new',tab_id:null}),'browser-next-new-tab','+');
+        const add=button('New tab',tabs,()=>void navigateAction({type:'tab',operation:'new',tab_id:null}),'browser-next-new-tab','+');
         add.disabled=!connection.attached||connection.busy;
     }
-    function render() {
+    function render(){
         if(disposed)return;
-        const current=connection.status, phase=connection.phase, privateControl=connection.controls&&current?.mode==='private';
+        const current=connection.status,phase=connection.phase,privateControl=connection.controls&&current?.mode==='private';
         root.dataset.state=phase==='live'?(privateControl?'private':current?.mode==='agent'?'agent':'watching'):phase;
-        status.textContent=phase==='live' ? privateControl?'Private control · Agent paused':current?.agent_active?'Agent working':'Watching browser'
-            :phase==='switching'?'Switching control…':phase==='connecting'?'Opening browser…':phase==='recovering'?'Restoring video…'
-            :phase==='stopped'?'Browser stopped':phase==='unavailable'?'Browser unavailable':phase==='waiting-video'?'Waiting for video…'
+        mirror.style.pointerEvents=connection.canInput?'auto':'none';
+        status.textContent=phase==='live'?privateControl?'Private control · Agent paused':current?.agent_active?'Agent working':'Watching browser'
+            :phase==='switching'?'Switching control…':phase==='connecting'?'Opening browser…':phase==='recovering'?'Restoring page…'
+            :phase==='stopped'?'Browser stopped':phase==='unavailable'?'Browser unavailable':phase==='waiting-page'?'Loading page…'
             :phase==='needs-review'?'Action needs review':'Browser connection needs attention';
-        primary.textContent=privateControl||connection.controls?'Return to agent':'Take control privately';
+        primary.textContent=connection.controls?'Return to agent':'Take control privately';
         primary.setAttribute('aria-label',primary.textContent);primary.title=primary.textContent;
         primary.disabled=!connection.attached||connection.busy||connection.closed;
-        captureButton.disabled=!connection.streaming||connection.busy;
         closeBrowser.disabled=!connection.controls||connection.busy;
         disconnect.disabled=!connection.attached||connection.busy;
-        if(!connection.streaming)capture?.reset();
-        const metadata=current?.mode==='private'&&!connection.controls?null:current;
-        const page=metadata?.page;
+        const metadata=current?.mode==='private'&&!connection.controls?null:current,page=metadata?.page;
         if(doc.activeElement!==address)address.value=page?.url==='about:blank'?'':safe(page?.url,8192);
-        address.disabled=!connection.attached||connection.busy;
-        go.disabled=address.disabled;
+        address.disabled=!connection.attached||connection.busy;go.disabled=address.disabled;
         back.disabled=!connection.attached||connection.busy||page?.can_go_back!==true;
         forward.disabled=!connection.attached||connection.busy||page?.can_go_forward!==true;
         reload.disabled=!connection.attached||connection.busy;
         reload.textContent=page?.loading?'■':'↻';reload.setAttribute('aria-label',page?.loading?'Stop loading':'Reload');
-        const blank=connection.attached&&(!page?.url||page.url==='about:blank');
-        welcome.hidden=!blank||phase==='unavailable';
+        const blank=connection.attached&&(!page?.url||page.url==='about:blank');welcome.hidden=!blank||phase==='unavailable';
         recovery.hidden=!connection.issue&&phase!=='stopped'&&phase!=='unavailable'&&phase!=='disconnected';
         if(!recovery.hidden){
             const issue=connection.issue;
             recoveryTitle.textContent=issue==='input-unknown'?'Your last action was not confirmed':issue==='control-unknown'?'Control change was not confirmed'
-                :issue==='video-unavailable'?'Live video stopped':phase==='stopped'?'This browser is stopped':phase==='unavailable'?'Browser unavailable on this host':'Could not confirm this voyage’s browser';
+                :issue==='page-unavailable'?'Live page stopped':phase==='stopped'?'This browser is stopped':phase==='unavailable'?'Browser unavailable on this host':'Could not confirm this voyage’s browser';
             recoveryBody.textContent=issue==='input-unknown'?'The page may have changed. Check its current state before acting again. Your action will not be repeated.'
-                :issue==='video-unavailable'?'The voyage may still be running. Recheck the media connection without repeating page actions.'
+                :issue==='page-unavailable'?'The voyage may still be running. Resynchronize the page without repeating actions.'
                 :phase==='stopped'?'Start a browser for this voyage when it is available.'
                 :phase==='unavailable'?'This Voyage host cannot start a browser with its current configuration.'
-                :'The Vessel connection alone does not confirm this voyage or its browser. Check the voyage state and try again.';
-            recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';
-            recoveryAction.disabled=connection.busy;
+                :'Check the voyage state and try again.';
+            recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';recoveryAction.disabled=connection.busy;
         }
         modeHint.textContent=privateControl?'Private: your input stays out of agent history. Return control when finished.'
             :connection.controls?'You control this browser.':'Take private control to type, paste, and navigate.';
-        compose.hidden=!connection.controls;
-        composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;
+        compose.hidden=!connection.controls;composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;
         const dialog=connection.controls?current?.dialog:null;
         dialogPanel.hidden=!dialog;dialogMessage.textContent=safe(dialog?.message,4096);dialogInput.hidden=dialog?.type!=='prompt';
-        const fence=JSON.stringify([current?.binding?.browser_id,current?.binding?.tab_id,current?.binding?.controller_epoch,current?.mode]);
-        if(fence!==frameFence){frameFence=fence;capture?.reset();dialogInput.value='';}
-        const point=current?.mode==='agent'?current?.agent_cursor:null;
-        cursor.hidden=!point||Date.now()-point.at>2500||!connection.streaming;
-        if(!cursor.hidden&&current?.viewport){cursor.style.left=`${point.x/current.viewport.width*100}%`;cursor.style.top=`${point.y/current.viewport.height*100}%`;}
-        if(!scaleChosen)actual=privateControl&&scroll.clientWidth<680
-            &&Math.abs((current?.viewport?.width||0)-scroll.clientWidth)<20;
-        renderTabs();paintScale();scheduleViewport();
+        const fence=pageKey(current);if(fence!==frameFence){frameFence=fence;dialogInput.value='';}
+        if(!scaleChosen)actual=privateControl&&scroll.clientWidth<680&&Math.abs((current?.viewport?.width||0)-scroll.clientWidth)<20;
+        renderTabs();renderDownloads();paintScale();scheduleViewport();
     }
-    const pointer = (event, pressed, moving=false) => {
-        if(!connection.canInput)return;
-        const point=screenPoint(video,event.clientX,event.clientY,connection.status?.viewport);if(!point)return;
-        event.preventDefault();if(pressed){video.focus();video.setPointerCapture?.(event.pointerId);}
-        connection.input({type:'pointer',...point,button:moving?null:['left','middle','right'][event.button]||null,pressed});
-    };
-    video.onpointerdown=event=>pointer(event,true);video.onpointerup=event=>pointer(event,false);
-    let moveAt=0;video.onpointermove=event=>{if(Date.now()-moveAt<40)return;moveAt=Date.now();pointer(event,false,true);};
-    video.oncontextmenu=event=>event.preventDefault();
-    video.addEventListener('wheel',event=>{
-        if(!connection.canInput)return;event.preventDefault();
-        const factor=event.deltaMode===1?16:event.deltaMode===2?connection.status?.viewport?.height||720:1;
-        const bounded=value=>Math.max(-16384,Math.min(16384,Math.round(value*factor)));
-        connection.input({type:'scroll',delta_x:bounded(event.deltaX),delta_y:bounded(event.deltaY)});
-    },{passive:false});
-    const keys=new Set();
-    const key=(event,pressed)=>{
-        if(event.key==='Escape'){event.preventDefault();primary.focus();return;}
-        if(!connection.canInput||event.isComposing||['Process','Dead'].includes(event.key)||bytes(event.key)>128||/[\x00-\x1f\x7f]/.test(event.key))return;
-        event.preventDefault();pressed?keys.add(event.key):keys.delete(event.key);
-        connection.input({type:'key',key:event.key,pressed});
-    };
-    video.onkeydown=event=>key(event,true);video.onkeyup=event=>key(event,false);
-    video.onblur=()=>{for(const name of keys)connection.input({type:'key',key:name,pressed:false});keys.clear();};
+    function onReplay(player,session){
+        const frame=player.iframe,body=frame.contentDocument;
+        const targetId=target=>{
+            const element=target?.nodeType===1?target:target?.parentElement;
+            return element?player.getMirror().getId(element):-1;
+        };
+        body.addEventListener('click',event=>{
+            event.preventDefault();event.stopPropagation();
+            if(!session.canInput)return;
+            const id=targetId(event.target);
+            if(event.target?.matches?.('input[type=file]')){
+                if(id>0){uploadNode=id;uploadPicker.click();}
+                return;
+            }
+            if(event.target?.matches?.('canvas,video,iframe')){
+                const rect=event.target.getBoundingClientRect();
+                if(id>0&&rect.width&&rect.height)session.input({type:'surface_click',node_id:id,
+                    x:Math.max(0,Math.min(10000,Math.round((event.clientX-rect.left)/rect.width*10000))),
+                    y:Math.max(0,Math.min(10000,Math.round((event.clientY-rect.top)/rect.height*10000))),button:'left'});
+                return;
+            }
+            if(id>0)session.input({type:'click',node_id:id,button:'left'});
+        },true);
+        body.addEventListener('contextmenu',event=>{
+            event.preventDefault();event.stopPropagation();
+            if(!session.canInput)return;
+            const id=targetId(event.target);
+            if(id>0)session.input({type:'click',node_id:id,button:'right'});
+        },true);
+        body.addEventListener('input',event=>{
+            if(!session.canInput||event.isComposing)return;
+            const element=event.target,id=targetId(element);
+            if(id<=0)return;
+            if(element.matches?.('select')){session.input({type:'select',node_id:id,value:element.value});return;}
+            if(element.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=file]),textarea,[contenteditable]')){
+                const text=element.isContentEditable?element.textContent:element.value;
+                if(typeof text==='string'&&bytes(text)<=16384)session.input({type:'fill',node_id:id,text});
+            }
+        },true);
+        body.addEventListener('wheel',event=>{
+            if(!session.canInput)return;
+            const id=targetId(event.target);if(id<=0)return;
+            event.preventDefault();
+            const factor=event.deltaMode===1?16:event.deltaMode===2?session.status?.viewport?.height||720:1;
+            const bound=value=>Math.max(-16384,Math.min(16384,Math.round(value*factor)));
+            session.input({type:'wheel',node_id:id,delta_x:bound(event.deltaX),delta_y:bound(event.deltaY)});
+        },{capture:true,passive:false});
+        const keys=new Set();
+        const key=(event,pressed)=>{
+            if(event.key==='Escape'){event.preventDefault();primary.focus();return;}
+            if(!session.canInput||event.isComposing||['Process','Dead'].includes(event.key)||bytes(event.key)>128||/[\x00-\x1f\x7f]/.test(event.key))return;
+            const editable=event.target?.matches?.('input,textarea,[contenteditable]');
+            if(editable&&!['Enter','Tab','Escape','ArrowUp','ArrowDown'].includes(event.key))return;
+            event.preventDefault();pressed?keys.add(event.key):keys.delete(event.key);
+            session.input({type:'key',key:event.key,pressed});
+        };
+        body.addEventListener('keydown',event=>key(event,true),true);
+        body.addEventListener('keyup',event=>key(event,false),true);
+        frame.addEventListener('blur',()=>{for(const name of keys)session.input({type:'key',key:name,pressed:false});keys.clear();});
+    }
+    function onVisuals(items,player){
+        if(!player||!Array.isArray(items)){
+            visualLayer.replaceChildren();visualNodes.clear();return;
+        }
+        const present=new Set();
+        for(const item of items){
+            if(!Number.isSafeInteger(item.id)||typeof item.data_base64!=='string'||item.data_base64.length>270000)continue;
+            const target=player.getMirror().getNode(item.id);
+            if(!target?.getBoundingClientRect)continue;
+            const rect=target.getBoundingClientRect();
+            present.add(item.id);
+            let picture=visualNodes.get(item.id);
+            if(!picture){picture=node('img',visualLayer,'browser-next-visual');picture.alt='';visualNodes.set(item.id,picture);}
+            if(picture.dataset.version!==String(item.version)){
+                picture.src=`data:image/jpeg;base64,${item.data_base64}`;
+                picture.dataset.version=String(item.version);
+            }
+            picture.style.left=`${Math.max(0,item.left??rect.left)}px`;picture.style.top=`${Math.max(0,item.top??rect.top)}px`;
+            picture.style.width=`${Math.max(0,item.width)}px`;
+            picture.style.height=`${Math.max(0,item.height)}px`;
+        }
+        for(const [id,picture] of visualNodes)if(!present.has(id)){picture.remove();visualNodes.delete(id);}
+    }
     composed.addEventListener('input',()=>{sendText.disabled=!connection.canInput||!composed.value;});
-    const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>{
-        if(!scaleChosen){actual=connection.controls&&connection.status?.mode==='private'&&scroll.clientWidth<680
-            &&Math.abs((connection.status?.viewport?.width||0)-scroll.clientWidth)<20;paintScale();}
-        scheduleViewport();
-    }):null;observer?.observe(scroll);
+    const observer=typeof ResizeObserver!=='undefined'?new ResizeObserver(()=>{paintScale();scheduleViewport();}):null;
+    observer?.observe(scroll);
     const refresh=setInterval(()=>void connection.refresh(),2000);
-    function dispose(){if(disposed)return;disposed=true;clearInterval(refresh);clearTimeout(resizeTimer);observer?.disconnect();capture?.dispose();connection.dispose();root.replaceChildren();}
+    function dispose(){if(disposed)return;disposed=true;clearInterval(refresh);clearTimeout(resizeTimer);observer?.disconnect();connection.dispose();root.replaceChildren();}
     render();if(options.autoConnect!==false)void connection.connect();
     return {session:connection,disconnect:()=>connection.disconnect(),dispose};
 }
-
-export {BrowserConnection as BrowserSession, screenPoint as videoPoint};

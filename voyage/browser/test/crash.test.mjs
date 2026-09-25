@@ -97,7 +97,7 @@ for(const scenario of ['sigkill','hung-eof','hung-term','shutdown'])test(`actual
     }finally{clearTimeout(timer);pending.delete(id);}
   };
   try{
-    await call('init',{config:{root:home,executable,public_web:false,origins:[],ice_servers:[],width:640,height:480}});
+    await call('init',{config:{root:home,executable,public_web:false,origins:[],width:640,height:480}});
     await call('open');
     // A dispatched external effect cannot be declared reconciled by killing PIDs.
     await fs.writeFile(path.join(home,'receipts',receiptName),receipt,{mode:0o600});
@@ -105,7 +105,7 @@ for(const scenario of ['sigkill','hung-eof','hung-term','shutdown'])test(`actual
     // Chromium may rewrite its process title into one argv entry on this host.
     // Ownership still comes from the observed descendant identities above.
     const browsers=before.processes.filter(p=>Array.isArray(p.cmd)&&/(?:^|\s)--user-data-dir=/.test(p.cmd.join(' '))&&!/(?:^|\s)--type=/.test(p.cmd.join(' ')));
-    assert.equal(browsers.length,2,'both task and encoder Chromium must actually be running');
+    assert.equal(browsers.length,1,'the single task Chromium must actually be running');
     assert.ok(before.processes.some(p=>p.pgrp!==initial.pgrp),'must observe Chromium outside Node process group');
     const node=before.processes.find(p=>p.ppid===child.pid&&p.cmd.includes(worker));
     assert.ok(node,'guardian must launch actual Node worker');

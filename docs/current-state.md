@@ -90,28 +90,24 @@ See [notifications](notifications.md), [client commands](notifications-client.md
 
 ## Voyage-owned host browser
 
-The #333 implementation moves interactive task browsing to a Voyage-owned worker
-on the Vessel host. `host_browser` launches it on demand under executing policy.
-Helm Web's Browser panel and native Helm F6 / `/browser` use one shared graphical
-WebRTC viewer. Native Helm opens it in the ordinary browser; terminal video is not
-required. Viewer detach does not close the host browser. Human/private control,
-tab/document/viewport fences, exact receipts and observed cleanup remain explicit.
-The browser is the larger desktop pane and a full-screen mobile panel. The shared
-viewer exposes tabs, navigation, private control and text composition directly;
-secondary capture, viewer disconnect and browser closure are under More. Its
-media peer stays connected through control and viewport changes on one tab, and
-uncertain input is never automatically replayed. The worker still encodes CDP
-JPEG frames through a separate trusted Chromium canvas into WebRTC; its frame
-queue is bounded. See the [viewer contract](../helm/browser-view/CONTRACT.md)
-and [worker contract](../voyage/browser/CONTRACT.md).
+The #333 host browser runs in a Voyage-owned worker on the Vessel host. Helm Web's
+Browser panel and native Helm F6 / `/browser` use one shared live DOM viewer.
+Native Helm opens it in the ordinary browser. Viewer detach does not close the
+host browser. The worker transfers bounded rrweb snapshots and changes through
+the authenticated Helm–Vessel command connection; Helm reconstructs the full
+page in a script-free iframe. Human clicks and form edits target live page
+element IDs. Canvas/video/iframe areas have localized visual fallback. Tabs,
+navigation, private control, text composition, upload, download and dialog
+controls use typed, fenced operations. Uncertain input is not replayed.
 
-Local synthetic evidence includes two real Voyages, mounted production viewer,
-native local-owner/access-file launchers, decoded video and private-input history
-exclusion. A separate loopback TURN test checks relay-selected decoded media. These
-are not public-NAT, native macOS/Windows or arbitrary-site certification. See
-[host-browser design](host-browser.md) for configuration, limits and acceptance.
-Distribution uses packaged worker assets plus host Node/Chromium; required OS
-sandbox policy currently refuses this worker rather than being bypassed.
+Control changes fence old effects and other viewers before private takeover.
+Receipts keep exact identities without retaining private page contents. The
+worker uses a single sandboxed Chromium process and observed cleanup. Linux
+loopback worker and viewer checks cover reconstruction, element input, two
+Voyages and private history exclusion; this does not certify arbitrary sites or
+native macOS/Windows behavior. See [host-browser design](host-browser.md), the
+[viewer contract](../helm/browser-view/CONTRACT.md) and the
+[worker contract](../voyage/browser/CONTRACT.md).
 
 Legacy explicit local-browser code and cleanup receipts remain for compatibility;
 it is no longer the F6/default browser path. Its old setup instructions in
