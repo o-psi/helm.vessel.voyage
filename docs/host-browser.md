@@ -20,14 +20,54 @@ commands and accounts for capacity; it does not run an embedded browser agent.
 Each voyage has isolated browser state. Multiple authorized viewers may watch;
 only one human connection or the agent controls the browser at a time.
 
+## Full-site viewing target
+
+Human takeover requires the full website: layout, styles, text, links, fields and
+controls in one interactive view. A page outline cannot serve as the main human
+view. Whole-page JPEG/video streaming keeps interaction tied to image coordinates
+and does not resolve the reported resource, readability, latency and connection
+problems. The current WebRTC viewer remains the implemented path described in
+[current state](current-state.md), not the preferred target transport.
+
+Evaluate live DOM co-browsing: the Voyage-owned Chromium instance runs the site
+and remains the only execution and action owner. Helm displays a sandboxed,
+script-free mirror of its page structure and styles. DOM changes flow to Helm;
+human actions refer to host elements and document epochs, and the host browser
+performs them. The existing authenticated Helm–Vessel connection remains the
+authorization and control path. No website JavaScript or raw CDP runs in Helm.
+This is a design candidate, not implemented behavior or a transport selection.
+
+Qualification must cover CSS and fonts, shadow DOM, same- and cross-origin
+frames, authenticated assets, navigation, responsive layout, selection, focus,
+IME, dialogs, uploads, downloads, canvas, video and other content that a DOM
+mirror alone may not reproduce. Selective visual media may be necessary for
+canvas or video, but it must not turn ordinary page interaction back into
+whole-page image clicking. A lagging or reconnected viewer needs a fresh snapshot
+before it can control the page. Record unsupported site classes explicitly; do
+not call a partial mirror universal full-site support.
+
+## Design references
+
+- [Surfly's architecture](https://help.surfly.com/en/architecture) keeps one
+  browser tab as the page owner and mirrors changes to participants. Its
+  [leader/follower model](https://help.surfly.com/en/what-do-leader-and-follower-mean-in-a-surfly-sessi)
+  routes control to that owner.
+- [OpenReplay co-browsing](https://github.com/openreplay/openreplay/wiki/How-Co%E2%80%90browsing-works-in-Session-Replay)
+  combines a full initial DOM scan with live updates and uses separate media for
+  canvas. This informs selective media instead of whole-page video.
+- [rrweb live mode](https://github.com/rrweb-io/rrweb/blob/main/docs/recipes/live-mode.md)
+  and [PhantomStream's architecture](https://github.com/fullselfbrowsing/PhantomStream/blob/main/docs/ARCHITECTURE.md)
+  illustrate DOM replay and its fidelity limits. These are design references,
+  not evidence that arbitrary sites already work in Helm.
+
 ## Transport and authority
 
 The worker controls Chromium over a private pipe. Raw CDP is never a public API.
-A structured page description serves agent actions and text presentation; Helm
-renders video from the real page, never executes a copy of website scripts.
-WebRTC carries media; the authenticated Helm–Vessel socket carries typed signaling
-and controls. WebRTC does not automatically traverse a WSS reverse proxy.
-Direct, TURN-relayed and fallback paths need actual qualification.
+The existing structured page description serves agent actions and text
+presentation. The current viewer encodes browser frames into WebRTC; the
+authenticated Helm–Vessel socket carries typed signaling and controls. WebRTC
+does not automatically traverse a WSS reverse proxy. Direct, TURN-relayed and
+fallback paths remain limitations of that implementation.
 
 The server supplies socket provenance. User identity alone cannot distinguish two
 windows belonging to the same user. Viewer bindings include the principal, socket,
@@ -48,18 +88,24 @@ Browser state, login cookies and downloads reside on the execution host. Private
 input is hidden from model history, not from the host administrator. Existing
 personal-browser cookies are not imported. Localhost means the Vessel host.
 Chromium sandboxing, private storage, bounded tabs/transfers/media, explicit network
-policy and process/resource accounting remain necessary. Stop video when nobody
-watches; do not stop unrelated browser work. Retiring resources count until cleanup
-is observed. A running page is not promised to survive process or host failure.
+policy and process/resource accounting remain necessary. Stop viewer mirroring and
+media when nobody watches; do not stop unrelated browser work. Retiring resources
+count until cleanup is observed. A running page is not promised to survive process
+or host failure.
 
 ## Evidence required before completion
 
-- Actual decoded WebRTC video, readable text and measured interaction performance.
+- A usable full-site human view in both Helm clients, with measured readability,
+  interaction latency, CPU, memory, bandwidth and connection recovery against
+  the current WebRTC viewer.
+- Documented fidelity across representative sites, including frames,
+  authenticated assets, canvas and video; explicit handling of unsupported cases.
 - Both Helm client journeys: navigation, typing/IME, scrolling, resize, tabs including
   last-tab recovery, website dialogs, uploads/downloads, private handoff and cleanup.
 - Multiple voyages and viewers, stale input, socket loss/revocation, private-view
   exclusion, slow viewers, process crashes and capacity exhaustion.
-- Direct and relay deployment evidence; fallback behavior and resource measurements.
+- Deployment evidence for the selected transport, resynchronization after loss,
+  fallback behavior and resource measurements.
 - Focused local tests, applicable workspace Rust coverage, packaged distribution,
   hosted build follow-through and independent follow-up audit.
 
