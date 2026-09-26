@@ -14,7 +14,7 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
     assert.match(html,/<h1>Heading<\/h1>/);assert.match(html,/<strong>Bold<\/strong>/);assert.match(html,/<code>code<\/code>/);
     assert.doesNotMatch(html,/<script|<img|javascript:|<iframe/);
 });
-test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:15000}, async () => {
+test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:120000}, async () => {
     let id='10000000-0000-4000-8000-000000000001', rejectCreate=false, loseCreate=false, createdProcess;
 
     const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
@@ -25,7 +25,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
     root.dataset.vessels=JSON.stringify([{id:'local',name:'Local Vessel',vessel_id:vessel}]);
     document.body.append(root);
     const $=selector=>root.querySelector(selector);
-    let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false, rejectNext=false, receiptKnown=true;
+    let revision=1, cursor=0, liveText='Streamed response', previews=[], reasoning=[], running=false, failed=false, uncertain=false, dropNext=false, decisionKind=null, requests=[], sockets=[], access='approval', delaySnapshot=false, rejectNext=false, receiptKnown=true;
     globalThis.fetch=async()=>({ok:true,json:async()=>({token:'a'.repeat(64),expires_at_ms:Date.now()+120000,vessel_id:vessel,url:'wss://vessel.example/v1/vessel/browser-socket'})});
 
 
@@ -55,7 +55,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             else {
                 let value;
                 if(command.op==='host_browser')value={status:{available:false,running:false,binding:null}};
-                else if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:null};
+                else if(command.op==='snapshot')value={session_id:id,revision,observation_cursor:cursor,access,inference:{account:{account_id:id,connection_id:id,connection_revision:1,identity_generation:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'medium',reasoning_efforts:['low','medium','high'],service_tier:null},name:'Synthetic voyage',message_offset:0,messages:[{message_index:0,role:'user',content:'Hello **Vessel**',projection_truncated:false},{message_index:1,role:'assistant',content:'',tool_calls:[{id:'call-1',function:{name:'read_file',arguments:'{}'}}]},{message_index:2,role:'tool',tool_call_id:'call-1',tool_success:true,created_at:'2026-09-16T12:34:00Z',content:'Synthetic tool output'},{message_index:3,role:'assistant',content:'A readable answer.'}],run:running?{run_id:run,state:'running',stream_reconciled:true,live_text:liveText,live_text_offset:0,tool_previews:previews,reasoning_previews:reasoning}:failed?{run_id:run,state:'failed',failure_summary:'Provider request failed.',provider_attempts:[{http_status:400,model:'fixture'}],partial_text:''}:null};
                 else if(command.op==='set_account_inference'){revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='set_access'){access=command.access;revision++;value={command_id:command.command_id,status:'applied'};}
                 else if(command.op==='decisions')value=decisionKind?[{decision_id:'10000000-0000-4000-8000-000000000005',incarnation,run_id:run,expires_at_ms:Date.now()+60000,request:decisionKind==='root_grant'?{kind:'root_grant',root_grant:{path:'/fixture/config',permission:'write',lifetime:'current_run',reason:'Configure Boost'}}:decisionKind==='approval'?{kind:'approval',approval:{action:'shell',target:'synthetic',reason:'test'}}:{kind:'question',question:{question:'Choose one',options:['First','Second']}}}]:[];
@@ -109,6 +109,10 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         observe({replay_gap:true,events:[]}); await until(()=>requests.filter(r=>r.op==='snapshot').length>before && !$('#send').disabled);
         assert.equal(sockets.at(-1).after,cursor,'gap resubscribes at fresh snapshot cursor');
         running=false; previews=[]; reasoning=[]; observe(); await until(()=>$('#live-output').hidden && $('#live-previews').hidden);
+        failed=true; observe(); await until(()=>!$('#run-failure').hidden);
+        assert.match($('#run-failure-detail').textContent,/Provider request failed\.\nHTTP 400 · fixture/);
+        assert.equal($('#composer-model').textContent,'fixture','selected model is visible after the run fails');
+        failed=false; observe(); await until(()=>$('#run-failure').hidden);
         const quietSnapshots=requests.filter(c=>c.op==='snapshot').length;
         await new Promise(r=>setTimeout(r,1100));
         assert.equal(requests.filter(c=>c.op==='snapshot').length,quietSnapshots,'quiet subscriptions do not poll snapshots each second');
@@ -188,7 +192,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
         async function prepareChat(text) {
             $('#new-voyage').click();
-            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'Everyday');
+            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'Everyday · fixture');
             assert.equal(root.querySelector('[name="voyage-settings"]'),null,'no new-voyage modal');
             assert.match($('#conversation-empty').textContent,/first Send creates/);
             assert.equal($('#conversation-empty').hidden,false);

@@ -60,6 +60,11 @@ update from the same bounded projections used by the TUI. Native events are
 invalidations, not append-only token payloads: bursts coalesce into fresh reads.
 Gaps, owner changes and reconnect seed a new snapshot/subscription. Canonical
 messages replace provisional tool previews without executing preview content.
+When a run fails before producing assistant text, the conversation shows the
+Vessel's allowlisted failure summary and observed provider HTTP status, if any.
+The composer shows the selected model for an existing voyage. A new voyage uses
+the saved default execution profile; editing that profile does not change settings
+already copied into an existing voyage until the profile is applied there.
 The conversation follows new messages, live output and delayed content resizing while
 the reader remains at the bottom. Scrolling upward pauses following; returning to
 the bottom or choosing **Jump to latest** resumes it. Loading earlier history

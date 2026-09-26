@@ -181,7 +181,7 @@ export function mount(root) {
             $('access-mode').disabled = !enabled && !newChatSettings;
             $('access-mode').value = !selected ? composition?.active?.access || '' : ['read-only','approval','unrestricted'].includes(snapshot?.access) ? snapshot.access : '';
             $('new-voyage').disabled = busy || newChatSending;
-            $('composer-model').textContent = clean(reviewed?.profileName || 'Profile');
+            $('composer-model').textContent = clean(reviewed ? `${reviewed.profileName} · ${reviewed.settings.model}` : snapshot?.inference?.model || 'Profile');
             $('change-inference').title = clean([reviewed?.settings.model || snapshot?.inference?.model, reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort, reviewed?.settings.service_tier || snapshot?.inference?.service_tier].filter(Boolean).join(' · ') || 'Choose profile');
             $('composer-reasoning').textContent = clean(reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort || 'Default');
             $('composer-service').textContent = clean(reviewed ? reviewed.settings.service_tier || 'Default tier' : snapshot?.inference ? snapshot.inference.service_tier || 'Default tier' : 'Service');
@@ -262,6 +262,7 @@ export function mount(root) {
         accountLabelKey = ''; accountLabel = 'Account';
         snapshot = null; incarnation = null; revision = null; messages = []; decisions = []; earliest = 0; stale = true;
         messageFingerprint = ''; decisionFingerprint = ''; outputFingerprint = ''; $('messages').replaceChildren(); $('decisions').replaceChildren(); renderPreviews($('live-previews'), null); $('live-output').hidden = true; $('earlier').hidden = true;
+        $('run-failure').hidden = true; $('run-failure-detail').textContent = '';
         $('conversation-empty').hidden = false;
         $('conversation-empty').textContent = !selected ? 'Write your first message below. Your first Send creates the voyage.' : client ? 'Loading conversation…' : 'This Vessel is unavailable. Its voyages remain listed while the connection recovers.';
         connectionsChanged(); refresh();
@@ -289,7 +290,7 @@ export function mount(root) {
             if (changed) { revision = next.revision; messages = next.messages || []; earliest = next.message_offset || 0; }
             stale = false; lastFresh = Date.now(); log('snapshot_fresh',{generation:mine}); $('voyage-title').textContent = clean(next.name || id); state(`Connected · ${next.run?.state || 'idle'}`);
             $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
-            renderMessages(); renderDecisions(); renderOutput(); subscribe();
+            renderMessages(); renderDecisions(); renderOutput(); renderFailure(); subscribe();
         } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
         finally { if (mine === generation) { refreshing = false; controls(); if (refreshQueued) { refreshQueued = false; queueMicrotask(refresh); } } }
     }
@@ -467,6 +468,19 @@ export function mount(root) {
         $('output-title').textContent = run.stream_reconciled ? 'Live output · provisional, not yet canonical' : 'Run output · unreconciled, may overlap history';
         outputOffset = (run.stream_reconciled ? run.live_text_offset : 0) + new TextEncoder().encode(text).length;
         $('more-output').hidden = !hasMore;
+    }
+    function renderFailure() {
+        const run = snapshot?.run;
+        const failed = run?.state === 'failed';
+        $('run-failure').hidden = !failed;
+        if (!failed) { $('run-failure-detail').textContent = ''; return; }
+        const attempt = Array.isArray(run.provider_attempts) ? run.provider_attempts.at(-1) : null;
+        const status = attempt?.http_status;
+        const model = attempt?.model || snapshot?.inference?.model;
+        const detail = run.failure_summary || 'The run ended without a completed reply.';
+        const statusDetail = Number.isInteger(status) && status >= 100 && status <= 599
+            ? `HTTP ${status}${model ? ` · ${clean(model)}` : ''}` : '';
+        $('run-failure-detail').textContent = [clean(detail), statusDetail].filter(Boolean).join('\n');
     }
     async function moreOutput() {
         if (!actionable() || refreshing) return;
