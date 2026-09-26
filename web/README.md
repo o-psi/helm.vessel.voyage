@@ -190,6 +190,13 @@ installed Flux modal version does not provide a pinned footer slot. Socket-drive
 choices are cloned from server-rendered Flux option templates; the Vessel remains
 the source of account, profile and model authority.
 
+Expired ChatGPT accounts have an explicit Flux refresh control in Profile setup.
+It sends one scoped `account_usage` refresh for the selected account binding and
+reloads the catalogue; unavailable accounts cannot be applied to a voyage.
+Uncertain refreshes are not retried automatically. Reauthentication of an
+invalid refresh token remains a host-owner `vessel auth accounts reauthenticate`
+operation for the same account.
+
 The composer supports text and picture attachments. **New voyage → Setup**
 prepares the workspace and account/model settings in memory without starting a
 Voyage. First Send creates the Voyage and submits the message with separate

@@ -104,6 +104,12 @@
                         <flux:select id="edit-profile" variant="listbox" searchable label="Saved profile" placeholder="Choose a profile" />
                         <flux:text id="edit-profile-summary" class="setup-wrap" />
                     </div>
+                    <div id="setup-expired-accounts" class="space-y-3" hidden>
+                        <flux:heading size="sm">Expired ChatGPT sign-in</flux:heading>
+                        <flux:select id="edit-expired-account" variant="listbox" searchable label="Account to refresh" placeholder="Choose an account" />
+                        <flux:button id="setup-refresh-oauth" type="button" size="sm" variant="outline" icon="arrow-path">Refresh selected sign-in</flux:button>
+                    </div>
+                    <flux:text id="setup-oauth-status" size="sm" class="setup-wrap" role="status" aria-live="polite" />
                     <flux:button id="setup-manage-open" type="button" size="sm" variant="ghost" icon="cog-6-tooth">Manage profiles</flux:button>
                 </section>
                 <section id="setup-manage" class="space-y-4" aria-label="Manage profiles" hidden>

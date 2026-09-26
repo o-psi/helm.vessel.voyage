@@ -17,7 +17,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     const creating = () => !target?.session_id;
     let openingDraft;
     let catalogue = {revision:0,profiles:[],can_manage:false}, editingProfile = null;
-    let usageVersion = 0, enrolledAccount = null;
+    let usageVersion = 0, enrolledAccount = null, oauthRefreshing = false;
     let setupScreen = 'overview', screenStack = [], focusStack = [], pickerKind = null, profileBeforePicker = null, deleteId = null;
     const configurations = new Map();
     let starting = false;
@@ -125,17 +125,30 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     const workspace = () => creating() && $('settings-workspace').value === '__custom__' ? raw('edit-workspace-path').value.trim() : $('settings-workspace').value;
     function workspaceChanged() {
+        raw('setup-oauth-status').textContent = '';
         raw('edit-custom-workspace').hidden = !creating() || $('settings-workspace').value !== '__custom__';
         return loadAccounts();
     }
-    const choice = () => choices[Number($('settings-account').value)];
+    const choice = () => /^\d+$/.test($('settings-account').value) ? choices[Number($('settings-account').value)] : undefined;
+    const expiredOAuth = account => account?.binding.transport === 'chatgpt_oauth' && account.state === 'ready' && account.availability === 'expired';
+    const selectedExpiredOAuth = () => /^\d+$/.test($('settings-expired-account').value) ? choices[Number($('settings-expired-account').value)] : undefined;
     const model = () => models.find(m => m.id === $('settings-model').value);
     const key = (c, command) => `${prefix}${c.id}:${c.vessel_id}:${command.command_id}`;
     function reset() {
         enrollment.hide();
         choices = []; models = []; defaults = {};
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
+        options('settings-expired-account', []);
+        raw('setup-expired-accounts').hidden = true;
         $('settings-save').disabled = true;
+    }
+    function renderExpiredAccounts(preferred) {
+        const expired = choices.flatMap((account,index) => expiredOAuth(account)
+            ? [{value:String(index),label:account.label,detail:'Expired · refresh sign-in'}] : []);
+        const selected = choices.findIndex(account => expiredOAuth(account) && same(account.binding,preferred));
+        options('settings-expired-account', expired, selected < 0 ? null : String(selected));
+        raw('setup-expired-accounts').hidden = !expired.length;
+        raw('setup-refresh-oauth').disabled = oauthRefreshing || !expired.length;
     }
     function sameSetup() {
         const selected = current();
@@ -176,6 +189,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     async function loadVessel() {
         if (saving) return;
+        raw('setup-oauth-status').textContent = '';
         const mine = ++version; reset(); options('settings-workspace', []);
         catalogue = {revision:0,profiles:[],can_manage:false}; renderProfiles();
         raw('edit-custom-workspace').hidden = true; raw('edit-workspace-path').value = ''; raw('edit-workspace-path').disabled = false;
@@ -210,23 +224,23 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             await workspaceChanged();
         } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
-    async function loadAccounts() {
-        if (saving) return;
+    async function loadAccounts(preferredProfile = null, preferredExpired = null) {
+        if (saving) return false;
         const mine = ++version; reset();
         catalogue = {revision:0,profiles:[],can_manage:false}; renderProfiles();
         const c = connection, client = c?.client, selectedWorkspace = workspace();
-        if (!client || !selectedWorkspace) return status('Choose a connected Vessel and workspace.');
-        if (!selectedWorkspace.startsWith('/')) return status('Enter an absolute folder path on this Vessel.');
+        if (!client || !selectedWorkspace) { status('Choose a connected Vessel and workspace.'); return false; }
+        if (!selectedWorkspace.startsWith('/')) { status('Enter an absolute folder path on this Vessel.'); return false; }
         status('Loading provider accounts…');
         try {
             const accountCatalogue = await setupRead(mine,c,client,'accounts',{workspace:selectedWorkspace,transport:null});
-            if (!readStillCurrent(mine,c,client)) return;
+            if (!readStillCurrent(mine,c,client)) return false;
             for (const account of accountCatalogue.accounts || []) {
                 const provider = accountCatalogue.connections?.find(item => item.id === account.connection_id);
                 for (const transport of provider?.transports || []) {
                     const binding = {account_id:account.id,connection_id:provider.id,identity_generation:account.identity_generation,connection_revision:provider.revision,transport};
                     const ready = account.state === 'ready' && account.availability === 'available';
-                    choices.push({binding,ready,label:`${account.label} · ${provider.label} · ${transport.replaceAll('_',' ')}${same(binding,accountCatalogue.default_account) ? ' · Default' : ''}${ready ? '' : ` · ${account.availability.replaceAll('_',' ')}`}`});
+                    choices.push({binding,ready,state:account.state,availability:account.availability,label:`${account.label} · ${provider.label} · ${transport.replaceAll('_',' ')}${same(binding,accountCatalogue.default_account) ? ' · Default' : ''}${ready ? '' : ` · ${account.availability.replaceAll('_',' ')}`}`});
                 }
             }
             const reviewed = configuration();
@@ -234,9 +248,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             const preferred = choices.find(c => c.binding.account_id === enrolledAccount)?.binding || (!creating() ? target.inference?.account : defaults.account);
             enrolledAccount = null;
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,detail:c.ready ? 'Available' : 'Unavailable',disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
+            renderExpiredAccounts(preferredExpired);
             if (setupScreen === 'editor') loadUsage(false);
-            await loadProfiles();
-        } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
+            await loadProfiles(preferredProfile);
+            return readStillCurrent(mine,c,client);
+        } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } return false; }
     }
     const selectedProfile = () => catalogue.profiles.find(profile => profile.id === raw('edit-profile').value);
     function renderEditorChoices() {
@@ -296,11 +312,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw('edit-manage-profile').value = raw('edit-profile').value;
         renderOverview();
     }
-    async function loadProfiles() {
+    async function loadProfiles(preferred) {
         const mine = version, c = connection, client = c.client;
         const result = await setupRead(mine,c,client,'profiles',{workspace:workspace()});
         if (!readStillCurrent(mine,c,client)) return;
-        catalogue = result; renderProfiles();
+        catalogue = result; renderProfiles(preferred);
     }
     async function editProfile(mode) {
         if (saving || !catalogue.can_manage) return;
@@ -561,6 +577,50 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         profileBeforePicker = raw('edit-profile').value;
         showScreen('profiles');
     });
+    raw('setup-refresh-oauth').addEventListener('click', async () => {
+        if (oauthRefreshing || setupScreen !== 'profiles' || !sameSetup()) return;
+        const selected = selectedExpiredOAuth(), c = connection, client = c?.client, selectedWorkspace = workspace();
+        if (!expiredOAuth(selected) || !client || !selectedWorkspace) return;
+        const binding = structuredClone(selected.binding), mine = version;
+        const report = message => {
+            raw('setup-oauth-status').textContent = clean(message);
+            status(message);
+        };
+        oauthRefreshing = true;
+        raw('setup-refresh-oauth').disabled = true;
+        report(`Refreshing sign-in for ${selected.label}…`);
+        let observation = null, refreshError = false;
+        try {
+            try {
+                observation = await setupRead(mine,c,client,'account_usage',{workspace:selectedWorkspace,account:binding,refresh:true});
+                if (!same(observation?.account,binding)) refreshError = true;
+            } catch { refreshError = true; }
+            if (!still(mine,c,client) || workspace() !== selectedWorkspace || setupScreen !== 'profiles') return;
+            const preferredProfile = raw('edit-profile').value, nextVersion = version + 1;
+            const reloaded = await loadAccounts(preferredProfile,binding);
+            if (!still(nextVersion,c,client) || workspace() !== selectedWorkspace || setupScreen !== 'profiles') return;
+            if (!reloaded) return report('Refresh was attempted, but account status could not be reloaded. Select Reload to check the account before trying again.');
+            const currentAccount = choices.find(item => same(item.binding,binding));
+            if (!refreshError && currentAccount?.ready && observation?.refresh_status !== 'sign_in_required') {
+                return report('ChatGPT sign-in is available. You can use its saved profile.');
+            }
+            if (currentAccount?.availability === 'refresh_pending_or_uncertain') {
+                return report('Sign-in refresh is pending or uncertain. Do not retry it here. Recover this account on its Vessel with vessel auth accounts reauthenticate.');
+            }
+            if (observation?.refresh_status === 'sign_in_required') {
+                return report('ChatGPT sign-in is required. Reauthenticate this account on its Vessel with vessel auth accounts reauthenticate.');
+            }
+            if (refreshError) {
+                return report(currentAccount?.ready
+                    ? 'This account appears available in the reloaded catalogue, but its refresh reply could not be confirmed. Select Reload before using it.'
+                    : 'Sign-in refresh could not be confirmed. Check this account on its Vessel before trying again; use vessel auth accounts reauthenticate if needed.');
+            }
+            return report('This ChatGPT account is still unavailable. Check its sign-in on the Vessel before trying again.');
+        } finally {
+            oauthRefreshing = false;
+            if (!raw('setup-expired-accounts').hidden) raw('setup-refresh-oauth').disabled = !expiredOAuth(selectedExpiredOAuth());
+        }
+    });
     raw('setup-access-open').addEventListener('click', () => showScreen('access'));
     raw('setup-reasoning-open').addEventListener('click', () => {
         raw('change-reasoning').click();
@@ -611,7 +671,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         });
     }
     raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); renderOverview(); });
-    raw('edit-workspace-path').addEventListener('change',loadAccounts);
+    raw('edit-workspace-path').addEventListener('change',() => loadAccounts());
     raw('edit-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await prepareDraft(connection.id,workspace());raw('edit-close').click();}catch(error){status(error.message);}});
 
     raw('edit-save').addEventListener('click',save);

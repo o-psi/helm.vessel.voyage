@@ -9,10 +9,10 @@
     </div>
     <div id="enrollment-private" hidden class="space-y-4">
         <flux:text>Enter this code on the ChatGPT sign-in page.</flux:text>
-        <p id="enrollment-code" class="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-center font-mono text-2xl font-semibold tracking-widest select-all dark:border-zinc-600 dark:bg-zinc-900" aria-label="Private sign-in code"></p>
-        <a id="enrollment-link" target="_blank" rel="noopener noreferrer" class="flex w-full items-center justify-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-medium text-white dark:bg-white dark:text-zinc-900">Open ChatGPT sign-in ↗</a>
+        <flux:text id="enrollment-code" class="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-center font-mono text-2xl font-semibold tracking-widest select-all dark:border-zinc-600 dark:bg-zinc-900" aria-label="Private sign-in code" />
+        <flux:button id="enrollment-link" href="https://auth.openai.com/codex/device" target="_blank" rel="noopener noreferrer" variant="primary" icon:trailing="arrow-top-right-on-square" class="w-full">Open ChatGPT sign-in</flux:button>
     </div>
-    <p id="enrollment-status" role="status" aria-live="polite" class="text-sm text-zinc-600 dark:text-zinc-400"></p>
+    <flux:text id="enrollment-status" role="status" aria-live="polite" />
     <div class="flex flex-wrap items-center justify-end gap-2">
         <flux:button id="enrollment-cancel" type="button" size="sm" variant="ghost" hidden>Cancel sign-in</flux:button>
         <flux:button id="enrollment-check" type="button" size="sm" variant="primary" hidden>Check sign-in</flux:button>

@@ -338,7 +338,14 @@ Flux components; Vessel reads and draft state remain in the browser client.
 
 The current unsent new-voyage draft is retained when reopening Setup or changing
 Location. Account metadata and models are fetched from the selected Vessel;
-unavailable accounts remain labeled and cannot be selected. Explicit model/account
+unavailable accounts remain labeled and cannot be used. Expired ChatGPT accounts
+appear in Profile setup with a targeted **Refresh selected sign-in** action. It
+asks the Vessel to refresh that account's OAuth token once through its bounded
+`account_usage` read, then reloads accounts and profiles. The profile stays
+unusable until the refreshed catalogue reports the account available. A failed
+or uncertain refresh is not repeated automatically; host-owner recovery uses
+`vessel auth accounts reauthenticate` for that same account. This action cannot
+replace an invalid refresh token through the Web device-sign-in flow. Explicit model/account
 changes reset reasoning and service options to provider defaults. Discovery
 prepares an in-memory configuration only. First Send creates the independent voyage
 and submits the message after a fresh owner snapshot. A pre-send access choice uses

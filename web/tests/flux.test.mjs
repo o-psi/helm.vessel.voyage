@@ -37,4 +37,7 @@ test('Setup profile, management, account and model choices render as searchable 
  }
  assert.equal(d.getElementById('flux-search-option')?.content.firstElementChild.tagName,'UI-OPTION');
  for(const id of ['setup-profile-list','setup-manage-profile-list','setup-picker-list']) assert.equal(d.getElementById(id),null,`${id} custom choices are removed`);
+ const signIn=d.getElementById('enrollment-link');
+ assert.equal(signIn?.tagName,'A');
+ assert.ok(signIn.hasAttribute('data-flux-button'),'Setup sign-in link uses Flux button styling and behavior');
 });
