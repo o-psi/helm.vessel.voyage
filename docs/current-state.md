@@ -24,8 +24,14 @@ The console is disabled by default. Offline HTTP, DOM and local WebSocket fixtur
 checks are recorded in the guide; live OAuth-provider journeys, real-provider voyage execution and native
 browser/mobile interaction certification require separate evidence.
 New voyage creation and provider-account/model selection are available in the web
-console. Web and TUI composers support picture attachments and memory-only unsent
-composition. Shared drafts and unsent-content persistence are removed. Terminal/browser execution and account
+console. The default Livewire console opens one responsive Setup flyout for a new
+voyage's location, profile, account/model choices, ChatGPT account sign-in, access
+and reasoning. Profile selection and management stay within that surface; an
+existing voyage applies a selected profile to its next run only after Vessel
+confirmation. Access uses its separate authority and confirmation flow. Web and
+TUI composers support picture attachments and memory-only unsent composition;
+first Send creates a prepared new voyage. Shared drafts and unsent-content
+persistence are removed. Private terminal execution and API-key account
 enrollment remain native-client capabilities. The web client is not Ratzilla.
 
 ## Execution profiles

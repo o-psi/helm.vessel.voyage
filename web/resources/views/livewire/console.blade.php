@@ -40,53 +40,19 @@
             <form id="composer" class="mx-auto w-full max-w-3xl px-3 pb-2 pt-2 sm:px-4 sm:pb-4">
                 <flux:composer id="prompt" submit="enter" label="Message" label:sr-only rows="2" max-rows="8" placeholder="Ask anything…" class="rounded-3xl! p-3! shadow-sm">
                     <x-slot name="input"><flux:textarea rows="2" readonly class="border-0! bg-transparent! shadow-none! resize-none" /></x-slot>
-                    <x-slot name="actionsLeading" class="col-span-3! min-w-0 overflow-x-auto">
-                        <div class="flex w-max flex-nowrap items-center gap-1 whitespace-nowrap [&>ui-dropdown]:shrink-0 sm:gap-2">
-
-                            <flux:dropdown position="top" align="start"><flux:button id="change-location" type="button" size="sm" variant="ghost" icon="folder" icon:trailing="chevron-down"><span id="composer-location">Location</span></flux:button><flux:popover id="location-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" /></flux:dropdown>
+                    <x-slot name="actionsLeading" class="col-span-3! min-w-0">
+                        <div class="flex min-w-0 items-center gap-1 sm:gap-2">
+                            <flux:button id="change-setup" type="button" size="sm" variant="ghost" icon="adjustments-horizontal" aria-label="Open voyage setup" aria-haspopup="dialog" aria-controls="setup-dialog"><span id="composer-setup-label" class="max-w-36 truncate sm:max-w-56">Setup</span></flux:button>
                             <flux:button id="attach-picture" type="button" size="sm" variant="ghost" icon="paper-clip" aria-label="Attach pictures" tooltip="Attach pictures" />
-
-                            <flux:dropdown position="top" align="start">
-                                <flux:button id="change-inference" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Choose profile" disabled><span id="composer-model" class="max-w-28 truncate sm:max-w-48">Profile</span></flux:button>
-                                <flux:popover id="edit-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto">
-                                    <div id="edit-form" class="space-y-4">
-                                        <flux:heading id="edit-title">Profiles</flux:heading>
-                                        <flux:text id="edit-description" />
-                                        <div id="edit-location-section" hidden class="space-y-4"><flux:select id="edit-vessel" label="Vessel" /><flux:select id="edit-workspace" label="Workspace" /><div id="edit-custom-workspace" hidden><flux:input id="edit-workspace-path" label="Folder on this Vessel" description="Existing absolute path on the Vessel, not your browser’s computer." /></div></div>
-                                        <div id="edit-profiles-section" class="space-y-3"><flux:select id="edit-profile" label="Profile" /><flux:text id="edit-profile-summary" /><div id="edit-profile-actions" class="flex flex-wrap gap-2"><flux:button id="profile-new" type="button" size="sm">Create</flux:button><flux:button id="profile-edit" type="button" size="sm">Edit</flux:button><flux:button id="profile-duplicate" type="button" size="sm">Duplicate</flux:button><flux:button id="profile-default" type="button" size="sm">Make default</flux:button><flux:button id="profile-delete" type="button" size="sm">Delete</flux:button></div></div>
-                                        <div id="edit-profile-name-section" hidden><flux:input id="edit-profile-name" label="Profile name" maxlength="80" /><flux:button id="profile-cancel-edit" type="button" size="sm" variant="ghost">Cancel profile edit</flux:button></div>
-                                        <div id="edit-account-section" hidden><flux:select id="edit-account" variant="listbox" searchable label="Provider account" /><flux:dropdown position="bottom" align="start"><flux:button id="edit-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button><flux:popover id="edit-enrollment-host" class="w-80 max-w-[calc(100vw-2rem)] max-h-[70dvh] overflow-y-auto" /></flux:dropdown><div class="mt-3 space-y-2"><flux:heading size="sm">Account usage</flux:heading><flux:text id="account-usage" class="whitespace-pre-line" role="status">Not loaded</flux:text><flux:button id="account-usage-refresh" type="button" size="sm" variant="ghost" icon="arrow-path">Refresh usage</flux:button></div></div>
-                                        <div id="edit-model-section"><flux:select id="edit-model" variant="listbox" searchable label="Model" /></div>
-                                        <div id="edit-reasoning-section" hidden><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
-                                        <div id="edit-service-section" hidden><flux:radio.group id="edit-service" label="Service tier" variant="pills" /></div>
-                                        <flux:text id="edit-status" role="status" />
-                                        <div class="flex flex-wrap gap-2"><flux:button id="edit-retry" type="button" size="sm">Reload</flux:button><flux:button id="edit-close" type="button" size="sm" variant="ghost">Cancel</flux:button><flux:button id="edit-save" type="button" size="sm" variant="primary" disabled>Apply</flux:button></div>
-                                    </div>
-                                </flux:popover>
-                            </flux:dropdown>
-                            <flux:dropdown hidden position="top" align="start">
-                                <flux:button id="change-account" type="button" size="sm" variant="ghost" icon="user-circle" icon:trailing="chevron-down" aria-label="Change account" disabled><span id="composer-account" class="max-w-40 truncate">Account</span></flux:button>
-                                <flux:popover id="account-popover" class="w-80 max-w-[calc(100vw-2rem)] max-h-[60dvh] overflow-y-auto" />
-                            </flux:dropdown>
-                            <flux:dropdown hidden position="top" align="start">
-                                <flux:button id="change-service" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" aria-label="Change service tier" disabled><span id="composer-service">Service</span></flux:button>
-                                <flux:popover id="service-popover" class="w-72 max-w-[calc(100vw-2rem)]" />
-                            </flux:dropdown>
-                            <flux:dropdown hidden position="top" align="start">
-                                <flux:button id="change-reasoning" type="button" size="sm" variant="ghost" icon:trailing="chevron-down" disabled><span id="composer-reasoning">Default</span></flux:button>
-                                <flux:popover id="reasoning-popover" class="w-64 max-w-[calc(100vw-2rem)] space-y-3">
-                                    <div class="space-y-3"><flux:slider id="quick-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="quick-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
-                                    <flux:text id="reasoning-status" role="status" />
-                                    <flux:button id="reasoning-save" type="button" size="sm" variant="primary">Apply</flux:button>
-                                </flux:popover>
-                            </flux:dropdown>
-                            <flux:dropdown position="top" align="start">
-                                <flux:button id="change-access" type="button" size="sm" variant="ghost" icon="lock-open" icon:trailing="chevron-down" disabled><span id="composer-access">Access unknown</span></flux:button>
-                                <flux:popover class="w-72 max-w-[calc(100vw-2rem)] space-y-3">
-                                    <flux:select id="access-mode" label="Voyage access mode" disabled><flux:select.option value="">Vessel default</flux:select.option><flux:select.option value="read-only">Read only</flux:select.option><flux:select.option value="approval">Approval</flux:select.option><flux:select.option value="unrestricted">Full access</flux:select.option></flux:select>
-                                    <flux:text size="sm">Read only restricts changes. Approval asks before actions that need permission. Full access runs without asking, within the executing host’s configured limits.</flux:text>
-                                </flux:popover>
-                            </flux:dropdown>
+                        </div>
+                        {{-- Existing status targets stay available while the settings controller moves into the flyout. --}}
+                        <div hidden>
+                            <flux:button id="change-location" type="button" disabled><span id="composer-location">Location</span></flux:button>
+                            <flux:button id="change-inference" type="button" disabled><span id="composer-model">Profile</span></flux:button>
+                            <flux:button id="change-account" type="button" disabled><span id="composer-account">Account</span></flux:button>
+                            <flux:button id="change-service" type="button" disabled><span id="composer-service">Service</span></flux:button>
+                            <flux:button id="change-reasoning" type="button" disabled><span id="composer-reasoning">Default</span></flux:button>
+                            <flux:button id="change-access" type="button" disabled><span id="composer-access">Access unknown</span></flux:button>
                         </div>
                     </x-slot>
                     <x-slot name="actionsTrailing" class="col-span-1! shrink-0 ps-2"><flux:button id="cancel" hidden type="button" size="sm" variant="subtle" icon="stop" aria-label="Cancel run" title="Cancel run" class="rounded-full!" disabled /><flux:button id="send" type="submit" size="sm" variant="primary" icon="arrow-up" aria-label="Send" title="Send · Enter" class="rounded-full!" disabled /></x-slot>
@@ -100,6 +66,140 @@
                 <div id="host-browser-content"></div>
             </aside>
     </flux:main>
+    <flux:modal id="setup-dialog" name="voyage-setup" flyout :closable="false" :dismissible="false" :escapable="false" class="voyage-setup-dialog">
+        <div id="edit-form" class="voyage-setup-shell">
+            <header id="setup-header" class="voyage-setup-header">
+                <flux:button id="setup-back" type="button" size="sm" variant="ghost" icon="arrow-left" aria-label="Back" hidden />
+                <flux:heading id="setup-title" size="lg" class="min-w-0 flex-1 truncate">Setup</flux:heading>
+                <flux:button id="setup-close" type="button" size="sm" variant="ghost" icon="x-mark" aria-label="Close setup" />
+            </header>
+            <div id="setup-content" class="voyage-setup-content" tabindex="0">
+                <flux:heading id="edit-title" class="sr-only">Voyage setup</flux:heading>
+                <section id="setup-overview" class="space-y-4" aria-label="Voyage setup">
+                    <flux:text id="edit-description" class="setup-wrap">Choose the location, profile, access and reasoning for your next run.</flux:text>
+                    <div class="space-y-2">
+                        <button id="setup-location-open" type="button" class="setup-nav-row">
+                            <flux:icon.folder class="size-5 shrink-0 text-zinc-500" />
+                            <span class="min-w-0 flex-1"><strong>Location</strong><span id="setup-location-summary" class="setup-wrap">Choose a Vessel and workspace</span></span>
+                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
+                        </button>
+                        <button id="setup-profile-open" type="button" class="setup-nav-row">
+                            <flux:icon.user-circle class="size-5 shrink-0 text-zinc-500" />
+                            <span class="min-w-0 flex-1"><strong>Profile</strong><span id="setup-profile-summary" class="setup-wrap">Choose a profile</span></span>
+                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
+                        </button>
+                        <button id="setup-access-open" type="button" class="setup-nav-row">
+                            <flux:icon.lock-open class="size-5 shrink-0 text-zinc-500" />
+                            <span class="min-w-0 flex-1"><strong>Access</strong><span id="setup-access-summary" class="setup-wrap">Vessel default</span></span>
+                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
+                        </button>
+                        <button id="setup-reasoning-open" type="button" class="setup-nav-row">
+                            <flux:icon.sparkles class="size-5 shrink-0 text-zinc-500" />
+                            <span class="min-w-0 flex-1"><strong>Reasoning</strong><span id="setup-reasoning-summary" class="setup-wrap">Provider default</span></span>
+                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
+                        </button>
+                    </div>
+                </section>
+                <section id="setup-location" class="space-y-4" aria-label="Location" hidden>
+                    <div id="edit-location-section" class="space-y-4">
+                        <flux:select id="edit-vessel" label="Vessel" />
+                        <flux:select id="edit-workspace" label="Workspace" />
+                        <div id="edit-custom-workspace" hidden><flux:input id="edit-workspace-path" label="Folder on this Vessel" description="Existing absolute path on the Vessel, not your browser’s computer." /></div>
+                    </div>
+                </section>
+                <section id="setup-profiles" class="space-y-4" aria-label="Profiles" hidden>
+                    <div id="edit-profiles-section" class="space-y-3">
+                        <flux:input id="setup-profile-search" type="search" size="sm" icon="magnifying-glass" label="Find a profile" placeholder="Search profiles…" />
+                        <select id="edit-profile" aria-label="Selected profile" hidden></select>
+                        <div id="setup-profile-list" class="setup-list" aria-label="Saved profiles"></div>
+                        <flux:text id="edit-profile-summary" class="setup-wrap" />
+                    </div>
+                    <flux:button id="setup-manage-open" type="button" size="sm" variant="ghost" icon="cog-6-tooth">Manage profiles</flux:button>
+                </section>
+                <section id="setup-manage" class="space-y-4" aria-label="Manage profiles" hidden>
+                    <flux:button id="setup-manage-back" type="button" size="sm" variant="ghost" icon="arrow-left">Profiles</flux:button>
+                    <div id="setup-manage-profile-list" class="setup-list" aria-label="Profiles to manage"></div>
+                    <div id="edit-profile-actions" class="flex flex-wrap gap-2">
+                        <flux:button id="profile-new" type="button" size="sm">Create</flux:button>
+                        <flux:button id="profile-edit" type="button" size="sm">Edit</flux:button>
+                        <flux:button id="profile-duplicate" type="button" size="sm">Duplicate</flux:button>
+                        <flux:button id="profile-default" type="button" size="sm">Make default</flux:button>
+                        <flux:button id="profile-delete" type="button" size="sm">Delete</flux:button>
+                    </div>
+                    <flux:text size="sm" class="setup-wrap">Profile changes affect future selections. Existing voyages keep their settings.</flux:text>
+                </section>
+                <section id="setup-delete" class="space-y-4" aria-label="Delete profile" hidden>
+                    <flux:heading size="lg">Delete profile?</flux:heading>
+                    <flux:text class="setup-wrap">This removes <strong id="setup-delete-name"></strong> from saved profiles. Existing voyages keep their current settings.</flux:text>
+                    <flux:button id="setup-delete-confirm" type="button" variant="danger">Delete profile</flux:button>
+                </section>
+                <section id="setup-editor" class="space-y-5" aria-label="Profile editor" hidden>
+                    <div id="edit-profile-name-section" class="space-y-2" hidden>
+                        <flux:input id="edit-profile-name" label="Profile name" maxlength="80" />
+                        <flux:button id="profile-cancel-edit" type="button" size="sm" variant="ghost">Cancel profile edit</flux:button>
+                    </div>
+                    <div id="edit-account-section" class="space-y-3" hidden>
+                        <select id="edit-account" aria-label="Selected provider account" hidden></select>
+                        <div>
+                            <span class="setup-field-label">Provider account</span>
+                            <button id="setup-account-open" type="button" class="setup-picker-row"><span id="setup-account-value" class="min-w-0 flex-1 setup-wrap">Choose an account</span><flux:icon.chevron-right class="size-4 shrink-0" /></button>
+                        </div>
+                        <flux:button id="edit-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button>
+                        <div class="space-y-2">
+                            <flux:heading size="sm">Account usage</flux:heading>
+                            <flux:text id="account-usage" class="whitespace-pre-line setup-wrap" role="status">Not loaded</flux:text>
+                            <flux:button id="account-usage-refresh" type="button" size="sm" variant="ghost" icon="arrow-path">Refresh usage</flux:button>
+                        </div>
+                    </div>
+                    <div id="edit-model-section" class="space-y-2" hidden>
+                        <select id="edit-model" aria-label="Selected model" hidden></select>
+                        <span class="setup-field-label">Model</span>
+                        <button id="setup-model-open" type="button" class="setup-picker-row"><span id="setup-model-value" class="min-w-0 flex-1 setup-wrap">Choose a model</span><flux:icon.chevron-right class="size-4 shrink-0" /></button>
+                    </div>
+                    <details class="setup-advanced">
+                        <summary>Advanced options</summary>
+                        <div class="space-y-4 pt-4">
+                            <div id="edit-reasoning-section" hidden><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
+                            <div id="edit-service-section" hidden><flux:select id="edit-service" label="Service tier" /></div>
+                        </div>
+                    </details>
+                </section>
+                <section id="setup-picker" class="space-y-4" aria-label="Choose an option" hidden>
+                    <flux:input id="setup-picker-search" type="search" size="sm" icon="magnifying-glass" label="Find an option" placeholder="Search…" />
+                    <div id="setup-picker-list" class="setup-list" aria-label="Available options"></div>
+                </section>
+                <section id="setup-enrollment" aria-label="Connect ChatGPT account" hidden></section>
+                <section id="setup-access" class="space-y-4" aria-label="Access mode" hidden>
+                    <flux:select id="access-mode" label="Voyage access mode" disabled>
+                        <flux:select.option value="">Vessel default</flux:select.option>
+                        <flux:select.option value="read-only">Read only</flux:select.option>
+                        <flux:select.option value="approval">Approval</flux:select.option>
+                        <flux:select.option value="unrestricted">Full access</flux:select.option>
+                    </flux:select>
+                    <flux:text size="sm" class="setup-wrap">Read only restricts changes. Approval asks before actions that need permission. Full access runs without asking, within the executing host’s configured limits.</flux:text>
+                    <flux:text id="setup-access-status" class="setup-wrap" role="status" />
+                </section>
+                <section id="setup-reasoning" class="space-y-4" aria-label="Reasoning" hidden>
+                    <flux:text size="sm" class="setup-wrap">Adjust reasoning for the next run without changing the saved profile.</flux:text>
+                    <div id="reasoning-popover" class="space-y-3">
+                        <flux:slider id="quick-reasoning" label="Reasoning" min="0" max="1" step="1" />
+                        <flux:text id="quick-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text>
+                        <flux:text id="reasoning-status" class="setup-wrap" role="status" />
+                        <flux:button id="reasoning-save" type="button" size="sm" variant="primary">Apply reasoning</flux:button>
+                    </div>
+                </section>
+            </div>
+            <footer id="setup-footer" class="voyage-setup-footer">
+                <flux:text id="edit-status" class="setup-wrap" role="status" />
+                <div class="flex flex-wrap items-center justify-end gap-2">
+                    <flux:button id="edit-retry" type="button" size="sm" variant="ghost">Reload</flux:button>
+                    <flux:button id="edit-close" type="button" size="sm" variant="ghost">Cancel</flux:button>
+                    <flux:button id="edit-save" type="button" size="sm" variant="primary" disabled>Apply</flux:button>
+                    <flux:button id="setup-done" type="button" size="sm" variant="primary">Done</flux:button>
+                </div>
+            </footer>
+        </div>
+    </flux:modal>
     <div hidden>@include('console.account-enrollment')</div>
     <flux:modal name="sidebar-action" class="w-full md:max-w-2xl" :dismissible="false">
         <form id="sidebar-action-form" class="space-y-4">
@@ -119,7 +219,6 @@
         <div class="space-y-4"><flux:heading size="lg">Tool / attachment details</flux:heading><pre class="overflow-auto"><flux:text inline id="message-details-content" class="whitespace-pre-wrap break-words font-mono" /></pre></div>
     </flux:modal>
         {{-- Blade renders Flux controls once; JS clones these for socket-driven content. --}}
-        <template id="flux-service-option"><flux:radio value=""><span data-option-label></span></flux:radio></template>
         <template id="flux-card"><article class="min-w-0 space-y-3 break-words" /></template>
         <template id="thread-user"><article class="ms-auto w-fit max-w-[92%] space-y-3 rounded-3xl rounded-br-lg bg-zinc-100 px-5 py-4 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100" aria-label="Your message" /></template>
         <template id="thread-assistant"><article class="me-auto min-w-0 max-w-[96%] space-y-3 rounded-3xl rounded-bl-lg border border-zinc-200/70 bg-zinc-50 px-5 py-4 dark:border-zinc-700/60 dark:bg-zinc-900" aria-label="Assistant message"><span data-interrupted class="text-xs text-amber-600" hidden>Interrupted attempt</span></article></template>

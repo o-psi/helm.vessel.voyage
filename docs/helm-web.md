@@ -78,7 +78,20 @@ receipt is not execution completion. Steering acknowledgements carry a nested du
 receipt: queued or applied status clears the unchanged sent draft; not-applied or
 uncertain outcomes retain it. Reconnection reads the same receipt without resending. Storage failure blocks sending; clearing
 site storage loses local recovery evidence. Full-message expansion is capped at
-4 MiB with explicit handoff to native Helm. New voyage creation and provider-account/model selection are available through scoped Vessel APIs. Use the composer’s Account or model button before the first Send to review the new chat’s Vessel-hosted provider account and model. Continue keeps that reviewed selection in memory without creating a voyage; reopening review preserves it. For an idle existing voyage, Account shows both the account and its model before Apply. Unavailable accounts are disabled, and active runs cannot switch accounts. Provider credentials stay on the Vessel; use **Add ChatGPT account** for device sign-in. Uploads, private terminals, browser execution, API-key account enrollment and the remaining native administration surfaces are still parity gaps.
+4 MiB with explicit handoff to native Helm. New voyage creation and
+provider-account/model selection are available through scoped Vessel APIs. In
+the default Livewire console, **Setup** opens a responsive flyout. New voyages
+choose a Vessel workspace and execution profile there; profile management,
+account/model pickers and **Add ChatGPT account** device sign-in use screens in
+the same surface. Preparing the choice keeps it in memory until first Send creates
+the voyage. For an idle existing voyage, selecting a profile sends a next-run
+settings command and waits for confirmation. Editing a saved profile does not
+change settings already copied into voyages. Unavailable accounts cannot be
+applied, and active runs cannot switch accounts. Access uses its own authority
+check and command; reasoning is local for a new voyage and a confirmed next-run
+override for an existing voyage. Provider credentials stay
+on the Vessel. Private terminals, API-key account enrollment
+and the remaining native administration surfaces are still parity gaps.
 
 ## Connect your Vessels
 

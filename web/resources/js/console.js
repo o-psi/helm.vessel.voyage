@@ -164,6 +164,16 @@ export function mount(root) {
             $('host-browser-toggle').title = selected ? `Browser · ${$('voyage-title').textContent}` : 'Choose a voyage to use its browser';
             const newChatSettings = !selected && client && !busy && !newChatSending;
             const reviewed = !selected ? settings?.configuration() : null;
+            $('change-setup').disabled = busy || newChatSending || !fleet.connections.size;
+            $('setup-location-open').hidden = Boolean(selected);
+            $('setup-location-open').disabled = Boolean(selected) || busy || newChatSending || !fleet.connections.size;
+            $('setup-profile-open').disabled = !newChatSettings && (!enabled || running());
+            $('setup-access-open').disabled = !enabled && !newChatSettings;
+            $('setup-reasoning-open').disabled = !reviewed && (!enabled || running() || !snapshot?.inference?.account);
+            $('setup-reasoning-summary').textContent = clean(reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort || 'Provider default');
+            $('composer-setup-label').textContent = clean(reviewed ? `${reviewed.profileName} · ${reviewed.settings.model}` : snapshot?.inference?.model || 'Setup');
+            $('change-setup').title = clean([reviewed?.settings.model || snapshot?.inference?.model, reviewed?.settings.reasoning_effort || snapshot?.inference?.reasoning_effort, reviewed?.settings.service_tier || snapshot?.inference?.service_tier].filter(Boolean).join(' · ') || 'Voyage setup');
+            $('setup-access-summary').textContent = ({'read-only':'Read only',approval:'Approval',unrestricted:'Full access'})[!selected ? composition?.active?.access : snapshot?.access] || (!selected ? 'Vessel default' : 'Access unknown');
             $('attach-picture').disabled = busy || newChatSending || !selectedVessel;
             $('reconnect').disabled = busy; setComposerDisabled($('prompt'), busy || newChatSending || !selectedVessel); $('send').disabled = newChatSending || (!enabled && !(!selected && composition?.active?.document?.target?.type === 'new_chat' && !busy && client)); $('cancel').disabled = !enabled || !running();
             $('cancel').hidden = !running();
@@ -587,18 +597,20 @@ export function mount(root) {
     $('prompt').addEventListener('keydown', event => {
         if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) event.stopImmediatePropagation();
     }, {capture:true});
-    $('access-mode').addEventListener('change', () => {
+    $('access-mode').addEventListener('change', async () => {
         const access = $('access-mode').value;
-        if (!selected && composition?.active?.document.target.type === 'new_chat') { composition.active.access = access; controls(); return; }
-        if (['read-only','approval','unrestricted'].includes(access) && access !== snapshot?.access) act('set_access',null,null,{access});
+        if (!selected && composition?.active?.document.target.type === 'new_chat') {
+            composition.active.access = access;
+            $('setup-access-status').textContent = 'Access selected for this new voyage.';
+            controls(); return;
+        }
+        if (['read-only','approval','unrestricted'].includes(access) && access !== snapshot?.access) {
+            $('setup-access-status').textContent = 'Updating access on the Vessel…';
+            const confirmed = await act('set_access',null,null,{access});
+            $('setup-access-status').textContent = confirmed ? 'Access change confirmed.' : 'Access change was not confirmed. Check the voyage status before retrying.';
+        }
         controls(); // Only a refreshed owner snapshot confirms the new mode.
     });
-    // Popover form fields must not submit the enclosing message composer.
-    for (const popover of $('composer').querySelectorAll('[data-flux-popover]')) {
-        popover.addEventListener('keydown', event => {
-            if (event.key === 'Enter' && !event.target.closest('button')) event.preventDefault();
-        });
-    }
     let reasoningTarget;
     $('change-reasoning').addEventListener('click', () => {
         reasoningTarget = {vessel:selectedVessel, session_id:selected, incarnation, revision:snapshot?.revision};
@@ -612,15 +624,15 @@ export function mount(root) {
     });
     $('reasoning-save').addEventListener('click', async () => {
         const t = reasoningTarget;
-        if (!selected && t?.draftKey === captureDraft()?.key && settings.setReasoning(reasoningValue($('quick-reasoning')))) { $('reasoning-popover').hidePopover?.(); return; }
+        if (!selected && t?.draftKey === captureDraft()?.key && settings.setReasoning(reasoningValue($('quick-reasoning')))) { settings.finishReasoning(); return; }
         if (!t || t.vessel !== selectedVessel || t.session_id !== selected || t.incarnation !== incarnation || t.revision !== snapshot?.revision || !actionable() || running()) {
-            $('reasoning-status').textContent = 'Voyage changed. Reopen this popover to reload choices.'; return;
+            $('reasoning-status').textContent = 'Voyage changed. Reopen Reasoning to reload choices.'; return;
         }
         $('reasoning-save').disabled = true;
         const inference = snapshot.inference;
         const ok = await act('set_account_inference',null,null,{account:inference.account,model:inference.model,reasoning_effort:reasoningValue($('quick-reasoning')) || null,service_tier:inference.service_tier || null});
         $('reasoning-status').textContent = ok ? 'Settings confirmed.' : 'Not confirmed. Review the voyage status before trying again.';
-        if (ok) $('reasoning-popover').hidePopover?.();
+        if (ok) settings.finishReasoning();
     });
     $('cancel').addEventListener('click',() => act('cancel'));
     $('earlier').addEventListener('click',earlier); $('more-output').addEventListener('click',moreOutput);

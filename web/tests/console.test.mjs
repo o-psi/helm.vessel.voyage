@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {spawnSync} from 'node:child_process';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 const dom = new JSDOM('<!doctype html><meta name="csrf-token" content="synthetic-token">',{url:'http://localhost/console',pretendToBeVisual:true});
 for (const key of ['window','document','location','localStorage','Event','CustomEvent']) globalThis[key]=dom.window[key];
 const {mount,markdown} = await import('../resources/js/console.js');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-async function until(predicate) {for(let i=0;i<100;i++){if(predicate())return;await pause(25);}assert.fail('Timed out waiting for browser state');}
+async function until(predicate, describe=()=> 'Timed out waiting for browser state') {for(let i=0;i<100;i++){if(predicate())return;await pause(25);}assert.fail(describe());}
 const id='10000000-0000-4000-8000-000000000001', incarnation='10000000-0000-4000-8000-000000000002', run='10000000-0000-4000-8000-000000000003', vessel='10000000-0000-4000-8000-000000000004';
 
 test('Markdown is sanitized, selectable HTML with no remote image or script execution', () => {
@@ -14,11 +17,13 @@ test('Markdown is sanitized, selectable HTML with no remote image or script exec
     assert.match(html,/<h1>Heading<\/h1>/);assert.match(html,/<strong>Bold<\/strong>/);assert.match(html,/<code>code<\/code>/);
     assert.doesNotMatch(html,/<script|<img|javascript:|<iframe/);
 });
-test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:120000}, async () => {
+test('browser journey: history, live output, submit, approval, question, cancel, reconnect receipts without replay', {timeout:120000}, async (t) => {
+    const compiled=mkdtempSync(join(tmpdir(),'helm-console-views-'));
+    t.after(()=>rmSync(compiled,{recursive:true,force:true}));
     let id='10000000-0000-4000-8000-000000000001', rejectCreate=false, loseCreate=false, createdProcess;
 
     const root=document.createElement('main');root.id='helm-client';root.dataset.ticketUrl='/console/ticket';
-    const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8'});
+    const rendered = spawnSync('php', ['-r', `require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'test'])->render();`], {cwd: new URL('..',import.meta.url), encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
     assert.equal(rendered.status,0,rendered.stderr);
     const fixture = document.createElement('div'); fixture.innerHTML = rendered.stdout;
     root.innerHTML = fixture.querySelector('#helm-client').innerHTML;
@@ -134,15 +139,24 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.match($('#messages article[aria-label="Assistant message"]').textContent,/A readable answer/);
         assert.equal($('#cancel').hidden,true,'cancel is hidden for idle voyage');
         assert.equal($('#prompt').getAttribute('submit'),'enter');
-        assert.equal($('#composer').querySelectorAll('[data-flux-popover]').length,$('[data-draft-menu]') ? 8 : 7);
-        $('#change-inference').click();
-        await until(()=>!$('#edit-save').disabled);
-        assert.equal($('#edit-form').parentElement.id,'edit-popover');
+        assert.ok($('#prompt').contains($('#change-setup')),'Setup is the composer entry point');
+        assert.ok($('#setup-dialog').contains($('#edit-form')),'settings have their own responsive surface');
+        assert.equal($('#edit-form').closest('form'),null,'setup fields cannot submit the message form');
+        $('#change-setup').click();
+        await until(()=>!$('#setup-overview').hidden);
+        assert.equal($('#setup-dialog').querySelector('dialog')?.hasAttribute('open'),true);
+        assert.equal($('#setup-location-open').hidden,true,'existing voyage location stays fixed');
+        $('#setup-profile-open').click();
+        await until(()=>!$('#setup-profiles').hidden && !$('#edit-save').disabled);
         assert.equal($('#edit-account-section').hidden,true);
         assert.equal($('#edit-model-section').hidden,true);
         assert.equal($('#edit-service-section').hidden,true);
         assert.equal($('#edit-form').tagName,'DIV','no nested form inside message composer');
+        assert.ok($('#setup-profile-list button[data-selected]'),'a profile is selected in the list');
         assert.match($('#edit-profile-summary').textContent,/fixture/);
+        const setupSubmits=requests.filter(c=>c.op==='submit'||c.op==='steer').length;
+        $('#setup-profile-search').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+        assert.equal(requests.filter(c=>c.op==='submit'||c.op==='steer').length,setupSubmits,'Enter in setup does not send');
         $('#edit-save').click();
         await until(()=>requests.some(c=>c.op==='set_account_inference')&&!$('#send').disabled);
         assert.equal(requests.find(c=>c.op==='set_account_inference').reasoning_effort,'high');
@@ -168,12 +182,19 @@ test('browser journey: history, live output, submit, approval, question, cancel,
         assert.deepEqual(requests.find(c=>c.response?.status==='selected').response,{status:'selected',index:1,answer:'Second'});
         $('#cancel').click();await until(()=>requests.some(c=>c.op==='cancel')&&!$('#send').disabled);assert.equal($('#send').getAttribute('aria-label'),'Send');
         assert.equal($('#cancel').hidden,true,'cancel hides after run ends');
+        $('#change-setup').click();
+        await until(()=>!$('#setup-overview').hidden);
+        $('#setup-access-open').click();
+        assert.equal($('#setup-access').hidden,false,'access opens within Setup');
         assert.equal($('#access-mode').value,'approval');
         $('#access-mode').value='read-only';$('#access-mode').dispatchEvent(new Event('change'));
         await until(()=>requests.some(c=>c.op==='set_access')&&!$('#send').disabled);
         assert.equal($('#access-mode').value,'read-only');
         const accessCommand=requests.find(c=>c.op==='set_access');
         assert.equal(accessCommand.incarnation,incarnation);assert.equal(accessCommand.access,'read-only');
+        $('#setup-back').click();
+        assert.equal($('#setup-overview').hidden,false);
+        $('#setup-close').click();
         rejectNext=true;$('#prompt').value='Rejected dispatch';$('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         await until(()=>!rejectNext&&!$('#send').disabled);assert.equal($('#prompt').value,'Rejected dispatch');
         assert.match($('#notice').textContent,/refused/);
@@ -192,30 +213,47 @@ test('browser journey: history, live output, submit, approval, question, cancel,
 
         async function prepareChat(text) {
             $('#new-voyage').click();
-            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'Everyday · fixture');
-            assert.equal(root.querySelector('[name="voyage-settings"]'),null,'no new-voyage modal');
+            await until(()=>!$('#send').disabled && $('#composer-model').textContent === 'Everyday · fixture' && !$('#setup-overview').hidden);
+            assert.equal($('#setup-dialog').querySelector('dialog')?.hasAttribute('open'),true);
+            assert.equal($('#setup-location-open').hidden,false,'location editable before first Send');
+            assert.match($('#setup-location-summary').textContent,/Local Vessel.*fixture/);
             assert.match($('#conversation-empty').textContent,/first Send creates/);
             assert.equal($('#conversation-empty').hidden,false);
             assert.equal($('#prompt').hasAttribute('disabled'),false);
-            assert.equal($('#change-location').disabled,false,'location editable before first Send');
-            assert.equal($('#prompt').contains($('#change-location')),true,'location stays in the existing composer control row');
-            assert.equal(document.activeElement,$('#prompt').querySelector('textarea'));
+            $('#setup-done').click();
+            await until(()=>!$('#setup-dialog').querySelector('dialog')?.hasAttribute('open'));
             $('#prompt').value=text;$('#prompt').dispatchEvent(new Event('input'));
         }
         await prepareChat('First-send message');
-        assert.equal($('#change-account').disabled,false,'new chats allow account review before sending');
-        assert.equal($('#change-inference').disabled,false);
+        assert.equal($('#change-setup').disabled,false,'new chats allow setup review before sending');
         assert.match($('#composer-account').textContent,/Personal account/);
-        $('#change-inference').click();
-        await until(()=>!$('#edit-save').disabled);
-        $('#edit-profile').value='work';$('#edit-profile').dispatchEvent(new Event('change'));
+        const profileReads=requests.filter(c=>c.op==='profiles').length;
+        $('#change-setup').click();
+        assert.equal($('#setup-profile-list').querySelector('button'),null,'reloading Setup removes stale selectable profiles');
+        await until(()=>!$('#setup-overview').hidden && requests.filter(c=>c.op==='profiles').length>profileReads && /Apply copies/.test($('#edit-status').textContent));
+        $('#setup-profile-open').click();
+        await until(()=>!$('#setup-profiles').hidden && $('#setup-profile-list button'));
+        const profileRow=name=>[...$('#setup-profile-list').querySelectorAll('button')].find(button=>button.querySelector('.setup-choice-title')?.textContent.startsWith(name));
+        profileRow('Work').click();
         $('#edit-save').click();
-        await until(()=>$('#composer-account').textContent.includes('Work account'));
-        $('#change-inference').click();
-        await until(()=>!$('#edit-save').disabled);
+        await until(()=>$('#composer-account').textContent.includes('Work account'),()=>`Profile apply did not settle: saveDisabled=${$('#edit-save').disabled}, status=${$('#edit-status').textContent}, selected=${$('#edit-profile').value}, account=${$('#composer-account').textContent}, overviewHidden=${$('#setup-overview').hidden}, recentOps=${requests.slice(-8).map(c=>c.op).join(',')}`);
+        assert.equal($('#setup-overview').hidden,false,'profile apply returns to setup overview');
+        $('#setup-profile-open').click();
+        await until(()=>!$('#setup-profiles').hidden && !$('#edit-save').disabled);
         assert.equal($('#edit-profile').value,'work','review retains the selected settings');
         assert.equal($('#prompt').value,'First-send message','review preserves the unsent message');
-        $('#edit-close').click();
+        profileRow('Everyday').click();
+        $('#setup-back').click();
+        assert.equal($('#edit-profile').value,'work','Back discards an unconfirmed profile choice');
+        $('#setup-reasoning-open').click();
+        assert.equal($('#setup-reasoning').hidden,false,'reasoning override is reachable in Setup');
+        assert.ok($('#setup-reasoning').contains($('#quick-reasoning')));
+        const startsBeforeReasoning=requests.filter(c=>c.op==='start_account').length;
+        $('#reasoning-save').click();
+        assert.equal($('#setup-overview').hidden,false,'applying reasoning returns to overview');
+        assert.equal(requests.filter(c=>c.op==='start_account').length,startsBeforeReasoning,'setup changes do not create a voyage');
+        $('#setup-close').click();
+        assert.equal($('#prompt').value,'First-send message','closing setup preserves the unsent message');
         const submissions=requests.filter(c=>c.op==='submit').length;
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));
         $('#composer').dispatchEvent(new Event('submit',{cancelable:true}));

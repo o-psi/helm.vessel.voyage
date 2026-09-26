@@ -17,24 +17,91 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     const creating = () => !target?.session_id;
     let openingDraft;
     let catalogue = {revision:0,profiles:[],can_manage:false}, editingProfile = null;
-    let editSection = 'model', usageVersion = 0, enrolledAccount = null;
+    let usageVersion = 0, enrolledAccount = null;
+    let setupScreen = 'overview', screenStack = [], pickerKind = null, profileBeforePicker = null, deleteId = null;
     const configurations = new Map();
     let starting = false;
     let target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
-    const enrollment = accountEnrollment(root, {context: () => ({connection, workspace: workspace()}), refreshed: async account => { enrolledAccount = account; await loadAccounts(); }});
+    const enrollment = accountEnrollment(root, {context: () => ({connection, workspace: workspace()}), refreshed: async account => {
+        const returnToEditor = setupScreen === 'enrollment' && editingProfile
+            ? {profile:structuredClone(editingProfile),name:raw('edit-profile-name').value} : null;
+        enrolledAccount = account;
+        await loadAccounts();
+        if (returnToEditor && setupScreen === 'enrollment') {
+            editingProfile = returnToEditor.profile;
+            raw('edit-profile-name').value = returnToEditor.name;
+            if (screenStack.at(-1) === 'editor') screenStack.pop();
+            showProfileEditor(true);
+            showScreen('editor', false);
+            renderEditorChoices();
+            if (choice()?.ready) {
+                await loadModels();
+                status('Account connected. Choose a model, then save the profile.');
+            } else status('Account connected, but the account list could not be refreshed. Reload choices before saving.');
+        }
+    }});
     const prefix = `helm-web:creation:${root.dataset.tenantId}:`;
-    const status = message => { $('settings-status').textContent = clean(message); };
+    const status = message => {
+        $('settings-status').textContent = clean(message);
+        if (raw('setup-overview-status')) raw('setup-overview-status').textContent = clean(message);
+    };
+    const setupDialog = () => raw('setup-dialog')?.querySelector('dialog');
+    function showSetup() {
+        if (typeof window.Flux?.modal === 'function') window.Flux.modal('voyage-setup').show();
+        else setupDialog()?.setAttribute('open', '');
+    }
+    function closeSetup(force = false) {
+        if (saving && !force) return;
+        enrollment.hide();
+        if (typeof window.Flux?.modal === 'function') window.Flux.modal('voyage-setup').close();
+        else setupDialog()?.removeAttribute('open');
+    }
+    const screens = ['overview','location','profiles','manage','editor','picker','enrollment','access','delete','reasoning'];
+    function showScreen(next, push = true) {
+        if (push && next !== setupScreen) screenStack.push(setupScreen);
+        setupScreen = next;
+        for (const screen of screens) raw(`setup-${screen}`).hidden = screen !== next;
+        raw('setup-back').hidden = next === 'overview';
+        raw('setup-title').textContent = ({overview:creating() ? 'New voyage setup' : 'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Manage profiles',editor:editingProfile?.name ? 'Edit profile' : 'Create profile',picker:pickerKind === 'account' ? 'Choose account' : 'Choose model',enrollment:'Connect ChatGPT',access:'Access mode',delete:'Delete profile',reasoning:'Reasoning'})[next];
+        raw('setup-done').hidden = next !== 'overview';
+        raw('edit-save').hidden = !['profiles','editor'].includes(next);
+        raw('edit-save').textContent = next === 'editor' ? 'Save profile' : creating() ? 'Use profile' : 'Apply to next run';
+        raw('edit-retry').hidden = !['location','profiles','manage','editor'].includes(next);
+        raw('edit-close').hidden = next !== 'overview';
+        raw('edit-status').hidden = ['picker','enrollment','access','reasoning','delete'].includes(next);
+        raw('setup-content').scrollTop = 0;
+        renderOverview();
+    }
+    function goBack() {
+        if (setupScreen === 'enrollment') enrollment.hide();
+        if (setupScreen === 'editor') renderProfiles(raw('edit-profile').value);
+        if (setupScreen === 'profiles' && profileBeforePicker && raw('edit-profile').value !== profileBeforePicker) {
+            raw('edit-profile').value = profileBeforePicker;
+            profileChanged();
+        }
+        showScreen(screenStack.pop() || 'overview', false);
+    }
+    function renderOverview() {
+        if (!raw('setup-location-summary')) return;
+        const vessel = fleet.connections.get(connection?.id || target?.vessel);
+        raw('setup-location-summary').textContent = clean([vessel?.name, workspace()].filter(Boolean).join(' · ') || 'Choose a Vessel and workspace');
+        const reviewed = creating() ? configuration() : null;
+        const configured = reviewed && reviewed.vessel === connection?.id && reviewed.workspace === workspace() ? reviewed : null;
+        const active = configured?.settings || target?.inference;
+        const profile = catalogue.profiles.find(item => item.id === configured?.profileId) || matchingProfile(catalogue.profiles, active);
+        raw('setup-profile-summary').textContent = clean(creating() && !configured && reviewed ? 'Choose a profile for this location' : profile ? `${profile.name} · ${profile.model}` : active?.model ? `Custom · ${active.model}` : 'Choose a profile');
+        raw('setup-done').disabled = creating() && !configured;
+    }
     function options(id, items, selected = null) {
         const field = $(id);
         if (field.matches('ui-slider')) { setReasoning(field, items.length ? items : [{value:'',label:'Provider default'}], selected); return; }
-        const radio = field.matches('ui-radio-group');
         const custom = field.matches('ui-select'), container = custom ? field.querySelector('ui-options') : field;
         if (custom) container.querySelectorAll('[data-settings-option]').forEach(option => option.remove());
         else container.replaceChildren();
         container.append(...items.map(item => {
-            const option = $(radio ? 'flux-service-option' : custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
+            const option = $(custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
             option.setAttribute('data-settings-option','');
-            (radio ? option.querySelector('ui-radio') || option : option).setAttribute('value', item.value);
+            option.setAttribute('value', item.value);
             (option.querySelector('[data-option-label]') || option).textContent = clean(item.label);
             option.toggleAttribute('disabled', Boolean(item.disabled));
             return option;
@@ -61,6 +128,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     async function loadVessel() {
         if (saving) return;
         const mine = ++version; reset(); options('settings-workspace', []);
+        catalogue = {revision:0,profiles:[],can_manage:false}; renderProfiles();
         raw('edit-custom-workspace').hidden = true; raw('edit-workspace-path').value = ''; raw('edit-workspace-path').disabled = false;
         connection = fleet.connections.get($('settings-vessel').value);
         const c = connection, client = c?.client;
@@ -117,11 +185,79 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             const preferred = choices.find(c => c.binding.account_id === enrolledAccount)?.binding || (!creating() ? target.inference?.account : defaults.account);
             enrolledAccount = null;
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
-            if (editSection === 'account') loadUsage(false);
+            if (setupScreen === 'editor') loadUsage(false);
             await loadProfiles();
         } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     const selectedProfile = () => catalogue.profiles.find(profile => profile.id === raw('edit-profile').value);
+    function choiceRow(label, detail, selected, action, disabled = false) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'setup-choice'; button.disabled = disabled;
+        button.toggleAttribute('data-selected', selected);
+        button.setAttribute('aria-pressed', String(selected));
+        const title = document.createElement('span'); title.className = 'setup-choice-title'; title.textContent = clean(label);
+        const description = document.createElement('span'); description.className = 'setup-choice-detail'; description.textContent = clean(detail);
+        button.append(title, description);
+        button.addEventListener('click', action);
+        return button;
+    }
+    function renderProfileLists() {
+        const query = raw('setup-profile-search').value.trim().toLocaleLowerCase();
+        const selected = raw('edit-profile').value;
+        for (const [id, manage] of [['setup-profile-list',false],['setup-manage-profile-list',true]]) {
+            const host = raw(id); host.replaceChildren();
+            for (const profile of catalogue.profiles) {
+                const detail = profileSummary(profile, choices);
+                if (!manage && query && !`${profile.name} ${detail}`.toLocaleLowerCase().includes(query)) continue;
+                const available = choices.some(item => item.ready && sameAccount(item.binding, profile.account));
+                host.append(choiceRow(`${profile.name}${profile.id === catalogue.default_profile_id ? ' · Default' : ''}`, detail, profile.id === selected, () => {
+                    raw('edit-profile').value = profile.id;
+                    profileChanged();
+                }, !manage && !available));
+            }
+            if (!host.children.length) {
+                const empty = document.createElement('p'); empty.className = 'setup-empty';
+                empty.textContent = catalogue.profiles.length ? 'No matching available profiles.' : 'No profiles yet. Create one in Manage profiles.';
+                host.append(empty);
+            }
+        }
+    }
+    function renderEditorChoices() {
+        const account = choice(), selectedModel = model();
+        raw('setup-account-value').textContent = clean(account?.label || 'Choose an account');
+        raw('setup-model-value').textContent = clean(selectedModel?.display_name || selectedModel?.id || 'Choose a model');
+        raw('setup-account-open').disabled = !choices.length || saving;
+        raw('setup-model-open').disabled = !models.length || saving;
+    }
+    function renderPicker() {
+        const host = raw('setup-picker-list'); host.replaceChildren();
+        const query = raw('setup-picker-search').value.trim().toLocaleLowerCase();
+        const items = pickerKind === 'account'
+            ? choices.map((item, index) => ({value:String(index), label:item.label, detail:item.ready ? 'Available' : 'Unavailable', disabled:!item.ready}))
+            : models.map(item => ({value:item.id,label:item.display_name || item.id,detail:item.display_name && item.display_name !== item.id ? item.id : ''}));
+        for (const item of items) {
+            if (query && !`${item.label} ${item.detail}`.toLocaleLowerCase().includes(query)) continue;
+            host.append(choiceRow(item.label,item.detail,item.value === raw(pickerKind === 'account' ? 'edit-account' : 'edit-model').value, () => {
+                if (pickerKind === 'account') {
+                    raw('edit-account').value = item.value;
+                    goBack();
+                    loadModels(); loadUsage(false);
+                } else {
+                    raw('edit-model').value = item.value;
+                    updateModel();
+                    goBack();
+                }
+                renderEditorChoices();
+            }, item.disabled));
+        }
+        if (!host.children.length) {
+            const empty = document.createElement('p'); empty.className = 'setup-empty'; empty.textContent = 'No matching choices.'; host.append(empty);
+        }
+    }
+    function openPicker(kind) {
+        pickerKind = kind; raw('setup-picker-search').value = '';
+        showScreen('picker'); renderPicker(); raw('setup-picker-search').focus();
+    }
     function showProfileEditor(show) {
         for (const section of ['account','model','reasoning','service','profile-name']) raw(`edit-${section}-section`).hidden = !show;
         raw('edit-profiles-section').hidden = show;
@@ -132,8 +268,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw('edit-profile-actions').querySelectorAll('button').forEach(button=>button.disabled=false);
         options('settings-profile', catalogue.profiles.map(profile => ({value:profile.id,label:`${profile.name}${profile.id === catalogue.default_profile_id ? ' · Default' : ''}`})), preferred || matchingProfile(catalogue.profiles,seed)?.id || catalogue.default_profile_id);
         raw('edit-profile-actions').hidden = !catalogue.can_manage;
+        raw('setup-manage-open').hidden = !catalogue.can_manage;
         showProfileEditor(false); editingProfile = null;
         profileChanged();
+        renderOverview();
     }
     function profileChanged() {
         const profile = selectedProfile();
@@ -147,10 +285,12 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                 if (!still(mine,c,c.client)) return;
                 const active = captureDraft?.();
                 if (!active || active.vessel !== c.id || active.workspace !== workspace()) return;
-                configurations.set(active.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:workspace(),profileName:profile.name,accountLabel:choices.find(item=>sameAccount(item.binding,profile.account))?.label,settings:profileSettings(profile),reasoning_efforts:[]});
-                prepared();
+                configurations.set(active.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:workspace(),profileId:profile.id,profileName:profile.name,accountLabel:choices.find(item=>sameAccount(item.binding,profile.account))?.label,settings:profileSettings(profile),reasoning_efforts:[]});
+                renderOverview(); prepared();
             });
         }
+        renderProfileLists();
+        renderOverview();
     }
     async function loadProfiles() {
         const mine = version, c = connection, client = c.client;
@@ -166,11 +306,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw('edit-profile-name').value = editingProfile.name;
         for (const id of ['edit-profile-name','profile-cancel-edit','edit-account','edit-model','edit-reasoning','edit-service']) raw(id).disabled=false;
         options('settings-account',choices.map((item,index)=>({value:String(index),label:item.label,disabled:!item.ready})),String(choices.findIndex(item=>sameAccount(item.binding,editingProfile.account))));
-        showProfileEditor(true); await loadModels();
+        showProfileEditor(true); showScreen('editor'); renderEditorChoices(); await loadModels();
     }
     async function mutateProfiles(op, fields) {
         saving = true;
-        const fieldsBefore = [...raw('edit-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio-group,button')].map(field=>[field,field.disabled]);
+        const fieldsBefore = [...raw('edit-form').querySelectorAll('select,input,ui-select,ui-slider,button')].map(field=>[field,field.disabled]);
         const restoreFields = () => fieldsBefore.forEach(([field,disabled])=>field.disabled=disabled);
         fieldsBefore.forEach(([field])=>field.disabled=true);
         raw('edit-save').disabled = true;
@@ -178,6 +318,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         try {
             catalogue = await read(connection.client,op,{command_id:uuid(),workspace:workspace(),expected_revision:catalogue.revision,...fields});
             restoreFields(); renderProfiles(fields.profile?.id);
+            if (['editor','delete'].includes(setupScreen)) {
+                if (screenStack.at(-1) === 'manage') screenStack.pop();
+                showScreen('manage', false);
+            }
             status('Profiles saved. Existing voyage settings are unchanged.');
         } catch (error) { restoreFields(); catalogue = {revision:0,profiles:[],can_manage:false}; editingProfile=null; renderProfiles(); status(`${error.message} Reload profiles before retrying; the previous change may have completed.`); }
         finally { saving=false; raw('edit-retry').disabled=false; raw('edit-close').disabled=false; raw('profile-new').disabled=false; }
@@ -191,14 +335,23 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     raw('edit-profile').addEventListener('change',profileChanged);
     for (const mode of ['new','edit','duplicate']) raw(`profile-${mode}`).addEventListener('click',()=>editProfile(mode));
-    raw('profile-cancel-edit').addEventListener('click',()=>renderProfiles());
+    raw('profile-cancel-edit').addEventListener('click',goBack);
     raw('profile-default').addEventListener('click',()=>{if(!saving && selectedProfile()) mutateProfiles('set_default_profile',{profile_id:selectedProfile().id});});
-    raw('profile-delete').addEventListener('click',()=>{if(!saving && selectedProfile()) mutateProfiles('delete_profile',{profile_id:selectedProfile().id});});
+    raw('profile-delete').addEventListener('click',()=>{
+        if (saving || !selectedProfile()) return;
+        deleteId = selectedProfile().id;
+        raw('setup-delete-name').textContent = clean(selectedProfile().name);
+        showScreen('delete');
+    });
+    raw('setup-delete-confirm').addEventListener('click',()=>{
+        if (!saving && deleteId && catalogue.profiles.some(profile => profile.id === deleteId)) mutateProfiles('delete_profile',{profile_id:deleteId});
+    });
     async function loadModels() {
         if (saving) return;
         const mine = ++version, c = connection, client = c?.client, selected = choice();
         models = []; $('settings-save').disabled = true;
         for (const id of ['settings-model','settings-reasoning','settings-service']) options(id,[]);
+        renderEditorChoices();
         if (!client || !selected?.ready) return status('Choose an available provider account.');
         status('Loading models for this account…');
         try {
@@ -209,7 +362,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             const seed = editingProfile || (!creating() ? target.inference : defaults);
             const preferred = same(seed?.account,selected.binding) ? seed?.model : models.find(m => m.is_default)?.id;
             options('settings-model',models.map(m => ({value:m.id,label:m.display_name && m.display_name !== m.id ? `${m.display_name} · ${m.id}` : m.id})),preferred);
-            updateModel();
+            updateModel(); renderEditorChoices();
         } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     function updateModel() {
@@ -223,6 +376,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             options(id,items,preserve ? original || '' : '');
         }
         $('settings-save').disabled = !selected;
+        renderEditorChoices();
         if (creating() && selected && !configuration() && !editingProfile) {
             const origin = captureDraft?.(), mine = version, c = connection;
             if (origin?.vessel === connection.id && origin.target?.type === 'new_chat' && !origin.workspace) {
@@ -246,7 +400,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         $('settings-retry').disabled = false;
         $('settings-close').disabled = false;
         $('settings-title').textContent = edit ? 'Profiles' : 'New voyage';
-        editingProfile = null; showProfileEditor(false); raw('edit-location-section').hidden = editSection !== 'location';
+        raw('setup-profile-search').value = '';
+        raw('setup-access-status').textContent = '';
+        raw('reasoning-status').textContent = '';
+        editingProfile = null; showProfileEditor(false);
+        screenStack = []; showScreen('overview', false);
         $('settings-save').textContent = 'Apply';
         $('settings-description').textContent = 'Choose a profile. Changes apply to the next run; editing or deleting a profile does not change existing voyages.';
         options('settings-vessel',[...fleet.connections.values()].map(c => ({value:c.id,label:`${c.name}${c.client ? '' : ' · offline'}`})),target.vessel);
@@ -260,7 +418,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         const retained = await created?.(c.id,process.session_id,command.workspace,origin);
         if (!retained) select(c.id,process.session_id,process.name || 'New voyage');
         localStorage.removeItem(storageKey);
-        raw('edit-close').click();
+        closeSetup();
         renderPending();
     }
     async function save(event) {
@@ -274,12 +432,13 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!selected?.ready) return status('This profile’s provider account is unavailable. Edit the profile or choose another.');
         saving = true; ++version;
         status(!creating() ? 'Applying account and model settings…' : 'Preparing new chat…');
-        for (const field of $('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio-group,button')) field.disabled = true;
+        const fieldsBefore = [...$('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,button')].map(field => [field,field.disabled]);
+        fieldsBefore.forEach(([field]) => field.disabled = true);
         let recorded = false;
         try {
             if (!creating()) {
                 if (!await apply(target,settings)) throw new Error('Settings were not confirmed. Close this form to review the voyage status before trying again.');
-                $('settings-close').disabled = false; $('settings-close').click();
+                $('settings-close').disabled = false; closeSetup(true);
             } else {
                 const path = workspace();
                 let origin = captureDraft?.();
@@ -289,16 +448,17 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
                     origin = captureDraft?.();
                 }
                 if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The new-chat composer could not be prepared.');
-                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,profileName:profile.name,accountLabel:clean(selected.label),settings:structuredClone(settings),reasoning_efforts:selectedModel.reasoning_efforts || []});
+                configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,profileId:profile.id,profileName:profile.name,accountLabel:clean(selected.label),settings:structuredClone(settings),reasoning_efforts:selectedModel.reasoning_efforts || []});
                 raw('edit-close').disabled = false;
-                raw('edit-close').click();
                 status('New chat ready. Write your message, then Send.');
-                prepared();
+                screenStack = []; showScreen('overview', false); prepared();
 
             }
         } catch (error) { status(error.message); }
         finally {
             saving = false;
+            fieldsBefore.forEach(([field,disabled]) => { field.disabled = disabled; });
+            renderOverview();
             $('settings-close').disabled = false;
             // After dispatch only explicit resolution can settle a creation.
             $('settings-retry').disabled = recorded;
@@ -360,17 +520,13 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             }
         } catch { status('Browser recovery storage is unavailable. Creation requires working local storage.'); }
     }
-    for (const id of ['account-popover','edit-popover','service-popover']) raw(id)?.addEventListener('toggle', event => { if (event.newState === 'closed') enrollment.hide(); });
-    for (const prefix of ['edit']) {
-        raw(`${prefix}-enroll`).addEventListener('click', () => {
-            raw(`${prefix}-enrollment-host`).append(raw('enrollment-panel'));
-            enrollment.open();
-        });
-        raw(`${prefix}-enrollment-host`).addEventListener('toggle', event => {
-            if (event.newState === 'closed' && raw(`${prefix}-enrollment-host`).contains(raw('enrollment-panel'))) enrollment.hide();
-        });
-        raw(`${prefix}-close`).addEventListener('click', () => enrollment.hide());
-    }
+    raw('edit-enroll').addEventListener('click', () => {
+        raw('setup-enrollment').append(raw('enrollment-panel'));
+        showScreen('enrollment'); enrollment.open();
+    });
+    raw('enrollment-close').addEventListener('click', () => {
+        if (setupScreen === 'enrollment') goBack();
+    });
     async function newVoyage() {
         if (saving || starting) return;
         const retained = resumeDraft();
@@ -378,30 +534,43 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!c) return unavailable('Connect a Vessel before starting a new voyage.');
         await draft?.(c.id, retained?.workspace || '');
         prepared();
-        editSection = 'location';
-        open(false);
+        showSetup(); open(false);
     }
     raw('new-voyage').addEventListener('click',() => newVoyage().catch(error => unavailable(error.message)));
-    function openSection(section, host, event) {
-        enrollment.hide();
+    raw('change-setup').addEventListener('click', () => {
         if (saving) return;
-        editSection = section;
-        raw(host).append(raw('edit-form'));
-        raw('edit-location-section').hidden = section !== 'location';
-        open(true);
-    }
-    raw('change-location').addEventListener('click',event => openSection('location','location-popover',event));
-    raw('change-inference').addEventListener('click',event => openSection('model','edit-popover',event));
-    raw('change-account').addEventListener('click',event => openSection('account','account-popover',event));
-    raw('change-service').addEventListener('click',event => openSection('service','service-popover',event));
+        showSetup(); open(Boolean(current().session_id));
+    });
+    raw('setup-close').addEventListener('click', () => closeSetup());
+    raw('setup-back').addEventListener('click', goBack);
+    raw('setup-done').addEventListener('click', () => {
+        if (creating() && !configuration()) return status('Choose an available profile before continuing.');
+        closeSetup(); prepared();
+    });
+    raw('setup-location-open').addEventListener('click', () => showScreen('location'));
+    raw('setup-profile-open').addEventListener('click', () => {
+        profileBeforePicker = raw('edit-profile').value;
+        showScreen('profiles');
+    });
+    raw('setup-access-open').addEventListener('click', () => showScreen('access'));
+    raw('setup-reasoning-open').addEventListener('click', () => {
+        raw('change-reasoning').click();
+        showScreen('reasoning');
+    });
+    raw('setup-manage-open').addEventListener('click', () => showScreen('manage'));
+    raw('setup-manage-back').addEventListener('click', goBack);
+    raw('setup-account-open').addEventListener('click', () => openPicker('account'));
+    raw('setup-model-open').addEventListener('click', () => openPicker('model'));
+    raw('setup-profile-search').addEventListener('input', renderProfileLists);
+    raw('setup-picker-search').addEventListener('input', renderPicker);
     async function loadUsage(refresh) {
-        const mine = ++usageVersion, c = connection, client = c?.client, selected = choice(), workspace = $('settings-workspace').value;
+        const mine = ++usageVersion, c = connection, client = c?.client, selected = choice(), selectedWorkspace = workspace();
         const output = raw('account-usage'), button = raw('account-usage-refresh');
         output.textContent = refresh ? 'Refreshing usage…' : 'Reading cached usage…'; button.disabled = true;
         if (!client || !selected?.ready) { output.textContent = 'Usage unavailable for this account.'; return; }
         try {
-            const observation = await read(client,'account_usage',{workspace,account:selected.binding,refresh});
-            if (mine !== usageVersion || editSection !== 'account' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
+            const observation = await read(client,'account_usage',{workspace:selectedWorkspace,account:selected.binding,refresh});
+            if (mine !== usageVersion || setupScreen !== 'editor' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
             if (!same(observation.account,selected.binding)) throw new Error('Account usage identity changed. Reopen the account picker.');
             const snapshot = observation.snapshot;
             const lines = [`Status: ${String(observation.refresh_status || 'unavailable').replaceAll('_',' ')}`];
@@ -420,16 +589,16 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     for (const prefix of ['edit']) {
         raw(`${prefix}-vessel`).addEventListener('change',loadVessel);
         raw(`${prefix}-workspace`).addEventListener('change',workspaceChanged);
-        raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (editSection === 'account') loadUsage(false); });
+        raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (setupScreen === 'editor') loadUsage(false); });
         raw(`${prefix}-model`).addEventListener('change',updateModel);
         raw(`${prefix}-retry`).addEventListener('click',loadVessel);
     }
-    raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); });
+    raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); renderOverview(); });
     raw('edit-workspace-path').addEventListener('change',loadAccounts);
     raw('edit-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await draft?.(connection.id,workspace());raw('edit-close').click();}catch(error){status(error.message);}});
 
     raw('edit-save').addEventListener('click',save);
-    raw('edit-close').addEventListener('click', () => raw('edit-form').closest('[data-flux-popover]')?.hidePopover?.());
+    raw('edit-close').addEventListener('click', () => closeSetup());
     window.addEventListener('storage',renderPending);
-    return {renderPending: () => { enrollment.changed(); renderPending(); }, configuration, startDraft, review: () => raw('change-inference').click(), setReasoning(value) { const config = configuration(); if (!config) return false; config.settings.reasoning_effort = value || null; prepared(); return true; }};
+    return {renderPending: () => { enrollment.changed(); renderPending(); }, configuration, startDraft, review: () => raw('change-setup').click(), finishReasoning: () => { if (setupScreen === 'reasoning') goBack(); }, setReasoning(value) { const config = configuration(); if (!config) return false; config.settings.reasoning_effort = value || null; prepared(); return true; }};
 }

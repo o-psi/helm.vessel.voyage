@@ -160,13 +160,24 @@ validation/audit, origin HTTP/health, public HTTPS/assets, route-specific titles
 descriptions and links, environment-file denial and service health. These are
 HTTP/runtime checks; no browser visual QA or agent execution was performed.
 
-### In-memory composition and private pictures
+### Setup, in-memory composition and private pictures
 
-The composer supports text and picture attachments. **New chat → Continue**
-prepares workspace and account/model settings in memory without starting a Voyage.
-First Send creates the Voyage and submits the message with separate durable
-identities. Uncertain creation is reconciled, never replayed. Pictures cannot
-steer an active run; wait for completion.
+The default Livewire console has one **Setup** control in the composer. Its
+responsive flyout contains location (for a new voyage), searchable profile
+selection and management, a profile editor with account/model pickers, ChatGPT
+device sign-in, access and reasoning. The account and model pickers and sign-in
+step replace nested popovers without replacing unsent composer text. Profile
+edits affect future selections; an existing idle voyage uses a separate,
+confirmed command to apply a selected profile to its next run. Access remains a
+separate authority change: a new voyage keeps its choice locally, while an
+existing voyage waits for Vessel confirmation. Reasoning is retained locally for
+a new voyage or applied to an existing voyage's next run after confirmation.
+
+The composer supports text and picture attachments. **New voyage → Setup**
+prepares the workspace and account/model settings in memory without starting a
+Voyage. First Send creates the Voyage and submits the message with separate
+durable identities. Uncertain creation is reconciled, never replayed. Pictures
+cannot steer an active run; wait for completion.
 
 Unsent text and pictures are kept only in page memory. Reloading or closing the
 page loses them. Shared drafts, polling, server-side draft staging and draft

@@ -120,3 +120,146 @@
     #helm-client #host-browser-panel:not([hidden]) { position: fixed; inset: 0; z-index: 100; height: 100dvh; border: 0; }
     #helm-client #host-browser-expand { display: none; }
 }
+
+/* One setup surface: only the middle pane scrolls, including on narrow phones. */
+#helm-client #setup-dialog > dialog {
+    width: min(100vw, 32rem);
+    min-width: 0;
+    max-width: 100vw;
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    padding: 0;
+    overflow: hidden;
+}
+#helm-client .voyage-setup-shell {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+#helm-client .voyage-setup-header,
+#helm-client .voyage-setup-footer {
+    flex: none;
+    min-width: 0;
+    background: var(--color-white);
+}
+.dark #helm-client .voyage-setup-header,
+.dark #helm-client .voyage-setup-footer { background: var(--color-zinc-800); }
+#helm-client .voyage-setup-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: max(1rem, env(safe-area-inset-top)) 1.25rem 1rem;
+    border-bottom: 1px solid var(--color-zinc-200);
+}
+#helm-client .voyage-setup-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 1.25rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+#helm-client .voyage-setup-content > section { min-width: 0; }
+#helm-client .voyage-setup-content > [hidden] { display: none; }
+#helm-client .voyage-setup-footer {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem max(1rem, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--color-zinc-200);
+}
+.dark #helm-client .voyage-setup-header,
+.dark #helm-client .voyage-setup-footer { border-color: var(--color-zinc-700); }
+#helm-client .setup-wrap,
+#helm-client .setup-choice-title,
+#helm-client .setup-choice-detail {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+#helm-client .setup-nav-row,
+#helm-client .setup-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--color-zinc-200);
+    border-radius: 0.75rem;
+    background: var(--color-zinc-50);
+    color: var(--color-zinc-900);
+    text-align: start;
+}
+#helm-client .setup-nav-row strong,
+#helm-client .setup-nav-row .setup-wrap {
+    display: block;
+}
+#helm-client .setup-nav-row strong { font-size: 0.875rem; font-weight: 600; }
+#helm-client .setup-nav-row .setup-wrap { margin-top: 0.125rem; color: var(--color-zinc-600); font-size: 0.8rem; }
+#helm-client .setup-nav-row:hover,
+#helm-client .setup-picker-row:hover { background: var(--color-zinc-100); }
+#helm-client .setup-nav-row:focus-visible,
+#helm-client .setup-picker-row:focus-visible,
+#helm-client .setup-choice:focus-visible {
+    outline: 2px solid var(--color-indigo-500);
+    outline-offset: 2px;
+}
+.dark #helm-client .setup-nav-row,
+.dark #helm-client .setup-picker-row {
+    border-color: var(--color-zinc-700);
+    background: var(--color-zinc-900);
+    color: var(--color-zinc-100);
+}
+.dark #helm-client .setup-nav-row .setup-wrap { color: var(--color-zinc-400); }
+.dark #helm-client .setup-nav-row:hover,
+.dark #helm-client .setup-picker-row:hover { background: var(--color-zinc-700); }
+#helm-client .setup-field-label {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+#helm-client .setup-list { min-width: 0; border-top: 1px solid var(--color-zinc-200); }
+#helm-client .setup-choice {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 0.75rem 0.5rem;
+    border: 0;
+    border-bottom: 1px solid var(--color-zinc-200);
+    background: transparent;
+    color: inherit;
+    text-align: start;
+}
+#helm-client .setup-choice:hover { background: var(--color-zinc-50); }
+#helm-client .setup-choice:disabled { cursor: not-allowed; opacity: 0.55; }
+#helm-client .setup-choice[data-selected] {
+    background: var(--color-indigo-50);
+    box-shadow: inset 3px 0 0 var(--color-indigo-500);
+}
+#helm-client .setup-choice-title { display: block; font-size: 0.875rem; font-weight: 600; }
+#helm-client .setup-choice-detail { display: block; margin-top: 0.2rem; color: var(--color-zinc-600); font-size: 0.8rem; }
+.dark #helm-client .setup-list,
+.dark #helm-client .setup-choice { border-color: var(--color-zinc-700); }
+.dark #helm-client .setup-choice:hover { background: var(--color-zinc-700); }
+.dark #helm-client .setup-choice[data-selected] { background: var(--color-indigo-950); }
+.dark #helm-client .setup-choice-detail { color: var(--color-zinc-400); }
+#helm-client .setup-advanced {
+    min-width: 0;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-zinc-200);
+}
+.dark #helm-client .setup-advanced { border-color: var(--color-zinc-700); }
+#helm-client .setup-advanced summary { cursor: pointer; font-size: 0.875rem; font-weight: 600; }
+#helm-client #setup-enrollment #enrollment-code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    font-size: clamp(1rem, 5vw, 1.5rem);
+    letter-spacing: 0.1em;
+}
