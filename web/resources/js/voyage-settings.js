@@ -125,12 +125,32 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
         $('settings-save').disabled = true;
     }
-    function still(mine, c, client) { return Boolean(client) && mine === version && connection === c && c.client === client && !disconnectedClients.has(client) && current().session_id === target?.session_id && current().vessel === target?.vessel; }
+    function sameSetup() {
+        const selected = current();
+        if (!creating()) return selected.session_id === target?.session_id && selected.vessel === target?.vessel && selected.incarnation === target?.incarnation;
+        const active = captureDraft?.();
+        if (selected.session_id) return false;
+        if (!openingDraft) return !active && selected.vessel === target?.vessel;
+        return active?.target?.type === 'new_chat' && active.key === openingDraft.key && active.opening === openingDraft.opening && active.vessel === selected.vessel;
+    }
+    async function prepareDraft(vessel, path) {
+        if (!sameSetup()) throw new Error('Voyage changed. Reopen settings.');
+        const before = captureDraft?.(), mine = version, c = connection, client = c?.client;
+        await draft?.(vessel,path);
+        const active = captureDraft?.();
+        const sameLocation = mine === version && c === connection && c?.client === client && workspace() === path;
+        const sameDraft = active?.key && active.target?.type === 'new_chat' && active.vessel === vessel && active.workspace === path
+            && !current().session_id && current().vessel === vessel && (!before?.key || active.key === before.key)
+            && (!Number.isInteger(before?.opening) || active.opening === before.opening + 1);
+        if (!sameLocation || !sameDraft) throw new Error('The new-chat composer could not be prepared.');
+        openingDraft = {key:active.key,opening:active.opening};
+        return active;
+    }
+    function still(mine, c, client) { return Boolean(client) && mine === version && connection === c && c.client === client && !disconnectedClients.has(client) && sameSetup(); }
     function readStillCurrent(mine, c, client, disconnected = false) {
         if (!disconnected && still(mine,c,client)) return true;
         if (mine === version && connection === c && setupDialog()?.hasAttribute('open')) {
-            const selected = current();
-            if (selected.session_id !== target?.session_id || selected.vessel !== target?.vessel) status('Voyage changed. Close and reopen setup.');
+            if (!sameSetup()) status('Voyage changed. Close and reopen setup.');
             else if (disconnected || disconnectedClients.has(client) || c.client !== client) status(c.client && c.client !== client ? 'Vessel connection changed. Select Reload to refresh choices.' : 'Vessel connection lost. Reconnect it, then select Reload.');
         }
         return false;
@@ -298,13 +318,13 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         status(profile ? 'Apply copies these settings to this voyage. Profile edits never change existing voyages.' : 'Create a profile to get started.');
         if (creating() && profile && !configuration() && !raw('edit-save').disabled) {
             const origin = captureDraft?.(), c = connection, client = c?.client, mine = version;
-            Promise.resolve(origin?.workspace ? null : draft(c.id,workspace())).then(() => {
+            Promise.resolve(origin?.workspace ? null : prepareDraft(c.id,workspace())).then(() => {
                 if (!still(mine,c,client) || selectedProfile()?.id !== profile.id) return;
                 const active = captureDraft?.();
                 if (!active || active.vessel !== c.id || active.workspace !== workspace()) return;
                 configurations.set(active.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:workspace(),profileId:profile.id,profileName:profile.name,accountLabel:choices.find(item=>sameAccount(item.binding,profile.account))?.label,settings:profileSettings(profile),reasoning_efforts:[]});
                 renderOverview(); prepared();
-            });
+            }).catch(error => { if (mine === version && connection === c && setupDialog()?.hasAttribute('open')) status(error.message); });
         }
         renderProfileLists();
         renderOverview();
@@ -397,12 +417,12 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (creating() && selected && !configuration() && !editingProfile) {
             const origin = captureDraft?.(), mine = version, c = connection, client = c?.client;
             if (origin?.vessel === connection.id && origin.target?.type === 'new_chat' && !origin.workspace) {
-                draft(connection.id,workspace()).then(() => {
+                prepareDraft(connection.id,workspace()).then(() => {
                     if (!still(mine,c,client) || current().session_id || captureDraft()?.key !== origin.key || model()?.id !== selected.id) return;
                     const active = captureDraft();
                     configurations.set(active.key,{vessel:connection.id,vessel_id:connection.vessel_id,workspace:workspace(),accountLabel:clean(choice().label),settings:{account:choice().binding,model:selected.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null},reasoning_efforts:selected.reasoning_efforts || []});
                     prepared();
-                });
+                }).catch(error => { if (mine === version && connection === c && setupDialog()?.hasAttribute('open')) status(error.message); });
             }
         }
 
@@ -413,7 +433,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (saving) return;
         root.querySelector('[data-flux-sidebar-on-mobile]:not([data-flux-sidebar-collapsed-mobile]) [data-flux-sidebar-collapse] button')?.click();
         ++usageVersion;
-        target = current(); openingDraft = captureDraft?.()?.key;
+        target = current();
+        const origin = captureDraft?.();
+        openingDraft = origin ? {key:origin.key,opening:origin.opening} : null;
         $('settings-retry').disabled = false;
         $('settings-close').disabled = false;
         $('settings-title').textContent = edit ? 'Profiles' : 'New voyage';
@@ -441,7 +463,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     async function save(event) {
         event.preventDefault();
         if (saving || $('settings-save').disabled) return;
-        if (current().vessel !== target?.vessel || current().session_id !== target?.session_id || (creating() && captureDraft?.()?.key !== openingDraft)) return status('Voyage changed. Reopen settings.');
+        if (!sameSetup()) return status('Voyage changed. Reopen settings.');
         if (editingProfile) return saveProfile();
         const c = connection, client = c?.client, profile = selectedProfile();
         if (!client || !profile) return status('Choose a profile before continuing.');
@@ -459,10 +481,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             } else {
                 const path = workspace();
                 let origin = captureDraft?.();
-                if (origin?.target?.type === 'new_chat' && (origin.vessel !== c.id || origin.workspace !== path)) { await draft?.(c.id,path); origin = captureDraft?.(); }
+                if (origin?.target?.type === 'new_chat' && (origin.vessel !== c.id || origin.workspace !== path)) { origin = await prepareDraft(c.id,path); }
                 if (!origin || origin.target?.type !== 'new_chat') {
-                    await draft?.(c.id,path);
-                    origin = captureDraft?.();
+                    origin = await prepareDraft(c.id,path);
                 }
                 if (!origin || origin.vessel !== c.id || origin.workspace !== path || origin.target?.session_id) throw new Error('The new-chat composer could not be prepared.');
                 configurations.set(origin.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:path,profileId:profile.id,profileName:profile.name,accountLabel:clean(selected.label),settings:structuredClone(settings),reasoning_efforts:selectedModel.reasoning_efforts || []});
@@ -486,7 +507,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     // Configuration is in memory and explicitly reviewed before creating a chat.
     function configuration(origin = captureDraft?.()) {
         const value = origin && configurations.get(origin.key), c = value && fleet.connections.get(value.vessel);
-        return value && c?.client && c.vessel_id === value.vessel_id && origin.vessel === value.vessel && origin.workspace === value.workspace && !origin.target?.session_id ? value : null;
+        return value && c?.client && c.vessel_id === value.vessel_id && origin.vessel === value.vessel && origin.workspace === value.workspace && !origin.session_id && origin.target?.type === 'new_chat' ? value : null;
     }
     async function startDraft(origin = captureDraft?.()) {
         if (starting) throw new Error('New chat creation is already in progress.');
@@ -561,6 +582,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     raw('setup-close').addEventListener('click', () => closeSetup());
     raw('setup-back').addEventListener('click', goBack);
     raw('setup-done').addEventListener('click', () => {
+        if (!sameSetup()) return status('Voyage changed. Reopen settings.');
         if (creating() && !configuration()) return status('Choose an available profile before continuing.');
         closeSetup(); prepared();
     });
@@ -615,7 +637,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); renderOverview(); });
     raw('edit-workspace-path').addEventListener('change',loadAccounts);
-    raw('edit-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await draft?.(connection.id,workspace());raw('edit-close').click();}catch(error){status(error.message);}});
+    raw('edit-draft')?.addEventListener('click',async()=>{try{if(!connection || !workspace())throw new Error('Choose a Vessel and workspace.');await prepareDraft(connection.id,workspace());raw('edit-close').click();}catch(error){status(error.message);}});
 
     raw('edit-save').addEventListener('click',save);
     raw('edit-close').addEventListener('click', () => closeSetup());
