@@ -1262,6 +1262,44 @@ fn input_action(input: HostBrowserInput) -> Result<Value> {
         } => {
             json!({"kind":"element","action":"upload","node_id":node_id,"name":name,"mime_type":mime_type,"data_base64":data_base64})
         }
+        HostBrowserInput::FrameElement { frame_id, input } => {
+            let mut action = match input {
+                HostBrowserFrameElementInput::Click { node_id, button } => {
+                    json!({"kind":"element","action":"click","node_id":node_id,"button":button})
+                }
+                HostBrowserFrameElementInput::SurfaceClick {
+                    node_id,
+                    x,
+                    y,
+                    button,
+                } => {
+                    json!({"kind":"element","action":"surface_click","node_id":node_id,"x":x,"y":y,"button":button})
+                }
+                HostBrowserFrameElementInput::Fill { node_id, text } => {
+                    json!({"kind":"element","action":"fill","node_id":node_id,"text":text})
+                }
+                HostBrowserFrameElementInput::Select { node_id, value } => {
+                    json!({"kind":"element","action":"select","node_id":node_id,"value":value})
+                }
+                HostBrowserFrameElementInput::Wheel {
+                    node_id,
+                    delta_x,
+                    delta_y,
+                } => {
+                    json!({"kind":"element","action":"wheel","node_id":node_id,"x":delta_x,"y":delta_y})
+                }
+                HostBrowserFrameElementInput::Upload {
+                    node_id,
+                    name,
+                    mime_type,
+                    data_base64,
+                } => {
+                    json!({"kind":"element","action":"upload","node_id":node_id,"name":name,"mime_type":mime_type,"data_base64":data_base64})
+                }
+            };
+            action["frame_id"] = json!(frame_id);
+            action
+        }
         HostBrowserInput::Download { download_id } => {
             json!({"kind":"download","download_id":download_id})
         }
@@ -1287,6 +1325,22 @@ fn input_action(input: HostBrowserInput) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn frame_element_input_keeps_document_identity_through_worker_translation() {
+        let frame_id = Uuid::new_v4();
+        let action = input_action(HostBrowserInput::FrameElement {
+            frame_id,
+            input: HostBrowserFrameElementInput::Fill {
+                node_id: 37,
+                text: "private field".into(),
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            action,
+            json!({"kind":"element","action":"fill","frame_id":frame_id,"node_id":37,"text":"private field"})
+        );
+    }
     #[test]
     fn only_proven_effect_free_refusals_are_recoverable() {
         for code in [

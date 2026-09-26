@@ -88,6 +88,12 @@ pub enum HostBrowserInput {
         mime_type: String,
         data_base64: String,
     },
+    /// Element identity inside a cross-origin frame mirrored through Voyage's
+    /// private browser pipe. The frame ID changes on every frame navigation.
+    FrameElement {
+        frame_id: Uuid,
+        input: HostBrowserFrameElementInput,
+    },
     Download {
         download_id: Uuid,
     },
@@ -147,6 +153,7 @@ impl HostBrowserInput {
                     && mime_type.len() <= 128
                     && data_base64.len() <= 2_796_204
             }
+            Self::FrameElement { frame_id, input } => !frame_id.is_nil() && input.valid(),
             Self::Download { download_id } => !download_id.is_nil(),
             Self::Key { key, .. } => {
                 !key.is_empty() && key.len() <= 128 && !key.chars().any(char::is_control)
@@ -170,6 +177,94 @@ impl HostBrowserInput {
             Self::Scroll { delta_x, delta_y } => {
                 delta_x.unsigned_abs() <= 16384 && delta_y.unsigned_abs() <= 16384
             }
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostBrowserFrameElementInput {
+    Click {
+        node_id: u64,
+        button: HostBrowserButton,
+    },
+    SurfaceClick {
+        node_id: u64,
+        x: u16,
+        y: u16,
+        button: HostBrowserButton,
+    },
+    Fill {
+        node_id: u64,
+        text: String,
+    },
+    Select {
+        node_id: u64,
+        value: String,
+    },
+    Wheel {
+        node_id: u64,
+        delta_x: i32,
+        delta_y: i32,
+    },
+    Upload {
+        node_id: u64,
+        name: String,
+        mime_type: String,
+        data_base64: String,
+    },
+}
+impl HostBrowserFrameElementInput {
+    pub fn valid(&self) -> bool {
+        match self {
+            Self::Click { node_id, button } => HostBrowserInput::Click {
+                node_id: *node_id,
+                button: *button,
+            }
+            .valid(),
+            Self::SurfaceClick {
+                node_id,
+                x,
+                y,
+                button,
+            } => HostBrowserInput::SurfaceClick {
+                node_id: *node_id,
+                x: *x,
+                y: *y,
+                button: *button,
+            }
+            .valid(),
+            Self::Fill { node_id, text } => HostBrowserInput::Fill {
+                node_id: *node_id,
+                text: text.clone(),
+            }
+            .valid(),
+            Self::Select { node_id, value } => HostBrowserInput::Select {
+                node_id: *node_id,
+                value: value.clone(),
+            }
+            .valid(),
+            Self::Wheel {
+                node_id,
+                delta_x,
+                delta_y,
+            } => HostBrowserInput::Wheel {
+                node_id: *node_id,
+                delta_x: *delta_x,
+                delta_y: *delta_y,
+            }
+            .valid(),
+            Self::Upload {
+                node_id,
+                name,
+                mime_type,
+                data_base64,
+            } => HostBrowserInput::Upload {
+                node_id: *node_id,
+                name: name.clone(),
+                mime_type: mime_type.clone(),
+                data_base64: data_base64.clone(),
+            }
+            .valid(),
         }
     }
 }
@@ -422,6 +517,40 @@ mod tests {
             serde_json::from_str::<HostBrowserInput>(r#"{"type":"text","text":"x","script":"x"}"#)
                 .is_err()
         );
+        let frame = HostBrowserInput::FrameElement {
+            frame_id: id,
+            input: HostBrowserFrameElementInput::Fill {
+                node_id: 7,
+                text: "private".into(),
+            },
+        };
+        assert!(frame.valid());
+        assert_eq!(
+            serde_json::from_value::<HostBrowserInput>(serde_json::to_value(&frame).unwrap())
+                .unwrap(),
+            frame
+        );
+        assert!(
+            !HostBrowserInput::FrameElement {
+                frame_id: Uuid::nil(),
+                input: HostBrowserFrameElementInput::Click {
+                    node_id: 7,
+                    button: HostBrowserButton::Left
+                }
+            }
+            .valid()
+        );
+        assert!(
+            !HostBrowserInput::FrameElement {
+                frame_id: id,
+                input: HostBrowserFrameElementInput::Click {
+                    node_id: 0,
+                    button: HostBrowserButton::Left
+                }
+            }
+            .valid()
+        );
+        assert!(serde_json::from_str::<HostBrowserInput>(r#"{"type":"frame_element","frame_id":"00000000-0000-0000-0000-000000000001","input":{"type":"navigate","url":"https://example.com"}}"#).is_err());
     }
 }
 

@@ -21,12 +21,12 @@ export class Worker {
   constructor(){
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
-    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;
+    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();
   }
   status(){return {viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,downloads:[...this.downloads].filter(([,d])=>d.owner===this.controller).map(([id,d])=>({id,name:d.name})),browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){const epochs={...req.epochs};if(['join','mirror','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();}
-  advance(...keys){for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;}this.invalidate();}
+  advance(...keys){for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;this.frameVisuals.clear();}this.invalidate();}
   checkAgent(){if(this.mode!=='agent')refuse('agent_fenced');}
   guard(stamp){if(stamp!==this.epochs.control)refuse('control_fenced');}
   async request(req){
@@ -111,11 +111,11 @@ export class Worker {
       case 'close':return this.close();
       case 'shutdown':await this.close();await this.releaseLock();return {shutdown:true};
       case 'policy':this.setPolicy(req);await this.fence();this.proxy?.update(this.allowed,this.publicWeb);return null;
-      case 'join':identifier(req.viewer);if(this.viewers.has(req.viewer))refuse('viewer_exists');if(this.viewers.size>=4)refuse('viewer_limit');if(this.mode==='private'&&this.controller!==req.viewer)refuse('private');this.viewers.set(req.viewer,{seq:0});return null;
+      case 'join':identifier(req.viewer);if(this.viewers.has(req.viewer))refuse('viewer_exists');if(this.viewers.size>=4)refuse('viewer_limit');if(this.mode==='private'&&this.controller!==req.viewer)refuse('private');this.viewers.set(req.viewer,{seq:0,mirrorCursor:0,frameCursors:new Map()});return null;
       case 'disconnect':{
         identifier(req.viewer);this.viewers.delete(req.viewer);
         if(this.controller===req.viewer){if(this.mode!=='private'){this.mode='agent';this.controller=null;}await this.fence();}
-        if(!this.viewers.size)await bounded(this.page?.evaluate(()=>globalThis.__voyageMirror?.stop()),1000).catch(()=>{});return null;
+        if(!this.viewers.size)await this.stopMirrors();return null;
       }
       case 'control':{
         this.viewer(req.viewer);if(!['agent','human','private'].includes(req.mode))refuse('invalid_mode');
@@ -166,7 +166,7 @@ export class Worker {
     page.on('load',()=>{this.metadata.set(id,{...this.metadata.get(id),loading:false});});
     page.on('dialog',dialog=>{if(page===this.page)this.dialog=dialog;else void dialog.dismiss().catch(()=>{});});
     page.on('response',response=>{const effect=this.cacheAsset(response);this.assetEffects.add(effect);void effect.finally(()=>this.assetEffects.delete(effect));});
-    page.on('framenavigated',frame=>{if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}});
+    page.on('framenavigated',frame=>{this.frameIds.set(frame,randomUUID());if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}});
     page.on('close',()=>{this.metadata.delete(id);this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');}});
     page.on('download',download=>{void this.recordDownload(download);});
   }
@@ -224,18 +224,19 @@ export class Worker {
     };
     for(const event of events)visit(event);
   }
-  async captureVisuals(page){
-    if(Date.now()-this.visualAt<1000)return this.visuals;
+  async captureVisuals(page,mirrored=new Set()){
+    if(Date.now()-this.visualAt<1000)return this.visuals.filter(item=>!mirrored.has(item.id));
     this.visualAt=Date.now();
-    const targets=await page.evaluate(()=>[...document.querySelectorAll('canvas,video,iframe')].slice(0,12).map(element=>{
+    const targets=await page.evaluate(hidden=>[...document.querySelectorAll('canvas,video,iframe')].slice(0,12).map(element=>{
       const rect=element.getBoundingClientRect(),style=getComputedStyle(element);
       const left=Math.max(0,rect.left),top=Math.max(0,rect.top);
-      return {id:globalThis.__voyageMirror?.id(element),left,top,x:left+scrollX,y:top+scrollY,
+      return {id:globalThis.__voyageMirror?.id(element),left,top,x:left,y:top,
         width:Math.max(0,Math.min(innerWidth,rect.right)-left),height:Math.max(0,Math.min(innerHeight,rect.bottom)-top),
         visible:style.visibility!=='hidden'&&style.display!=='none'&&rect.width>8&&rect.height>8&&rect.right>0&&rect.bottom>0&&rect.left<innerWidth&&rect.top<innerHeight};
-    }).filter(item=>item.visible&&item.id>0).sort((a,b)=>b.width*b.height-a.width*a.height).slice(0,2));
+    }).filter(item=>item.visible&&item.id>0&&!hidden.includes(item.id)).sort((a,b)=>b.width*b.height-a.width*a.height).slice(0,2),[...mirrored]);
     const visuals=[];
     for(const target of targets){
+      if(mirrored.has(target.id))continue;
       try{
         const clip={x:Math.max(0,target.x),y:Math.max(0,target.y),
           width:Math.min(target.width,this.config.width),height:Math.min(target.height,this.config.height)};
@@ -247,29 +248,94 @@ export class Worker {
     }
     this.visuals=visuals;return visuals;
   }
-  async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');}
+  async captureFrameVisuals(frame,frameId){
+    const cached=this.frameVisuals.get(frameId);
+    if(cached&&Date.now()-cached.at<1000)return cached.items;
+    const targets=await frame.evaluate(()=>[...document.querySelectorAll('canvas,video')].slice(0,8).map(element=>{
+      const r=element.getBoundingClientRect(),style=getComputedStyle(element);
+      return {id:globalThis.__voyageMirror?.id(element),visible:r.width>8&&r.height>8&&r.right>0&&r.bottom>0&&r.left<innerWidth&&r.top<innerHeight&&style.display!=='none'&&style.visibility!=='hidden'};
+    }).filter(item=>item.visible&&item.id>0).slice(0,1));
+    const items=[];
+    for(const target of targets){
+      let handle;
+      try{
+        handle=await frame.evaluateHandle(id=>globalThis.__voyageMirror?.node(id)??null,target.id);
+        const element=handle.asElement();if(!element)continue;
+        const box=await element.boundingBox();
+        // An element screenshot can scroll the task page as a side effect.
+        // A mirror read must capture only the already visible viewport.
+        if(!box||box.x<0||box.y<0||box.x+box.width>this.config.width||box.y+box.height>this.config.height)continue;
+        const clip={x:box.x,y:box.y,width:box.width,height:box.height};
+        let content=await this.page.screenshot({type:'jpeg',quality:55,clip,timeout:1500});
+        if(content.length>200000)content=await this.page.screenshot({type:'jpeg',quality:30,clip,timeout:1500});
+        if(content.length<=200000)items.push({id:target.id,version:Date.now(),data_base64:content.toString('base64')});
+      }catch{}finally{await handle?.dispose().catch(()=>{});}
+    }
+    this.frameVisuals.set(frameId,{at:Date.now(),items});
+    return items;
+  }
+  async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);await this.stopMirrors();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');}
+  frameId(frame){let id=this.frameIds.get(frame);if(!id){id=randomUUID();this.frameIds.set(frame,id);}return id;}
+  async stopMirrors(){
+    await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(()=>globalThis.__voyageMirror?.stop()),1000))));
+    this.frameVisuals.clear();
+    for(const viewer of this.viewers.values()){viewer.mirrorCursor=0;viewer.frameCursors.clear();}
+  }
   async mirror(req){
-    this.viewer(req.viewer);this.requireOpen();
+    const viewer=this.viewer(req.viewer);this.requireOpen();
     const since=number(req.since,0,Number.MAX_SAFE_INTEGER),page=this.page,stamp=this.epochs.capture;
     // Chromium pauses page evaluation while a JavaScript dialog is open.
     // Keep the read channel responsive so the human can dismiss that dialog.
-    if(this.dialog)return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[]};
+    if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     const value=await bounded(page.evaluate(cursor=>globalThis.__voyageMirror?.drain(cursor)??{error:'recorder_unavailable'},since),5000);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
     this.inlineAssets(value.events,page.url());
-    const visuals=await bounded(this.captureVisuals(page),5000).catch(()=>this.visuals);
+    const frameCursors=!value.reset&&since===viewer.mirrorCursor?new Map(viewer.frameCursors):new Map();
+    const frames=[],nextCursors=new Map(),mirrored=new Set();let remainingMedia=2;
+    // The site never receives a child's events. rrweb's cross-origin mode
+    // uses postMessage to the parent page, which can expose private input.
+    for(const frame of page.frames().slice(1,33)){
+      if(frames.length>=8)break;
+      const parent=frame.parentFrame();if(!parent)continue;
+      let host;
+      try{
+        host=await bounded(frame.frameElement(),700);
+        const hostId=await bounded(host.evaluate(element=>globalThis.__voyageMirror?.id(element)??-1),700);
+        if(hostId<=0)continue;
+        const frameId=this.frameId(frame),parentId=parent===page.mainFrame()?null:this.frameId(parent);
+        if(parentId&&!nextCursors.has(parentId))continue;
+        const cursor=frameCursors.get(frameId)||0;
+        const child=await bounded(frame.evaluate(([since,budget])=>globalThis.__voyageMirror?.drain(since,budget)??{error:'recorder_unavailable'},[cursor,550000]),2500);
+        if(child?.error)continue;
+        this.inlineAssets(child.events,frame.url());
+        const bytes=Buffer.from(JSON.stringify(child.events));
+        if(bytes.length>650000)continue;
+        const frameVisuals=remainingMedia?await bounded(this.captureFrameVisuals(frame,frameId),1800).catch(()=>[]):[];
+        remainingMedia-=frameVisuals.length;
+        frames.push({frame_id:frameId,parent_frame_id:parentId,host_node_id:hostId,
+          encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:child.cursor,reset:child.reset,visuals:frameVisuals});
+        nextCursors.set(frameId,child.cursor);
+        if(parent===page.mainFrame())mirrored.add(hostId);
+      }catch{}finally{await host?.dispose().catch(()=>{});}
+    }
+    for(const id of this.frameVisuals.keys())if(!nextCursors.has(id))this.frameVisuals.delete(id);
+    const visuals=await bounded(this.captureVisuals(page,mirrored),5000).catch(()=>this.visuals.filter(item=>!mirrored.has(item.id)));
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
+    this.viewer(req.viewer);
     const bytes=Buffer.from(JSON.stringify(value.events));
     if(bytes.length>3000000)refuse('mirror_limit');
-    return {encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:value.cursor,reset:value.reset,latest:value.latest,visuals};
+    const result={encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:value.cursor,reset:value.reset,latest:value.latest,visuals,frames};
+    if(Buffer.byteLength(JSON.stringify(result))>2800000)refuse('mirror_limit');
+    viewer.mirrorCursor=value.cursor;viewer.frameCursors=nextCursors;
+    return result;
   }
   async fence(keepViewers=[]){
     this.advance('control','capture');this.downloads.clear();for(const f of this.fenceWaiters)f();this.fenceWaiters.clear();
     this.agentCursor=null;this.agentAction=null;
-    await Promise.all([this.page?bounded(this.page.evaluate(()=>globalThis.__voyageMirror?.stop()),1000).catch(()=>{}):null,this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
+    await Promise.all([this.stopMirrors(),this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
     // Acknowledgement means the old effect settled, not merely its raced reply.
     try{await bounded(Promise.allSettled([...this.effects]),5000);}catch{this.closing=true;await this.task?.close();await Promise.allSettled([...this.effects]);refuse('effect_quarantined');}
   }
@@ -356,10 +422,13 @@ export class Worker {
       case 'element':{
         const id=number(a.node_id,1,Number.MAX_SAFE_INTEGER);
         if(!['click','surface_click','fill','select','wheel','upload'].includes(a.action))refuse('invalid_input');
-        const handle=await this.page.evaluateHandle(node=>globalThis.__voyageMirror?.node(node)??null,id);
+        let frame=this.page.mainFrame();
+        if(a.frame_id!==undefined){const frameId=identifier(a.frame_id);frame=this.page.frames().find(item=>this.frameIds.get(item)===frameId);if(!frame||frame===this.page.mainFrame())beforeEffect('stale_frame');}
+        const handle=await frame.evaluateHandle(node=>globalThis.__voyageMirror?.node(node)??null,id);
         try{
           const element=handle.asElement();if(!element)beforeEffect('stale_reference');
           if(!await element.isVisible())beforeEffect('element_hidden');
+          if(a.frame_id!==undefined&&this.frameIds.get(frame)!==a.frame_id)beforeEffect('stale_frame');
           if(a.action==='surface_click'){
             const box=await element.boundingBox();if(!box)beforeEffect('element_hidden');
             await this.page.mouse.click(box.x+box.width*number(a.x,0,10000)/10000,

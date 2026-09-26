@@ -61,6 +61,14 @@
 .browser-next-mirror .replayer-mouse{display:none!important}
 .browser-next-visuals{position:absolute;left:0;top:0;transform-origin:top left;pointer-events:none;z-index:2}
 .browser-next-visual{position:absolute;display:block;pointer-events:none;object-fit:fill}
+.browser-next-frames{position:absolute;left:0;top:0;transform-origin:top left;z-index:3;pointer-events:none}
+.browser-next-frame{position:absolute;overflow:hidden;background:#fff;pointer-events:none}
+.browser-next-frames[data-control=true] .browser-next-frame{pointer-events:auto}
+.browser-next-frame .replayer-wrapper{position:relative;width:100%!important;height:100%!important;overflow:hidden}
+.browser-next-frame .replayer-wrapper>iframe{display:block!important;width:100%!important;height:100%!important;border:0;background:#fff}
+.browser-next-frame .replayer-mouse{display:none!important}
+.browser-next-frame-visuals{position:absolute;inset:0;pointer-events:none;z-index:1}
+.browser-next-frame-visual{position:absolute;display:block;pointer-events:none;object-fit:fill}
 .browser-next-welcome{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:25px;text-align:center;background:var(--bv-surface);color:var(--bv-ink)}
 .browser-next-welcome-mark{display:grid;place-items:center;width:54px;height:54px;border-radius:15px;background:var(--bv-accent-soft);color:var(--bv-accent);font-size:30px}
 .browser-next-welcome h3{margin:0;font-size:22px;letter-spacing:-.025em}

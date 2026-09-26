@@ -335,6 +335,12 @@ qualification remains a separate adverse check.
 The viewer also uses `node web/tests/browser-next-browser.mjs` for real Chromium
 DOM replay and element input at desktop/mobile sizes and
 `node web/tests/browser-layout-browser.mjs` for the production React shell.
+The worker test includes real same-origin and cross-origin nested frames, a
+private sign-in field, a cookie-gated image, localized canvas fallback, stale
+frame references and parent-page message exclusion. The viewer Chromium fixture
+checks nested frame replay, media overlays and typed input at both desktop and
+mobile sizes. These fixtures are synthetic local sites; a deployed
+TLS proxy and public-site qualification remain separate checks.
 `node --test web/tests/host-browser.test.mjs`, `npm run typecheck --prefix web`
 and `npm run build --prefix web` check the client. The browser journeys do not
 certify arbitrary public websites, native macOS/Windows behavior or resource

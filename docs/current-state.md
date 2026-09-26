@@ -95,8 +95,9 @@ Browser panel and native Helm F6 / `/browser` use one shared live DOM viewer.
 Native Helm opens it in the ordinary browser. Viewer detach does not close the
 host browser. The worker transfers bounded rrweb snapshots and changes through
 the authenticated Helm–Vessel command connection; Helm reconstructs the full
-page in a script-free iframe. Human clicks and form edits target live page
-element IDs. Canvas/video/iframe areas have localized visual fallback. Tabs,
+page in script-free iframes, including bounded cross-origin child-frame mirrors.
+Human clicks and form edits target live page element IDs and short-lived frame IDs
+for cross-origin elements. Canvas/video and unsupported iframe areas have localized visual fallback. Tabs,
 navigation, private control, text composition, upload, download and dialog
 controls use typed, fenced operations. Uncertain input is not replayed.
 

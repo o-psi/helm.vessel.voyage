@@ -39,12 +39,12 @@ async function decodeMirror(value) {
 // A mount owns one authenticated attachment and one script-free replay iframe.
 // Read-only mirror cursors may be repeated; page actions never are.
 export class BrowserConnection {
-    constructor({transport, context, mirror, changed = () => {}, onReplay = () => {}, onVisuals = () => {},
+    constructor({transport, context, mirror, frameLayer, changed = () => {}, onReplay = () => {}, onVisuals = () => {},
         uuid = () => crypto.randomUUID(), timeout = 25000}) {
-        Object.assign(this,{transport,context,mirror,changed,onReplay,onVisuals,uuid,timeout});
+        Object.assign(this,{transport,context,mirror,frameLayer,changed,onReplay,onVisuals,uuid,timeout});
         this.status=null;this.phase='idle';this.issue=null;this.sequence=0;
         this.queue=[];this.sending=false;this.urgentPromise=null;this.busy=false;this.closed=false;
-        this.epoch=0;this.cursor=0;this.streaming=false;this.polling=false;this.replayer=null;
+        this.epoch=0;this.cursor=0;this.streaming=false;this.polling=false;this.replayer=null;this.frames=new Map();
     }
     emit(){this.changed(this);}
     operation(action,fields={}){return {action,command_id:this.uuid(),binding:{...this.status.binding},...fields};}
@@ -56,8 +56,104 @@ export class BrowserConnection {
     clearMirror(){
         this.cursor=0;this.streaming=false;
         this.replayer?.destroy();this.replayer=null;
+        for(const frame of this.frames.values())frame.player.destroy();
+        this.frames.clear();this.frameLayer?.replaceChildren();
         this.mirror?.replaceChildren();
         this.onVisuals([],null);
+    }
+    newPlayer(root,frameId=null){
+        const library=globalThis.rrweb;
+        if(!library?.Replayer)throw Error('replayer_unavailable');
+        const player=new library.Replayer([],{root,liveMode:true,mouseTail:false,
+            showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
+        const replayDocument=player.iframe.contentDocument;
+        const policy=replayDocument.createElement('meta');
+        policy.httpEquiv='Content-Security-Policy';policy.content=replayPolicy;
+        replayDocument.head.append(policy);
+        player.iframe.referrerPolicy='no-referrer';
+        player.enableInteract();
+        player.on('fullsnapshot-rebuilded',()=>{
+            if(frameId===null){
+                if(this.replayer!==player)return;
+                this.streaming=true;this.phase='live';this.issue=null;this.emit();
+                this.onVisuals(this.latestVisuals||[],player);
+            }else if(this.frames.get(frameId)?.player!==player)return;
+            this.onReplay(player,this,frameId);
+            if(frameId!==null){const frame=this.frames.get(frameId);this.paintFrameVisuals(frame,frame.latestVisuals||[]);}
+        });
+        player.startLive(Date.now()-120);
+        return player;
+    }
+    framePosition(item,parent){
+        const target=parent.player.getMirror().getNode(item.host_node_id);
+        if(!target?.getBoundingClientRect)return null;
+        const rect=target.getBoundingClientRect();
+        let left=rect.left+target.clientLeft,top=rect.top+target.clientTop;
+        let owner=target.ownerDocument;
+        while(owner!==parent.player.iframe.contentDocument){
+            const host=owner?.defaultView?.frameElement;
+            if(!host)return null;
+            const outer=host.getBoundingClientRect();left+=outer.left+host.clientLeft;top+=outer.top+host.clientTop;
+            owner=host.ownerDocument;
+        }
+        return {left,top,
+            width:target.clientWidth||rect.width,height:target.clientHeight||rect.height};
+    }
+    paintFrameVisuals(frame,items){
+        if(!frame?.visualLayer)return;
+        const present=new Set();
+        for(const item of items){
+            if(!Number.isSafeInteger(item.id)||typeof item.data_base64!=='string'||item.data_base64.length>270000)continue;
+            const position=this.framePosition({host_node_id:item.id},{player:frame.player});
+            if(!position)continue;
+            present.add(item.id);
+            let picture=frame.visualNodes.get(item.id);
+            if(!picture){picture=document.createElement('img');picture.className='browser-next-frame-visual';picture.alt='';frame.visualLayer.append(picture);frame.visualNodes.set(item.id,picture);}
+            if(picture.dataset.version!==String(item.version)){
+                picture.src=`data:image/jpeg;base64,${item.data_base64}`;
+                picture.dataset.version=String(item.version);
+            }
+            picture.style.left=`${position.left}px`;picture.style.top=`${position.top}px`;
+            picture.style.width=`${Math.max(0,position.width)}px`;picture.style.height=`${Math.max(0,position.height)}px`;
+        }
+        for(const [id,picture] of frame.visualNodes)if(!present.has(id)){picture.remove();frame.visualNodes.delete(id);}
+    }
+    async updateFrames(items){
+        if(!this.frameLayer)return;
+        if(!Array.isArray(items)||items.length>8)throw Error('invalid_frames');
+        const present=new Set();
+        for(const item of items){
+            if(typeof item.frame_id!=='string'||present.has(item.frame_id)||!Number.isSafeInteger(item.host_node_id)||item.host_node_id<=0)throw Error('invalid_frame');
+            present.add(item.frame_id);
+            const parent=item.parent_frame_id?this.frames.get(item.parent_frame_id):{player:this.replayer,root:this.frameLayer};
+            if(!parent?.player)continue;
+            let frame=this.frames.get(item.frame_id);
+            const events=await decodeMirror(item);
+            if(!frame||item.reset){
+                if(!events.some(event=>event?.type===2))throw Error('missing_frame_snapshot');
+                frame?.player.destroy();frame?.root.remove();
+                const root=document.createElement('div');root.className='browser-next-frame';
+                parent.root.append(root);
+                const player=this.newPlayer(root,item.frame_id);
+                const visualLayer=document.createElement('div');visualLayer.className='browser-next-frame-visuals';root.append(visualLayer);
+                frame={root,player,visualLayer,visualNodes:new Map()};
+                this.frames.set(item.frame_id,frame);
+            }
+            if(frame.root.parentNode!==parent.root)parent.root.append(frame.root);
+            frame.latestVisuals=Array.isArray(item.visuals)?item.visuals:[];
+            for(const event of events)frame.player.addEvent(fenceSnapshot(event));
+            const position=this.framePosition(item,parent);
+            frame.root.hidden=!position;
+            if(position){
+                frame.root.style.left=`${position.left}px`;frame.root.style.top=`${position.top}px`;
+                frame.root.style.width=`${Math.max(0,position.width)}px`;
+                frame.root.style.height=`${Math.max(0,position.height)}px`;
+            }
+            this.paintFrameVisuals(frame,frame.latestVisuals);
+        }
+        for(const [id,frame] of this.frames)if(!present.has(id)){
+            frame.player.destroy();frame.root.remove();this.frames.delete(id);
+        }
     }
     accept(status){
         const previous=this.status;
@@ -134,31 +230,12 @@ export class BrowserConnection {
         if(value.reset){
             this.clearMirror();
             if(!events.some(event=>event?.type===2))throw Error('missing_full_snapshot');
-            const library=globalThis.rrweb;
-            if(!library?.Replayer)throw Error('replayer_unavailable');
-            const player=new library.Replayer([],{root:this.mirror,liveMode:true,mouseTail:false,
-                showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
-            this.replayer=player;
-            // rrweb's replay iframe has sandbox="allow-same-origin". This CSP
-            // prevents the mirror from fetching the site's URLs from Helm.
-            const replayDocument=player.iframe.contentDocument;
-            const policy=replayDocument.createElement('meta');
-            policy.httpEquiv='Content-Security-Policy';
-            policy.content=replayPolicy;
-            replayDocument.head.append(policy);
-            player.iframe.referrerPolicy='no-referrer';
-            player.enableInteract();
-            player.on('fullsnapshot-rebuilded',()=>{
-                if(this.replayer!==player)return;
-                this.onReplay(player,this);
-                this.streaming=true;this.phase='live';this.issue=null;this.emit();
-                this.onVisuals(this.latestVisuals||[],player);
-            });
-            player.startLive(Date.now()-120);
+            this.replayer=this.newPlayer(this.mirror);
         }
         for(const event of events)this.replayer?.addEvent(fenceSnapshot(event));
         this.cursor=value.cursor;
         this.latestVisuals=Array.isArray(value.visuals)?value.visuals:[];
+        await this.updateFrames(value.frames||[]);
         this.onVisuals(this.latestVisuals,this.replayer);
     }
     async refresh(){
@@ -289,14 +366,16 @@ export function mountBrowserViewer(root,options={}){
     const shell=node('div',scroll,'browser-next-mirror-shell');
     const mirror=node('div',shell,'browser-next-mirror');
     const visualLayer=node('div',shell,'browser-next-visuals');visualLayer.setAttribute('aria-hidden','true');
+    const frameLayer=node('div',shell,'browser-next-frames');
     const uploadPicker=node('input',stage);uploadPicker.type='file';uploadPicker.hidden=true;
     let uploadNode=null;
     uploadPicker.addEventListener('change',async()=>{
-        const file=uploadPicker.files?.[0],id=uploadNode;uploadPicker.value='';uploadNode=null;
-        if(!file||!id||!connection.canInput||file.size>2*1024*1024)return;
+        const file=uploadPicker.files?.[0],target=uploadNode;uploadPicker.value='';uploadNode=null;
+        if(!file||!target||!connection.canInput||file.size>2*1024*1024)return;
         const raw=new Uint8Array(await file.arrayBuffer());
         let binary='';for(let offset=0;offset<raw.length;offset+=16384)binary+=String.fromCharCode(...raw.subarray(offset,offset+16384));
-        try{await connection.confirmedInput({type:'upload',node_id:id,name:file.name,mime_type:file.type||'application/octet-stream',data_base64:btoa(binary)});}
+        const input={type:'upload',node_id:target.id,name:file.name,mime_type:file.type||'application/octet-stream',data_base64:btoa(binary)};
+        try{await connection.confirmedInput(target.frameId?{type:'frame_element',frame_id:target.frameId,input}:input);}
         catch{}
     });
     const welcome=node('div',stage,'browser-next-welcome');
@@ -326,7 +405,7 @@ export function mountBrowserViewer(root,options={}){
     button('Dismiss dialog',dialogPanel,()=>{void connection.urgentInput({type:'dialog',accept:false,text:null});dialogInput.value='';});
     let actual=false,scaleChosen=false,resizeTimer=null,resizeTarget='',disposed=false,tabFingerprint='',downloadFingerprint='',frameFence='';
     const visualNodes=new Map();
-    const connection=new BrowserConnection({...options,mirror,onReplay,onVisuals,changed:()=>{render();options.changed?.(connection);}});
+    const connection=new BrowserConnection({...options,mirror,frameLayer,onReplay,onVisuals,changed:()=>{render();options.changed?.(connection);}});
     function paintScale(){
         const viewport=connection.status?.viewport;
         if(!viewport?.width||!viewport?.height)return;
@@ -338,6 +417,8 @@ export function mountBrowserViewer(root,options={}){
         mirror.style.transform=`scale(${factor})`;
         visualLayer.style.width=`${viewport.width}px`;visualLayer.style.height=`${viewport.height}px`;
         visualLayer.style.transform=`scale(${factor})`;
+        frameLayer.style.width=`${viewport.width}px`;frameLayer.style.height=`${viewport.height}px`;
+        frameLayer.style.transform=`scale(${factor})`;
         root.dataset.scale=actual?'actual':'fit';scale.textContent=actual?'Fit':'100%';
         scale.setAttribute('aria-label',actual?'Fit page in view':'View at actual size');scale.title=scale.getAttribute('aria-label');
         scale.setAttribute('aria-pressed',String(actual));
@@ -403,6 +484,7 @@ export function mountBrowserViewer(root,options={}){
         const current=connection.status,phase=connection.phase,privateControl=connection.controls&&current?.mode==='private';
         root.dataset.state=phase==='live'?(privateControl?'private':current?.mode==='agent'?'agent':'watching'):phase;
         mirror.style.pointerEvents=connection.canInput?'auto':'none';
+        frameLayer.dataset.control=String(connection.canInput);
         status.textContent=phase==='live'?privateControl?'Private control · Agent paused':current?.agent_active?'Agent working':'Watching browser'
             :phase==='switching'?'Switching control…':phase==='connecting'?'Opening browser…':phase==='recovering'?'Restoring page…'
             :phase==='stopped'?'Browser stopped':phase==='unavailable'?'Browser unavailable':phase==='waiting-page'?'Loading page…'
@@ -441,8 +523,9 @@ export function mountBrowserViewer(root,options={}){
         if(!scaleChosen)actual=privateControl&&scroll.clientWidth<680&&Math.abs((current?.viewport?.width||0)-scroll.clientWidth)<20;
         renderTabs();renderDownloads();paintScale();scheduleViewport();
     }
-    function onReplay(player,session){
+    function onReplay(player,session,frameId){
         const frame=player.iframe,body=frame.contentDocument;
+        const send=input=>session.input(frameId?{type:'frame_element',frame_id:frameId,input}:input);
         const targetId=target=>{
             const element=target?.nodeType===1?target:target?.parentElement;
             return element?player.getMirror().getId(element):-1;
@@ -452,32 +535,32 @@ export function mountBrowserViewer(root,options={}){
             if(!session.canInput)return;
             const id=targetId(event.target);
             if(event.target?.matches?.('input[type=file]')){
-                if(id>0){uploadNode=id;uploadPicker.click();}
+                if(id>0){uploadNode={id,frameId};uploadPicker.click();}
                 return;
             }
             if(event.target?.matches?.('canvas,video,iframe')){
                 const rect=event.target.getBoundingClientRect();
-                if(id>0&&rect.width&&rect.height)session.input({type:'surface_click',node_id:id,
+                if(id>0&&rect.width&&rect.height)send({type:'surface_click',node_id:id,
                     x:Math.max(0,Math.min(10000,Math.round((event.clientX-rect.left)/rect.width*10000))),
                     y:Math.max(0,Math.min(10000,Math.round((event.clientY-rect.top)/rect.height*10000))),button:'left'});
                 return;
             }
-            if(id>0)session.input({type:'click',node_id:id,button:'left'});
+            if(id>0)send({type:'click',node_id:id,button:'left'});
         },true);
         body.addEventListener('contextmenu',event=>{
             event.preventDefault();event.stopPropagation();
             if(!session.canInput)return;
             const id=targetId(event.target);
-            if(id>0)session.input({type:'click',node_id:id,button:'right'});
+            if(id>0)send({type:'click',node_id:id,button:'right'});
         },true);
         body.addEventListener('input',event=>{
             if(!session.canInput||event.isComposing)return;
             const element=event.target,id=targetId(element);
             if(id<=0)return;
-            if(element.matches?.('select')){session.input({type:'select',node_id:id,value:element.value});return;}
+            if(element.matches?.('select')){send({type:'select',node_id:id,value:element.value});return;}
             if(element.matches?.('input:not([type=checkbox]):not([type=radio]):not([type=file]),textarea,[contenteditable]')){
                 const text=element.isContentEditable?element.textContent:element.value;
-                if(typeof text==='string'&&bytes(text)<=16384)session.input({type:'fill',node_id:id,text});
+                if(typeof text==='string'&&bytes(text)<=16384)send({type:'fill',node_id:id,text});
             }
         },true);
         body.addEventListener('wheel',event=>{
@@ -486,7 +569,7 @@ export function mountBrowserViewer(root,options={}){
             event.preventDefault();
             const factor=event.deltaMode===1?16:event.deltaMode===2?session.status?.viewport?.height||720:1;
             const bound=value=>Math.max(-16384,Math.min(16384,Math.round(value*factor)));
-            session.input({type:'wheel',node_id:id,delta_x:bound(event.deltaX),delta_y:bound(event.deltaY)});
+            send({type:'wheel',node_id:id,delta_x:bound(event.deltaX),delta_y:bound(event.deltaY)});
         },{capture:true,passive:false});
         const keys=new Set();
         const key=(event,pressed)=>{

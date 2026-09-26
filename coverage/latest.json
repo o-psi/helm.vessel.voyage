@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-25T18:48:37.610456+00:00",
-  "source_commit": "61c3238c7f7d15bba405fe1122eb02d5872850e4",
+  "measured_at_utc": "2026-09-26T01:08:05Z",
+  "source_commit": "3d9afdb7eaceb8b31650a3ff16b191070364e997",
   "dirty": true,
-  "source_fingerprint_sha256": "56c496a01d8b491f11a2760972d4b5482ac4a877c155339d76bd42a875df2cb3",
+  "source_fingerprint_sha256": "6a7fc624ac03f158c4e6c1b95cecf06d1345b15c43c4245d27c5ba2db6c23f29",
   "source_fingerprint_method": "SHA-256 over sorted tracked and untracked workspace code/test files (.rs, Cargo .toml/.lock, .mjs, .js, .css, .tsx, .py, .blade.php): relative path + NUL + bytes or <deleted> + NUL; ignored build outputs excluded",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1755,
+    "passed": 1756,
     "failed": 0,
     "ignored": 2
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10206,
-      "covered": 7366,
-      "percent": 72.1732314324907
+      "count": 10208,
+      "covered": 7352,
+      "percent": 72.02194357366771
     },
     "instantiations": {
-      "count": 23188,
-      "covered": 9306,
-      "percent": 40.13282732447818
+      "count": 23040,
+      "covered": 9238,
+      "percent": 40.095486111111114
     },
     "lines": {
-      "count": 106330,
-      "covered": 79902,
-      "percent": 75.14530236057557
+      "count": 106447,
+      "covered": 79831,
+      "percent": 74.99600740274502
     },
     "mcdc": {
       "count": 0,
@@ -42,66 +42,26 @@
       "percent": 0
     },
     "regions": {
-      "count": 174343,
-      "covered": 125053,
-      "notcovered": 49290,
-      "percent": 71.72814509329311
+      "count": 174484,
+      "covered": 124960,
+      "notcovered": 49524,
+      "percent": 71.6168817771257
     }
   },
-  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $TARGET/coverage-report -j 8 -- --test-threads=1",
-  "report_command": [
-    "/usr/bin/llvm-cov",
-    "export",
-    "-format=text",
-    "-instr-profile=$WORKSPACE/target/voyage-browser-dom-mirror.profdata",
-    "-object",
-    "$WORKSPACE/target/debug/deps/helm-1e673a1ff7d584f2",
-    "-object",
-    "$WORKSPACE/target/debug/deps/helm-3abf021cb7f6ace0",
-    "-object",
-    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-6d0c5675aec018f1",
-    "-object",
-    "$WORKSPACE/target/debug/deps/vessel-4686a92ea5f37d5a",
-    "-object",
-    "$WORKSPACE/target/debug/deps/vessel-e5e32e6712ceb8fd",
-    "-object",
-    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-5f54bed537a9a348",
-    "-object",
-    "$WORKSPACE/target/debug/deps/voyage-3f49471a24057a3c",
-    "-object",
-    "$WORKSPACE/target/debug/deps/voyage-98aaba8c7c8a49cd",
-    "-object",
-    "$WORKSPACE/target/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
-    "-object",
-    "$WORKSPACE/target/debug/deps/completion_final_tests-31668c60333e0c82",
-    "-object",
-    "$WORKSPACE/target/debug/deps/voyage_installer-cafe619186177e69",
-    "-object",
-    "$WORKSPACE/target/debug/deps/voyage_protocol-0ba333dc0230bf7a",
-    "-object",
-    "$WORKSPACE/target/debug/deps/voyage_storage-046a16532f0d6755",
-    "-object",
-    "$WORKSPACE/target/debug/helm",
-    "-object",
-    "$WORKSPACE/target/debug/vessel",
-    "-object",
-    "$WORKSPACE/target/debug/voyage",
-    "-path-equivalence=$REUSED_WORKSPACE,$WORKSPACE",
-    "-ignore-filename-regex=/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^($WORKSPACE|$REUSED_WORKSPACE)(/.*)?/(tests|examples|benches)/|^($WORKSPACE|$REUSED_WORKSPACE)(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$TARGET/",
-    "-summary-only"
-  ],
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; umask 077; CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 -- --test-threads=1",
+  "report_command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov report --json --summary-only --ignore-filename-regex '^/usr/src/debug/rust/' --output-path target/coverage-report/workspace-summary.json",
   "exclusions": [
     "Doctests",
     "Ignored live-provider tests",
     "Python/JavaScript/manual journeys",
     "Branch coverage",
     "Dependency/test source per standard cargo-llvm-cov exclusions",
-    "Historical target objects outside the 13 current Cargo test executables and three current binaries"
+    "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "Full default-feature workspace Rust tests passed with owner-only temporary files and serial test execution after the final Rust/test edits. An earlier run failed because installer tests rejected a /tmp checkout; a second attempt used a stale test binary embedding that removed path. Neither failed attempt is counted as passing.",
-    "The isolated worktree moved from /tmp to an owner-only directory. Reused Rust test objects still reference the old path, but their Rust source bytes were unchanged across the move. The automatic report mixed paths; corrected export selected the 13 test executables and three binaries run by Cargo, applied path equivalence for source lookup, and reported 467 unique relative workspace files with zero diagnostics. Export labels retain both old and new paths. Raw reports remain under target/.",
-    "Linux only. Browser JavaScript, real Chromium journeys, process cleanup and live-provider acceptance are separate from this measurement.",
-    "Compared with the preceding record: lines +0.1361 percentage points, functions +0.2820, regions +0.0875. No measurement scope was narrowed."
+    "Default-feature workspace Rust tests passed with owner-only temporary files and serial test execution after the final code/test edits. An earlier sandbox run lacked loopback/process permissions; an outside-sandbox attempt with a permissive temporary-file mode failed existing private-storage tests. Neither failed attempt is counted as passing.",
+    "The isolated target contains current-worktree artifacts. The final report has 467 unique workspace files, matching the preceding workspace file count; there are no duplicate paths. The automatic report also included one distribution Rust standard-library file with 5 lines, 5 functions and 10 regions. The recorded totals exclude only that non-workspace file; raw and HTML reports remain under target/.",
+    "Linux only. Browser JavaScript, Chromium journeys, process cleanup and live-provider acceptance are separate from this measurement.",
+    "Compared with the preceding record: lines -0.1493 percentage points, functions -0.1513, regions -0.1113. Added frame input/translation branches account for the small Rust coverage drop; the measured workspace scope was not narrowed."
   ]
 }
