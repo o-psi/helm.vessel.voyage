@@ -327,7 +327,24 @@ provider run was created for verification.
 
 ## New voyages and provider accounts
 
-New voyage opens the existing conversation composer immediately, without a setup modal. Location (Vessel/workspace), account, model, reasoning and service tier are editable in its Flux popovers before first Send. The current unsent new-voyage draft is retained when reopening New voyage; changing location explicitly with Apply preserves its text and pictures. Account metadata and models are fetched from that exact Vessel. Unavailable accounts remain labeled and cannot be selected. Explicit model/account changes reset reasoning and service options to provider defaults. Default account/model discovery prepares an in-memory configuration only. First Send creates the independent voyage and submits the message after a fresh owner snapshot. A pre-send access choice uses the existing access control: it is applied and confirmed after creation and before inference; omission keeps the Vessel default. Failed or uncertain access changes retain the message rather than submitting under an unconfirmed mode.
+New voyage opens the existing conversation composer and one responsive Flux Setup
+flyout. Its Location, Profile, Access and Reasoning sections have explicit Back
+navigation. Flux searchable listboxes choose saved profiles, provider accounts and
+models; profile editing uses Flux inputs and an Advanced accordion. The account
+and model listboxes open from dedicated Setup screens, so their menus do not stack
+over the editor. A small layout wrapper pins the flyout header and footer because
+the installed Flux 2.19 modal has no footer slot. Its interactive controls remain
+Flux components; Vessel reads and draft state remain in the browser client.
+
+The current unsent new-voyage draft is retained when reopening Setup or changing
+Location. Account metadata and models are fetched from the selected Vessel;
+unavailable accounts remain labeled and cannot be selected. Explicit model/account
+changes reset reasoning and service options to provider defaults. Discovery
+prepares an in-memory configuration only. First Send creates the independent voyage
+and submits the message after a fresh owner snapshot. A pre-send access choice uses
+the existing access control: it is applied and confirmed after creation and before
+inference; omission keeps the Vessel default. Failed or uncertain access changes
+retain the message rather than submitting under an unconfirmed mode.
 
 Owner pairing uses `--full-access`: no rights, workspace or account allowlists are required. It covers all ordinary voyages, canonical workspace folders and provider accounts, including resources added after pairing. The workspace picker offers known folders and **Another folder…** for an existing absolute path on the Vessel. Authentication, expiry, revocation and each voyage’s local execution policy still apply. Provider credentials remain on the Vessel. Full access does not add web UI features that are listed above as parity gaps.
 
@@ -345,11 +362,25 @@ The composer uses a compact model/reasoning settings trigger, access selector, a
 
 When the checkout is also the served application, CLI-generated Blade views must remain readable by the PHP-FPM service user, which also needs write access to runtime view/cache/session/log directories. Use narrowly scoped service-user ACLs with directory inheritance, not world-writable permissions; preserve application keys and credentials. A passing CLI render does not prove the service user can render the authenticated console.
 
-Existing-voyage settings open in click-triggered Flux popovers above the composer: account/model with provider discovery, a separate reasoning selector, and access with mode explanations. New voyage uses these same popovers on the same composer, plus a pre-creation location picker. Popovers are viewport-width constrained; model options scroll. Inference changes bind the reviewed voyage identity and revision and are refused after switching or starting a run. Popover field Enter does not submit the message draft.
+Existing-voyage settings use the same Setup flyout. Selecting a saved profile
+copies its account and model to the next run after Vessel confirmation; editing a
+saved profile does not mutate any existing voyage. Access changes retain their
+separate confirmation path and receipt. Inference changes bind the reviewed voyage
+identity and revision and are refused after switching or starting a run. Enter in
+Setup does not submit the message draft.
 
-Reasoning uses a stepped Flux slider: the first stop is provider default, followed by the provider-advertised levels in their returned order. The label shows the canonical level, not an invented numeric effort. Default-only models disable the slider; existing explicit values remain visible. Service tiers use Flux radio choices. These controls are shared by draft configuration and account/model editing; account and model lists remain searchable.
+Reasoning uses a stepped Flux slider: the first stop is provider default, followed
+by the provider-advertised levels in their returned order. The label shows the
+canonical level, not an invented numeric effort. Default-only models disable the
+slider; existing explicit values remain visible. Service tiers use a Flux select.
+Account and model listboxes remain searchable.
 
-The model popover now contains only model selection. Account has its own picker and private usage observation: cached status, observation time, used percentages and reset times when exposed by the provider. Refresh is explicit and uses the existing scoped `account_usage` read, never inference; unavailable/unsupported data is not zero usage. Switching accounts selects the account’s default model and resets provider options. Service radios have their own popover. Usage replies are checked against the selected account and connection before display.
+The account picker has a private usage observation: cached status, observation
+time, used percentages and reset times when exposed by the provider. Refresh is
+explicit and uses the existing scoped `account_usage` read, never inference;
+unavailable/unsupported data is not zero usage. Switching accounts selects that
+account's default model and resets provider options. Usage replies are checked
+against the selected account and connection before display.
 
 ## Conversation presentation
 

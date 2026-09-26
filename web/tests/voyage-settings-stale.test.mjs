@@ -24,6 +24,8 @@ test('setup gives a reload path when a client is lost or replaced during discove
     t.after(() => dom.window.close());
     for (const key of ['window','document','localStorage','Event']) globalThis[key] = dom.window[key];
     const root = document.querySelector('#helm-client'), field = id => root.querySelector(`#${id}`);
+    const profileOption = () => root.querySelector('#edit-profile ui-option[data-settings-option]');
+    const modelOptions = () => root.querySelectorAll('#edit-model ui-option[data-settings-option]');
     const account = {account_id:'10000000-0000-4000-8000-000000000001',connection_id:'10000000-0000-4000-8000-000000000002',identity_generation:1,connection_revision:1,transport:'openai_responses'};
     const results = {
         capabilities:{vessel_id:'vessel',scope:'owner',workspaces:[{name:'Known',path:'/known'}]},
@@ -60,7 +62,7 @@ test('setup gives a reload path when a client is lost or replaced during discove
 
     connection.client = makeClient('after-loss');
     field('edit-retry').click();
-    await until(() => field('setup-profile-list button'));
+    await until(profileOption);
 
     for (const [op,next] of [['accounts','after-accounts'],['profiles','after-profiles']]) {
         heldOp = op; pending = null; field('edit-retry').click();
@@ -69,9 +71,9 @@ test('setup gives a reload path when a client is lost or replaced during discove
         connection.client = makeClient(next);
         stale.resolve(reply(stale.command));
         await until(() => /connection changed/i.test(field('edit-status').textContent));
-        assert.equal(field('setup-profile-list button'),null,`${op} must not restore profiles from the old client`);
+        assert.equal(profileOption(),null,`${op} must not restore profiles from the old client`);
         field('edit-retry').click();
-        await until(() => field('setup-profile-list button'));
+        await until(profileOption);
     }
 
     heldOp = 'account_models'; pending = null;
@@ -81,10 +83,10 @@ test('setup gives a reload path when a client is lost or replaced during discove
     connection.client = makeClient('after-models');
     staleModels.resolve(reply(staleModels.command));
     await until(() => /connection changed/i.test(field('edit-status').textContent));
-    assert.equal(field('edit-model').options.length,0,'models from the old client are ignored');
+    assert.equal(modelOptions().length,0,'models from the old client are ignored');
     assert.equal(field('edit-save').disabled,true);
     field('edit-retry').click();
-    await until(() => !field('setup-profiles').hidden && field('setup-profile-list button'));
+    await until(() => !field('setup-profiles').hidden && profileOption());
     assert.match(field('edit-status').textContent,/Apply copies/,'Reload from the editor returns to usable profile choices');
 
     heldOp = 'account_models'; pending = null;
@@ -95,7 +97,7 @@ test('setup gives a reload path when a client is lost or replaced during discove
     assert.equal(field('setup-manage').hidden,false);
     oldEditor.resolve(reply(oldEditor.command));
     await Promise.resolve();
-    assert.equal(field('edit-model').options.length,0,'a model response cannot populate an editor after leaving it');
+    assert.equal(modelOptions().length,0,'a model response cannot populate an editor after leaving it');
     assert.match(field('edit-status').textContent,/Apply copies/,'an old editor read cannot replace the newer profile status');
 
     heldOp = 'accounts'; pending = null;
@@ -106,11 +108,11 @@ test('setup gives a reload path when a client is lost or replaced during discove
     field('edit-workspace').value = '__custom__'; field('edit-workspace').dispatchEvent(new Event('change'));
     field('edit-workspace-path').value = '/new-folder'; field('edit-workspace-path').dispatchEvent(new Event('input'));
     field('edit-workspace-path').dispatchEvent(new Event('change'));
-    await until(() => field('setup-profile-list button'));
+    await until(profileOption);
     oldLocation.resolve(reply(oldLocation.command));
     await Promise.resolve();
     assert.equal(field('edit-workspace-path').value,'/new-folder','older accounts cannot replace a newer location');
-    assert.ok(field('setup-profile-list button'),'newer location choices remain available');
+    assert.ok(profileOption(),'newer location choices remain available');
 
     heldOp = 'profiles'; pending = null; field('edit-retry').click();
     await until(() => pending?.command.op === 'profiles');
@@ -118,5 +120,5 @@ test('setup gives a reload path when a client is lost or replaced during discove
     selection = {vessel:'v',session_id:'different-voyage'};
     oldVoyage.resolve(reply(oldVoyage.command));
     await until(() => /Voyage changed/.test(field('edit-status').textContent));
-    assert.equal(field('setup-profile-list button'),null,'an old voyage response cannot populate this setup');
+    assert.equal(profileOption(),null,'an old voyage response cannot populate this setup');
 });

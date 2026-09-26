@@ -25,6 +25,8 @@ function fixture(t, {firstHasProfile = false} = {}) {
     t.after(() => dom.window.close());
     for (const key of ['window','document','localStorage','Event']) globalThis[key] = dom.window[key];
     const root = document.querySelector('#helm-client'), field = id => root.querySelector(`#${id}`);
+    const profileOption = () => root.querySelector('#edit-profile ui-option[data-settings-option]');
+    const modelOptions = () => root.querySelectorAll('#edit-model ui-option[data-settings-option]');
     const account = vessel => ({account_id:`${vessel}-account`,connection_id:`${vessel}-provider`,identity_generation:1,connection_revision:1,transport:'openai_responses'});
     const profile = vessel => ({id:`${vessel}-profile`,name:`${vessel} profile`,account:account(vessel),model:`${vessel}-model`,reasoning_effort:null,service_tier:null});
     const catalogues = {
@@ -62,7 +64,7 @@ function fixture(t, {firstHasProfile = false} = {}) {
     const settings = voyageSettings(root,fleet,{current:() => selection,select,apply:() => assert.fail('Existing voyage inference was changed'),draft:(vessel,workspace) => composition.newChat(vessel,workspace),captureDraft,prepared:() => {}});
     const hold = (vessel,op) => held.set(`${vessel}:${op}`,null);
     const release = (vessel,op) => { const pending = held.get(`${vessel}:${op}`); assert.ok(pending,`${vessel} ${op} was not pending`); held.delete(`${vessel}:${op}`); pending.resolve(); };
-    return {field,seen,settings,composition,captureDraft,hold,release,selection:() => selection,choose:select};
+    return {field,profileOption,modelOptions,seen,settings,composition,captureDraft,hold,release,selection:() => selection,choose:select};
 }
 
 test('changing Vessel during new voyage setup loads editor models and retains the message through Use profile and Done', async t => {
@@ -76,7 +78,7 @@ test('changing Vessel during new voyage setup loads editor models and retains th
     f.field('setup-location-open').click();
     f.field('edit-vessel').value = 'win';
     f.field('edit-vessel').dispatchEvent(new Event('change'));
-    await until(() => f.captureDraft()?.vessel === 'win' && f.field('setup-profile-list button'));
+    await until(() => f.captureDraft()?.vessel === 'win' && f.profileOption());
     assert.equal(f.selection().vessel,'win');
     assert.equal(f.captureDraft().key,key);
     assert.equal(f.captureDraft().workspace,'/home/psi');
@@ -114,7 +116,7 @@ test('an external draft change invalidates a pending model response after a Vess
     f.field('setup-location-open').click();
     f.field('edit-vessel').value = 'win';
     f.field('edit-vessel').dispatchEvent(new Event('change'));
-    await until(() => f.captureDraft()?.vessel === 'win' && f.field('setup-profile-list button'));
+    await until(() => f.captureDraft()?.vessel === 'win' && f.profileOption());
     f.hold('win','account_models');
     f.field('setup-back').click();
     f.field('setup-profile-open').click();
@@ -130,7 +132,7 @@ test('an external draft change invalidates a pending model response after a Vess
     f.release('win','account_models');
     await until(() => /Voyage changed/.test(f.field('edit-status').textContent));
 
-    assert.equal(f.field('edit-model').options.length,0);
+    assert.equal(f.modelOptions().length,0);
     assert.equal(f.field('edit-save').disabled,true);
     assert.equal(f.seen.some(item => item.command.op === 'save_profile'),false);
 });
@@ -146,7 +148,7 @@ test('Use profile moves an already configured draft to the newly selected Vessel
     f.field('setup-location-open').click();
     f.field('edit-vessel').value = 'win';
     f.field('edit-vessel').dispatchEvent(new Event('change'));
-    await until(() => f.seen.some(item => item.vessel === 'win' && item.command.op === 'profiles') && f.field('setup-profile-list button'));
+    await until(() => f.seen.some(item => item.vessel === 'win' && item.command.op === 'profiles') && f.profileOption());
     assert.equal(f.selection().vessel,'tax','the existing draft stays put until Use profile');
     f.field('setup-back').click();
     assert.equal(f.field('setup-done').disabled,true,'the old profile needs review at the new location');
@@ -174,13 +176,13 @@ test('an old Vessel response cannot replace choices after selecting another loca
     await until(() => f.seen.some(item => item.vessel === 'win' && item.command.op === 'accounts'));
     f.field('edit-vessel').value = 'tax';
     f.field('edit-vessel').dispatchEvent(new Event('change'));
-    await until(() => f.field('edit-workspace').value === '/tax-axis' && f.field('setup-profile-list button'));
+    await until(() => f.field('edit-workspace').value === '/tax-axis' && f.profileOption());
     f.release('win','accounts');
     await Promise.resolve();
 
     assert.equal(f.field('edit-vessel').value,'tax');
     assert.equal(f.field('edit-workspace').value,'/tax-axis');
-    assert.equal(f.field('setup-profile-list button .setup-choice-title').textContent,'tax profile · Default');
+    assert.equal(f.profileOption().querySelector('[data-option-label]').textContent,'tax profile · Default');
     assert.equal(f.seen.some(item => item.vessel === 'win' && item.command.op === 'profiles'),false);
 });
 

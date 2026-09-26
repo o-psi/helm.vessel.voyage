@@ -176,87 +176,22 @@
 }
 .dark #helm-client .voyage-setup-header,
 .dark #helm-client .voyage-setup-footer { border-color: var(--color-zinc-700); }
-#helm-client .setup-wrap,
-#helm-client .setup-choice-title,
-#helm-client .setup-choice-detail {
+#helm-client .setup-wrap {
     white-space: normal;
     overflow-wrap: anywhere;
 }
-#helm-client .setup-nav-row,
-#helm-client .setup-picker-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
+#helm-client .voyage-setup-link {
     width: 100%;
+    height: auto;
+    min-height: 3.5rem;
     min-width: 0;
-    padding: 0.85rem 1rem;
-    border: 1px solid var(--color-zinc-200);
-    border-radius: 0.75rem;
-    background: var(--color-zinc-50);
-    color: var(--color-zinc-900);
+    justify-content: flex-start;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
     text-align: start;
+    white-space: normal;
 }
-#helm-client .setup-nav-row strong,
-#helm-client .setup-nav-row .setup-wrap {
-    display: block;
-}
-#helm-client .setup-nav-row strong { font-size: 0.875rem; font-weight: 600; }
-#helm-client .setup-nav-row .setup-wrap { margin-top: 0.125rem; color: var(--color-zinc-600); font-size: 0.8rem; }
-#helm-client .setup-nav-row:hover,
-#helm-client .setup-picker-row:hover { background: var(--color-zinc-100); }
-#helm-client .setup-nav-row:focus-visible,
-#helm-client .setup-picker-row:focus-visible,
-#helm-client .setup-choice:focus-visible {
-    outline: 2px solid var(--color-indigo-500);
-    outline-offset: 2px;
-}
-.dark #helm-client .setup-nav-row,
-.dark #helm-client .setup-picker-row {
-    border-color: var(--color-zinc-700);
-    background: var(--color-zinc-900);
-    color: var(--color-zinc-100);
-}
-.dark #helm-client .setup-nav-row .setup-wrap { color: var(--color-zinc-400); }
-.dark #helm-client .setup-nav-row:hover,
-.dark #helm-client .setup-picker-row:hover { background: var(--color-zinc-700); }
-#helm-client .setup-field-label {
-    display: block;
-    margin-bottom: 0.4rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-}
-#helm-client .setup-list { min-width: 0; border-top: 1px solid var(--color-zinc-200); }
-#helm-client .setup-choice {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    padding: 0.75rem 0.5rem;
-    border: 0;
-    border-bottom: 1px solid var(--color-zinc-200);
-    background: transparent;
-    color: inherit;
-    text-align: start;
-}
-#helm-client .setup-choice:hover { background: var(--color-zinc-50); }
-#helm-client .setup-choice:disabled { cursor: not-allowed; opacity: 0.55; }
-#helm-client .setup-choice[data-selected] {
-    background: var(--color-indigo-50);
-    box-shadow: inset 3px 0 0 var(--color-indigo-500);
-}
-#helm-client .setup-choice-title { display: block; font-size: 0.875rem; font-weight: 600; }
-#helm-client .setup-choice-detail { display: block; margin-top: 0.2rem; color: var(--color-zinc-600); font-size: 0.8rem; }
-.dark #helm-client .setup-list,
-.dark #helm-client .setup-choice { border-color: var(--color-zinc-700); }
-.dark #helm-client .setup-choice:hover { background: var(--color-zinc-700); }
-.dark #helm-client .setup-choice[data-selected] { background: var(--color-indigo-950); }
-.dark #helm-client .setup-choice-detail { color: var(--color-zinc-400); }
-#helm-client .setup-advanced {
-    min-width: 0;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-zinc-200);
-}
-.dark #helm-client .setup-advanced { border-color: var(--color-zinc-700); }
-#helm-client .setup-advanced summary { cursor: pointer; font-size: 0.875rem; font-weight: 600; }
+#helm-client .voyage-setup-link > span { min-width: 0; flex: 1; }
 #helm-client #setup-enrollment #enrollment-code {
     white-space: normal;
     overflow-wrap: anywhere;

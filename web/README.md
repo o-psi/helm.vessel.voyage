@@ -182,6 +182,14 @@ separate authority change: a new voyage keeps its choice locally, while an
 existing voyage waits for Vessel confirmation. Reasoning is retained locally for
 a new voyage or applied to an existing voyage's next run after confirmation.
 
+Setup's interactive controls use the installed Flux 2.19 components: buttons,
+searchable Pro listboxes, inputs, accordion, slider and status text. The account
+and model listboxes each have a dedicated screen inside the flyout. Structural
+containers and scoped layout CSS keep its header and actions visible because this
+installed Flux modal version does not provide a pinned footer slot. Socket-driven
+choices are cloned from server-rendered Flux option templates; the Vessel remains
+the source of account, profile and model authority.
+
 The composer supports text and picture attachments. **New voyage → Setup**
 prepares the workspace and account/model settings in memory without starting a
 Voyage. First Send creates the Voyage and submits the message with separate

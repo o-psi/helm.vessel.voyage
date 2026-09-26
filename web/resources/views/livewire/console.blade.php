@@ -70,7 +70,7 @@
         <div id="edit-form" class="voyage-setup-shell">
             <header id="setup-header" class="voyage-setup-header">
                 <flux:button id="setup-back" type="button" size="sm" variant="ghost" icon="arrow-left" aria-label="Back" hidden />
-                <flux:heading id="setup-title" size="lg" class="min-w-0 flex-1 truncate">Setup</flux:heading>
+                <flux:heading id="setup-title" size="lg" class="min-w-0 flex-1 truncate" tabindex="-1">Setup</flux:heading>
                 <flux:button id="setup-close" type="button" size="sm" variant="ghost" icon="x-mark" aria-label="Close setup" />
             </header>
             <div id="setup-content" class="voyage-setup-content" tabindex="0">
@@ -78,26 +78,18 @@
                 <section id="setup-overview" class="space-y-4" aria-label="Voyage setup">
                     <flux:text id="edit-description" class="setup-wrap">Choose the location, profile, access and reasoning for your next run.</flux:text>
                     <div class="space-y-2">
-                        <button id="setup-location-open" type="button" class="setup-nav-row">
-                            <flux:icon.folder class="size-5 shrink-0 text-zinc-500" />
-                            <span class="min-w-0 flex-1"><strong>Location</strong><span id="setup-location-summary" class="setup-wrap">Choose a Vessel and workspace</span></span>
-                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
-                        </button>
-                        <button id="setup-profile-open" type="button" class="setup-nav-row">
-                            <flux:icon.user-circle class="size-5 shrink-0 text-zinc-500" />
-                            <span class="min-w-0 flex-1"><strong>Profile</strong><span id="setup-profile-summary" class="setup-wrap">Choose a profile</span></span>
-                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
-                        </button>
-                        <button id="setup-access-open" type="button" class="setup-nav-row">
-                            <flux:icon.lock-open class="size-5 shrink-0 text-zinc-500" />
-                            <span class="min-w-0 flex-1"><strong>Access</strong><span id="setup-access-summary" class="setup-wrap">Vessel default</span></span>
-                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
-                        </button>
-                        <button id="setup-reasoning-open" type="button" class="setup-nav-row">
-                            <flux:icon.sparkles class="size-5 shrink-0 text-zinc-500" />
-                            <span class="min-w-0 flex-1"><strong>Reasoning</strong><span id="setup-reasoning-summary" class="setup-wrap">Provider default</span></span>
-                            <flux:icon.chevron-right class="size-4 shrink-0 text-zinc-400" />
-                        </button>
+                        <flux:button id="setup-location-open" type="button" variant="outline" icon="folder" icon:trailing="chevron-right" class="voyage-setup-link">
+                            <strong class="block">Location</strong><span id="setup-location-summary" class="setup-wrap block text-xs font-normal text-zinc-500 dark:text-zinc-400">Choose a Vessel and workspace</span>
+                        </flux:button>
+                        <flux:button id="setup-profile-open" type="button" variant="outline" icon="user-circle" icon:trailing="chevron-right" class="voyage-setup-link">
+                            <strong class="block">Profile</strong><span id="setup-profile-summary" class="setup-wrap block text-xs font-normal text-zinc-500 dark:text-zinc-400">Choose a profile</span>
+                        </flux:button>
+                        <flux:button id="setup-access-open" type="button" variant="outline" icon="lock-open" icon:trailing="chevron-right" class="voyage-setup-link">
+                            <strong class="block">Access</strong><span id="setup-access-summary" class="setup-wrap block text-xs font-normal text-zinc-500 dark:text-zinc-400">Vessel default</span>
+                        </flux:button>
+                        <flux:button id="setup-reasoning-open" type="button" variant="outline" icon="sparkles" icon:trailing="chevron-right" class="voyage-setup-link">
+                            <strong class="block">Reasoning</strong><span id="setup-reasoning-summary" class="setup-wrap block text-xs font-normal text-zinc-500 dark:text-zinc-400">Provider default</span>
+                        </flux:button>
                     </div>
                 </section>
                 <section id="setup-location" class="space-y-4" aria-label="Location" hidden>
@@ -109,16 +101,14 @@
                 </section>
                 <section id="setup-profiles" class="space-y-4" aria-label="Profiles" hidden>
                     <div id="edit-profiles-section" class="space-y-3">
-                        <flux:input id="setup-profile-search" type="search" size="sm" icon="magnifying-glass" label="Find a profile" placeholder="Search profiles…" />
-                        <select id="edit-profile" aria-label="Selected profile" hidden></select>
-                        <div id="setup-profile-list" class="setup-list" aria-label="Saved profiles"></div>
+                        <flux:select id="edit-profile" variant="listbox" searchable label="Saved profile" placeholder="Choose a profile" />
                         <flux:text id="edit-profile-summary" class="setup-wrap" />
                     </div>
                     <flux:button id="setup-manage-open" type="button" size="sm" variant="ghost" icon="cog-6-tooth">Manage profiles</flux:button>
                 </section>
                 <section id="setup-manage" class="space-y-4" aria-label="Manage profiles" hidden>
                     <flux:button id="setup-manage-back" type="button" size="sm" variant="ghost" icon="arrow-left">Profiles</flux:button>
-                    <div id="setup-manage-profile-list" class="setup-list" aria-label="Profiles to manage"></div>
+                    <flux:select id="edit-manage-profile" variant="listbox" searchable label="Profile to manage" placeholder="Choose a profile" />
                     <div id="edit-profile-actions" class="flex flex-wrap gap-2">
                         <flux:button id="profile-new" type="button" size="sm">Create</flux:button>
                         <flux:button id="profile-edit" type="button" size="sm">Edit</flux:button>
@@ -139,10 +129,9 @@
                         <flux:button id="profile-cancel-edit" type="button" size="sm" variant="ghost">Cancel profile edit</flux:button>
                     </div>
                     <div id="edit-account-section" class="space-y-3" hidden>
-                        <select id="edit-account" aria-label="Selected provider account" hidden></select>
-                        <div>
-                            <span class="setup-field-label">Provider account</span>
-                            <button id="setup-account-open" type="button" class="setup-picker-row"><span id="setup-account-value" class="min-w-0 flex-1 setup-wrap">Choose an account</span><flux:icon.chevron-right class="size-4 shrink-0" /></button>
+                        <div class="space-y-2">
+                            <flux:label for="setup-account-open">Provider account</flux:label>
+                            <flux:button id="setup-account-open" type="button" variant="outline" icon:trailing="chevron-right" class="voyage-setup-link"><span id="setup-account-value" class="setup-wrap">Choose an account</span></flux:button>
                         </div>
                         <flux:button id="edit-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button>
                         <div class="space-y-2">
@@ -152,21 +141,21 @@
                         </div>
                     </div>
                     <div id="edit-model-section" class="space-y-2" hidden>
-                        <select id="edit-model" aria-label="Selected model" hidden></select>
-                        <span class="setup-field-label">Model</span>
-                        <button id="setup-model-open" type="button" class="setup-picker-row"><span id="setup-model-value" class="min-w-0 flex-1 setup-wrap">Choose a model</span><flux:icon.chevron-right class="size-4 shrink-0" /></button>
+                        <flux:label for="setup-model-open">Model</flux:label>
+                        <flux:button id="setup-model-open" type="button" variant="outline" icon:trailing="chevron-right" class="voyage-setup-link"><span id="setup-model-value" class="setup-wrap">Choose a model</span></flux:button>
                     </div>
-                    <details class="setup-advanced">
-                        <summary>Advanced options</summary>
-                        <div class="space-y-4 pt-4">
+                    <flux:accordion>
+                        <flux:accordion.item heading="Advanced options">
+                        <div class="space-y-4">
                             <div id="edit-reasoning-section" hidden><flux:slider id="edit-reasoning" label="Reasoning" min="0" max="1" step="1" /><flux:text id="edit-reasoning-value" size="sm" aria-live="polite">Provider default</flux:text></div>
                             <div id="edit-service-section" hidden><flux:select id="edit-service" label="Service tier" /></div>
                         </div>
-                    </details>
+                        </flux:accordion.item>
+                    </flux:accordion>
                 </section>
                 <section id="setup-picker" class="space-y-4" aria-label="Choose an option" hidden>
-                    <flux:input id="setup-picker-search" type="search" size="sm" icon="magnifying-glass" label="Find an option" placeholder="Search…" />
-                    <div id="setup-picker-list" class="setup-list" aria-label="Available options"></div>
+                    <div id="setup-picker-account" hidden><flux:select id="edit-account" variant="listbox" searchable label="Provider account" placeholder="Choose an account" /></div>
+                    <div id="setup-picker-model" hidden><flux:select id="edit-model" variant="listbox" searchable label="Model" placeholder="Choose a model" /></div>
                 </section>
                 <section id="setup-enrollment" aria-label="Connect ChatGPT account" hidden></section>
                 <section id="setup-access" class="space-y-4" aria-label="Access mode" hidden>
@@ -227,7 +216,7 @@
         <template id="flux-decision"><flux:callout variant="warning" class="decision"><flux:callout.heading data-decision-heading /><flux:callout.text data-decision-text class="whitespace-pre-wrap break-words" /><x-slot name="actions" class="flex-wrap"><div data-decision-actions class="flex flex-wrap items-center gap-2"></div></x-slot></flux:callout></template>
         <template id="flux-action"><flux:button size="sm"><span data-label></span></flux:button></template>
         <template id="flux-option"><flux:select.option /></template>
-        <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span></flux:select.option></template>
+        <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span><span data-option-detail class="block text-xs font-normal text-zinc-500 dark:text-zinc-400 [ui-selected_&]:hidden"></span></flux:select.option></template>
         <template id="flux-voyage"><flux:context class="block min-w-0">
             <div data-voyage-row class="flex min-w-0 items-center gap-1">
                 <flux:sidebar.item as="button" class="min-w-0 flex-1"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item>
