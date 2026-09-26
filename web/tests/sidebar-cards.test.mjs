@@ -7,7 +7,8 @@ test('voyage cards retain Flux buttons with space, multiline titles and distinct
  assert.match(css,/button\[data-flux-sidebar-item\]\s*\{[^}]*min-height: 4rem/);
  assert.match(css,/padding: 0\.75rem !important/);
  assert.match(css,/-webkit-line-clamp: 2/);
- assert.match(css,/\[data-current\]\s*\{[^}]*border-color: var\(--color-emerald-500\)/);
+ assert.match(css,/\[data-current\]\s*\{[^}]*(?:background:|--card-fill:)/);
+ assert.match(css,/\.dark #helm-client #voyages button[^\{]*\[data-current\]\s*\{[^}]*(?:background:|--card-fill:)/);
  assert.match(css,/:focus-visible\s*\{[^}]*outline: 2px/);
  assert.match(css,/\.dark #helm-client #voyages button/);
  assert.doesNotMatch(css,/#voyages\s*\{[^}]*overflow:\s*hidden/);

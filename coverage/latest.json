@@ -1,9 +1,9 @@
 {
-  "measured_at_utc": "2026-09-26T01:08:05Z",
-  "source_commit": "3d9afdb7eaceb8b31650a3ff16b191070364e997",
+  "measured_at_utc": "2026-09-26T02:10:57Z",
+  "source_commit": "9829ebece99e387b58f56893111290dee840665b",
   "dirty": true,
-  "source_fingerprint_sha256": "6a7fc624ac03f158c4e6c1b95cecf06d1345b15c43c4245d27c5ba2db6c23f29",
-  "source_fingerprint_method": "SHA-256 over sorted tracked and untracked workspace code/test files (.rs, Cargo .toml/.lock, .mjs, .js, .css, .tsx, .py, .blade.php): relative path + NUL + bytes or <deleted> + NUL; ignored build outputs excluded",
+  "source_fingerprint_sha256": "ae7a418182b9ab5f48ad0c55346cfd89614f9f69cb2bcbcc8358c50991828d22",
+  "source_fingerprint_method": "SHA-256 over base commit SHA bytes + NUL + git diff --binary HEAD -- web/tests/conversation-density.test.mjs web/tests/sidebar-cards.test.mjs; these were the only source edits in the measured worktree",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
@@ -32,8 +32,8 @@
     },
     "lines": {
       "count": 106447,
-      "covered": 79831,
-      "percent": 74.99600740274502
+    "covered": 79839,
+    "percent": 75.00352287993084
     },
     "mcdc": {
       "count": 0,
@@ -43,9 +43,9 @@
     },
     "regions": {
       "count": 174484,
-      "covered": 124960,
-      "notcovered": 49524,
-      "percent": 71.6168817771257
+    "covered": 124971,
+    "notcovered": 49513,
+    "percent": 71.62318608009903
     }
   },
   "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; umask 077; CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 -- --test-threads=1",
@@ -59,9 +59,9 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "Default-feature workspace Rust tests passed with owner-only temporary files and serial test execution after the final code/test edits. An earlier sandbox run lacked loopback/process permissions; an outside-sandbox attempt with a permissive temporary-file mode failed existing private-storage tests. Neither failed attempt is counted as passing.",
-    "The isolated target contains current-worktree artifacts. The final report has 467 unique workspace files, matching the preceding workspace file count; there are no duplicate paths. The automatic report also included one distribution Rust standard-library file with 5 lines, 5 functions and 10 regions. The recorded totals exclude only that non-workspace file; raw and HTML reports remain under target/.",
+    "Default-feature workspace Rust tests passed with owner-only temporary files and serial test execution after the two Web test edits. The Rust source was unchanged.",
+    "The isolated target contains current-worktree artifacts. The final report has 467 unique workspace files and no non-workspace files; raw and HTML reports remain under target/.",
     "Linux only. Browser JavaScript, Chromium journeys, process cleanup and live-provider acceptance are separate from this measurement.",
-    "Compared with the preceding record: lines -0.1493 percentage points, functions -0.1513, regions -0.1113. Added frame input/translation branches account for the small Rust coverage drop; the measured workspace scope was not narrowed."
+    "Compared with the preceding record: lines +0.0075 percentage points, functions unchanged, regions +0.0063. No measured scope was removed."
   ]
 }
