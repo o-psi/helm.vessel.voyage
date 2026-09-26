@@ -22,6 +22,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     const configurations = new Map();
     let starting = false;
     let target, connection, choices = [], models = [], defaults = {}, version = 0, saving = false;
+    const disconnectedClients = new WeakSet();
     const enrollment = accountEnrollment(root, {context: () => ({connection, workspace: workspace()}), refreshed: async account => {
         const returnToEditor = setupScreen === 'enrollment' && editingProfile
             ? {profile:structuredClone(editingProfile),name:raw('edit-profile-name').value} : null;
@@ -66,7 +67,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw('setup-done').hidden = next !== 'overview';
         raw('edit-save').hidden = !['profiles','editor'].includes(next);
         raw('edit-save').textContent = next === 'editor' ? 'Save profile' : creating() ? 'Use profile' : 'Apply to next run';
-        raw('edit-retry').hidden = !['location','profiles','manage','editor'].includes(next);
+        raw('edit-retry').hidden = !['overview','location','profiles','manage','editor'].includes(next);
         raw('edit-close').hidden = next !== 'overview';
         raw('edit-status').hidden = ['picker','enrollment','access','reasoning','delete'].includes(next);
         raw('setup-content').scrollTop = 0;
@@ -124,7 +125,23 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
         $('settings-save').disabled = true;
     }
-    function still(mine, c, client) { return mine === version && connection === c && c.client === client && current().session_id === target?.session_id && current().vessel === target?.vessel; }
+    function still(mine, c, client) { return Boolean(client) && mine === version && connection === c && c.client === client && !disconnectedClients.has(client) && current().session_id === target?.session_id && current().vessel === target?.vessel; }
+    function readStillCurrent(mine, c, client, disconnected = false) {
+        if (!disconnected && still(mine,c,client)) return true;
+        if (mine === version && connection === c && setupDialog()?.hasAttribute('open')) {
+            const selected = current();
+            if (selected.session_id !== target?.session_id || selected.vessel !== target?.vessel) status('Voyage changed. Close and reopen setup.');
+            else if (disconnected || disconnectedClients.has(client) || c.client !== client) status(c.client && c.client !== client ? 'Vessel connection changed. Select Reload to refresh choices.' : 'Vessel connection lost. Reconnect it, then select Reload.');
+        }
+        return false;
+    }
+    async function setupRead(mine, c, client, op, fields = {}) {
+        const socket = client.socket;
+        const closed = () => { disconnectedClients.add(client); readStillCurrent(mine,c,client,true); };
+        socket?.addEventListener('close',closed,{once:true});
+        try { return await read(client,op,fields); }
+        finally { socket?.removeEventListener('close',closed); }
+    }
     async function loadVessel() {
         if (saving) return;
         const mine = ++version; reset(); options('settings-workspace', []);
@@ -135,8 +152,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!client) { unavailable('This Vessel is offline. Reconnect it to load workspaces and accounts.'); return status('This Vessel is offline. Reconnect it to load workspaces and accounts.'); }
         status('Loading workspaces…');
         try {
-            const caps = await read(client, 'capabilities');
-            if (!still(mine,c,client)) return;
+            const caps = await setupRead(mine,c,client,'capabilities');
+            if (!readStillCurrent(mine,c,client)) return;
             if (caps.vessel_id !== c.vessel_id) throw new Error('Vessel identity changed. Reconnect before continuing.');
             const required = creating() ? ['create','account_use'] : ['account_use'];
             if (caps.scope !== 'owner' && required.some(right => !caps.rights?.includes(right))) throw new Error('This older connection has limited access. Reconnect using the full-access setup instructions.');
@@ -145,8 +162,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             }
             let workspaces = caps.workspaces || [];
             if (!creating()) {
-                const process = await read(client,'inspect',{session_id:target.session_id});
-                if (!still(mine,c,client)) return;
+                const process = await setupRead(mine,c,client,'inspect',{session_id:target.session_id});
+                if (!readStillCurrent(mine,c,client)) return;
                 if (process.session_id !== target.session_id || process.incarnation !== target.incarnation) throw new Error('Voyage changed. Close this form and reopen its settings.');
                 workspaces = [{name:process.workspace,path:process.workspace}];
             }
@@ -159,7 +176,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             $('settings-workspace').disabled = !creating() || !items.length;
             if (!items.length) return status('No workspaces are available. Reconnect using the full-access setup instructions.');
             await workspaceChanged();
-        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
+        } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     async function loadAccounts() {
         if (saving) return;
@@ -170,8 +187,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!selectedWorkspace.startsWith('/')) return status('Enter an absolute folder path on this Vessel.');
         status('Loading provider accounts…');
         try {
-            const accountCatalogue = await read(client,'accounts',{workspace:selectedWorkspace,transport:null});
-            if (!still(mine,c,client)) return;
+            const accountCatalogue = await setupRead(mine,c,client,'accounts',{workspace:selectedWorkspace,transport:null});
+            if (!readStillCurrent(mine,c,client)) return;
             for (const account of accountCatalogue.accounts || []) {
                 const provider = accountCatalogue.connections?.find(item => item.id === account.connection_id);
                 for (const transport of provider?.transports || []) {
@@ -187,7 +204,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
             if (setupScreen === 'editor') loadUsage(false);
             await loadProfiles();
-        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
+        } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     const selectedProfile = () => catalogue.profiles.find(profile => profile.id === raw('edit-profile').value);
     function choiceRow(label, detail, selected, action, disabled = false) {
@@ -280,9 +297,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         for (const action of ['edit','duplicate','default','delete']) raw(`profile-${action}`).disabled = !profile;
         status(profile ? 'Apply copies these settings to this voyage. Profile edits never change existing voyages.' : 'Create a profile to get started.');
         if (creating() && profile && !configuration() && !raw('edit-save').disabled) {
-            const origin = captureDraft?.(), c = connection, mine = version;
+            const origin = captureDraft?.(), c = connection, client = c?.client, mine = version;
             Promise.resolve(origin?.workspace ? null : draft(c.id,workspace())).then(() => {
-                if (!still(mine,c,c.client)) return;
+                if (!still(mine,c,client) || selectedProfile()?.id !== profile.id) return;
                 const active = captureDraft?.();
                 if (!active || active.vessel !== c.id || active.workspace !== workspace()) return;
                 configurations.set(active.key,{vessel:c.id,vessel_id:c.vessel_id,workspace:workspace(),profileId:profile.id,profileName:profile.name,accountLabel:choices.find(item=>sameAccount(item.binding,profile.account))?.label,settings:profileSettings(profile),reasoning_efforts:[]});
@@ -294,8 +311,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     async function loadProfiles() {
         const mine = version, c = connection, client = c.client;
-        const result = await read(client,'profiles',{workspace:workspace()});
-        if (!still(mine,c,client)) return;
+        const result = await setupRead(mine,c,client,'profiles',{workspace:workspace()});
+        if (!readStillCurrent(mine,c,client)) return;
         catalogue = result; renderProfiles();
     }
     async function editProfile(mode) {
@@ -348,22 +365,22 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     });
     async function loadModels() {
         if (saving) return;
-        const mine = ++version, c = connection, client = c?.client, selected = choice();
+        const mine = ++version, c = connection, client = c?.client, selected = choice(), profile = editingProfile;
         models = []; $('settings-save').disabled = true;
         for (const id of ['settings-model','settings-reasoning','settings-service']) options(id,[]);
         renderEditorChoices();
         if (!client || !selected?.ready) return status('Choose an available provider account.');
         status('Loading models for this account…');
         try {
-            const result = await read(client,'account_models',{workspace:workspace(),account:selected.binding});
-            if (!still(mine,c,client)) return;
+            const result = await setupRead(mine,c,client,'account_models',{workspace:workspace(),account:selected.binding});
+            if (!readStillCurrent(mine,c,client) || setupScreen !== 'editor' || editingProfile !== profile) return;
             if (!same(result.account,selected.binding) || !Array.isArray(result.models)) throw new Error('Account model list changed. Reload choices.');
             models = result.models;
             const seed = editingProfile || (!creating() ? target.inference : defaults);
             const preferred = same(seed?.account,selected.binding) ? seed?.model : models.find(m => m.is_default)?.id;
             options('settings-model',models.map(m => ({value:m.id,label:m.display_name && m.display_name !== m.id ? `${m.display_name} · ${m.id}` : m.id})),preferred);
             updateModel(); renderEditorChoices();
-        } catch (error) { if (still(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
+        } catch (error) { if (setupScreen === 'editor' && editingProfile === profile && readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     function updateModel() {
         const selected = model();
@@ -378,10 +395,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         $('settings-save').disabled = !selected;
         renderEditorChoices();
         if (creating() && selected && !configuration() && !editingProfile) {
-            const origin = captureDraft?.(), mine = version, c = connection;
+            const origin = captureDraft?.(), mine = version, c = connection, client = c?.client;
             if (origin?.vessel === connection.id && origin.target?.type === 'new_chat' && !origin.workspace) {
                 draft(connection.id,workspace()).then(() => {
-                    if (!still(mine,c,c.client) || current().session_id || captureDraft()?.key !== origin.key) return;
+                    if (!still(mine,c,client) || current().session_id || captureDraft()?.key !== origin.key || model()?.id !== selected.id) return;
                     const active = captureDraft();
                     configurations.set(active.key,{vessel:connection.id,vessel_id:connection.vessel_id,workspace:workspace(),accountLabel:clean(choice().label),settings:{account:choice().binding,model:selected.id,reasoning_effort:reasoningValue($('settings-reasoning')) || null,service_tier:$('settings-service').value || null},reasoning_efforts:selected.reasoning_efforts || []});
                     prepared();
@@ -591,7 +608,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw(`${prefix}-workspace`).addEventListener('change',workspaceChanged);
         raw(`${prefix}-account`).addEventListener('change',() => { loadModels(); if (setupScreen === 'editor') loadUsage(false); });
         raw(`${prefix}-model`).addEventListener('change',updateModel);
-        raw(`${prefix}-retry`).addEventListener('click',loadVessel);
+        raw(`${prefix}-retry`).addEventListener('click',() => {
+            if (setupScreen === 'editor') { screenStack = []; showScreen('profiles', false); }
+            loadVessel();
+        });
     }
     raw('edit-workspace-path').addEventListener('input',() => { ++version; reset(); renderOverview(); });
     raw('edit-workspace-path').addEventListener('change',loadAccounts);

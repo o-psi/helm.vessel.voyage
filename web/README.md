@@ -111,7 +111,16 @@ LOG_LEVEL=warning
 
 Retain the migrated `APP_KEY` exactly across CT upgrades; do not regenerate it.
 Generate a key only for a fresh installation with no existing runtime state. Run
-`php artisan migrate --force` and `php artisan optimize` on the CT as `helm`.
+`php artisan migrate --force` on the CT as `helm`. Keep the configuration cache
+cleared: the private `LARAVEL_STORAGE_PATH` comes from `.env`, but
+`php artisan optimize` currently caches paths under `/srv/helm/app/storage`. If
+`optimize` was run, follow it with `php artisan config:clear` before serving
+traffic. Let `www-data` compile views in
+`/srv/helm/runtime/storage/framework/views`; a
+view cache generated as `helm` can fail when Laravel later updates a compiled
+file's timestamp as `www-data`. Verify both `/up` and an authenticated console
+request after changing caches. See [compiled-view deployment notes](deploy/compiled-views.md).
+
 The CT currently has Node 20.19.2, below `package.json`'s supported range. The
 initial deployment used matching assets built on the laptop. For later updates,
 run `npm ci` and `npm run build` on a host with supported Node, then copy the

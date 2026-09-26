@@ -9,6 +9,17 @@ Check the effective Laravel storage and compiled-view paths before any CLI rende
 or cache command. Do not assume `web/storage` is active: the laptop deployment's
 `.env` set `LARAVEL_STORAGE_PATH`, and a CLI bootstrap could write its live cache.
 
+On CT 106, `php artisan optimize` as `helm` cached paths under
+`/srv/helm/app/storage` even though `.env` points `LARAVEL_STORAGE_PATH` to the
+private runtime. The HTML `/up` route and authenticated console then returned
+500 while `/up` with `Accept: application/json` returned 200. The active error
+was `touch(): Utime failed: Operation not permitted` in `BladeCompiler`: a
+compiled view owned by `helm` cannot have its timestamp set by `www-data`, even
+when the file is group writable. Clear the configuration cache to restore the
+private runtime path, and let `www-data` create compiled views there. Check that
+new compiled files appear under `/srv/helm/runtime/storage/framework/views`,
+then verify both the HTML `/up` route and an authenticated console request.
+
 Laravel's atomic file replacement applies `0777 - umask()`. A CLI process with
 umask `0077` creates compiled views with mode `0700`, masking inherited ACL
 access for the `http` PHP-FPM worker. Repeated authenticated console requests
@@ -30,8 +41,9 @@ Do not change the process-wide umask to solve this: it also governs secret files
 
 For recovery, inspect the active Laravel log and the exact failing generated
 file with `namei -l` and `getfacl`. On CT 106 the worker is `www-data`; restore only
-its read access to affected generated PHP files, following the CT's group and ACL
-configuration. The laptop's old `http` ACL must not be copied to the CT.
+its access to affected generated PHP files, including ownership when Laravel
+needs to update their timestamps. The laptop's old `http` ACL must not be copied
+to the CT.
 
 Do not recursively make storage, credentials, sessions or database files public.
 Verify effective access and repeat the authenticated request. A successful public
