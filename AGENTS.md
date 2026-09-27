@@ -129,8 +129,8 @@ responsibility for its integration and outcome.
   workflow checks out current `main`. Its artifact name and `BUILD.txt` identify
   the source commit. If main advanced, establish that the built source contains the
   delivered commit and report the actual SHA; do not claim an exact-commit build.
-  A successful skipped run is not a newly produced download: locate the previous
-  successful, unexpired artifact that justified the skip. For packaging/workflow
+  A successful skipped run is not a newly produced download: locate the
+  public prerelease with both archive and checksum that justified the skip. For packaging/workflow
   changes, download and inspect the archive, binary membership, source/version
   identity and checksum before claiming the download pipeline works. For browser
   assets, verify the archive's `release.json` inventories `share/voyage/browser`
@@ -153,9 +153,9 @@ Read [the nightly workflow](.github/workflows/nightly.yml),
   availability: expiry/deletion can permit an unchanged-source rebuild, while a
   failed build does not prove a usable download exists. Do not treat planned
   release automation as implemented capability.
-- Nightly artifacts are development downloads, not Git tags, GitHub Releases, a
-  stable installer bundle or an automatic update channel. Keep stable downloads
-  unchanged. Never reuse the last shipped version as a prerelease base, overwrite
+- Nightly builds publish public development prereleases under `nightly-VERSION`
+  tags, with archive and checksum assets. They are not stable releases or an
+  automatic update channel; keep stable downloads unchanged. Never reuse the last shipped version as a prerelease base, overwrite
   a published version, or claim nightly/alpha/beta labels have a different order
   from SemVer's actual comparison rules.
 - Routine delivery does not authorize a stable release. When a user requests a

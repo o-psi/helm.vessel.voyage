@@ -134,22 +134,55 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 version=${VOYAGE_VERSION:-${VOYAGE_INSTALLER_VERSION:-latest}}
+source_commit=
 if [ "$version" = latest ]; then
-    fetch 'https://api.github.com/repos/o-psi/voyage/releases/latest' "$tmp/latest.json" 1048576 || fail 'no published release is available; set VOYAGE_RELEASE_DIR to an extracted full release or local build.'
-    version=$(python3 - "$tmp/latest.json" <<'PY'
+    fetch 'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/latest' "$tmp/latest.json" 1048576 || fail 'no published release is available; set VOYAGE_RELEASE_DIR to an extracted full release or local build.'
+    version=$(python3 - "$tmp/latest.json" <<'PYTHON'
 import json, sys
 with open(sys.argv[1]) as stream:
-    print(json.load(stream)['tag_name'])
-PY
+    release = json.load(stream)
+if release.get('draft') is not False or release.get('prerelease') is not False:
+    raise SystemExit('Expected a published stable release')
+print(release['tag_name'])
+PYTHON
     ) || fail 'invalid latest-release response.'
 fi
+if [ "$version" = nightly ]; then
+    fetch 'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases?per_page=100' "$tmp/releases.json" 4194304 || fail 'public nightly lookup failed; check GitHub/network availability.'
+    version=$(python3 - "$tmp/releases.json" "$tmp/source" "$target" <<'PYTHON'
+import json, pathlib, re, sys
+releases = json.loads(pathlib.Path(sys.argv[1]).read_text())
+candidates = []
+for release in releases:
+    match = re.fullmatch(r'nightly-([0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+\.[0-9]+)', str(release.get('tag_name', '')))
+    if match and release.get('prerelease') is True and release.get('draft') is False:
+        candidates.append((tuple(map(int, re.findall(r'[0-9]+', match[1]))), release, match[1]))
+if not candidates:
+    raise SystemExit('No public nightly is available; no fallback was installed')
+_, release, version = max(candidates, key=lambda item: item[0])
+source = release.get('target_commitish', '')
+if not re.fullmatch(r'[0-9a-f]{40}', str(source)):
+    raise SystemExit('Nightly release lacks an exact source commit')
+name = f'voyage-{version}-{sys.argv[3]}.tar.gz'
+for name, limit in ((name, 536870912), (name + '.sha256', 4096)):
+    matches = [asset for asset in release.get('assets', []) if asset.get('name') == name]
+    if len(matches) != 1 or type(matches[0].get('size')) is not int or not 0 < matches[0]['size'] <= limit:
+        raise SystemExit('Public nightly asset missing or oversized')
+pathlib.Path(sys.argv[2]).write_text(source)
+print(version)
+PYTHON
+    ) || fail 'invalid or unavailable public nightly.'
+    source_commit=$(cat "$tmp/source")
+fi
 case "$version" in ''|.|..|*[!A-Za-z0-9._-]*) fail 'invalid VOYAGE_VERSION.' ;; esac
+tag=$version
+case "$version" in *-nightly.*) tag="nightly-$version" ;; esac
 asset="voyage-$version-$target.tar.gz"
-base="https://github.com/o-psi/voyage/releases/download/$version"
+base="https://github.com/o-psi/helm.vessel.voyage/releases/download/$tag"
 printf 'Downloading Voyage %s (%s)…\n' "$version" "$target" >&2
 fetch "$base/$asset.sha256" "$tmp/checksum" 4096 || fail 'release checksum unavailable; check the published version and platform.'
 fetch "$base/$asset" "$tmp/$asset" || fail 'full release download failed.'
-python3 - "$tmp" "$asset" "$version" "$target" <<'PY'
+python3 - "$tmp" "$asset" "$version" "$target" "$source_commit" <<'PY'
 import hashlib, json, pathlib, re, shutil, sys, tarfile
 base, asset = pathlib.Path(sys.argv[1]), sys.argv[2]
 manifest = (base / 'checksum').read_text().strip()
@@ -195,6 +228,13 @@ names = ('helm', 'vessel', 'voyage', 'voyage-installer')
 if (release.get('schema_version') != 1 or release.get('version') != sys.argv[3]
         or release.get('target') != sys.argv[4] or set(release.get('binaries', {})) != set(names)):
     raise SystemExit('Release manifest identity/platform mismatch')
+if '-nightly.' in sys.argv[3]:
+    build = base / root / 'BUILD.txt'
+    if not build.is_file() or build.stat().st_size > 4096 or not release.get('assets'):
+        raise SystemExit('Nightly source or browser inventory missing')
+    source = re.search(r'^Source: ([0-9a-f]{40})$', build.read_text(), re.MULTILINE)
+    if not source or (sys.argv[5] and source[1] != sys.argv[5]):
+        raise SystemExit('Nightly source identity mismatch')
 for name in names:
     binary = base / root / 'bin' / name
     if not binary.is_file():

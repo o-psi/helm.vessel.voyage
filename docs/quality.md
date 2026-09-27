@@ -328,6 +328,13 @@ The Linux sandbox case launches bubblewrap and requires working user namespaces;
 setup failure is a failing check, never an unsandboxed fallback. This does not
 exercise live provider billing or certify native macOS/Windows behavior.
 
+## Public nightly acquisition
+
+Run `python3 packaging/test_public_nightly.py -v` after changes to the public
+nightly resolver or bootstrap. It exercises anonymous metadata, full archive
+extraction and failure handling with local HTTPS fixtures. It is an offline check:
+verify the actual published release and isolated installation separately.
+
 ## Bootstrap-only checks
 
 Run `python3 packaging/test_bootstrap.py -v` for offline bootstrap regressions,

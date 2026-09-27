@@ -19,18 +19,20 @@ platform loader, managed services and updater compatibility. It does not publish
 binaries or restart services. Helm shows the exact version, source identity and
 services before **Update this Vessel** approves that prepared release.
 
-Stable downloads use the canonical GitHub repository's published release. Nightly
-downloads use a completed successful `nightly.yml` main run, an unexpired artifact,
-its checksum, manifest and `BUILD.txt` source identity. The installer accepts no
-client-supplied URL, executable or shell command and makes no source-build fallback.
-GitHub checksums provide integrity under that repository's publication authority;
-this does not add independent release-signature verification.
+Stable downloads use the canonical GitHub repository's latest published stable
+release. Explicit nightly updates resolve the newest public `nightly-VERSION`
+prerelease and verify its archive checksum, exact source commit in `BUILD.txt`,
+platform and browser-asset manifest. The installer accepts no client-supplied
+URL, executable or shell command and makes no source-build fallback. The
+prerelease is public, so nightly preparation requires no GitHub CLI login on the
+executing host. Helm does not transfer credentials. GitHub checksums provide
+integrity under repository publication authority; this does not add independent
+release-signature verification.
 
-Nightly downloads require an existing GitHub CLI login on the executing host.
-Helm does not transfer credentials. Stable public downloads can use curl without
-GitHub login. Python 3.11+, curl and a working systemd user manager are required.
-Nightly artifacts currently target Linux x86-64 and the workflow's libc baseline;
-unsupported platform/loaders are refused before installation.
+Python 3.11+, curl and a working systemd user manager are required. Public
+nightlies currently target Linux x86-64 and glibc 2.39+; unsupported hosts are
+refused before installation. A managed update still requires owner review and
+approval of the exact prepared artifact.
 
 ## Durable operation and reconnect
 

@@ -27,42 +27,49 @@ in historical commits does not justify restoring deleted files in a working tree
 
 ## Nightly development downloads
 
-The GitHub `nightly` workflow builds Linux x86-64 programs at 03:23 UTC each
-night (GitHub may delay scheduled runs). It can also be started through
-**Actions → nightly → Run workflow**. Both modes build `main`, not a selected
-feature branch. No tests are run, no Git tags or GitHub Releases are created,
-and stable downloads are unchanged.
-
-The workflow skips a source commit when a previous successful nightly still has
-a downloadable artifact for that commit. Failed builds are retried the next night.
-Artifacts expire after 30 days; an expired or deleted download permits a rebuild
-of unchanged source so a development download remains available. Changes anywhere
-on `main`, including documentation, count as changed source.
+The GitHub [`nightly` workflow](../.github/workflows/nightly.yml) builds Linux x86-64 programs at
+03:23 UTC each night (GitHub may delay scheduled runs), or through a manual
+workflow dispatch. Both modes check out current `main`. No hosted tests run.
+A successful new build publishes a **public GitHub prerelease** with a unique
+`nightly-VERSION` tag, a full `.tar.gz` archive and `.sha256` checksum. The tag
+points to the actual checked-out source commit; `BUILD.txt` records the same
+source. The prerelease is never selected as GitHub's latest stable release.
+Actions artifacts remain as short-lived build evidence, not the public download
+channel. Public prereleases persist until deliberately retired. The workflow
+skips a commit only while a public nightly for that exact source has both assets.
+Failed builds are retried at the next run; a failed publication is not a usable
+download. Changes anywhere on main, including docs, count as changed source.
 
 The next intended release is recorded in
 [`packaging/nightly-version.txt`](../packaging/nightly-version.txt), currently
 `1.0.2`. In the temporary build checkout only, the workflow sets the Cargo workspace
-and its lockfile entries to `1.0.2-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
-run and attempt numbers prevent version reuse. The checked-in Cargo version remains
-the stable baseline. Before nightlies toward a later release, edit the target file.
-A target equal to or older than any fetched stable `vMAJOR.MINOR.PATCH` tag is
-refused, so shipping `v1.0.2` requires choosing a newer target for future nightlies.
+and lock entries to `1.0.2-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
+run and attempt numbers prevent version reuse. Checked-in Cargo versions remain
+the stable baseline. The version guard refuses a target equal to or older than a
+shipped stable tag; reconcile the next target after a stable release.
 
-To download: open **Actions → nightly**, select a successful run that actually
-built programs, and download its **nightly-…** artifact (GitHub sign-in is normally
-required). Inside the downloaded ZIP is a `.tar.gz` archive and its `.sha256`
-checksum. Extract the ZIP, check it with `sha256sum -c *.sha256`, then unpack the
-archive. Its `bin/` directory contains `helm`, `vessel`, `voyage`, and
-`voyage-installer`; `BUILD.txt` records the version and exact source commit.
-The archive also includes `release.json` with hashes for all four binaries and
-the browser worker assets. Keep the unpacked `bin/`, `share/`, and `release.json`
-together when using `voyage-installer upgrade --bin-dir PATH/TO/bin`. The
-installer uses that manifest to include and verify the browser worker. Supplying
-only `bin/` creates a binary-only installation that cannot start `host_browser`.
-These are development binaries, not the full stable installation bundle: no
-release documentation, generated completions, signatures are included. Managed installations can opt into the reviewed
-[remote update flow](remote-updates.md); nightly download access is required on
-the executing host, and each installation needs explicit approval. A successful build is not evidence of tested runtime behavior.
+For a fresh supported machine, use the explicit public nightly bootstrap:
+
+```sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh
+VOYAGE_VERSION=nightly sh install.sh install --start
+```
+
+Review the script before execution. This requires Linux x86-64, glibc 2.39+,
+Python 3.11+, curl and a working systemd user manager under an ordinary user.
+The public download does not require GitHub login. `VOYAGE_VERSION=latest` (the
+default) remains the latest stable release. A specific published nightly version
+can be pinned with `VOYAGE_VERSION=1.0.2-nightly...`.
+
+The archive contains `helm`, `vessel`, `voyage`, `voyage-installer`, `BUILD.txt`
+and `release.json` with binary and browser worker hashes. Keep its `bin/`,
+`share/` and `release.json` together when using `voyage-installer` directly.
+The bootstrap verifies the checksum, manifest, binary hashes and nightly source
+identity before invoking the installer. These are development binaries: no
+release documentation, generated completions or signatures are included.
+Managed installations can opt into [reviewed remote updates](remote-updates.md).
+A successful build or checksum does not establish native installation or runtime
+behavior on an untested computer.
 
 ## Artifact integrity
 

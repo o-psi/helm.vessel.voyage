@@ -37,6 +37,23 @@ Executables are stored in private, immutable release directories. Commands in
 four programs together. Ensure `~/.local/bin` is on PATH; the installer does not
 rewrite shell startup files.
 
+## Public nightly installation
+
+On a supported fresh Linux x86-64 computer, download and review the bootstrap,
+then explicitly select the public nightly channel:
+
+```sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh
+VOYAGE_VERSION=nightly sh install.sh install --start
+```
+
+Run as your ordinary user with glibc 2.39+, Python 3.11+, curl and a reachable
+systemd user manager. No GitHub login is needed. The bootstrap pins one public
+prerelease, checks its archive, manifest, binaries and source identity, then
+invokes the bundled installer. `VOYAGE_VERSION=latest` is the default stable
+channel; a nightly is selected only explicitly. Supported managed Vessels can
+also prepare a nightly through the owner-approved [remote update flow](../docs/remote-updates.md).
+
 ## Across versions
 
 Full archives contain a versioned `release.json` with the release label, target

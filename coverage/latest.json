@@ -1,8 +1,8 @@
 {
-  "measured_at_utc": "2026-09-27T18:04:32.267163+00:00",
-  "source_commit": "5d01c377bab36212ed1eb2b757563c4ea7a7461a",
+  "measured_at_utc": "2026-09-27T18:13:52.215162+00:00",
+  "source_commit": "a673e3b591e95b2bfffeb61177159ccc74fa4083",
   "dirty": true,
-  "source_fingerprint_sha256": "a281d953f68512f7b5b906b9bb32c7c4afa51dc2450b1860a0ac0c5820cec215",
+  "source_fingerprint_sha256": "43fe08c2bbea19c3ecf4f580debe38fec39b15ee7e3cca85f31a9cf466868a38",
   "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including protected Linux control storage and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10291,
-      "covered": 7450,
-      "percent": 72.39335341560587
+      "covered": 7449,
+      "percent": 72.38363618695948
     },
     "instantiations": {
       "count": 23304,
-      "covered": 9398,
-      "percent": 40.327840714040505
+      "covered": 9399,
+      "percent": 40.332131822863026
     },
     "lines": {
       "count": 107716,
-      "covered": 80910,
-      "percent": 75.11418916409819
+      "covered": 80902,
+      "percent": 75.10676222659586
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 176921,
-      "covered": 126796,
-      "notcovered": 50125,
-      "percent": 71.66814566953612
+      "covered": 126788,
+      "notcovered": 50133,
+      "percent": 71.66362387732377
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; (umask 077; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/profile-no-reload -j 8)",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; (umask 077; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/public-nightly -j 8)",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -118,11 +118,10 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "All 13 current Cargo workspace test executables plus the three exercised current binaries selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
-    "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this Web-only delivery.",
-    "Private fixture directories created with umask 077; workspace coverage passed without runtime policy changes.",
-    "Web verification separate: 47 shared/backend and 52 React tests passed; Rust coverage source fingerprint and scope remain unchanged.",
-    "No native root fixture or live-provider inference was rerun for this profile UX delivery.",
-    "Percentage-point changes from prior measurement: {\"lines\": 0.0093, \"functions\": 0.0097, \"regions\": 0.0062}"
+    "All 13 current Cargo workspace test executables plus three exercised current binaries selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
+    "Measurement includes unrelated staged Helm Rust work in the source fingerprint; that file is not part of this delivery.",
+    "Private fixture directories used umask 077. Python public-nightly tests are separate from Rust coverage.",
+    "The embedded Python acquisition worker changed; Rust workspace source and Cargo manifests are otherwise unchanged by this delivery.",
+    "Percentage-point changes from prior measurement: {\"lines\": -0.0074, \"functions\": -0.0097, \"regions\": -0.0045}"
   ]
 }
