@@ -8,6 +8,75 @@ use std::{
 };
 use uuid::Uuid;
 
+const BASE_BROWSER_SLOTS: usize = 4;
+const MAX_BROWSER_SLOTS: usize = 16;
+
+#[cfg(target_os = "linux")]
+fn slots_for_available_memory(available: u64) -> usize {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    BASE_BROWSER_SLOTS
+        + (available.saturating_sub(4 * GIB) / (2 * GIB))
+            .min((MAX_BROWSER_SLOTS - BASE_BROWSER_SLOTS) as u64) as usize
+}
+
+/// A generous reserve keeps the initial four-slot behavior on constrained
+/// hosts, while a host with spare memory need not refuse a fifth live voyage.
+/// The cgroup limit takes precedence when the service runs in a container.
+#[cfg(target_os = "linux")]
+pub fn admission_slots() -> usize {
+    let mem_available = fs::read_to_string("/proc/meminfo")
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                line.strip_prefix("MemAvailable:")?
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|kib| kib.checked_mul(1024))
+            })
+        })
+        .unwrap_or(0);
+    slots_for_available_memory(mem_available.min(cgroup_available().unwrap_or(u64::MAX)))
+}
+
+#[cfg(target_os = "linux")]
+fn cgroup_available() -> Option<u64> {
+    let membership = fs::read_to_string("/proc/self/cgroup").ok()?;
+    let group = membership
+        .lines()
+        .find_map(|line| line.strip_prefix("0::"))?;
+    let mut path = PathBuf::from("/sys/fs/cgroup");
+    for component in Path::new(group).components() {
+        if let std::path::Component::Normal(segment) = component {
+            path.push(segment);
+        } else if component != std::path::Component::RootDir {
+            return None;
+        }
+    }
+    let root = Path::new("/sys/fs/cgroup");
+    let mut least = None;
+    loop {
+        if let (Ok(max), Ok(current)) = (
+            fs::read_to_string(path.join("memory.max")),
+            fs::read_to_string(path.join("memory.current")),
+        ) {
+            if max.trim() != "max" {
+                let headroom = max
+                    .trim()
+                    .parse::<u64>()
+                    .ok()?
+                    .saturating_sub(current.trim().parse::<u64>().ok()?);
+                least = Some(least.map_or(headroom, |prior: u64| prior.min(headroom)));
+            }
+        }
+        if path == root {
+            return least;
+        }
+        path = path.parent()?.to_path_buf();
+    }
+}
+
 fn slot_owner(bytes: &[u8]) -> Option<Uuid> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
 }
@@ -193,7 +262,7 @@ pub(crate) fn recover(
     let root = crate::config::default_data_dir().join("host-browser-capacity");
     crate::attachment::local_actor::storage::Directory::open(&root)?.verify()?;
     let mut slots = Vec::new();
-    for index in 0..4 {
+    for index in 0..MAX_BROWSER_SLOTS {
         let path = root.join(format!("browser-slot-{index}"));
         match fs::symlink_metadata(&path) {
             Ok(_) if slot_owner(&read_private(&path)?) == Some(session) => {
@@ -333,6 +402,16 @@ impl Capacity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn spare_memory_expands_admission_but_never_exceeds_bound() {
+        const GIB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(slots_for_available_memory(0), 4);
+        assert_eq!(slots_for_available_memory(5 * GIB), 4);
+        assert_eq!(slots_for_available_memory(6 * GIB), 5);
+        assert_eq!(slots_for_available_memory(40 * GIB), 16);
+        assert_eq!(slots_for_available_memory(u64::MAX), 16);
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn observed_guardian_cleanup_recovers_stale_slot_without_attesting_effects() {

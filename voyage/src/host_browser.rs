@@ -537,7 +537,7 @@ impl HostBrowser {
                     &capacity_root,
                     &self.directory,
                     self.session,
-                    4,
+                    crate::host_browser_capacity::admission_slots(),
                 )?
             }
             #[cfg(not(target_os = "linux"))]
