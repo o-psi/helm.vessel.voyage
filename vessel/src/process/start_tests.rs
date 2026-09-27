@@ -196,6 +196,105 @@ async fn initialized_coordinator_spawns_authenticates_persists_and_replays() {
 }
 
 #[tokio::test]
+async fn configured_creation_does_not_require_a_host_default() {
+    const ISOLATED: &str = "VOYAGE_TEST_CONFIGURED_START_ISOLATED";
+    let f = Fixture::new();
+    if std::env::var_os(ISOLATED).is_none() {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process::start_tests::configured_creation_does_not_require_a_host_default",
+                "--nocapture",
+            ])
+            .env(ISOLATED, "1")
+            .env("XDG_DATA_HOME", &f.0)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+        return;
+    }
+    assert!(
+        voyage_runtime::accounts::Registry::default_host()
+            .unwrap()
+            .default_account()
+            .unwrap()
+            .1
+            .is_none()
+    );
+    // The independent runtime also resolves defaults during first bootstrap.
+    // It must preserve an explicit binding when this isolated host has no default.
+    let binding = voyage_protocol::accounts::AccountBinding {
+        account_id: Uuid::new_v4(),
+        connection_id: Uuid::new_v4(),
+        identity_generation: 1,
+        connection_revision: 1,
+        transport: voyage_protocol::accounts::Transport::ChatgptOauth,
+    };
+    let mut config = voyage_runtime::Config {
+        account: Some(binding.clone()),
+        ..Default::default()
+    };
+    config.require_default_account().unwrap();
+    assert_eq!(config.account, Some(binding));
+    assert!(
+        voyage_runtime::Config::default()
+            .require_default_account()
+            .unwrap_err()
+            .to_string()
+            .starts_with("default_account_required")
+    );
+    let mut s = f.supervisor().await;
+    s.binary = executable(&f);
+    let session = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    let error = s
+        .start(command, session, f.0.clone(), None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().starts_with("default_account_required"));
+    assert!(
+        database::creation_receipt(&f.0, command)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !registry::directory(&f.0, session)
+            .join("fixture-argv.json")
+            .exists()
+    );
+
+    // The controlled runtime checks that the retained config is handed through;
+    // account/config validation is owned by the caller and the real runtime.
+    let config = f.0.join("launch.json");
+    std::fs::write(&config, "{}").unwrap();
+    let result = s
+        .start(command, session, f.0.clone(), Some(config.clone()))
+        .await
+        .unwrap();
+    assert_eq!(result["state"], "live");
+    assert_eq!(
+        s.start(command, session, f.0.clone(), Some(config.clone()))
+            .await
+            .unwrap(),
+        result
+    );
+    let resolved = s
+        .resolve_start(command, session, f.0.clone(), Some(config))
+        .await
+        .unwrap();
+    assert_eq!(resolved["status"], "created");
+    assert_eq!(resolved["process"], result);
+    stop(&registry::directory(&f.0, session)).await;
+}
+
+#[tokio::test]
 async fn initialized_spawn_failure_is_retained_and_never_retried() {
     let f = Fixture::new();
     let s = f.supervisor().await;

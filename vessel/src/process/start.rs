@@ -113,7 +113,9 @@ impl Supervisor {
                     .await,
             )?);
         }
-        if initialize.is_none() {
+        // Configured starts already captured their selected account. Only a
+        // start with neither configuration nor imported state needs a default.
+        if initialize.is_none() && config_path.is_none() {
             let (_, default) =
                 voyage_runtime::accounts::Registry::default_host()?.default_account()?;
             ensure!(

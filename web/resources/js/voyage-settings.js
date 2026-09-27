@@ -6,6 +6,15 @@ import {request, uuid} from './vessel-client.js';
 
 const same = (a, b) => a && b && ['account_id','connection_id','identity_generation','connection_revision','transport'].every(k => a[k] === b[k]);
 const clean = value => String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, '');
+function creationRejection(error, commandId) {
+    const code = String(error ?? '').split(':', 1)[0];
+    const reason = code === 'default_account_required'
+        ? 'This Vessel requires a default account even though a profile is selected. Update the Vessel, then retry.'
+        : ['account unavailable', 'account binding revoked or unavailable', 'selected account unavailable or changed; review account selection'].includes(code)
+            ? 'The selected account is unavailable or changed. Open setup and reconnect the account or choose another profile.'
+            : 'Creation was rejected by the Vessel. Open setup to review the profile and location.';
+    return `${reason} Your draft is retained. Creation reference: ${commandId}.`;
+}
 async function read(client, op, fields = {}) {
     const response = await client.exchange(request(op, fields));
     if (response.protocol !== 1 || response.error != null || response.outcome_unknown !== false) throw new Error('The Vessel could not confirm this request. Check its connection, then reload choices.');
@@ -528,7 +537,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             localStorage.setItem(storageKey,JSON.stringify({vessel:c.id,vessel_id:c.vessel_id,command,origin}));
             const result=await c.client.exchange({protocol:1,command});
             if (result.protocol !== 1 || result.outcome_unknown !== false) throw new Error('Creation is unconfirmed. Use Check creation before sending.');
-            if (result.error != null) { localStorage.removeItem(storageKey); throw new Error('Creation was rejected. Your draft is retained; review settings before retrying.'); }
+            if (result.error != null) { localStorage.removeItem(storageKey); throw new Error(creationRejection(result.error,command.command_id)); }
             await accept(c,command,result.result,storageKey,origin);
             configurations.delete(origin.key);
             return result.result;

@@ -43,6 +43,10 @@ tool permissions or workspace configuration. Owner and full-access human connect
 can manage profiles; scoped clients see only profiles for their permitted accounts.
 An existing valid host default account seeds a Default profile on first owner use.
 An unconfigured host offers profile creation and private account setup.
+An explicit profile or captured launch configuration does not require a separate
+host default account. Only an unconfigured start needs that default. Web creation
+rejections retain the draft and show safe guidance plus the creation command
+reference; unconfirmed starts remain fenced until their exact receipt is resolved.
 
 Selection copies the four settings into a draft or the existing next-run settings
 command. Saved voyages therefore retain their values across profile edits, deletion,

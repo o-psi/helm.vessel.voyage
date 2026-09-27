@@ -16,7 +16,7 @@ const until = async predicate => {
     assert.fail('Setup did not reach the expected state');
 };
 
-function fixture(t, {firstHasProfile = false} = {}) {
+function fixture(t, {firstHasProfile = false, creationResponse} = {}) {
     const compiled = mkdtempSync(join(tmpdir(),'helm-location-setup-'));
     t.after(() => rmSync(compiled,{recursive:true,force:true}));
     const rendered = spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'location-test'])->render();`],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
@@ -37,6 +37,7 @@ function fixture(t, {firstHasProfile = false} = {}) {
     const clients = new Map(['tax','win'].map(vessel => [vessel,{socket:new dom.window.EventTarget(),exchange(envelope) {
         const command = envelope.command;
         seen.push({vessel,command});
+        if (command.op === 'start_account' && creationResponse) return Promise.resolve(creationResponse);
         const result = () => {
             if (command.op === 'capabilities') return {vessel_id:`${vessel}-identity`,scope:'owner',features:['execution_profiles'],workspaces:[{name:vessel,path:vessel === 'tax' ? '/tax-axis' : '/home/psi'}]};
             if (command.op === 'accounts') return {accounts:[{id:account(vessel).account_id,connection_id:account(vessel).connection_id,identity_generation:1,state:'ready',availability:'available',label:`${vessel} account`}],connections:[{id:account(vessel).connection_id,revision:1,transports:['openai_responses'],label:`${vessel} provider`}]};
@@ -66,6 +67,40 @@ function fixture(t, {firstHasProfile = false} = {}) {
     const release = (vessel,op) => { const pending = held.get(`${vessel}:${op}`); assert.ok(pending,`${vessel} ${op} was not pending`); held.delete(`${vessel}:${op}`); pending.resolve(); };
     return {field,profileOption,modelOptions,seen,settings,composition,captureDraft,hold,release,selection:() => selection,choose:select};
 }
+
+test('definitive creation rejection preserves the draft and explains known causes without exposing diagnostics', async t => {
+    for (const [error, expected] of [
+        ['default_account_required: private diagnostic', /Update the Vessel/],
+        ['account unavailable', /reconnect the account/],
+        ['cannot open /private/credential-file: secret', /review the profile and location/],
+    ]) {
+        const f = fixture(t,{firstHasProfile:true,creationResponse:{protocol:1,outcome_unknown:false,error}});
+        f.field('new-voyage').click();
+        await until(() => f.settings.configuration()?.vessel === 'tax');
+        f.field('prompt').value = 'Keep my unsent task';
+        f.field('prompt').dispatchEvent(new Event('input'));
+        await assert.rejects(f.settings.startDraft(), failure => {
+            assert.match(failure.message,expected);
+            assert.match(failure.message,/Your draft is retained/);
+            assert.ok(failure.message.includes(f.seen.find(item => item.command.op === 'start_account').command.command_id));
+            assert.doesNotMatch(failure.message,/private|secret/);
+            return true;
+        });
+        assert.equal(f.field('prompt').value,'Keep my unsent task');
+        assert.equal(f.selection().session_id,null);
+        assert.equal(localStorage.length,0);
+    }
+});
+
+test('uncertain creation retains its exact receipt and blocks a second dispatch', async t => {
+    const f = fixture(t,{firstHasProfile:true,creationResponse:{protocol:1,outcome_unknown:true,error:'default_account_required'}});
+    f.field('new-voyage').click();
+    await until(() => f.settings.configuration()?.vessel === 'tax');
+    await assert.rejects(f.settings.startDraft(),/Creation is unconfirmed/);
+    await assert.rejects(f.settings.startDraft(),/Creation is unconfirmed/);
+    assert.equal(f.seen.filter(item => item.command.op === 'start_account').length,1);
+    assert.equal(localStorage.length,1);
+});
 
 test('changing Vessel during new voyage setup loads editor models and retains the message through Use profile and Done', async t => {
     const f = fixture(t);

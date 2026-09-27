@@ -599,18 +599,19 @@ impl Config {
         Ok(config)
     }
 
-    /// New independent voyages require a host default. Existing frozen configurations
-    /// and explicitly selected accounts are never silently replaced.
+    /// Resolve a host default only when no account was explicitly selected.
+    /// Existing frozen configurations and selected accounts are never replaced.
     pub fn require_default_account(&mut self) -> Result<()> {
+        if self.account.is_some() {
+            return Ok(());
+        }
         let (_, default) = crate::accounts::Registry::default_host()?.default_account()?;
         let default = default.ok_or_else(|| {
             anyhow::anyhow!(
                 "default_account_required: choose a default account before creating a voyage"
             )
         })?;
-        if self.account.is_none() {
-            self.select_account(default)?;
-        }
+        self.select_account(default)?;
         Ok(())
     }
 

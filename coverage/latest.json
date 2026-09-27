@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-27T06:54:45.553316+00:00",
-  "source_commit": "5f74839cb2206d9f99652275373aeb923b597492",
+  "measured_at_utc": "2026-09-27T14:21:06.903060+00:00",
+  "source_commit": "7fdbd4773b97882b779dda99c2b52be0af4cf768",
   "dirty": true,
-  "source_fingerprint_sha256": "32516f9161bc860ae8f993f5689e5ab4be3b0414d81b9c2865aed27228d36eaa",
-  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including new updater files and unrelated staged Rust edit",
+  "source_fingerprint_sha256": "6d3cdb182431ecf4e628d0ed68819c8000bc90f7dd4902970f4faf0fc6742d52",
+  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including configured-start regression and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1765,
+    "passed": 1766,
     "failed": 0,
     "ignored": 2
   },
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10258,
-      "covered": 7418,
-      "percent": 72.31429128485085
+      "covered": 7421,
+      "percent": 72.34353675180347
     },
     "instantiations": {
       "count": 23244,
-      "covered": 9365,
-      "percent": 40.28996730339012
+      "covered": 9373,
+      "percent": 40.324384787472034
     },
     "lines": {
-      "count": 107249,
-      "covered": 80458,
-      "percent": 75.01981370455668
+      "count": 107250,
+      "covered": 80494,
+      "percent": 75.05268065268065
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 176050,
-      "covered": 125998,
-      "notcovered": 50052,
-      "percent": 71.56944049985799
+      "count": 176053,
+      "covered": 126051,
+      "notcovered": 50002,
+      "percent": 71.59832550425156
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/remote-updates-history -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/creation-default-account -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -120,7 +120,7 @@
   "notes": [
     "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
     "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
-    "Change in percentage points: lines -0.0177, functions -0.0097, regions -0.0148",
+    "Change in percentage points: lines +0.0329, functions +0.0292, regions +0.0289",
     "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate."
   ]
 }
