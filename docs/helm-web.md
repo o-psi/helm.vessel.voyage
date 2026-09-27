@@ -16,6 +16,7 @@ make them a second console. Implement all new console behavior in
 ## Routes and interaction
 
 - `/`: authenticated React console; signed-out requests redirect to `/landing`.
+- `/voyages/{connection UUID}/{session UUID}`: bookmarkable React conversation. Selection and browser history update the URL; reloading restores the voyage after its Vessel catalogue confirms it. The URL grants no access: Laravel serves only the tenant-scoped shell, and Vessel tickets, catalogue and snapshots still enforce authority. Missing/offline voyages stay at their URL with an unavailable message rather than selecting another session.
 - `/react`: compatibility redirect to `/`, preserving `manage-vessels=1`.
 - `/landing`, `/helm`, `/vessel`, `/voyage`: public product pages.
 - `/console/login`, `/auth/{provider}`, `/auth/{provider}/callback`: existing login.

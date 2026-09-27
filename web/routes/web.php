@@ -21,6 +21,8 @@ Route::middleware(ConsoleHeaders::class)->group(function () {
 Route::middleware([ConsoleOperator::class,ConsoleHeaders::class])->group(function () {
     Route::get('/react', [\App\Http\Controllers\ReactConsoleController::class, 'redirect'])->name('console.react');
     Route::get('/', \App\Http\Controllers\ReactConsoleController::class)->name('console');
+    Route::get('/voyages/{vessel}/{session}', \App\Http\Controllers\ReactConsoleController::class)
+        ->whereUuid('vessel')->whereUuid('session')->name('console.voyage');
     Route::post('/console/ticket',[ConsoleAuthController::class,'ticket'])->name('console.ticket')->middleware('throttle:console-tickets');
     Route::get('/connections',[VesselConnectionController::class,'index'])->name('connections');
     Route::post('/connections',[VesselConnectionController::class,'store'])->name('connections.store')->middleware('throttle:10,1');

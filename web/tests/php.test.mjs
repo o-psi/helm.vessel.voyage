@@ -64,6 +64,15 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   assert.equal((await call('/auth/google')).status,404);
   assert.equal((await call('/react')).status,302);
   const alias=await call('/react?manage-vessels=1',{},'alice');assert.equal(alias.status,302);assert.equal(new URL(alias.headers.get('location')).pathname,'/');assert.equal(new URL(alias.headers.get('location')).search,'?manage-vessels=1');
+  const voyageId='11111111-2222-4333-8444-555555555555';
+  const voyagePath=`/voyages/${seed.alice.connection}/${voyageId}`;
+  const deepLink=await call(voyagePath,{},'alice');assert.equal(deepLink.status,200);
+  const deepHtml=await deepLink.text();assert.match(deepHtml,/Helm Console/);assert.match(deepHtml,/alice vessel/);assert.ok(!deepHtml.includes('bob vessel'));
+  assert.equal((await call(voyagePath)).status,302);
+  assert.equal((await call(`/voyages/${seed.bob.connection}/${voyageId}`,{},'alice')).status,200);
+  // An unknown ID serves only a tenant-scoped shell; it cannot disclose or open another tenant's Vessel.
+  assert.ok(!(await (await call(`/voyages/${seed.bob.connection}/${voyageId}`,{},'alice')).text()).includes('bob vessel'));
+  assert.equal((await call('/voyages/not-a-uuid/'+voyageId,{},'alice')).status,404);
   const react=await call('/',{},'alice');const reactHtml=await react.text();
   assert.equal(react.status,200);assert.match(react.headers.get('cache-control'),/no-store/);
   assert.match(reactHtml,/Helm Console/);assert.match(reactHtml,/alice vessel/);

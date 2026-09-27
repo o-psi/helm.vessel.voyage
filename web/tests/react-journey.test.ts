@@ -5,7 +5,7 @@ import React from 'react';
 
 
 test('React journey connects, preserves drafts on navigation and submits once',async()=>{
- const dom=new JSDOM('<meta name="csrf-token" content="fixture"><div id="mount"></div>',{url:'https://helm.test/react',pretendToBeVisual:true});
+ const dom=new JSDOM('<meta name="csrf-token" content="fixture"><div id="mount"></div>',{url:'https://helm.test/',pretendToBeVisual:true});
  dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true;};dom.window.HTMLDialogElement.prototype.close=function(){this.open=false;};
  const saved:any={};for(const key of ['window','document','location','localStorage','Event','CustomEvent']){saved[key]=(globalThis as any)[key];(globalThis as any)[key]=(dom.window as any)[key];}
  Object.defineProperty(dom.window,'matchMedia',{value:()=>({matches:false,addEventListener(){},removeEventListener(){}})});
@@ -18,7 +18,7 @@ test('React journey connects, preserves drafts on navigation and submits once',a
    if(frame.type==='subscribe'||frame.type==='unsubscribe')return;
    const c=frame.request.command;commands.push(c);let result:any;
    if(c.op==='capabilities')result={scope:'owner',vessel_id:'v'};
-   else if(c.op==='catalogue')result=['a','b'].map(id=>({session_id:id,incarnation:'i',name:`Voyage ${id}`,state:'live',catalogue:{summary:{run_state:'idle'}}}));
+   else if(c.op==='catalogue')result=['22222222-3333-4444-8555-666666666666','33333333-4444-4555-8666-777777777777'].map(id=>({session_id:id,incarnation:'i',name:`Voyage ${id}`,state:'live',catalogue:{summary:{run_state:'idle'}}}));
    else if(c.op==='snapshot')result={session_id:c.session_id,incarnation:'i',result:{session_id:c.session_id,name:`Voyage ${c.session_id}`,revision:1,observation_cursor:5,messages:[{role:'assistant',content:'**Hello**',message_index:0}],run:{state:'idle'}}};
    else if(c.op==='decisions')result={session_id:c.session_id,incarnation:'i',result:[]};
    else if(c.op==='submit'){mutations++;result={session_id:c.session_id,incarnation:'i',result:{command_id:c.command_id,status:'accepted'}};}
@@ -32,7 +32,7 @@ test('React journey connects, preserves drafts on navigation and submits once',a
  const {App}=await import('../resources/react/App.tsx');const root=createRoot(dom.window.document.querySelector('#mount')!);
  const settle=()=>new Promise(resolve=>setTimeout(resolve,10));
  try{
-  await React.act(async()=>{root.render(React.createElement(App,{bootstrap:{tenantId:'t',vessels:[{id:'c',vessel_id:'v',name:'Vessel'}],ticketUrl:'/console/ticket',connectionsUrl:'/connections',logoutUrl:'/console/logout'}}));await settle();});
+  await React.act(async()=>{root.render(React.createElement(App,{bootstrap:{tenantId:'t',vessels:[{id:'11111111-2222-4333-8444-555555555555',vessel_id:'v',name:'Vessel'}],ticketUrl:'/console/ticket',connectionsUrl:'/connections',logoutUrl:'/console/logout'}}));await settle();});
   assert.equal(dom.window.document.querySelectorAll('.voyage-card').length,2);
   await React.act(async()=>{dom.window.document.querySelector<HTMLButtonElement>('.voyage-card')!.click();await settle();});
   const active=()=>dom.window.document.querySelector<HTMLElement>('.conversation:not([hidden])')!;
