@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {RunStatus} from '../resources/react/App.tsx';
+import {RunStatus, workingFrame} from '../resources/react/App.tsx';
+import workingStatuses from '../../helm/assets/working-statuses.json';
+import {readFileSync} from 'node:fs';
 
 function status(run: any, extra: any = {}, decisions: any[] = []) {
     return renderToStaticMarkup(React.createElement(RunStatus, {tab: {snapshot: {run, ...extra}, decisions} as any}));
@@ -26,4 +28,19 @@ test('conversation exposes failure and unresolved cleanup without claiming compl
     assert.doesNotMatch(html,/Ready to continue/);
     assert.match(status({state:'interrupted'}, {recovery_notice:'Saved conversation restored.'}), /Interrupted/);
     assert.match(status({state:'cancelled'}), /Ready to continue/);
+});
+
+test('running decoration uses the TUI word list and ten-frame spinner cadence', () => {
+    assert.deepEqual(workingFrame(0), {word:workingStatuses[0], spinner:'⠋'});
+    assert.deepEqual(workingFrame(9), {word:workingStatuses[0], spinner:'⠏'});
+    assert.deepEqual(workingFrame(40), {word:workingStatuses[1], spinner:'⠋'});
+    assert.deepEqual(workingFrame(40*workingStatuses.length), workingFrame(0));
+    const html = status({state:'running'});
+    assert.match(html, /working-indicator/);
+    assert.match(html, /aria-label="Working"/);
+    assert.match(html, /aria-hidden="true">Pondering/);
+    assert.doesNotMatch(status({state:'running'}, {}, [{}]), /working-indicator/);
+    assert.doesNotMatch(status({state:'running'}, {recovery_pending:true}), /working-indicator/);
+    const css = readFileSync(new URL('../resources/react/style.css', import.meta.url), 'utf8');
+    assert.match(css, /prefers-reduced-motion:reduce\).*?working-word/s);
 });

@@ -11,6 +11,7 @@ import {voyageList, activityLabel, cardStatus} from './presentation';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {Workspace, type Tab} from './workspace';
+import workingStatuses from '../../../helm/assets/working-statuses.json';
 
 type Bootstrap = {tenantId: string; vessels: any[]; ticketUrl: string; connectionsUrl: string; logoutUrl: string};
 const csrf = () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '';
@@ -42,17 +43,35 @@ function Composer({tab, workspace, onSettings}: {tab?: Tab; workspace: Workspace
         </div>{running && <button type="button" className="icon-button" aria-label="Cancel run" disabled={!enabled} onClick={() => tab && void workspace.act(tab.key,'cancel')}><Icon name="stop"/></button>}<button className="send-button icon-button" aria-label={running ? 'Steer' : 'Send'} disabled={!enabled || (!tab?.draft.trim() && !tab?.pictures.length)}><Icon name="up"/></button></div></div>
     </form>;
 }
+// Decorative only: the words and frames are not execution progress or transcript content.
+export function workingFrame(frame: number) {
+    return {word: workingStatuses[Math.floor(frame / 40) % workingStatuses.length], spinner: ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'][frame % 10]};
+}
+function WorkingIndicator() {
+    const [frame, setFrame] = useState(0);
+    useEffect(() => {
+        const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        if (motion.matches) return;
+        const epoch = performance.now();
+        const timer = window.setInterval(() => setFrame(Math.floor((performance.now() - epoch) / 100)), 100);
+        return () => window.clearInterval(timer);
+    }, []);
+    const {word, spinner} = workingFrame(frame);
+    return <span className="working-indicator" aria-label="Working"><span className="working-spinner" aria-hidden="true">{spinner}</span> <span className="working-word" aria-hidden="true">{word}</span></span>;
+}
+
 export function RunStatus({tab}: {tab: Tab}) {
     const snapshot = tab.snapshot, run = snapshot?.run;
     if (!snapshot) return null;
     const active = ['accepted', 'running', 'awaiting_decision', 'cancel_requested'].includes(run?.state);
     const pending = Boolean(snapshot.pending_cleanup_run);
     const show = run && (active || run.state !== 'completed' || pending || Boolean(run.live_text));
+    const working = !tab.stale && !snapshot.recovery_pending && run?.state === 'running' && !tab.decisions.length;
     const labels: Record<string, string> = {accepted:'Starting', running:'Working', awaiting_decision:'Waiting for you', cancel_requested:'Stopping', completed:'Finishing response…', failed:'Needs attention', cancelled:'Stopped', interrupted:'Interrupted'};
     const cleanup = snapshot.cleanup?.run_id === run?.run_id ? snapshot.cleanup : null;
     return <div className="run-status" role="status" aria-live="polite">
         {snapshot.recovery_notice && <p>{snapshot.recovery_notice}</p>}
-        {show && <><p className="run-status-label">{snapshot.recovery_pending ? 'Previous run interrupted · saved output' : active && tab.decisions.length ? 'Waiting for you' : labels[run.state] || 'Needs attention'}</p>
+        {show && <><p className="run-status-label">{working ? <WorkingIndicator/> : tab.stale && run.state === 'running' ? 'Status unavailable' : snapshot.recovery_pending ? 'Previous run interrupted · saved output' : active && tab.decisions.length ? 'Waiting for you' : labels[run.state] || 'Needs attention'}</p>
             {run.failure_summary && <p>{run.failure_summary}</p>}
             {!active && cleanup?.reason && <p>{cleanup.reason}</p>}
             {pending && !active && <><p>{cleanup?.phase === 'running' ? 'Finishing cleanup. Your draft is kept.' : cleanup?.retryable ? 'Cleanup needs attention. Send again to retry cleanup; your draft is kept.' : 'Previous program cleanup cannot yet be verified. Recovery checks automatically; your draft is kept.'}</p>
