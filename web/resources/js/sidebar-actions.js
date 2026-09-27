@@ -89,6 +89,7 @@ export function sidebarActions(root, {changed = () => {}, modal = name => window
             if (!control.disabled) open(connection,item,control.dataset.voyageAction);
         });
         render();
+        return (nextConnection, nextItem) => { connection = nextConnection; item = nextItem; };
     }
     async function open(connection,item,action) {
         const mine = ++epoch; current = null; $('submit').disabled=true;

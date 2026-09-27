@@ -20,14 +20,14 @@ test('shared CSS uses Flux theme instead of a parallel widget stylesheet',()=>{
  const css=readFileSync(new URL('../resources/css/app.css',import.meta.url),'utf8');assert.match(css,/livewire\/flux\/dist\/flux.css/);assert.match(css,/@custom-variant dark/);assert.doesNotMatch(css,/(?:^|\n)(?:button|input|textarea|:root)\s*\{/);
  const js=readFileSync(new URL('../resources/js/console.js',import.meta.url),'utf8');assert.doesNotMatch(js,/element\('(button|input)'/);assert.match(js,/fluxTemplate\('flux-action'/);
 });
-test('Setup profile, management, account and model choices render as searchable Flux controls',t=>{
+test('Setup profile and model choices, and account cards render as Flux controls',t=>{
  const compiled=mkdtempSync(join(tmpdir(),'helm-flux-setup-'));
  t.after(()=>rmSync(compiled,{recursive:true,force:true}));
  const code=`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); view()->share('errors',new Illuminate\\Support\\ViewErrorBag()); echo view('livewire.console',['vessels'=>collect(),'tenantId'=>'flux-test'])->render();`;
  const r=spawnSync('php',['-r',code],{cwd:new URL('..',import.meta.url),encoding:'utf8',env:{...process.env,VIEW_COMPILED_PATH:compiled}});
  assert.equal(r.status,0,r.stderr);
  const d=new JSDOM(r.stdout).window.document;
- for(const id of ['edit-profile','edit-manage-profile','edit-account','edit-model']){
+ for(const id of ['edit-profile','edit-manage-profile','edit-model']){
   const select=d.getElementById(id);
   assert.equal(select?.tagName,'UI-SELECT',`${id} is rendered by Flux`);
   assert.ok(select.hasAttribute('data-flux-select'));
@@ -35,6 +35,11 @@ test('Setup profile, management, account and model choices render as searchable 
   assert.ok(select.querySelector('input[placeholder]'),`${id} includes Flux search`);
   assert.ok(select.querySelector('ui-options'),`${id} has a Flux option container`);
  }
+ const accounts=d.getElementById('edit-account');
+ assert.equal(accounts?.tagName,'UI-RADIO-GROUP');
+ assert.ok(d.getElementById('setup-account-dropdown')?.contains(accounts));
+ assert.ok(d.getElementById('setup-editor').contains(accounts));
+ assert.equal(d.getElementById('flux-account-option')?.content.firstElementChild.tagName,'UI-RADIO');
  assert.equal(d.getElementById('flux-search-option')?.content.firstElementChild.tagName,'UI-OPTION');
  for(const id of ['setup-profile-list','setup-manage-profile-list','setup-picker-list']) assert.equal(d.getElementById(id),null,`${id} custom choices are removed`);
  const signIn=d.getElementById('enrollment-link');

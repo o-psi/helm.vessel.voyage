@@ -283,7 +283,7 @@ inside fixed-height navigation rows. Unchanged catalogue polls retain the contro
 Socket-driven controls clone server-rendered Flux templates. Do not create raw
 interactive elements, copy vendor component markup/styles, or add another widget
 library. Use documented component slots for callout headings, text and actions.
-The message input uses the licensed native `flux:composer`, including its action slots, automatic height and Ctrl/Cmd+Enter submission. Account and model choices use native searchable Pro listboxes. Tool/attachment inspection uses a
+The message input uses the licensed native `flux:composer`, including its action slots, automatic height and Ctrl/Cmd+Enter submission. Profile and model choices use native searchable Pro listboxes; provider accounts use Flux cards in the profile editor. Tool/attachment inspection uses a
 native Flux modal with its built-in dismissal and focus behavior.
 
 Semantic forms, layout containers and sanitized Markdown/code/list content remain
@@ -329,10 +329,10 @@ provider run was created for verification.
 
 New voyage opens the existing conversation composer and one responsive Flux Setup
 flyout. Its Location, Profile, Access and Reasoning sections have explicit Back
-navigation. Flux searchable listboxes choose saved profiles, provider accounts and
-models; profile editing uses Flux inputs and an Advanced accordion. The account
-and model listboxes open from dedicated Setup screens, so their menus do not stack
-over the editor. A small layout wrapper pins the flyout header and footer because
+navigation. Flux searchable listboxes choose saved profiles and models; a Flux
+dropdown in the profile editor presents provider accounts as cards with private
+usage observations for available accounts. Profile editing uses Flux inputs and an
+Advanced accordion. The model listbox opens from a dedicated Setup screen. A small layout wrapper pins the flyout header and footer because
 the installed Flux 2.19 modal has no footer slot. Its interactive controls remain
 Flux components; Vessel reads and draft state remain in the browser client.
 
@@ -380,18 +380,18 @@ Reasoning uses a stepped Flux slider: the first stop is provider default, follow
 by the provider-advertised levels in their returned order. The label shows the
 canonical level, not an invented numeric effort. Default-only models disable the
 slider; existing explicit values remain visible. Service tiers use a Flux select.
-Account and model listboxes remain searchable.
+The model listbox remains searchable.
 
-The account picker has a private usage observation: cached status, observation
-time, used percentages and reset times when exposed by the provider. Refresh is
-explicit and uses the existing scoped `account_usage` read, never inference;
-unavailable/unsupported data is not zero usage. Switching accounts selects that
+The account cards refresh private usage observations for available accounts when
+the editor opens. They show used percentages and reset times when exposed by the
+provider; unavailable or unsupported data is not zero usage. These scoped
+`account_usage` reads do not send inference. Switching accounts selects that
 account's default model and resets provider options. Usage replies are checked
-against the selected account and connection before display.
+against the account, connection and editor state before display.
 
 ## Conversation presentation
 
-Conversation chrome is moved to the sidebar; mobile keeps a navigation toggle. User messages are compact right-aligned surfaces; assistant responses are open, readable text rather than repeated bordered cards. Consecutive tool request/result entries collapse into one activity disclosure, with bodies rendered only when opened. Complete-message expansion and structured details remain available inside it; expanded groups survive history refreshes. Tool content is never discarded or interpreted as trusted HTML. Streaming output remains explicitly provisional, and approvals/errors stay outside collapsed history.
+Conversation chrome is moved to the sidebar; mobile keeps a navigation toggle. The voyage list has its own scroll area, sorts by latest turn completion or creation, and shows lifecycle status without treating catalogue metadata as proof of a live process. User messages are compact right-aligned surfaces; assistant responses are open, readable text rather than repeated bordered cards. Consecutive tool request/result entries collapse into one activity disclosure, with bodies rendered only when opened. Complete-message expansion and structured details remain available inside it; expanded groups survive history refreshes. Tool content is never discarded or interpreted as trusted HTML. Streaming output remains explicitly provisional, and approvals/errors stay outside collapsed history.
 
 Composer triggers display observed settings: model, account label, service tier, reasoning and access. Account labels load from the selected Vessel’s scoped catalogue, checked against the full account binding and voyage incarnation; late replies cannot replace another voyage’s label. Missing metadata is shown as unavailable, never guessed from another account. Null service tier is displayed as Default tier.
 

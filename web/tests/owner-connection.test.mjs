@@ -54,12 +54,10 @@ test('owner connection can choose a new folder; scoped connections retain their 
     assert.equal(seen.some(c=>c.op==='start_account'),false);
     field('setup-account-open').focus();
     field('setup-account-open').click();
-    assert.equal(field('setup-picker').hidden,false,'account choice stays within Setup');
-    assert.equal(field('edit-account').tagName,'UI-SELECT','account choices use a Flux listbox');
-    assert.ok(field('edit-account').contains(document.activeElement),'account picker receives focus');
-    field('setup-back').click();
-    assert.equal(field('setup-editor').hidden,false);
-    assert.equal(document.activeElement,field('setup-account-open'),'Back restores focus to the account trigger');
+    assert.equal(field('setup-editor').hidden,false,'account choice stays in the profile editor');
+    assert.equal(field('setup-picker').hidden,true,'account choice does not stack another Setup screen');
+    assert.equal(field('edit-account').tagName,'UI-RADIO-GROUP','account cards use Flux');
+    assert.ok(field('setup-editor').contains(field('edit-account')));
     field('setup-model-open').focus();
     field('setup-model-open').click();
     assert.equal(field('setup-picker').hidden,false,'model choice stays within Setup');

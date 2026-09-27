@@ -1,6 +1,7 @@
 import {mountHostBrowser} from './host-browser.js';
 import {setComposerDisabled} from './composer-disabled.js';
 import {renderRootGrant} from './root-grant.js';
+import {cardStatus, decorateCard} from './voyage-card.js';
 import {sidebarActions} from './sidebar-actions.js';
 import {conversationScroll} from './conversation-scroll.js';
 import {ConversationStream, renderPreviews} from './conversation-stream.js';
@@ -10,6 +11,7 @@ import {setReasoning, reasoningValue} from './inference-controls.js';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {request, voyageResult, mutation, resolved, receiptStatus} from './vessel-client.js';
+import {voyageList, activityLabel} from './voyage-list.js';
 import {VesselFleet} from './vessel-fleet.js';
 import {composer} from './composer.js';
 import {imageBytes} from './attachments.js';
@@ -217,9 +219,9 @@ export function mount(root) {
         const connections = [...fleet.connections.values()];
         if (!selectedVessel && connections.some(c=>c.client)) { const first=connections.find(c=>c.client); selectedVessel=first.id; client=first.client; journal=first.journal; composition?.select().catch(error=>notice(error.message)); }
         const connected = connections.filter(c => c.client).length;
-        $('fleet-state').textContent = connections.length ? `${connected} of ${connections.length} Vessels connected` : 'No Vessels connected';
+        $('fleet-state').textContent = connections.length ? `${connected}/${connections.length} connected` : 'No Vessels connected';
         $('vessel-statuses').replaceChildren();
-        for (const c of connections.filter(c => c.status !== 'Connected')) {
+        for (const c of connections) {
             $('vessel-statuses').append(fluxTemplate('flux-text', `${c.name} · ${c.status}`));
         }
         if (!selected) state(connected ? 'Ready' : connections.length ? 'Connecting…' : 'No Vessels connected');
@@ -231,28 +233,64 @@ export function mount(root) {
     }
     const sidebar = sidebarActions(root, {changed: () => { voyageFingerprint = null; fleet.poll(); refresh(); }});
     function renderVoyages() {
-        const query = $('voyage-search').value.toLowerCase();
-        const voyages = [...fleet.connections.values()].flatMap(connection => connection.voyages.map(v => ({...v, connection})));
-        const fingerprint = JSON.stringify([voyages.map(v => [v.session_id,v.name,v.state,v.connection.id,Boolean(v.connection.client)]), query, selectedVessel, selected]);
+        const query = $('voyage-search').value;
+        const connections = [...fleet.connections.values()];
+        const total = connections.reduce((count, c) => count + c.voyages.length, 0);
+        const filtered = voyageList(connections, query);
+        const fingerprint = JSON.stringify([filtered.map(v => [v.session_id,v.name,v.state,v.catalogue,v.connection.id,v.connection.name,Boolean(v.connection.client)]), query, total, selectedVessel, selected, stale, snapshot?.run?.state, new Date().toDateString()]);
         if (fingerprint === voyageFingerprint) return;
-        voyageFingerprint = fingerprint; $('voyages').replaceChildren();
-        const filtered = voyages.filter(v => `${v.name || ''} ${v.session_id} ${v.connection.name}`.toLowerCase().includes(query));
+        voyageFingerprint = fingerprint;
+        const scroll = $('voyage-list-scroll').scrollTop;
+        const focused = $('voyages').contains(document.activeElement) ? document.activeElement?.dataset.voyageKey : null;
+        const list = $('voyages');
+        const existing = new Map([...list.children].map(node => [node.querySelector('button').dataset.voyageKey, node]));
+        let position = 0;
+        $('voyage-count').textContent = query.trim() ? `${filtered.length}/${total}` : String(total);
         $('voyage-empty').hidden = filtered.length > 0;
-        $('voyage-empty').textContent = query ? 'No voyages match your search.' : 'Voyages from your connected Vessels appear here.';
+        $('voyage-empty').textContent = query.trim() ? 'No voyages match your search.' : connections.some(c => c.client) ? 'No voyages available on connected Vessels.' : connections.length ? 'Waiting for Vessels. Check connection details below.' : 'Connect a Vessel to see your voyages.';
         for (const item of filtered) {
             const label = clean(item.name || item.session_id), connection = item.connection;
-            const description = clean(`${label} · ${connection.name} · ${connection.client ? item.state : 'offline'}`);
-            const node = fluxTemplate('flux-voyage', label), control = node.querySelector('button');
-            node.querySelector('[data-vessel-label]').textContent = clean(connection.name);
-            control.addEventListener('click', () => select(connection.id, item.session_id, label));
+            const activity = item.activity;
+            const timestamp = activity ? `${activity.kind}: ${new Date(activity.ms).toLocaleString()}` : 'Timestamp unavailable';
             const current = item.session_id === selected && connection.id === selectedVessel;
+            const presentation = cardStatus(item, Boolean(connection.client), current && !stale ? snapshot : null);
+            const status = presentation.label;
+            const description = clean(`${label} · ${connection.name} · ${status} · ${timestamp}${item.catalogue?.stale ? ' · cached metadata' : ''}`);
+            const key = JSON.stringify([connection.id, item.session_id]);
+            let node = existing.get(key);
+            if (!node) {
+                node = fluxTemplate('flux-voyage', label);
+                node.querySelector('button').addEventListener('click', () => {
+                    const current = node.voyageData;
+                    select(current.connection.id, current.item.session_id, clean(current.item.name || current.item.session_id));
+                });
+                node.updateVoyageActions = sidebar.bind(node, connection, item);
+            }
+            existing.delete(key);
+            node.voyageData = {connection, item};
+            node.updateVoyageActions(connection, item);
+            const control = node.querySelector('button');
+            node.querySelector('[data-label]').textContent = label;
+            node.querySelector('[data-vessel-label]').textContent = clean(connection.name);
+            const time = node.querySelector('[data-voyage-time]');
+            time.textContent = activityLabel(activity); time.title = timestamp;
+            if (activity) time.dateTime = activity.iso; else time.removeAttribute('datetime');
+            control.dataset.voyageKey = JSON.stringify([connection.id, item.session_id]);
+            decorateCard(control, presentation);
             control.toggleAttribute('data-current', current); control.setAttribute('aria-current', String(current));
             control.setAttribute('aria-label', description); control.title = description;
             const tooltip = node.querySelector('[data-flux-tooltip-content]');
             if (tooltip) tooltip.textContent = description;
-            sidebar.bind(node, connection, item);
-            $('voyages').append(node);
+            // Leave unchanged rows connected so CSS animation timelines survive selection.
+            if (list.children[position] !== node) {
+                if (node.parentNode === list && list.moveBefore) list.moveBefore(node, list.children[position] || null);
+                else list.insertBefore(node, list.children[position] || null);
+            }
+            position++;
+            if (focused === control.dataset.voyageKey) control.focus({preventScroll: true});
         }
+        for (const node of existing.values()) node.remove();
+        $('voyage-list-scroll').scrollTop = scroll;
     }
     function select(vessel, id, title, retainDraft = false) {
         sidebar.invalidate();
@@ -302,7 +340,7 @@ export function mount(root) {
             $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'No messages yet. Send a message to begin.';
             renderMessages(); renderDecisions(); renderOutput(); renderFailure(); subscribe();
         } catch (error) { if (mine === generation) { stale = true; state('Stale · refresh required'); $('conversation-empty').hidden = messages.length > 0; $('conversation-empty').textContent = 'Conversation unavailable. Reconnecting to its Vessel…'; notice(error.message); } }
-        finally { if (mine === generation) { refreshing = false; controls(); if (refreshQueued) { refreshQueued = false; queueMicrotask(refresh); } } }
+        finally { if (mine === generation) { refreshing = false; renderVoyages(); controls(); if (refreshQueued) { refreshQueued = false; queueMicrotask(refresh); } } }
     }
     async function updateAccountLabel() {
         const binding = snapshot?.inference?.account;

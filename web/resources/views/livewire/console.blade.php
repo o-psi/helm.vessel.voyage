@@ -1,18 +1,33 @@
-<div id="helm-client" class="h-dvh overflow-hidden" wire:ignore data-tenant-id="{{ $tenantId }}" data-vessels="{{ $vessels->map(fn ($vessel) => ['id' => $vessel->id, 'name' => $vessel->name, 'vessel_id' => $vessel->vessel_id])->values()->toJson() }}" data-ticket-url="{{ route('console.ticket', absolute: false) }}">    <flux:sidebar collapsible="mobile" sticky class="min-h-0 border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900" aria-label="Voyages">
-            <flux:sidebar.header><flux:heading>Voyages</flux:heading><flux:sidebar.collapse class="lg:hidden" /></flux:sidebar.header>
-
-            @if($vessels->isEmpty())<flux:text>No Vessels connected. <flux:link href="{{ route('connections') }}">Add your first Vessel</flux:link>.</flux:text>@endif
-            <flux:button id="new-voyage" variant="primary" icon="plus" class="w-full">New voyage</flux:button>
-            <flux:input id="voyage-search" type="search" icon="magnifying-glass" label="Find a voyage" placeholder="Voyage or Vessel…" />
-            <flux:button id="reconnect" variant="ghost" icon="arrow-path" class="w-full">Refresh connections</flux:button>
-            <flux:text id="fleet-state" size="sm" role="status" />
-            <div id="vessel-statuses" class="space-y-2" role="status"></div>
-            <flux:sidebar.nav id="voyages" aria-label="Choose a voyage" />
-            <flux:text id="voyage-empty" size="sm" hidden />
-            <div id="pending-creations" class="space-y-2" aria-label="Unconfirmed voyage creation"></div>
-<div class="flex items-center justify-between">
-        <form method="post" action="{{ route('console.logout') }}">@csrf <flux:button type="submit" variant="ghost">Sign out</flux:button></form>
-</div><flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text><flux:button href="{{ route('connections') }}" variant="ghost" icon="server-stack">Vessels</flux:button>
+<div id="helm-client" class="h-dvh overflow-hidden" wire:ignore data-tenant-id="{{ $tenantId }}" data-vessels="{{ $vessels->map(fn ($vessel) => ['id' => $vessel->id, 'name' => $vessel->name, 'vessel_id' => $vessel->vessel_id])->values()->toJson() }}" data-ticket-url="{{ route('console.ticket', absolute: false) }}">
+    <flux:sidebar collapsible="mobile" sticky class="min-h-0 gap-3! overflow-hidden! border-e border-zinc-200 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900" aria-label="Voyages">
+            <flux:sidebar.header>
+                <flux:heading>Voyages <span id="voyage-count" class="text-zinc-500 text-xs" aria-live="polite"></span></flux:heading>
+                <flux:spacer />
+                <flux:button id="new-voyage" size="sm" variant="primary" icon="plus" aria-label="New voyage" tooltip="New voyage" />
+                <flux:sidebar.collapse class="lg:hidden" />
+            </flux:sidebar.header>
+            <flux:input id="voyage-search" type="search" size="sm" icon="magnifying-glass" aria-label="Find a voyage or Vessel" placeholder="Search voyages…" />
+            <div id="voyage-list-scroll" class="min-h-0 flex-1 overflow-y-auto overscroll-contain" tabindex="0" aria-label="Voyage list">
+                <flux:sidebar.nav id="voyages" aria-label="Choose a voyage" />
+                <flux:text id="voyage-empty" size="sm" class="p-2" hidden />
+            </div>
+            <div id="pending-creations" class="max-h-32 shrink-0 overflow-y-auto space-y-2 empty:hidden" aria-label="Unconfirmed voyage creation"></div>
+            <flux:separator />
+            <flux:text id="connection-state" size="sm" role="status">Connecting…</flux:text>
+            <div class="flex shrink-0 items-center gap-2">
+                <flux:dropdown position="top" align="start" class="min-w-0 flex-1">
+                    <flux:button size="sm" variant="ghost" icon="server-stack" icon:trailing="chevron-up" class="w-full min-w-0 [&>span]:min-w-0 [&>span]:truncate" aria-label="Vessel connection details"><span id="fleet-state" role="status"></span></flux:button>
+                    <flux:popover class="w-64 space-y-3">
+                        <flux:heading size="sm">Vessel connections</flux:heading>
+                        <div id="vessel-statuses" class="max-h-48 overflow-y-auto space-y-2" role="status"></div>
+                        <flux:button href="{{ route('connections') }}" size="sm" variant="subtle">Manage Vessels</flux:button>
+                    </flux:popover>
+                </flux:dropdown>
+                <div class="flex shrink-0 items-center gap-2">
+                    <flux:button id="reconnect" size="sm" variant="ghost" icon="arrow-path" aria-label="Reconnect Vessels" tooltip="Reconnect Vessels" />
+                    @include('console.profile-menu')
+                </div>
+            </div>
     </flux:sidebar>
     <flux:main class="browser-workspace flex min-h-0 min-w-0 flex-col p-0!" role="main" aria-label="Conversation">
             <div class="browser-conversation">
@@ -110,19 +125,24 @@
                         <flux:button id="setup-refresh-oauth" type="button" size="sm" variant="outline" icon="arrow-path">Refresh selected sign-in</flux:button>
                     </div>
                     <flux:text id="setup-oauth-status" size="sm" class="setup-wrap" role="status" aria-live="polite" />
-                    <flux:button id="setup-manage-open" type="button" size="sm" variant="ghost" icon="cog-6-tooth">Manage profiles</flux:button>
+                    <flux:button id="setup-manage-open" type="button" size="sm" variant="ghost" icon="pencil-square">Your profiles</flux:button>
                 </section>
-                <section id="setup-manage" class="space-y-4" aria-label="Manage profiles" hidden>
-                    <flux:button id="setup-manage-back" type="button" size="sm" variant="ghost" icon="arrow-left">Profiles</flux:button>
-                    <flux:select id="edit-manage-profile" variant="listbox" searchable label="Profile to manage" placeholder="Choose a profile" />
-                    <div id="edit-profile-actions" class="flex flex-wrap gap-2">
-                        <flux:button id="profile-new" type="button" size="sm">Create</flux:button>
-                        <flux:button id="profile-edit" type="button" size="sm">Edit</flux:button>
-                        <flux:button id="profile-duplicate" type="button" size="sm">Duplicate</flux:button>
-                        <flux:button id="profile-default" type="button" size="sm">Make default</flux:button>
-                        <flux:button id="profile-delete" type="button" size="sm">Delete</flux:button>
+                <section id="setup-manage" class="space-y-4" aria-label="Your profiles" hidden>
+                    <flux:button id="setup-manage-back" type="button" size="sm" variant="ghost" icon="arrow-left">Back to setup</flux:button>
+                    <div id="edit-profile-actions" class="space-y-4">
+                        <flux:text size="sm">Keep your favorite account and model combinations ready to use.</flux:text>
+                        <flux:button id="profile-new" type="button" size="sm" variant="primary" icon="plus">New profile</flux:button>
+                        <flux:separator />
+                        <flux:select id="edit-manage-profile" variant="listbox" searchable label="Profile" placeholder="Choose a profile" />
+                        <div class="flex flex-wrap gap-2">
+                            <flux:button id="profile-edit" type="button" size="sm" icon="pencil-square">Edit profile</flux:button>
+                            <flux:button id="profile-duplicate" type="button" size="sm" icon="document-duplicate">Make a copy</flux:button>
+                            <flux:button id="profile-default" type="button" size="sm" icon="star">Use as default</flux:button>
+                        </div>
+                        <flux:text size="sm" class="setup-wrap">Changes apply the next time you choose this profile.</flux:text>
+                        <flux:separator />
+                        <flux:button id="profile-delete" type="button" size="sm" variant="ghost" icon="trash">Delete profile</flux:button>
                     </div>
-                    <flux:text size="sm" class="setup-wrap">Profile changes affect future selections. Existing voyages keep their settings.</flux:text>
                 </section>
                 <section id="setup-delete" class="space-y-4" aria-label="Delete profile" hidden>
                     <flux:heading size="lg">Delete profile?</flux:heading>
@@ -137,14 +157,14 @@
                     <div id="edit-account-section" class="space-y-3" hidden>
                         <div class="space-y-2">
                             <flux:label for="setup-account-open">Provider account</flux:label>
-                            <flux:button id="setup-account-open" type="button" variant="outline" icon:trailing="chevron-right" class="voyage-setup-link"><span id="setup-account-value" class="setup-wrap">Choose an account</span></flux:button>
+                            <flux:dropdown id="setup-account-dropdown" position="bottom" align="start">
+                                <flux:button id="setup-account-open" type="button" variant="outline" icon:trailing="chevron-down" class="voyage-setup-link"><span id="setup-account-value" class="setup-wrap">Choose an account</span></flux:button>
+                                <flux:popover class="w-80 max-w-[calc(100vw-2rem)] max-h-80 overflow-y-auto">
+                                    <flux:radio.group id="edit-account" variant="cards" label="Provider account" class="flex-col" />
+                                </flux:popover>
+                            </flux:dropdown>
                         </div>
                         <flux:button id="edit-enroll" type="button" size="sm" variant="ghost" icon="plus">Add ChatGPT account</flux:button>
-                        <div class="space-y-2">
-                            <flux:heading size="sm">Account usage</flux:heading>
-                            <flux:text id="account-usage" class="whitespace-pre-line setup-wrap" role="status">Not loaded</flux:text>
-                            <flux:button id="account-usage-refresh" type="button" size="sm" variant="ghost" icon="arrow-path">Refresh usage</flux:button>
-                        </div>
                     </div>
                     <div id="edit-model-section" class="space-y-2" hidden>
                         <flux:label for="setup-model-open">Model</flux:label>
@@ -160,7 +180,6 @@
                     </flux:accordion>
                 </section>
                 <section id="setup-picker" class="space-y-4" aria-label="Choose an option" hidden>
-                    <div id="setup-picker-account" hidden><flux:select id="edit-account" variant="listbox" searchable label="Provider account" placeholder="Choose an account" /></div>
                     <div id="setup-picker-model" hidden><flux:select id="edit-model" variant="listbox" searchable label="Model" placeholder="Choose a model" /></div>
                 </section>
                 <section id="setup-enrollment" aria-label="Connect ChatGPT account" hidden></section>
@@ -221,17 +240,18 @@
         <template id="thread-tool-entry"><details class="group" data-tool-entry><summary class="flex cursor-pointer list-none items-center gap-2 py-2 text-sm"><flux:icon.chevron-right class="size-3 text-zinc-400 group-open:rotate-90" /><span data-entry-label class="min-w-0 flex-1 line-clamp-2 [overflow-wrap:anywhere]"></span><time data-entry-time class="shrink-0 text-xs text-zinc-400"></time></summary><div data-entry-body class="max-h-96 overflow-auto rounded-lg bg-zinc-50 p-3 dark:bg-zinc-900"></div></details></template>
         <template id="flux-decision"><flux:callout variant="warning" class="decision"><flux:callout.heading data-decision-heading /><flux:callout.text data-decision-text class="whitespace-pre-wrap break-words" /><x-slot name="actions" class="flex-wrap"><div data-decision-actions class="flex flex-wrap items-center gap-2"></div></x-slot></flux:callout></template>
         <template id="flux-action"><flux:button size="sm"><span data-label></span></flux:button></template>
+        <template id="flux-account-option"><flux:radio variant="cards"><div class="min-w-0 flex-1 space-y-2"><flux:heading data-option-label class="setup-wrap" /><div data-option-detail class="space-y-3 text-sm text-zinc-500 dark:text-zinc-400 setup-wrap" aria-live="polite"></div></div><flux:radio.indicator /></flux:radio></template>
+        <template id="flux-account-usage"><div class="space-y-1"><flux:text data-usage-label size="sm" /><div class="flex items-center gap-3"><flux:progress data-usage-bar max="100" class="min-w-0 flex-1" /><span data-usage-number class="shrink-0 text-xs tabular-nums"></span></div><flux:text data-usage-reset size="sm" /></div></template>
         <template id="flux-option"><flux:select.option /></template>
         <template id="flux-search-option"><flux:select.option variant="listbox"><span data-option-label></span><span data-option-detail class="block text-xs font-normal text-zinc-500 dark:text-zinc-400 [ui-selected_&]:hidden"></span></flux:select.option></template>
         <template id="flux-voyage"><flux:context class="block min-w-0">
             <div data-voyage-row class="flex min-w-0 items-center gap-1">
-                <flux:sidebar.item as="button" class="min-w-0 flex-1"><span data-label></span><x-slot name="badge"><span data-vessel-label class="block max-w-24 truncate"></span></x-slot></flux:sidebar.item>
+                <flux:sidebar.item as="button" class="min-w-0 flex-1"><span data-label class="block truncate"></span><span class="mt-0.5 flex min-w-0 items-center gap-2 text-xs font-normal text-zinc-500 dark:text-zinc-400"><span data-vessel-label class="min-w-0 flex-1 truncate"></span><time data-voyage-time class="shrink-0"></time></span></flux:sidebar.item>
                 <flux:button data-voyage-actions type="button" size="sm" variant="ghost" icon="ellipsis-vertical" aria-label="Voyage actions" aria-haspopup="menu" />
             </div>
             <flux:menu aria-label="Voyage actions"><flux:menu.item data-voyage-action="access">Access modes</flux:menu.item><flux:menu.item data-voyage-action="rename">Rename</flux:menu.item><flux:menu.item data-voyage-action="archive">Archive / Restore</flux:menu.item><flux:menu.item data-voyage-action="branch">Branch</flux:menu.item><flux:menu.item data-voyage-action="cancel">Cancel run</flux:menu.item><flux:menu.item data-voyage-action="details">Details</flux:menu.item><flux:menu.item data-voyage-action="clear">Clear</flux:menu.item><flux:menu.item data-voyage-action="compact">Compact</flux:menu.item><flux:menu.item data-voyage-action="delete">Delete</flux:menu.item></flux:menu>
         </flux:context></template>
         <template id="flux-attachment-panel"><div data-attachment-context class="col-span-4 min-w-0" hidden>
-
             <div class="flex gap-2 overflow-x-auto px-1 pb-2" data-images hidden></div>
             <div data-upload-errors class="space-y-1" hidden></div>
 

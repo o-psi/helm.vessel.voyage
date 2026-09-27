@@ -54,6 +54,8 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     function closeSetup(force = false) {
         if (saving && !force) return;
         enrollment.hide();
+        ++usageVersion;
+        raw('setup-account-dropdown').value = false;
         if (typeof window.Flux?.modal === 'function') window.Flux.modal('voyage-setup').close();
         else setupDialog()?.removeAttribute('open');
     }
@@ -63,10 +65,12 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             screenStack.push(setupScreen);
             focusStack.push(document.activeElement);
         }
+        if (next !== setupScreen) ++usageVersion;
+        raw('setup-account-dropdown').value = false;
         setupScreen = next;
         for (const screen of screens) raw(`setup-${screen}`).hidden = screen !== next;
         raw('setup-back').hidden = next === 'overview';
-        raw('setup-title').textContent = ({overview:creating() ? 'New voyage setup' : 'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Manage profiles',editor:editingProfile?.name ? 'Edit profile' : 'Create profile',picker:pickerKind === 'account' ? 'Choose account' : 'Choose model',enrollment:'Connect ChatGPT',access:'Access mode',delete:'Delete profile',reasoning:'Reasoning'})[next];
+        raw('setup-title').textContent = ({overview:creating() ? 'New voyage setup' : 'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Your profiles',editor:editingProfile?.name ? 'Edit profile' : 'New profile',picker:pickerKind === 'account' ? 'Choose account' : 'Choose model',enrollment:'Connect ChatGPT',access:'Access mode',delete:'Delete profile',reasoning:'Reasoning'})[next];
         raw('setup-done').hidden = next !== 'overview';
         raw('edit-save').hidden = !['profiles','editor'].includes(next);
         raw('edit-save').textContent = next === 'editor' ? 'Save profile' : creating() ? 'Use profile' : 'Apply to next run';
@@ -76,6 +80,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         raw('setup-content').scrollTop = 0;
         renderOverview();
         raw('setup-title').focus();
+        if (next === 'editor') loadAccountUsage();
     }
     function goBack() {
         if (setupScreen === 'enrollment') enrollment.hide();
@@ -102,26 +107,27 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     function options(id, items, selected = null) {
         const field = $(id);
         if (field.matches('ui-slider')) { setReasoning(field, items.length ? items : [{value:'',label:'Provider default'}], selected); return; }
+        const cards = field.matches('ui-radio-group');
         const custom = field.matches('ui-select'), container = custom ? field.querySelector('ui-options') : field;
         if (custom) container.querySelectorAll('[data-settings-option]').forEach(option => option.remove());
         else container.replaceChildren();
         container.append(...items.map(item => {
-            const option = $(custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
+            const option = $(cards ? 'flux-account-option' : custom ? 'flux-search-option' : 'flux-option').content.firstElementChild.cloneNode(true);
             option.setAttribute('data-settings-option','');
             option.setAttribute('value', item.value);
             (option.querySelector('[data-option-label]') || option).textContent = clean(item.label);
-            if (custom) {
+            if (custom || cards) {
                 option.setAttribute('label', clean(item.label));
                 if (item.detail) option.setAttribute('keywords', clean(item.detail));
                 const detail = option.querySelector('[data-option-detail]');
-                if (detail) { detail.textContent = clean(item.detail || ''); detail.hidden = !item.detail; }
+                if (detail) { detail.textContent = cards && !item.disabled ? 'Loading usage…' : clean(item.detail || ''); detail.hidden = !cards && !item.detail; }
             }
             option.toggleAttribute('disabled', Boolean(item.disabled));
             return option;
         }));
         const value = selected != null && items.some(item => item.value === selected && !item.disabled) ? selected : items.find(item => !item.disabled)?.value ?? '';
         field.value = value;
-        field.disabled = !items.some(item => !item.disabled);
+        if (!cards) field.disabled = !items.some(item => !item.disabled);
     }
     const workspace = () => creating() && $('settings-workspace').value === '__custom__' ? raw('edit-workspace-path').value.trim() : $('settings-workspace').value;
     function workspaceChanged() {
@@ -136,6 +142,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     const key = (c, command) => `${prefix}${c.id}:${c.vessel_id}:${command.command_id}`;
     function reset() {
         enrollment.hide();
+        ++usageVersion;
         choices = []; models = []; defaults = {};
         for (const id of ['settings-account','settings-model','settings-reasoning','settings-service']) options(id, []);
         options('settings-expired-account', []);
@@ -249,7 +256,6 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             enrolledAccount = null;
             options('settings-account', choices.map((c,i) => ({value:String(i),label:c.label,detail:c.ready ? 'Available' : 'Unavailable',disabled:!c.ready})), String(choices.findIndex(c => same(c.binding,preferred))));
             renderExpiredAccounts(preferredExpired);
-            if (setupScreen === 'editor') loadUsage(false);
             await loadProfiles(preferredProfile);
             return readStillCurrent(mine,c,client);
         } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } return false; }
@@ -264,7 +270,6 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     function openPicker(kind) {
         pickerKind = kind;
-        raw('setup-picker-account').hidden = kind !== 'account';
         raw('setup-picker-model').hidden = kind !== 'model';
         showScreen('picker');
         const trigger = raw(kind === 'account' ? 'edit-account' : 'edit-model').querySelector('button, input');
@@ -330,7 +335,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     }
     async function mutateProfiles(op, fields) {
         saving = true;
-        const fieldsBefore = [...raw('edit-form').querySelectorAll('select,input,ui-select,ui-slider,button')].map(field=>[field,field.disabled]);
+        const fieldsBefore = [...raw('edit-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio,button')].map(field=>[field,field.disabled]);
         const restoreFields = () => fieldsBefore.forEach(([field,disabled])=>field.disabled=disabled);
         fieldsBefore.forEach(([field])=>field.disabled=true);
         raw('edit-save').disabled = true;
@@ -457,7 +462,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (!selected?.ready) return status('This profile’s provider account is unavailable. Edit the profile or choose another.');
         saving = true; ++version;
         status(!creating() ? 'Applying account and model settings…' : 'Preparing new chat…');
-        const fieldsBefore = [...$('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,button')].map(field => [field,field.disabled]);
+        const fieldsBefore = [...$('voyage-settings-form').querySelectorAll('select,input,ui-select,ui-slider,ui-radio,button')].map(field => [field,field.disabled]);
         fieldsBefore.forEach(([field]) => field.disabled = true);
         let recorded = false;
         try {
@@ -628,38 +633,57 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     });
     raw('setup-manage-open').addEventListener('click', () => showScreen('manage'));
     raw('setup-manage-back').addEventListener('click', goBack);
-    raw('setup-account-open').addEventListener('click', () => openPicker('account'));
     raw('setup-model-open').addEventListener('click', () => openPicker('model'));
-    async function loadUsage(refresh) {
-        const mine = ++usageVersion, c = connection, client = c?.client, selected = choice(), selectedWorkspace = workspace();
-        const output = raw('account-usage'), button = raw('account-usage-refresh');
-        output.textContent = refresh ? 'Refreshing usage…' : 'Reading cached usage…'; button.disabled = true;
-        if (!client || !selected?.ready) { output.textContent = 'Usage unavailable for this account.'; return; }
-        try {
-            const observation = await read(client,'account_usage',{workspace:selectedWorkspace,account:selected.binding,refresh});
-            if (mine !== usageVersion || setupScreen !== 'editor' || c !== connection || client !== c.client || !same(selected.binding,choice()?.binding)) return;
-            if (!same(observation.account,selected.binding)) throw new Error('Account usage identity changed. Reopen the account picker.');
-            const snapshot = observation.snapshot;
-            const lines = [`Status: ${String(observation.refresh_status || 'unavailable').replaceAll('_',' ')}`];
-            if (snapshot) {
-                lines.push(`Observed: ${new Date(snapshot.fetched_at * 1000).toLocaleString()}`);
-                for (const window of snapshot.windows || []) {
+    async function loadAccountUsage() {
+        const mine = ++usageVersion, c = connection, client = c?.client, selectedWorkspace = workspace();
+        const cards = [...raw('edit-account').querySelectorAll('ui-radio')];
+        await Promise.all(cards.map(async card => {
+            const account = choices[Number(card.getAttribute('value'))];
+            const output = card.querySelector('[data-option-detail]');
+            if (!account?.ready) return;
+            const isCurrent = () => mine === usageVersion && setupScreen === 'editor' && c === connection
+                && client === c?.client && workspace() === selectedWorkspace && sameSetup() && card.isConnected
+                && same(account.binding,choices[Number(card.getAttribute('value'))]?.binding);
+            output.textContent = 'Loading usage…';
+            if (!client) { output.textContent = 'Usage unavailable · Vessel disconnected'; return; }
+            try {
+                const observation = await read(client,'account_usage',{workspace:selectedWorkspace,account:account.binding,refresh:true});
+                if (!isCurrent()) return;
+                if (!same(observation.account,account.binding)) throw new Error('Account usage identity changed. Reopen the profile editor.');
+                const snapshot = observation.snapshot;
+                const rows = [];
+                for (const window of snapshot?.windows || []) {
                     if (!Number.isFinite(window.used_percent)) continue;
-                    lines.push(`${window.kind}: ${window.used_percent}% used${window.resets_at ? ` · resets ${new Date(window.resets_at * 1000).toLocaleString()}` : ''}`);
+                    const row = raw('flux-account-usage').content.firstElementChild.cloneNode(true);
+                    const label = clean(String(window.kind).replaceAll('_',' '));
+                    const percent = Math.round(window.used_percent * 10) / 10;
+                    row.querySelector('[data-usage-label]').textContent = label;
+                    const bar = row.querySelector('[data-usage-bar]');
+                    bar.setAttribute('value',String(Math.max(0,Math.min(100,window.used_percent))));
+                    bar.setAttribute('aria-label',`${label} usage`);
+                    bar.setAttribute('aria-valuetext',`${percent}% used`);
+                    row.querySelector('[data-usage-number]').textContent = `${percent}% used`;
+                    const reset = row.querySelector('[data-usage-reset]');
+                    reset.hidden = !window.resets_at;
+                    if (window.resets_at) reset.textContent = `Resets ${new Date(window.resets_at * 1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}`;
+                    rows.push(row);
                 }
-            } else lines.push('No usage observation available. This is not zero usage.');
-            output.textContent = lines.map(clean).join('\n');
-        } catch (error) { if (mine === usageVersion) output.textContent = clean(error.message); }
-        finally { if (mine === usageVersion) button.disabled = false; }
+                output.replaceChildren(...rows);
+                if (!rows.length) output.textContent = 'No usage information available.';
+                output.title = [snapshot?.fetched_at ? `Observed: ${new Date(snapshot.fetched_at * 1000).toLocaleString()}` : '',
+                    observation.refresh_status ? `Status: ${String(observation.refresh_status).replaceAll('_',' ')}` : ''].filter(Boolean).map(clean).join('\n');
+            } catch (error) {
+                if (isCurrent()) output.textContent = `Usage unavailable · ${clean(error.message)}`;
+            }
+        }));
     }
-    raw('account-usage-refresh').addEventListener('click',() => loadUsage(true));
     for (const prefix of ['edit']) {
         raw(`${prefix}-vessel`).addEventListener('change',loadVessel);
         raw(`${prefix}-workspace`).addEventListener('change',workspaceChanged);
         raw(`${prefix}-account`).addEventListener('change',() => {
-            if (setupScreen === 'picker' && pickerKind === 'account') goBack();
+            raw('setup-account-dropdown').value = false;
+            raw('setup-account-open').focus();
             loadModels();
-            if (setupScreen === 'editor') loadUsage(false);
         });
         raw(`${prefix}-model`).addEventListener('change',() => {
             updateModel();
