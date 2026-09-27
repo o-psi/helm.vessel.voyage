@@ -192,6 +192,8 @@
     white-space: normal;
 }
 #helm-client .voyage-setup-link > span { min-width: 0; flex: 1; }
+/* Flux initializes an empty listbox before Vessel choices arrive. */
+#helm-client #setup-dialog ui-options:has(> ui-option:not([data-hidden])) > ui-option-empty { display: none; }
 #helm-client #setup-enrollment #enrollment-code {
     white-space: normal;
     overflow-wrap: anywhere;
