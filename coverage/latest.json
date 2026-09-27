@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 13996,
-      "covered": 11250,
-      "percent": 80.38010860245784
+      "count": 10324,
+      "covered": 7657,
+      "percent": 74.1669895389384
     },
     "instantiations": {
-      "count": 27547,
-      "covered": 13456,
-      "percent": 48.84742440193124
+      "count": 23364,
+      "covered": 9628,
+      "percent": 41.20869714090053
     },
     "lines": {
-      "count": 165574,
-      "covered": 140271,
-      "percent": 84.71801128196455
+      "count": 108033,
+      "covered": 83356,
+      "percent": 77.15790545481474
     },
     "mcdc": {
       "count": 0,
@@ -42,10 +42,10 @@
       "percent": 0
     },
     "regions": {
-      "count": 272650,
-      "covered": 225083,
-      "notcovered": 47567,
-      "percent": 82.55382358334862
+      "count": 177490,
+      "covered": 130937,
+      "notcovered": 46553,
+      "percent": 73.77148008338497
     }
   },
   "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/image-history-354 -j 8",
@@ -87,7 +87,7 @@
     "-object",
     "$WORKSPACE/target/debug/voyage",
     "-ignore-filename-regex",
-    "-ignore-filename-regex",
+    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/(target|\\.worktrees)/",
     "-summary-only"
   ],
   "exclusions": [
@@ -101,6 +101,7 @@
   ],
   "notes": [
     "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
-    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint."
+    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint.",
+    "Corrected report exclusion argument: earlier helper read wrong positional element of prior report_command. Current workspace artifact set unchanged; original standard dependency/test exclusions restored. Raw reports retained under target/."
   ]
 }
