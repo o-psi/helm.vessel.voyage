@@ -25,8 +25,10 @@ make them a second console. Implement all new console behavior in
 
 React retains each open voyage's in-memory draft, renders canonical history and
 live observations, and shows Starting, Working and Waiting for you in the
-conversation pane. Successful admission is not execution completion. Unknown
-commands retain their exact receipt identities and are never automatically replayed.
+conversation pane. Earlier history loads automatically near the top of the scrollable
+transcript (and for short transcripts), maintaining the reader’s scroll position.
+Successful admission is not execution completion. Unknown commands retain their
+exact receipt identities and are never automatically replayed.
 
 New voyage settings choose Vessel, workspace and profile; **Create voyage** creates
 an independent voyage without inference. Sending a message starts a run. Profile

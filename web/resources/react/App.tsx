@@ -83,8 +83,32 @@ export function RunStatus({tab}: {tab: Tab}) {
 
 export function Conversation({tab, workspace, active, onSettings}: {tab: Tab; workspace: Workspace; active: boolean; onSettings:()=>void}) {
     const run = tab.snapshot?.run, scroll = useRef<HTMLDivElement>(null), following = useRef(true);
+    const loadingHistory = useRef(false), retryHistoryAt = useRef(0);
     const [showJump,setShowJump] = useState(false);
     useEffect(() => {if(active && following.current && scroll.current) scroll.current.scrollTop=scroll.current.scrollHeight;},[active,tab.snapshot]);
+    const loadNearTop = () => {
+        const el = scroll.current, offset = tab.snapshot?.message_offset;
+        if (!active || !el || !offset || tab.busy || loadingHistory.current || Date.now() < retryHistoryAt.current) return;
+        // Preload within one eighth of the visible transcript; also fill short histories.
+        if (el.scrollTop > el.clientHeight / 8 && el.scrollHeight > el.clientHeight) return;
+        loadingHistory.current = true;
+        following.current = false;
+        const height = el.scrollHeight, top = el.scrollTop;
+        void workspace.earlier(tab.key).then(() => {
+            if (tab.snapshot?.message_offset === offset) retryHistoryAt.current = Date.now() + 3000;
+            requestAnimationFrame(() => {
+                if (scroll.current === el) {
+                    following.current = false;
+                    el.scrollTop = top + el.scrollHeight - height;
+                    setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight >= 80);
+                }
+                loadingHistory.current = false;
+                // If a page still does not fill the viewport, fetch another bounded page.
+                if (scroll.current === el && el.scrollHeight <= el.clientHeight && tab.snapshot?.message_offset !== offset) loadNearTop();
+            });
+        });
+    };
+    useEffect(() => {if (active) loadNearTop();}, [active, tab.snapshot?.message_offset]);
     const renderMessage=(message:any)=>{return <article key={message.message_index} className={`message ${message.role}`}>
                     {['tool','function'].includes(message.role) ? <pre>{content(message.content)}</pre> : <><span className="sr-only">{message.role}</span><div className="prose" dangerouslySetInnerHTML={{__html:prose(message.parts?.length?message.parts.filter((part:any)=>part.type==='text').map((part:any)=>part.text).join('\n'):content(message.content))}}/></>}
                     {message.interrupted_attempt&&<small className="message-meta">Interrupted attempt</small>}
@@ -94,9 +118,8 @@ export function Conversation({tab, workspace, active, onSettings}: {tab: Tab; wo
     return <section className="conversation" hidden={!active} aria-label={tab.title}>
         <h1 className="sr-only">{tab.title}</h1>
         {tab.notice && <aside className="notice" role="status">{tab.notice}<button onClick={() => void workspace.reconcile(tab.key)}>Check receipts</button></aside>}
-        <div className="transcript" ref={scroll} tabIndex={0} aria-label="Conversation messages" onScroll={() => {const el=scroll.current!;following.current=el.scrollHeight-el.scrollTop-el.clientHeight<80;setShowJump(!following.current);}}><div className="thread">
+        <div className="transcript" ref={scroll} tabIndex={0} aria-label="Conversation messages" onScroll={() => {const el=scroll.current!;following.current=el.scrollHeight-el.scrollTop-el.clientHeight<80;setShowJump(!following.current);loadNearTop();}}><div className="thread">
             {!tab.snapshot && <p className="empty">Waiting for a current Vessel snapshot…</p>}
-            {tab.snapshot?.message_offset > 0 && <button className="history-link" disabled={tab.busy} onClick={async()=>{const el=scroll.current!;const height=el.scrollHeight;following.current=false;await workspace.earlier(tab.key);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-height;});}}>Load earlier messages</button>}
             {threadRows(tab.snapshot?.messages||[]).map(row=>row.entries?<ToolGroup key={row.key} entries={row.entries} running={['running','starting','cancelling'].includes(run?.state)} messageStart={run?.message_start} decisions={tab.decisions.length>0} renderMessage={renderMessage}/>:<React.Fragment key={row.key}>{renderMessage(row.message)}</React.Fragment>)}
             <Output tab={tab} workspace={workspace}/>
             <RunStatus tab={tab}/>
