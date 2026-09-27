@@ -123,7 +123,9 @@ responsibility for its integration and outcome.
   A successful skipped run is not a newly produced download: locate the previous
   successful, unexpired artifact that justified the skip. For packaging/workflow
   changes, download and inspect the archive, binary membership, source/version
-  identity and checksum before claiming the download pipeline works.
+  identity and checksum before claiming the download pipeline works. For browser
+  assets, verify the archive's `release.json` inventories `share/voyage/browser`
+  and that an installer upgrade from the unpacked archive retains the worker.
 
 ### Maintain version and channel intent
 

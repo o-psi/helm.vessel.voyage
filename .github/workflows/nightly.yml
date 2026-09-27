@@ -84,7 +84,7 @@ jobs:
           for binary in helm vessel voyage voyage-installer; do
             install -m 755 "target/release/$binary" "dist/$name/bin/$binary"
           done
-          python3 -c 'import sys; from pathlib import Path; sys.path.insert(0,"packaging"); import browser_assets; browser_assets.stage(Path("voyage/browser"), Path(sys.argv[1]))' "dist/$name"
+          python3 packaging/stage_nightly.py "dist/$name" "$VERSION"
           printf 'Development build: %s\nSource: %s\nLinux x86-64 only. No tests run. Not a stable release.\n' \
             "$VERSION" "$SOURCE_SHA" > "dist/$name/BUILD.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"

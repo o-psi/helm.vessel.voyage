@@ -54,6 +54,11 @@ required). Inside the downloaded ZIP is a `.tar.gz` archive and its `.sha256`
 checksum. Extract the ZIP, check it with `sha256sum -c *.sha256`, then unpack the
 archive. Its `bin/` directory contains `helm`, `vessel`, `voyage`, and
 `voyage-installer`; `BUILD.txt` records the version and exact source commit.
+The archive also includes `release.json` with hashes for all four binaries and
+the browser worker assets. Keep the unpacked `bin/`, `share/`, and `release.json`
+together when using `voyage-installer upgrade --bin-dir PATH/TO/bin`. The
+installer uses that manifest to include and verify the browser worker. Supplying
+only `bin/` creates a binary-only installation that cannot start `host_browser`.
 These are development binaries, not the full stable installation bundle: no
 release documentation, generated completions, signatures or automatic update
 channel is included. A successful build is not evidence of tested runtime behavior.
@@ -112,8 +117,9 @@ verifies and preserves their hashes as part of release identity. It refuses
 symlinks, missing entry points, mismatched dependency versions and oversized
 inventories. Older binary-only releases remain readable.
 
-The nightly workflow prepares and includes the same worker assets without adding
-hosted tests. Runtime Python 3, Node and sandbox-capable Chromium remain execution-host
+The nightly workflow prepares the same worker assets and writes their
+`release.json` inventory so the installer retains them, without adding hosted
+tests. Runtime Python 3, Node and sandbox-capable Chromium remain execution-host
 requirements, not programs required on a Helm viewer machine. This section does
 not establish successful deployment or full #333 acceptance; exact runtime discovery,
 provisioning, mirror fidelity and cleanup evidence must accompany delivery. Do not silently
