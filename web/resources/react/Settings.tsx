@@ -23,6 +23,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     const [capabilityReload,setCapabilityReload]=useState(0),[accountsReload,setAccountsReload]=useState(0);
     const [catalogue,setCatalogue]=useState<any>(null),[profileId,setProfileId]=useState(''),[editor,setEditor]=useState<any>(null),[profileName,setProfileName]=useState('');
     const [deleteTarget,setDeleteTarget]=useState<any>(null);
+    const [reviewRequired,setReviewRequired]=useState(false);
     const [notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[recovery,setRecovery]=useState(0);
     const connection=fleet.connections.get(vessel),selected=accounts.find(item=>sameAccount(item.binding,account?JSON.parse(account):null)),selectedModel=models.find(item=>item.id===model);
     const profile=catalogue?.profiles.find((item:any)=>item.id===profileId),profileAccount=accounts.find(item=>sameAccount(item.binding,profile?.account));
@@ -51,15 +52,15 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
             if(alive){setCaps(value);setPath(location||value.workspaces?.[0]?.path||'');setNotice('');}
         }).catch(error=>alive&&setNotice(error.message));return()=>{alive=false;};
     },[vessel,connection?.client,capabilityReload]);
-    useEffect(()=>{setEditor(null);setProfileId('');},[path,vessel]);
+    useEffect(()=>{setEditor(null);setProfileId('');setReviewRequired(false);},[path,vessel]);
     useEffect(()=>{
         let alive=true;setCatalogue(null);
-        if(path.startsWith('/'))vesselRead(connection,'profiles',{workspace:path}).then(value=>{if(alive){setCatalogue(value);setProfileId(current=>value.profiles.some((item:any)=>item.id===current)?current:matchingProfile(value.profiles,tab?.snapshot?.inference)?.id||value.default_profile_id||value.profiles[0]?.id||'');}}).catch(error=>alive&&setNotice(error.message));
+        if(path.startsWith('/'))vesselRead(connection,'profiles',{workspace:path}).then(value=>{if(alive){setCatalogue(value);setProfileId(current=>value.profiles.some((item:any)=>item.id===current)?current:matchingProfile(value.profiles,tab?.snapshot?.inference)?.id||value.default_profile_id||value.profiles[0]?.id||'');}}).catch(error=>{if(alive){setNotice(error.message);setReviewRequired(true);}});
         return()=>{alive=false;};
     },[path,vessel,connection?.client,recovery]);
     useEffect(()=>{
         let alive=true;setAccounts([]);setModels([]);if(!path.startsWith('/'))return;
-        vesselRead(connection,'accounts',{workspace:path,transport:null}).then(value=>{if(alive){setAccounts(accountChoices(value));}}).catch(error=>alive&&setNotice(error.message));return()=>{alive=false;};
+        vesselRead(connection,'accounts',{workspace:path,transport:null}).then(value=>{if(alive){setAccounts(accountChoices(value));}}).catch(error=>{if(alive){setNotice(error.message);setReviewRequired(true);}});return()=>{alive=false;};
     },[path,vessel,connection?.client,recovery,accountsReload]);
     // Model discovery is editor-only. A seed is captured before refreshing accounts,
     // so navigation and sign-in completion cannot silently reset an unsaved model.
@@ -92,7 +93,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     async function mutate(op:string,fields:any){
         if(busy||!catalogue?.can_manage)return;setBusy(true);const epoch=generation.current;
         try{const value=await vesselRead(connection,op,{command_id:uuid(),workspace:path,expected_revision:catalogue.revision,...fields});if(epoch!==generation.current)return;setCatalogue(value);setProfileId(fields.profile?.id||value.profiles.find((item:any)=>item.id===profileId)?.id||value.default_profile_id||value.profiles[0]?.id||'');setEditor(null);show('profiles');setNotice('Profiles saved. Existing voyages retain their settings.');}
-        catch(error){if(epoch===generation.current){setCatalogue(null);setEditor(null);show('profiles');setNotice(`${error instanceof Error?error.message:'Change unconfirmed.'} Reload profiles before retrying; the change may have completed.`);}}finally{setBusy(false);}
+        catch(error){if(epoch===generation.current){setCatalogue(null);setEditor(null);setReviewRequired(true);show('profiles');setNotice(`${error instanceof Error?error.message:'Change unconfirmed.'} Check status before retrying; the change may have completed.`);}}finally{setBusy(false);}
     }
     function saveProfile(){if(!editor)return;if(catalogue?.revision!==editorRevision.current){setNotice('Saved profiles changed while you were editing. Cancel this edit and review the current profile before saving.');return;}const nameError=profileNameError(profileName);if(nameError){setNotice(nameError);return;}if(!selected?.ready||!selectedModel){setNotice('Choose an available account and model.');return;}return mutate('save_profile',{profile:{id:editor.id,name:profileName.trim(),account:selected.binding,model,reasoning_effort:reasoning||null,service_tier:service||null},make_default:false});}
     async function refreshSignIn(item:any){
@@ -102,9 +103,9 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
         try{
             try{observation=await vesselRead(connection,'account_usage',{workspace:path,account:binding,refresh:true});confirmed=sameAccount(observation?.account,binding);}catch{/* Never replay an uncertain refresh. Reload the catalogue once. */}
             const value=await vesselRead(connection,'accounts',{workspace:path,transport:null});if(epoch!==generation.current)return;
-            const choices=accountChoices(value).map((choice:any)=>sameAccount(choice.binding,binding)&&(!confirmed||observation?.refresh_status==='sign_in_required')?{...choice,ready:false,availability:confirmed?'sign_in_required':'refresh_unconfirmed'}:choice),current=choices.find((choice:any)=>sameAccount(choice.binding,binding));setAccounts(choices);
-            setNotice(!confirmed?'Sign-in refresh could not be confirmed. Reload accounts to check its status; do not repeat the refresh.':observation?.refresh_status==='sign_in_required'?'Sign-in is required. Reauthenticate this account on its Vessel with vessel auth accounts reauthenticate.':current?.ready?'Sign-in refreshed. This account is available.':current?.availability==='refresh_pending_or_uncertain'?'Sign-in refresh is pending or uncertain. Recover this account on its Vessel before retrying.':'This account is still unavailable. Check its sign-in on the Vessel.');
-        }catch{if(epoch===generation.current)setNotice('Refresh was attempted, but account status could not be reloaded. Reload accounts to check; do not repeat the refresh.');}finally{setBusy(false);}
+            const choices=accountChoices(value).map((choice:any)=>sameAccount(choice.binding,binding)&&(!confirmed||observation?.refresh_status==='sign_in_required')?{...choice,ready:false,availability:confirmed?'sign_in_required':'refresh_unconfirmed'}:choice),current=choices.find((choice:any)=>sameAccount(choice.binding,binding));setAccounts(choices);if(!confirmed)setReviewRequired(true);
+            setNotice(!confirmed?'Sign-in refresh could not be confirmed. Select Check status to review the account; do not repeat the refresh.':observation?.refresh_status==='sign_in_required'?'Sign-in is required. Reauthenticate this account on its Vessel with vessel auth accounts reauthenticate.':current?.ready?'Sign-in refreshed. This account is available.':current?.availability==='refresh_pending_or_uncertain'?'Sign-in refresh is pending or uncertain. Recover this account on its Vessel before retrying.':'This account is still unavailable. Check its sign-in on the Vessel.');
+        }catch{if(epoch===generation.current){setReviewRequired(true);setNotice('Refresh was attempted, but account status could not be reloaded. Select Check status; do not repeat the refresh.');}}finally{setBusy(false);}
     }
     async function refreshUsage(){
         if(busy||!selected?.ready)return;const epoch=++usageGeneration.current;setBusy(true);setUsageNotice('Loading usage…');
@@ -141,7 +142,6 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
                     {!catalogue?.profiles?.some((item:any)=>matches(`${item.name} ${item.model}`))&&<p>{search?'No profiles match your search.':'No saved profiles yet.'}</p>}
                     <p>Choose a profile to use it. Profile edits affect future selections.</p>
                     {profileAccount&&!profileAccount.ready&&<div className="setup-warning"><p>The selected profile’s account is unavailable.</p>{refreshButton(profileAccount)}</div>}
-                    <button type="button" disabled={busy} onClick={()=>setRecovery(value=>value+1)}>Reload profiles</button>
                 </>}
                 {screen==='editor'&&editor&&<>
                     <label>Profile name<input maxLength={80} value={profileName} disabled={busy} onChange={event=>setProfileName(event.target.value)}/></label>
@@ -177,6 +177,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
                 {screen==='delete'&&<><p>Delete <strong>{deleteTarget?.profile.name}</strong>? Existing voyages keep their current settings.</p><button type="button" className="setup-danger" disabled={busy||!deleteTarget||!catalogue} onClick={()=>{if(deleteTarget.revision!==catalogue.revision){setNotice('Profiles changed. Go back and review this profile before deleting.');return;}void mutate('delete_profile',{profile_id:deleteTarget.profile.id});}}>Delete profile</button></>}
             </div>
             <footer><p role="status">{recoveryState.error?'Recovery storage is unavailable. Do not clear it or repeat uncertain creation.':notice}</p>
+                {reviewRequired&&<button type="button" disabled={busy} onClick={()=>{retainEditor();setReviewRequired(false);setNotice('');setRecovery(value=>value+1);}}>Check status</button>}
                 {records.map(record=><button type="button" key={record.key} disabled={busy} onClick={async()=>{setBusy(true);try{const c=fleet.connections.get(record.vessel);const process=await creation.current!.reconcile(c,record);if(process){onCreated(c.id,process);onClose();}else setNotice('Creation was not admitted. You can review and try again.');}catch(error){setNotice(error instanceof Error?error.message:'Receipt unavailable.');}finally{setBusy(false);}}}>Check creation · {record.vessel}</button>)}
                 <div className="setup-footer-actions">{screen==='overview'?<><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button className="primary-action" disabled={!canSave}>{busy?'Working…':tab?'Apply profile':'Create voyage'}</button></>:screen==='editor'?<><button type="button" disabled={busy} onClick={back}>Cancel profile edit</button><button className="primary-action" disabled={!canSave}>{busy?'Working…':'Save profile'}</button></>:<button type="button" disabled={busy} onClick={back}>{screen==='reasoning'||screen==='location'?'Done':'Back'}</button>}</div>
             </footer>

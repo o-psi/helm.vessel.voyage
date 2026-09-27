@@ -5,7 +5,7 @@ import {JSDOM} from 'jsdom';
 import {Settings} from '../resources/react/Settings';
 
 const binding={account_id:'a',connection_id:'p',identity_generation:1,connection_revision:1,transport:'chatgpt_oauth'};
-async function mount({availability='available',usageReply,modelReply,existing=false,canManage=true,empty=false}: {availability?:string;canManage?:boolean;empty?:boolean;usageReply?:(command:any)=>Promise<any>;modelReply?:(command:any)=>Promise<any>;existing?:boolean}={}){
+async function mount({availability='available',usageReply,modelReply,existing=false,canManage=true,empty=false,failProfilesOnce=false}: {availability?:string;failProfilesOnce?:boolean;canManage?:boolean;empty?:boolean;usageReply?:(command:any)=>Promise<any>;modelReply?:(command:any)=>Promise<any>;existing?:boolean}={}){
     const dom=new JSDOM('<div id="root"></div>',{url:'https://helm.test'});
     Object.assign(globalThis,{window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,IS_REACT_ACT_ENVIRONMENT:true});
     dom.window.HTMLDialogElement.prototype.showModal=function(){};dom.window.HTMLDialogElement.prototype.close=function(){};
@@ -19,7 +19,7 @@ async function mount({availability='available',usageReply,modelReply,existing=fa
             case 'capabilities':result={vessel_id:'v',scope:'owner',features:['execution_profiles'],workspaces:[{path:'/work',name:'Work'}]};break;
             case 'inspect':result={incarnation:'i',workspace:'/work'};break;
             case 'accounts':result={accounts:[{id:'a',connection_id:'p',identity_generation:1,label:'Work',state:'ready',availability},{id:'b',connection_id:'p',identity_generation:1,label:'Personal',state:'ready',availability:'available'}],connections:[{id:'p',revision:1,label:'ChatGPT',transports:['chatgpt_oauth']}]};break;
-            case 'profiles':result=structuredClone(catalogue);break;
+            case 'profiles':if(failProfilesOnce){failProfilesOnce=false;throw new Error('Profile list unavailable');}result=structuredClone(catalogue);break;
             case 'account_models':result=modelReply?await modelReply(command):{account:command.account,models:[{id:'m',display_name:'Everyday model',is_default:true,reasoning_efforts:['low','high'],service_tiers:['flex']},{id:'other',display_name:'Other model',reasoning_efforts:['low'],service_tiers:[]}]};break;
             case 'account_usage':result=usageReply?await usageReply(command):{account:command.account};availability='available';break;
             case 'save_profile':result={...catalogue,revision:2,profiles:[command.profile]};break;
@@ -78,14 +78,14 @@ test('lost sign-in refresh is never replayed by repeat clicks or account reload'
     const view=await mount({availability:'expired',usageReply:async()=>{throw new Error('lost reply');}});try{
         await view.click('Refresh sign-in');assert.match(view.text(),/could not be confirmed/);
         assert.equal([...document.querySelectorAll('button')].some(button=>button.textContent==='Refresh sign-in'),false,'an unconfirmed refresh cannot be retried');
-        await view.click('Profile');await view.click('Reload profiles');
+        await view.click('Profile');await view.click('Check status');
         assert.equal(view.button('Refresh sign-in').disabled,true);assert.equal(view.commands.filter(command=>command.op==='account_usage').length,1);
     }finally{await view.dispose();}
 });
 
 test('wrong identity in refresh response is not presented as a successful refresh',async()=>{
     const view=await mount({availability:'expired',usageReply:async()=>({account:{...binding,identity_generation:99},refresh_status:'fresh'})});try{
-        await view.click('Refresh sign-in');assert.match(view.text(),/could not be confirmed/);assert.doesNotMatch(view.text(),/Sign-in refreshed/);assert.equal(view.button('Create voyage').disabled,true,'review is required after an identity mismatch');await view.click('Profile');await view.click('Reload profiles');await view.click('Back');assert.equal(view.button('Create voyage').disabled,false,'explicit reload reviews the current catalogue');
+        await view.click('Refresh sign-in');assert.match(view.text(),/could not be confirmed/);assert.doesNotMatch(view.text(),/Sign-in refreshed/);assert.equal(view.button('Create voyage').disabled,true,'review is required after an identity mismatch');await view.click('Profile');await view.click('Check status');await view.click('Back');assert.equal(view.button('Create voyage').disabled,false,'explicit reload reviews the current catalogue');
     }finally{await view.dispose();}
 });
 
@@ -125,7 +125,7 @@ test('renewal cannot silently approve overwriting a newer profile revision',asyn
 
 test('create remains available above an empty or filtered profile list',async()=>{
     const view=await mount({empty:true});try{
-        await view.click('Profile');assert.match(view.text(),/No saved profiles yet/);
+        await view.click('Profile');assert.match(view.text(),/No saved profiles yet/);assert.doesNotMatch(view.text(),/Reload profiles|Check status/);
         await view.fill('Search profiles','Nothing matches');assert.match(view.text(),/No profiles match/);
         assert.ok(document.querySelector('header [aria-label="Create profile"]'));await view.click('Create profile');
         assert.equal(document.querySelector<HTMLInputElement>('input')!.value,'');
@@ -136,5 +136,15 @@ test('read-only catalogues allow profile choice without exposing mutation contro
     const view=await mount({canManage:false});try{
         await view.click('Profile');assert.equal(document.querySelector('[aria-label="Create profile"]'),null);assert.equal(document.querySelector('[aria-haspopup="menu"]'),null);
         assert.ok(document.querySelector('.setup-choice'));assert.equal(view.commands.some(command=>command.op==='save_profile'),false);
+    }finally{await view.dispose();}
+});
+
+
+test('failed profile loading offers status recovery without a permanent reload control',async()=>{
+    const view=await mount({failProfilesOnce:true});try{
+        assert.match(view.text(),/Profile list unavailable/);await view.click('Check status');await view.click('Profile');
+        assert.match(view.text(),/Everyday/);assert.doesNotMatch(view.text(),/Reload profiles|Check status/);
+        assert.equal(view.commands.filter(command=>command.op==='profiles').length,2);
+        assert.equal(view.commands.some(command=>['save_profile','start_account','account_usage'].includes(command.op)),false);
     }finally{await view.dispose();}
 });
