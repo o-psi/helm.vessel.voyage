@@ -1,5 +1,6 @@
 import {uuid, request, voyageResult, mutation, resolved, receiptStatus} from '../js/vessel-client.js';
 import {ConversationStream} from '../js/conversation-stream.js';
+import {preparePicture, MAX_PICTURE_BYTES, MAX_PICTURES} from './prepare-picture';
 
 export type Connection = {id: string; name: string; client: any; journal: any; voyages: any[]; status: string};
 export type Picture = {id: string; name: string; size: number; url: string; base64: string; uploadId: string; attachment?: any};
@@ -124,12 +125,14 @@ export class Workspace {
         tab.busy = true; this.changed();
         try {
             for (const file of files) {
-                if (!['image/png','image/jpeg','image/webp'].includes(file.type) || !file.size || tab.pictures.length >= 4 || tab.pictures.reduce((n,p) => n+p.size,0)+file.size > 2097152) throw new Error('Use PNG, JPEG or WebP; at most four pictures and 2 MiB total.');
-                const bytes = new Uint8Array(await file.arrayBuffer());
+                if (tab.pictures.length >= MAX_PICTURES) throw new Error('At most four pictures per message.');
+                const remaining=MAX_PICTURE_BYTES-tab.pictures.reduce((n,p) => n+p.size,0);
+                const {blob,name} = await preparePicture(file,remaining);
+                const bytes = new Uint8Array(await blob.arrayBuffer());
                 if (this.closed || this.tabs.get(key) !== tab || guard && !guard()) throw new Error('Voyage changed; capture not attached.');
                 let binary = '';
                 for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
-                tab.pictures.push({id:uuid(),name:file.name || 'pasted-image',size:file.size,url:URL.createObjectURL(file),base64:btoa(binary),uploadId:uuid()});
+                tab.pictures.push({id:uuid(),name:name || 'pasted-image',size:blob.size,url:URL.createObjectURL(blob),base64:btoa(binary),uploadId:uuid()});
             }
         } catch (error) { success = false; tab.notice = error instanceof Error ? error.message : 'Picture unavailable.'; }
         finally { tab.busy = false; this.changed(); }
