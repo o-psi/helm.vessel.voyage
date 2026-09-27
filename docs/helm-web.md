@@ -39,7 +39,11 @@ available. The composer previews PNG/JPEG/WebP pictures and can resize large
 phone photos to JPEG before upload. HEIC/HEIF works only in browsers able to decode
 it; otherwise export to JPEG or WebP. Original photos are not uploaded. The
 per-message limit remains four pictures and 4 MiB after conversion; errors appear
-by the picker. Reloading loses unsent text/pictures, not server-side conversations.
+by the picker. During an active run, Send queues an image-bearing follow-up locally
+until the run finishes; the draft is frozen and a Cancel queued send control is
+shown. Keep the page open: this is not a durable server queue. Failed or uncertain
+submissions are never automatically retried. Reloading loses unsent text/pictures,
+not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default
