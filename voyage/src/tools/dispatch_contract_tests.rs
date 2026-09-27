@@ -265,3 +265,69 @@ async fn shell_secret_references_fail_before_any_tool_effect() {
         .unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn declared_output_schema_requires_presence_and_valid_shape() {
+    let mut registry = ToolRegistry::default();
+    let mut tool = fixture("structured");
+    tool.output = Some(
+        json!({"type":"object","properties":{"count":{"type":"integer","minimum":1}},"required":["count"],"additionalProperties":false}),
+    );
+    registry.register_arc(Arc::new(tool)).unwrap();
+    assert!(
+        registry
+            .validate_output("structured", None)
+            .unwrap_err()
+            .to_string()
+            .contains("omitted")
+    );
+    for invalid in [
+        json!(null),
+        json!({}),
+        json!({"count":0}),
+        json!({"count":"1"}),
+        json!({"count":1,"extra":true}),
+    ] {
+        assert!(
+            registry
+                .validate_output("structured", Some(&invalid))
+                .unwrap_err()
+                .to_string()
+                .contains("JSON Schema")
+        );
+    }
+    registry
+        .validate_output("structured", Some(&json!({"count":1})))
+        .unwrap();
+    registry.register(fixture("unstructured"));
+    registry.validate_output("unstructured", None).unwrap();
+    registry
+        .validate_output("unstructured", Some(&json!(false)))
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_and_foreign_secret_arguments_are_pre_effect_dispatch_failures() {
+    let root = tempfile::tempdir().unwrap();
+    let context = reliability_tests::context(root.path());
+    let mut registry = ToolRegistry::default();
+    let tool = fixture("read_file");
+    let calls = tool.calls.clone();
+    registry.register(tool);
+    assert!(matches!(
+        registry.execute("missing", json!({}), &context).await,
+        Err(ToolError::Failed(_))
+    ));
+    assert!(matches!(
+        registry
+            .execute("read_file", json!({"workflow_secrets":[]}), &context)
+            .await,
+        Err(ToolError::InvalidArguments(_))
+    ));
+    context.cancellation.cancel();
+    assert!(matches!(
+        registry.execute("read_file", json!({}), &context).await,
+        Err(ToolError::Cancelled)
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}

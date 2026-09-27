@@ -842,3 +842,7 @@ mod tests {
         assert!(app.inference.profiles.labels.is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "profiles_campaign_tests.rs"]
+mod campaign_tests;

@@ -602,3 +602,24 @@ fn inference_history_rejects_invalid_windows_and_group_cursors_without_dispatch(
         assert!(!cli.run(&args).status.success(), "{args:?}");
     }
 }
+
+#[test]
+fn connected_configuration_rejection_precedes_network_and_config_loading() {
+    let cli = Cli::new();
+    for options in [
+        vec!["--config", "/missing/synthetic.toml"],
+        vec!["--set", "model=synthetic"],
+        vec!["--model", "synthetic"],
+        vec!["--provider", "openai-chat"],
+        vec!["--workspace", "/missing/workspace"],
+        vec!["--access", "read-only"],
+        vec!["--approval", "always"],
+    ] {
+        let mut args = options;
+        args.extend(["connect"]);
+        cli.fails(
+            &args,
+            "connected voyages resolve execution configuration on their host",
+        );
+    }
+}

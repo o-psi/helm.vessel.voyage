@@ -1538,3 +1538,7 @@ mod viewer_metadata_tests {
         assert!(manager.projection(owner).await["page"].is_null());
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "host_browser/worker_contract_tests.rs"]
+mod worker_contract_tests;

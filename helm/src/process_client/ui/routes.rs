@@ -276,6 +276,8 @@ pub(super) fn retain_receipt(
     use std::io::Write;
     let root =
         crate::process_client::cli::default_directory().with_file_name("helm-command-receipts");
+    #[cfg(test)]
+    let root = super::account_test_support::root("command-receipts", root);
     std::fs::create_dir_all(root.parent().context("receipt parent")?)?;
     #[cfg(unix)]
     {

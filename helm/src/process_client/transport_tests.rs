@@ -232,3 +232,129 @@ async fn feature_probe_requires_explicit_socket_support() {
         assert_eq!(task.await.unwrap(), expected);
     }
 }
+
+#[tokio::test]
+async fn browser_owner_preparation_matrix_is_narrow_and_socket_bound() {
+    use crate::process_client::loopback_tests::Peer;
+    use serde_json::json;
+    use voyage_protocol::{host_browser::HostBrowserOperation as Op, vessel::*};
+    let mut peer = Peer::open().await;
+    let socket = peer.client.connection_state().borrow().socket_id.unwrap();
+    let session = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    for op in [
+        Op::Status {},
+        Op::Start {
+            command_id: Uuid::new_v4(),
+            incarnation: owner,
+            expected_revision: 3,
+        },
+        Op::Receipt {
+            command_id: Uuid::new_v4(),
+        },
+    ] {
+        for prepared in [false, true] {
+            for wrong_session in [false, true] {
+                for wrong_owner in [false, true] {
+                    let c = peer.client.clone();
+                    let request = op.clone();
+                    let task = tokio::spawn(async move {
+                        c.host_browser_observed(socket, session, owner, request)
+                            .await
+                    });
+                    let (id, command) = peer.command().await;
+                    assert!(
+                        matches!(command, VesselCommand::Voyage(VoyageRequest { incarnation: Some(i), command: VoyageCommand::HostBrowser { operation }, .. }) if i == owner && operation == op)
+                    );
+                    let result = if prepared {
+                        json!({"status":"prepared","not_dispatched":true})
+                    } else {
+                        json!({"status":"running"})
+                    };
+                    peer.voyage_reply(
+                        id,
+                        if wrong_session {
+                            Uuid::new_v4()
+                        } else {
+                            session
+                        },
+                        if wrong_owner { Uuid::new_v4() } else { owner },
+                        result,
+                    )
+                    .await;
+                    let can_prepare = !matches!(op, Op::Receipt { .. });
+                    assert_eq!(
+                        task.await.unwrap().is_ok(),
+                        !wrong_session
+                            && (!prepared || can_prepare)
+                            && (!wrong_owner || (prepared && can_prepare))
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn browser_revision_rejects_malformed_and_misbound_snapshots() {
+    use crate::process_client::loopback_tests::Peer;
+    use serde_json::json;
+    let mut peer = Peer::open().await;
+    let socket = peer.client.connection_state().borrow().socket_id.unwrap();
+    let session = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    for value in [
+        json!({}),
+        json!({"revision":-1}),
+        json!({"revision":"4"}),
+        json!({"revision":0}),
+        json!({"revision":u64::MAX}),
+    ] {
+        for mismatch in [false, true] {
+            let c = peer.client.clone();
+            let task =
+                tokio::spawn(async move { c.host_browser_revision(socket, session, owner).await });
+            let (id, _) = peer.command().await;
+            peer.voyage_reply(
+                id,
+                session,
+                if mismatch { Uuid::new_v4() } else { owner },
+                value.clone(),
+            )
+            .await;
+            let actual = task.await.unwrap();
+            if !mismatch && value["revision"].as_u64().is_some() {
+                assert_eq!(actual.unwrap(), value["revision"].as_u64().unwrap());
+            } else {
+                assert!(actual.is_err());
+            }
+        }
+    }
+    for private in [false, true] {
+        let c = peer.client.clone();
+        let task = tokio::spawn(async move {
+            if private {
+                c.private_terminal(
+                    socket,
+                    session,
+                    owner,
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                    voyage_protocol::vessel::TerminalAction::Snapshot,
+                )
+                .await
+            } else {
+                c.host_browser(
+                    socket,
+                    session,
+                    owner,
+                    voyage_protocol::host_browser::HostBrowserOperation::Status {},
+                )
+                .await
+            }
+        });
+        let (id, _) = peer.command().await;
+        peer.reply(id, json!({"not_a_voyage_reply":true})).await;
+        assert!(task.await.unwrap().is_err());
+    }
+}

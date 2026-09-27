@@ -546,3 +546,80 @@ async fn native_socket_does_not_install_a_hidden_thirty_second_deadline() {
         0
     );
 }
+
+#[test]
+fn offline_redaction_preserves_replay_text_but_refuses_executable_secrets() {
+    use crate::{
+        model::{Message, Role},
+        tools::Redactor,
+    };
+    let redactor = Redactor::new(["fixture-secret".into()]);
+    let mut message = Message::new(Role::Assistant, "fixture-secret");
+    message.provider_state = Some(serde_json::json!({
+        "kind":"openai_responses_replay", "version":1,
+        "items":[{"type":"message","content":[
+            {"type":"output_text","text":"fixture-secret"},
+            {"type":"refusal","refusal":"fixture-secret"},
+            {"type":"unknown","safe":true},
+            {"type":"output_text","text":null}
+        ]}]
+    }));
+    redaction::message(&mut message, &redactor).unwrap();
+    assert!(
+        !serde_json::to_string(&message)
+            .unwrap()
+            .contains("fixture-secret")
+    );
+    assert_eq!(
+        message.provider_state.as_ref().unwrap()["items"][0]["content"][2]["safe"],
+        true
+    );
+    for state in [
+        serde_json::json!({"kind":"opaque","nested":[{"fixture-secret":false}]}),
+        serde_json::json!({"kind":"openai_responses_replay","version":2,"items":[{"text":"fixture-secret"}]}),
+        serde_json::json!({"kind":"openai_responses_replay","version":1,"items":[{"type":"function_call","arguments":"{\"key\":\"fixture-secret\"}"}]}),
+        serde_json::json!({"kind":"openai_responses_replay","version":1,"items":[{"type":"function_call","arguments":"fixture-secret"}]}),
+    ] {
+        let mut message = Message::new(Role::Assistant, "safe");
+        message.provider_state = Some(state.clone());
+        assert!(redaction::message(&mut message, &redactor).is_err());
+        assert_eq!(
+            message.provider_state,
+            Some(state),
+            "opaque data must not be rewritten"
+        );
+    }
+    let mut message = Message::new(Role::Tool, "safe");
+    message.tool_call_id = Some("fixture-secret".into());
+    assert!(redaction::message(&mut message, &redactor).is_err());
+}
+
+#[test]
+fn offline_tool_metadata_redaction_never_rewrites_contracts() {
+    use crate::{model::ToolDefinition, tools::Redactor};
+    let redactor = Redactor::new(["fixture-secret".into()]);
+    let safe = ToolDefinition {
+        name: "lookup".into(),
+        description: "description fixture-secret".into(),
+        input_schema: serde_json::json!({"type":"object","properties":{"n":{"type":"integer"}}}),
+        output_schema: Some(serde_json::json!({"type":"string"})),
+        annotations: None,
+    };
+    let mut projected = safe.clone();
+    redaction::definition(&mut projected, &redactor).unwrap();
+    assert!(!projected.description.contains("fixture-secret"));
+    assert_eq!(projected.input_schema, safe.input_schema);
+    for field in 0..3 {
+        let mut definition = safe.clone();
+        match field {
+            0 => definition.name = "fixture-secret".into(),
+            1 => definition.input_schema = serde_json::json!({"nested":[{"fixture-secret":null}]}),
+            _ => definition.output_schema = Some(serde_json::json!({"enum":["fixture-secret"]})),
+        }
+        let input = definition.input_schema.clone();
+        let output = definition.output_schema.clone();
+        assert!(redaction::definition(&mut definition, &redactor).is_err());
+        assert_eq!(definition.input_schema, input);
+        assert_eq!(definition.output_schema, output);
+    }
+}

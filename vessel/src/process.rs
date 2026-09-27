@@ -51,3 +51,6 @@ mod account_flows_tests;
 mod execution_profiles;
 
 mod updates;
+
+#[cfg(test)]
+mod authority_routing_tests;

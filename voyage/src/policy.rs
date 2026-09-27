@@ -404,3 +404,7 @@ fn safe_sed(words: &[String]) -> bool {
         character.is_ascii_digit() || matches!(character, ',' | '$' | 'p' | 'q' | 'd' | ' ' | '\t')
     })
 }
+
+#[cfg(test)]
+#[path = "policy_remaining_tests.rs"]
+mod remaining_tests;

@@ -218,3 +218,90 @@ async fn resume_name_ambiguity_and_workspace_mismatch_do_not_start_owners() {
             .contains("workspace differs")
     );
 }
+
+#[tokio::test]
+async fn invalid_prompts_fail_before_any_owner_or_workspace_access() {
+    for (prompt, expected) in [
+        (" \t\r\n".to_owned(), "blank"),
+        ("x".repeat(65537), "64 KiB"),
+        ("界".repeat(21846), "64 KiB"),
+    ] {
+        for no_save in [false, true] {
+            let result = run(
+                crate::Config::default(),
+                Some("/missing/synthetic/workspace".into()),
+                Some("unresolved-owner".into()),
+                prompt.clone(),
+                no_save,
+                true,
+                true,
+            )
+            .await;
+            assert!(result.unwrap_err().to_string().contains(expected));
+        }
+    }
+}
+
+#[tokio::test]
+async fn resume_name_skips_failed_snapshots_and_accepts_canonical_workspace() {
+    let mut peer = Peer::open().await;
+    let root = tempfile::tempdir().unwrap();
+    let mut selected = process();
+    selected.workspace = root.path().canonicalize().unwrap();
+    let other = process();
+    let c = peer.client.clone();
+    let workspace = root.path().join(".");
+    let task = tokio::spawn(async move {
+        resume::open(&c, &crate::Config::default(), Some(workspace), "wanted").await
+    });
+    let (id, _) = peer.command().await;
+    peer.reply(id, json!([other, selected.clone()])).await;
+    let (id, _) = peer.command().await;
+    send(
+        &mut peer.socket,
+        ServerFrame::Reply {
+            request_id: id,
+            response: VesselResponse {
+                error: Some("owner unavailable".into()),
+                ..response(json!(null))
+            },
+        },
+    )
+    .await;
+    let (id, _) = peer.command().await;
+    peer.voyage_reply(
+        id,
+        selected.session_id,
+        selected.incarnation,
+        json!({"name":"wanted"}),
+    )
+    .await;
+    assert_eq!(task.await.unwrap().unwrap().session_id, selected.session_id);
+}
+
+#[tokio::test]
+async fn resume_rejects_malformed_catalogue_and_restart_reply() {
+    let mut peer = Peer::open().await;
+    let c = peer.client.clone();
+    let task =
+        tokio::spawn(
+            async move { resume::open(&c, &crate::Config::default(), None, "fixture").await },
+        );
+    let (id, _) = peer.command().await;
+    peer.reply(id, json!({"not":"a catalogue"})).await;
+    assert!(task.await.unwrap().is_err());
+    let mut p = process();
+    p.state = ProcessState::Stopped;
+    let reference = p.session_id.to_string();
+    let c = peer.client.clone();
+    let task =
+        tokio::spawn(
+            async move { resume::open(&c, &crate::Config::default(), None, &reference).await },
+        );
+    let (id, _) = peer.command().await;
+    peer.reply(id, json!([p])).await;
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Restart { .. }));
+    peer.reply(id, json!(null)).await;
+    assert!(task.await.unwrap().is_err());
+}

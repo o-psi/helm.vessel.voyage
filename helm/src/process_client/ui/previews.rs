@@ -281,3 +281,7 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "previews_campaign_tests.rs"]
+mod campaign_tests;

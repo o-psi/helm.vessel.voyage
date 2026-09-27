@@ -134,3 +134,7 @@ impl Drop for Output {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "output_tests.rs"]
+mod coverage_tests;

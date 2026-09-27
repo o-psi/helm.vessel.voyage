@@ -83,3 +83,79 @@ async fn admin_recovery_and_removal_preserve_explicit_command_authority() {
     peer.reply(id, json!({"recovered":true})).await;
     assert_eq!(task.await.unwrap().unwrap(), json!({"recovered":true}));
 }
+
+#[test]
+fn administration_json_accepts_exact_byte_limit_and_rejects_bad_inputs() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("input.json");
+    let payload = format!("\"{}\"", "x".repeat(65534));
+    std::fs::write(&file, payload).unwrap();
+    assert_eq!(read_json::<String>(&file).unwrap().len(), 65534);
+    for payload in [
+        vec![b'x'; 65537],
+        b"{".to_vec(),
+        vec![0xff],
+        b"true false".to_vec(),
+    ] {
+        std::fs::write(&file, payload).unwrap();
+        assert!(read_json::<serde_json::Value>(&file).is_err());
+    }
+    assert!(read_json::<serde_json::Value>(root.path()).is_err());
+    assert!(read_json::<serde_json::Value>(&root.path().join("missing")).is_err());
+}
+
+#[tokio::test]
+async fn assignment_uses_observed_owner_and_forwards_exact_identifiers() {
+    for cancel in [false, true] {
+        let mut peer = Peer::open().await;
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let run = Uuid::new_v4();
+        let assignment = Uuid::new_v4();
+        let c = peer.client.clone();
+        let task = tokio::spawn(async move {
+            execute(
+                &c,
+                AdminCommand::Assignment {
+                    session,
+                    run,
+                    assignment,
+                    participant: "worker-α".into(),
+                    cancel,
+                },
+            )
+            .await
+        });
+        let (id, command) = peer.command().await;
+        assert!(matches!(command, VesselCommand::Inspect { session_id } if session_id == session));
+        peer.reply(id, json!({"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"live"})).await;
+        let (id, command) = peer.command().await;
+        assert!(
+            matches!(command, VesselCommand::Voyage(VoyageRequest { session_id, incarnation: None, command: VoyageCommand::AssignmentObserve { run_id, assignment_id, participant, cancel: actual }, .. }) if session_id == session && run_id == run && assignment_id == assignment && participant == "worker-α" && actual == cancel)
+        );
+        peer.voyage_reply(id, session, incarnation, json!({"observed":true}))
+            .await;
+        assert_eq!(task.await.unwrap().unwrap(), json!({"observed":true}));
+    }
+}
+
+#[tokio::test]
+async fn malformed_admin_files_fail_without_connecting() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("malformed.json");
+    std::fs::write(&file, "{}").unwrap();
+    let client = Client::local(root.path().join("no-vessel"));
+    for command in [
+        AdminCommand::Trust {
+            identity_file: file.clone(),
+        },
+        AdminCommand::AcceptParticipant {
+            binding_file: file,
+            command_id: Uuid::new_v4(),
+        },
+    ] {
+        let error = execute(&client, command).await.unwrap_err().to_string();
+        assert!(error.contains("missing field"), "{error}");
+        assert!(client.connection_state().borrow().socket_id.is_none());
+    }
+}

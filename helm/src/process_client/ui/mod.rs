@@ -387,3 +387,6 @@ mod campaign_journey_tests;
 
 #[cfg(all(test, unix))]
 mod socket_support_tests;
+
+#[cfg(all(test, unix))]
+mod campaign_dispatch_tests;

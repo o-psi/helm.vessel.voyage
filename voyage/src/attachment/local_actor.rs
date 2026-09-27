@@ -149,3 +149,7 @@ fn decode(bytes: &[u8]) -> Result<LocalActor> {
     );
     Ok(record.actor)
 }
+
+#[cfg(all(test, unix))]
+#[path = "local_actor_tests.rs"]
+mod tests;

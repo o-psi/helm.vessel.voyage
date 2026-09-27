@@ -1,5 +1,5 @@
 //! Width and sanitization checks only; never constructs a live terminal backend.
-use super::clipped;
+use super::{CleanupFailure, Screen, clipped};
 use unicode_width::UnicodeWidthStr;
 
 #[test]
@@ -82,4 +82,17 @@ fn width_bound_holds_for_mixed_unicode_and_sanitized_controls() {
             assert!(!output.contains('\t'));
         }
     }
+}
+
+#[test]
+fn completed_screen_cleanup_is_idempotent_without_console_access() {
+    let mut screen = Screen { finished: true };
+    screen.finish().unwrap();
+    screen.finish().unwrap();
+    assert!(screen.finished);
+    drop(screen);
+    assert_eq!(
+        CleanupFailure.to_string(),
+        "private terminal cleanup could not be confirmed; stop this Helm interface"
+    );
 }

@@ -38,3 +38,7 @@ pub fn validate_origin(origin: &str, allow_loopback_http: bool) -> anyhow::Resul
     }
     Ok(url.origin().ascii_serialization())
 }
+
+#[cfg(test)]
+#[path = "origin_tests.rs"]
+mod tests;

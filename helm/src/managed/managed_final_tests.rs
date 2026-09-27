@@ -221,3 +221,54 @@ async fn managed_rejects_missing_configuration_and_negative_deadline_before_muta
         peer.finish().await;
     }
 }
+
+#[tokio::test]
+async fn managed_live_state_matrix_preserves_owner_or_restarts_once() {
+    use voyage_protocol::vessel::{ProcessInfo, ProcessState};
+    for state in [
+        ProcessState::Live,
+        ProcessState::Suspended,
+        ProcessState::Stopped,
+        ProcessState::Unavailable,
+        ProcessState::Starting,
+    ] {
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let mut p: ProcessInfo = serde_json::from_value(info(session, incarnation)).unwrap();
+        p.state = state.clone();
+        let restarted = Uuid::new_v4();
+        let mut script = vec![(wire(V::Capabilities), json!({}))];
+        if state == ProcessState::Stopped {
+            script.push((
+                json!({"op":"restart","session_id":session,"incarnation":incarnation}),
+                info(session, restarted),
+            ));
+        }
+        let peer = Peer::new(script).await;
+        peer.client.request(V::Capabilities).await.unwrap();
+        let result = connection::live(&peer.client, p).await;
+        if matches!(
+            state,
+            ProcessState::Live | ProcessState::Suspended | ProcessState::Stopped
+        ) {
+            let found = result.unwrap();
+            assert_eq!(found.session_id, session);
+            assert_eq!(
+                found.incarnation,
+                if state == ProcessState::Stopped {
+                    restarted
+                } else {
+                    incarnation
+                }
+            );
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("managed owner unavailable")
+            );
+        }
+        peer.finish().await;
+    }
+}

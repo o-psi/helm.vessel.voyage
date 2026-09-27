@@ -304,3 +304,88 @@ fn ordinary_structured_results_remain_accepted() {
         confidential(&redactor, &["safe progress".into()], &value).unwrap();
     }
 }
+
+#[tokio::test]
+async fn host_progress_requires_current_run_and_enforces_private_budget() {
+    use sdk::Host;
+    let root = tempfile::tempdir().unwrap();
+    let mut context = crate::tools::reliability_tests::context(root.path());
+    context.max_output_bytes = 20;
+    let broker = Broker {
+        context: context.clone(),
+        manager: Arc::new(Manager::default()),
+        progress: Arc::new(Mutex::new(vec![])),
+    };
+    let mut identity = invocation().identity;
+    identity.run = context.execution_id;
+    broker
+        .progress(&identity, "visible\x1b\nline")
+        .await
+        .unwrap();
+    assert_eq!(broker.progress.lock().unwrap()[0], "visible\nline");
+    assert!(
+        broker
+            .progress(&identity, "x".repeat(30).as_str())
+            .await
+            .is_err()
+    );
+    identity.run = Uuid::new_v4();
+    assert!(broker.progress(&identity, "wrong run").await.is_err());
+    identity.run = context.execution_id;
+    context.cancellation.cancel();
+    assert!(broker.progress(&identity, "cancelled").await.is_err());
+    assert_eq!(broker.progress.lock().unwrap().len(), 1);
+}
+#[tokio::test]
+async fn host_reads_refuse_invalid_scope_deadline_and_missing_invocation_before_io() {
+    use sdk::Host;
+    let root = tempfile::tempdir().unwrap();
+    let context = crate::tools::reliability_tests::context(root.path());
+    let manager = Arc::new(Manager::default());
+    let broker = Broker {
+        context: context.clone(),
+        manager: manager.clone(),
+        progress: Arc::new(Mutex::new(vec![])),
+    };
+    let mut identity = invocation().identity;
+    identity.run = context.execution_id;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    assert!(
+        broker
+            .read(&identity, "file", 0, 10, deadline)
+            .await
+            .is_err()
+    );
+    manager.read_allowed.store(true, Ordering::Release);
+    for (offset, limit) in [(1, 10), (0, 0), (0, sdk::MAX_READ + 1)] {
+        assert!(
+            broker
+                .read(&identity, "file", offset, limit, deadline)
+                .await
+                .is_err()
+        );
+    }
+    assert!(
+        broker
+            .read(
+                &identity,
+                "file",
+                0,
+                10,
+                Instant::now() - Duration::from_secs(1)
+            )
+            .await
+            .is_err()
+    );
+    std::fs::write(root.path().join("file"), b"fixture").unwrap();
+    assert!(
+        broker
+            .read(&identity, "file", 0, 10, deadline)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("unowned")
+    );
+    manager.restrict_host_read(false);
+    assert!(!manager.read_allowed.load(Ordering::Acquire));
+}

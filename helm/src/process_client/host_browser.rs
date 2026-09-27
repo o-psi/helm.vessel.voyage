@@ -657,3 +657,7 @@ mod tests {
         assert!(SCRIPT.contains("credentials:'omit'"));
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "host_browser_tests.rs"]
+mod coverage_tests;

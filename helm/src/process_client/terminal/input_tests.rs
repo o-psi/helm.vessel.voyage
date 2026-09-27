@@ -176,3 +176,62 @@ fn keypad_and_paste_respect_explicit_modes() {
     );
     assert!(paste("\x1b[201~".into(), &modes).is_err());
 }
+
+#[test]
+fn paste_byte_limits_include_bracketing_and_multibyte_input() {
+    for bracketed in [false, true] {
+        let modes = TerminalModes {
+            bracketed_paste: bracketed,
+            ..Default::default()
+        };
+        let limit = if bracketed { 65524 } else { 65536 };
+        assert_eq!(paste("x".repeat(limit), &modes).unwrap().len(), 65536);
+        assert!(paste("x".repeat(limit + 1), &modes).is_err());
+        assert!(paste("界".repeat(limit / 3 + 1), &modes).is_err());
+        let empty = paste(String::new(), &modes).unwrap();
+        assert_eq!(empty.len(), if bracketed { 12 } else { 0 });
+        assert_eq!(paste("\x1b".into(), &modes).is_err(), bracketed);
+    }
+}
+
+#[test]
+fn all_modifier_combinations_encode_navigation_consistently() {
+    for bits in 0..8 {
+        let mut modifiers = KeyModifiers::NONE;
+        if bits & 1 != 0 {
+            modifiers |= KeyModifiers::SHIFT;
+        }
+        if bits & 2 != 0 {
+            modifiers |= KeyModifiers::ALT;
+        }
+        if bits & 4 != 0 {
+            modifiers |= KeyModifiers::CONTROL;
+        }
+        for application in [false, true] {
+            let modes = TerminalModes {
+                app_cursor: application,
+                ..Default::default()
+            };
+            for (code, end) in [
+                (KeyCode::Up, 'A'),
+                (KeyCode::Down, 'B'),
+                (KeyCode::Right, 'C'),
+                (KeyCode::Left, 'D'),
+                (KeyCode::Home, 'H'),
+                (KeyCode::End, 'F'),
+            ] {
+                let expected = if bits != 0 {
+                    format!("\x1b[1;{}{end}", bits + 1)
+                } else if application {
+                    format!("\x1bO{end}")
+                } else {
+                    format!("\x1b[{end}")
+                };
+                assert_eq!(
+                    key_bytes(code, modifiers, &modes).unwrap(),
+                    expected.as_bytes()
+                );
+            }
+        }
+    }
+}

@@ -294,3 +294,9 @@ pub mod legacy_recovery;
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod recovery_tests;
+
+#[cfg(all(test, unix))]
+mod image_upload_tests;

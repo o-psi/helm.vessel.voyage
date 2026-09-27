@@ -65,13 +65,23 @@ fn home() -> Result<PathBuf> {
         Ok(std::env::var_os("HOME").context("HOME required")?.into())
     }
 }
+fn installation_root() -> Result<PathBuf> {
+    #[cfg(test)]
+    {
+        Ok(home()?.join("install"))
+    }
+    #[cfg(not(test))]
+    {
+        Ok(home()?.join(".local/share/voyage/install"))
+    }
+}
 fn root() -> Result<PathBuf> {
-    let root = home()?.join(".local/share/voyage/install/updates");
+    let root = installation_root()?.join("updates");
     files::private_directory(&root)?;
     Ok(root)
 }
 fn current() -> Result<String> {
-    let root = home()?.join(".local/share/voyage/install");
+    let root = installation_root()?;
     let state: serde_json::Value =
         serde_json::from_slice(&files::read(&root.join("transaction.json"), 65536)?)?;
     ensure!(
@@ -115,7 +125,10 @@ fn output(record: &Record) -> Result<()> {
     );
     Ok(())
 }
-fn command(mut command: Command) -> Result<String> {
+fn command(command: Command) -> Result<String> {
+    command_for(command, Duration::from_secs(20))
+}
+fn command_for(mut command: Command, timeout: Duration) -> Result<String> {
     // Output goes to a private bounded file, not a pipe that can deadlock.
     let p = root()?.join(format!("command-{}-{}.log", std::process::id(), now()));
     files::write_new(&p, b"")?;
@@ -125,7 +138,7 @@ fn command(mut command: Command) -> Result<String> {
         .stdout(log.try_clone()?)
         .stderr(log)
         .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + timeout;
     let result = (|| {
         loop {
             if let Some(status) = child.try_wait()? {
@@ -201,10 +214,37 @@ fn persistent_gateway_command(command: Option<&[u8]>, home: &std::path::Path) ->
     .iter()
     .any(|relative| command == Some(home.join(relative).as_os_str().as_encoded_bytes()))
 }
+fn process_executable(pid: u32) -> std::io::Result<PathBuf> {
+    #[cfg(test)]
+    {
+        crate::fixture_tests::executable(pid)
+    }
+    #[cfg(not(test))]
+    {
+        fs::read_link(format!("/proc/{pid}/exe"))
+    }
+}
+fn process_arguments(pid: u32) -> std::io::Result<Vec<u8>> {
+    #[cfg(test)]
+    {
+        fs::read(
+            home()
+                .expect("isolated process fixture")
+                .join(format!("cmdline-{pid}")),
+        )
+    }
+    #[cfg(not(test))]
+    {
+        fs::read(format!("/proc/{pid}/cmdline"))
+    }
+}
 fn gateways() -> Result<Vec<Gateway>> {
-    let exe = home()?
-        .join(".local/share/voyage/install/current/bin/vessel")
+    let exe = installation_root()?
+        .join("current/bin/vessel")
         .canonicalize()?;
+    #[cfg(test)]
+    let state = home()?.join(".local/state/voyage/vessel");
+    #[cfg(not(test))]
     let state = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .unwrap_or(home()?.join(".local/state"))
@@ -227,10 +267,10 @@ fn gateways() -> Result<Vec<Gateway>> {
         let Ok(pid) = pid.trim().parse::<u32>() else {
             continue;
         };
-        if fs::read_link(format!("/proc/{pid}/exe")).ok().as_ref() != Some(&exe) {
+        if process_executable(pid).ok().as_ref() != Some(&exe) {
             continue;
         }
-        let argv = fs::read(format!("/proc/{pid}/cmdline"))?;
+        let argv = process_arguments(pid)?;
         let args: Vec<_> = argv.split(|c| *c == 0).filter(|v| !v.is_empty()).collect();
         if !args
             .windows(2)
@@ -297,8 +337,8 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
     )?;
     let manifest = Manifest::inspect(&prepared.bin_dir)?;
     let installed: Manifest = serde_json::from_slice(&files::read(
-        &home()?
-            .join(".local/share/voyage/install/releases")
+        &installation_root()?
+            .join("releases")
             .join(&record.current_release)
             .join("release.json"),
         1024 * 1024,
@@ -406,7 +446,7 @@ fn apply_worker(record: &mut Record) -> Result<()> {
             let pid = systemctl(&["show", &gateway.unit, "--property=MainPID", "--value"])?;
             let pid: u32 = pid.trim().parse()?;
             ensure!(
-                fs::read_link(format!("/proc/{pid}/exe"))? == report.release_dir.join("bin/vessel"),
+                process_executable(pid)? == report.release_dir.join("bin/vessel"),
                 "Gateway did not activate the approved release"
             );
         }
@@ -458,9 +498,7 @@ fn reconcile(record: &mut Record) -> Result<()> {
             || Some(installed.as_str()) == record.release_id.as_deref(),
         "Another installation replaced this operation"
     );
-    let release = home()?
-        .join(".local/share/voyage/install/releases")
-        .join(&installed);
+    let release = installation_root()?.join("releases").join(&installed);
     let manifest: Manifest =
         serde_json::from_slice(&files::read(&release.join("release.json"), 1024 * 1024)?)?;
     ensure!(
@@ -476,7 +514,7 @@ fn reconcile(record: &mut Record) -> Result<()> {
         let pid = systemctl(&["show", unit, "--property=MainPID", "--value"])?;
         let pid: u32 = pid.trim().parse()?;
         ensure!(
-            fs::read_link(format!("/proc/{pid}/exe"))? == release.join("bin/vessel"),
+            process_executable(pid)? == release.join("bin/vessel"),
             "Service executable not verified"
         );
     }
@@ -708,6 +746,10 @@ pub(super) fn run(args: &[String]) -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "linux_tests.rs"]
+mod expanded_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fixture_tests::Fixture;
@@ -755,7 +797,7 @@ mod tests {
     }
     fn installation() -> Fixture {
         let f = Fixture::new();
-        let install = home().unwrap().join(".local/share/voyage/install");
+        let install = installation_root().unwrap();
         files::private_directory(&install).unwrap();
         let current = "a".repeat(64);
         files::atomic_json(
