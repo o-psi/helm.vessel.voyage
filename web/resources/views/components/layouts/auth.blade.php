@@ -6,11 +6,12 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="robots" content="noindex, nofollow">
     <title>Helm Console</title>
-    @viteReactRefresh
-    @vite('resources/react/main.tsx')
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    @livewireStyles
+    @fluxAppearance
 </head>
-<body>
-    <div id="helm-react" data-bootstrap="{{ json_encode($bootstrap) }}"></div>
-    <noscript>Helm requires JavaScript to connect to your Vessels.</noscript>
+<body class="min-h-dvh bg-white font-sans text-zinc-800 antialiased dark:bg-zinc-800 dark:text-zinc-100">
+    {{ $slot }}
+    @fluxScripts
 </body>
 </html>

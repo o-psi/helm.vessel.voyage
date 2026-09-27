@@ -5,33 +5,39 @@
 
 # Helm website
 
-## Production console
+## Helm React preview
 
-React 19 / TypeScript is the authenticated console at `/`. `/react` redirects to
-`/` and retains the connection-management query. Laravel owns authentication,
-tenant-scoped connection bootstrap and the shared public/login pages. The console
-loads no Livewire or Flux runtime. The retired console is preserved in
-[`archive/helm-web-flux`](../archive/helm-web-flux/README.md), outside route,
-Composer, Vite and default test discovery. Do not implement console changes there.
+The authenticated `/react` route runs the React 19 / TypeScript console alongside
+(not instead of) the existing `/` console. It uses the same Laravel sessions,
+tenant-scoped connection bootstrap and direct Vessel WebSocket transport. No
+Livewire or Flux JavaScript is loaded by the React route. The existing console
+remains the default while the preview is compared and verified.
 
-From `web/`, use `npm ci`, `npm run typecheck`, `npm test`, and `npm run build`.
-The supported Node range is in `package.json`. Production assets contain the
-React console plus shared public/login assets; a build alone does not deploy them.
+Use Node 24.15+ (or another version in `package.json`'s `engines`) for the current
+jsdom and Vite toolchain. From `web/`, run `npm ci`, `npm run typecheck`,
+`npm run test:react`, and `npm run build`. `npm test` includes the existing client
+suite followed by the React tests. The preview requires the same Laravel/PHP
+runtime and authentication setup described below; a Vite build alone does not
+start or deploy the application.
 
-React owns voyage navigation, drafts, history, run status, settings, decisions,
-attachments and connection management. Shared transport/intent journals retain
-exact command identities across the cutover. Browser viewing, account enrollment,
-advanced voyage actions and the reviewed updater use explicitly disposed adapters.
-No unknown command is automatically replayed. Provider credentials remain on Vessels.
+React owns workspace navigation, per-voyage drafts, transcript presentation,
+settings, typed decisions, image preparation and the connection manager. Existing
+transport/intent journals are shared. Private account enrollment and advanced
+voyage actions are deliberately isolated DOM adapters with explicit disposal,
+retaining their audited receipt and consent logic while React owns their hosts.
+Pending creation uses the same journal namespace as the existing console, so
+switching interfaces does not authorize another uncertain start.
 
-Create voyage explicitly prepares an independent voyage before its first message.
-Unsent text and pictures live in page memory and survive switching conversations,
-but not reloading. The profile editor manages accounts/models/reasoning/service;
-Vessel updates exposes exact prepare/review/apply/status and capability-gates older
-hosts. Existing private keys, tenants, connections and conversation journals need
-no migration for this interface cutover.
+Draft text and pictures live only in page memory; switching voyages preserves
+them, but refreshing or navigating away does not. The preview contains a link
+back to the existing console. Mutation admission is distinct from execution
+completion; uncertain commands are reconciled by their original identities,
+never automatically replayed. An actual authenticated browser comparison is
+required before claiming visual parity or replacing the default route.
 
-helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
+
+Laravel 13, Livewire 4 and licensed Flux Pro UI 2 product website for
+https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
 as a product suite for running coding agents across machines the user controls.
 Product copy presents Helm Web and the Linux terminal client as two interfaces
 to operator-controlled Vessels and independent Voyages. Web use requires Vessel
@@ -140,9 +146,8 @@ at `/usr/local/bin/cloudflared`; explicit operator upgrades are required.
 Use the Proxmox console or `pct exec` for administration. Check `systemctl is-active
 nginx php8.4-fpm cloudflared`, `systemctl --failed`, and `nginx -t`. The internal
 `http://127.0.0.1/up` endpoint should return 200. The public page must contain the
-Helm title, and all production React assets must return 200. The console must not
-load the archived console bundle or Flux/Livewire scripts. Shared public/login
-pages still load their own Flux assets. Verify desktop and mobile layouts.
+Helm title, and its CSS, Flux and Livewire scripts must return 200. Exercise all
+three interface choices and confirm the planned labels for web and mobile.
 `/.env` must return 403; unknown pages must return 404. Debug output stays disabled.
 
 If public resolution lags, inspect authoritative/public DNS independently; do not
@@ -164,14 +169,87 @@ validation/audit, origin HTTP/health, public HTTPS/assets, route-specific titles
 descriptions and links, environment-file denial and service health. These are
 HTTP/runtime checks; no browser visual QA or agent execution was performed.
 
-### Console verification
+### Setup, in-memory composition and private pictures
 
-Run `npm test` for the active shared transport/auth and React suites. The HTTP
-fixture checks canonical root rendering, `/react` redirect, tenant isolation,
-CSRF, connection-management feedback and logout. Archived Flux presentation
-fixtures are historical and are excluded from the active suite. Use
-`node tests/browser-layout-browser.mjs` after building for desktop/mobile Chromium
-checks, then verify the authenticated production root in the shared browser.
+The default Livewire console has one **Setup** control in the composer. Its
+responsive flyout contains location (for a new voyage), searchable profile
+selection and management, a profile editor with account/model pickers, ChatGPT
+device sign-in, access and reasoning. The account and model pickers and sign-in
+step replace nested popovers without replacing unsent composer text. Profile
+edits affect future selections; an existing idle voyage uses a separate,
+confirmed command to apply a selected profile to its next run. Access remains a
+separate authority change: a new voyage keeps its choice locally, while an
+existing voyage waits for Vessel confirmation. Reasoning is retained locally for
+a new voyage or applied to an existing voyage's next run after confirmation.
+
+Setup's interactive controls use the installed Flux 2.19 components: buttons,
+searchable Pro listboxes, inputs, accordion, slider and status text. The account
+and model listboxes each have a dedicated screen inside the flyout. Structural
+containers and scoped layout CSS keep its header and actions visible because this
+installed Flux modal version does not provide a pinned footer slot. Socket-driven
+choices are cloned from server-rendered Flux option templates; the Vessel remains
+the source of account, profile and model authority.
+
+Expired ChatGPT accounts have an explicit Flux refresh control in Profile setup.
+It sends one scoped `account_usage` refresh for the selected account binding and
+reloads the catalogue; unavailable accounts cannot be applied to a voyage.
+Uncertain refreshes are not retried automatically. Reauthentication of an
+invalid refresh token remains a host-owner `vessel auth accounts reauthenticate`
+operation for the same account.
+
+The composer supports text and picture attachments. **New voyage → Setup**
+prepares the workspace and account/model settings in memory without starting a
+Voyage. First Send creates the Voyage and submits the message with separate
+durable identities. Uncertain creation is reconciled, never replayed. Pictures
+cannot steer an active run; wait for completion.
+
+Unsent text and pictures are kept only in page memory. Reloading or closing the
+page loses them. Shared drafts, polling, server-side draft staging and draft
+recovery are removed. Attachments upload directly to the selected Voyage before
+submission. Persistent command journals retain execution identity metadata only,
+not unsent text or image bytes. Existing draft data is not deleted or migrated.
+
+Focused fixtures: `node --test tests/composer.test.mjs tests/console.test.mjs`
+and `cd gateway && node --test test/*.test.js`. These do not establish a real phone
+journey, native TUI exchange, restart durability, or approved live-provider behavior;
+those require the integrated backend and manual/native evidence.
+
+### Sidebar voyage actions
+
+Each voyage card has a native Flux context menu (right-click, Shift+F10 / Menu
+key, or the visible ellipsis). Actions always capture that card's Vessel and
+voyage, not the selected conversation. Opening an action reads current public
+capabilities, process identity and snapshot; confirmation rechecks incarnation
+and revision. The server remains authoritative. Disabled menu items explain
+missing authority, active runs, archive state, cleanup and unresolved commands.
+
+Rename, access modes, archive/restore, branch, cancel, details, clear, compact and
+delete use the existing public operations. Branch offers full history or a saved
+user-message boundary and warns about independent provider costs. Clear/Delete
+require typed confirmation; Compact preserves canonical history and only reduces
+working context. Restoring a positively stopped archive restarts it before a
+fresh snapshot and unarchive command; unavailable processes are not inferred dead.
+
+Uncertain sidebar effects retain metadata-only local intents. Open Details and
+choose **Check pending receipt** to reconcile without replay. Branch requires the
+source's matching `snapshot_committed` receipt plus observation of its exact child
+ID; a missing child remains uncertain. A changed incarnation after an uncertain
+restart is reported as observed state, not exact acknowledgement; reopen Restore
+to finish unarchiving. Cancel admission does not establish completed cleanup.
+
+### Vessel management
+
+**Manage Vessels** opens a Flux dialog in the console rather than navigating away.
+The default view is a responsive card grid (two columns on wider screens, one on
+mobile) with an **Add Vessel** action. Adding opens
+a separate step within the dialog; setup help and credential import are collapsed.
+Each card’s options reveal technical details and removal confirmation. Unconfirmed
+pairings stay in the list with a **Check connection** action. Saved connections are not an online-status
+claim. Disconnect requires confirmation and removes only this account’s saved
+connection; admitted voyages continue and the underlying Vessel grant is retained.
+The legacy `/connections` URL redirects to `/?manage-vessels=1`. Form submissions
+reload the console and reopen management with their result or validation errors;
+invitation and credential fields are never repopulated.
 
 ## Laravel Boost (local AI development)
 

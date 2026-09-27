@@ -7,7 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 class VesselConnectionController extends Controller {
     private function consoleRedirect(Request $request): \Illuminate\Http\RedirectResponse {
-        return redirect()->route($request->header('X-Helm-Client') === 'react' ? 'console.react' : 'console', ['manage-vessels' => 1]);
+        return redirect()->route('console', ['manage-vessels' => 1]);
     }
     public function index(Request $request) {
         return $this->consoleRedirect($request);

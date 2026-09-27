@@ -5,17 +5,16 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {JSDOM} from 'jsdom';
 import {App} from '../resources/react/App.tsx';
 
-test('React shell renders safely without Livewire and exposes migration boundaries', () => {
+test('React shell renders safely without Livewire and uses the production console', () => {
     const dom = new JSDOM('<meta name="csrf-token" content="fixture-token">');
     const previous = globalThis.document;
     globalThis.document = dom.window.document;
     try {
-        const html = renderToStaticMarkup(React.createElement(App, {bootstrap: {tenantId: 'tenant', vessels: [{id: 'v', name: '<img src=x onerror=alert(1)>', vessel_id: 'owner'}], ticketUrl: '/console/ticket', legacyUrl: '/', connectionsUrl: '/connections', logoutUrl: '/console/logout'}}));
+        const html = renderToStaticMarkup(React.createElement(App, {bootstrap: {tenantId: 'tenant', vessels: [{id: 'v', name: '<img src=x onerror=alert(1)>', vessel_id: 'owner'}], ticketUrl: '/console/ticket', connectionsUrl: '/connections', logoutUrl: '/console/logout'}}));
         const output = new JSDOM(html).window.document;
         assert.equal(output.querySelectorAll('img,script').length, 0);
         assert.match(output.body.textContent!, /<img src=x onerror=alert\(1\)>/);
-        assert.match(output.body.textContent!, /React preview/);
-        assert.match(output.body.textContent!, /Compare with existing console/);
+        assert.doesNotMatch(output.body.textContent!, /React preview|existing console/i);
         assert.equal(output.querySelector('.tabs'), null);
         assert.equal(output.querySelector('.welcome'), null);
         assert.equal(output.querySelector('textarea')?.getAttribute('placeholder'), 'Ask anything…');

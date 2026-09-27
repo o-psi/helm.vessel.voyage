@@ -12,7 +12,7 @@ import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {Workspace, type Tab} from './workspace';
 
-type Bootstrap = {tenantId: string; vessels: any[]; ticketUrl: string; legacyUrl: string; connectionsUrl: string; logoutUrl: string};
+type Bootstrap = {tenantId: string; vessels: any[]; ticketUrl: string; connectionsUrl: string; logoutUrl: string};
 const csrf = () => document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content || '';
 function Icon({name}: {name: string}) {
     const paths: Record<string, string> = {plus:'M12 5v14M5 12h14',search:'m21 21-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',folder:'M3 7V5h6l2 2h10v13H3Z',clip:'m9 17 8-8a3 3 0 0 0-4-4l-9 9a5 5 0 0 0 7 7l9-9',up:'m6 12 6-6 6 6M12 6v14',stop:'M6 6h12v12H6Z',menu:'M4 8h16M4 16h16',refresh:'M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1',server:'M3 4h18v6H3ZM3 14h18v6H3ZM6 7h1M6 17h1',chevron:'m8 10 4 4 4-4',user:'M8 7a4 4 0 1 0 8 0 4 4 0 0 0-8 0M4 21v-2a8 8 0 0 1 16 0v2'};
@@ -26,7 +26,7 @@ function content(value: unknown): string {
 export function prose(text: string) {
     return DOMPurify.sanitize(marked.parse(text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g,'')) as string, {ALLOWED_TAGS:['p','br','strong','em','del','code','pre','blockquote','ul','ol','li','h1','h2','h3','h4','hr','a','table','thead','tbody','tr','th','td'], ALLOWED_ATTR:['href','title'], ALLOW_DATA_ATTR:false});
 }
-function Composer({tab, workspace, legacyUrl,onSettings}: {tab?: Tab; workspace: Workspace; legacyUrl: string; onSettings:()=>void}) {
+function Composer({tab, workspace, onSettings}: {tab?: Tab; workspace: Workspace; onSettings:()=>void}) {
     const fileInput = useRef<HTMLInputElement>(null);
     const running = ['running','starting','cancelling'].includes(tab?.snapshot?.run?.state);
     const enabled = tab && workspace.actionable(tab) && workspace.permitted(tab,running?'steer':'submit');
@@ -40,7 +40,6 @@ function Composer({tab, workspace, legacyUrl,onSettings}: {tab?: Tab; workspace:
             <small>{[tab?.snapshot?.inference?.model,tab?.snapshot?.inference?.reasoning_effort,tab?.snapshot?.inference?.service_tier].filter(Boolean).join(' · ')}</small>
             <div className="access-picker"><label className="sr-only" htmlFor={`access-${tab?.session||'new'}`}>Voyage access mode</label><select id={`access-${tab?.session||'new'}`} disabled={!enabled} value={tab?.snapshot?.access||''} title="Access is enforced by the executing host; configured roots and limits still apply." onChange={event=>{if(tab)void workspace.act(tab.key,'set_access',{access:event.target.value});}}><option value="" disabled>Access unknown</option><option value="read-only">Read only</option><option value="approval">Approval</option><option value="unrestricted">Full access</option></select></div>
         </div>{running && <button type="button" className="icon-button" aria-label="Cancel run" disabled={!enabled} onClick={() => tab && void workspace.act(tab.key,'cancel')}><Icon name="stop"/></button>}<button className="send-button icon-button" aria-label={running ? 'Steer' : 'Send'} disabled={!enabled || (!tab?.draft.trim() && !tab?.pictures.length)}><Icon name="up"/></button></div></div>
-        <div className="preview-caption"><span>React preview</span><a href={legacyUrl}>Compare with existing console ↗</a></div>
     </form>;
 }
 export function RunStatus({tab}: {tab: Tab}) {
@@ -63,7 +62,7 @@ export function RunStatus({tab}: {tab: Tab}) {
     </div>;
 }
 
-export function Conversation({tab, workspace, active, legacyUrl,onSettings}: {tab: Tab; workspace: Workspace; active: boolean; legacyUrl: string; onSettings:()=>void}) {
+export function Conversation({tab, workspace, active, onSettings}: {tab: Tab; workspace: Workspace; active: boolean; onSettings:()=>void}) {
     const run = tab.snapshot?.run, scroll = useRef<HTMLDivElement>(null), following = useRef(true);
     const [showJump,setShowJump] = useState(false);
     useEffect(() => {if(active && following.current && scroll.current) scroll.current.scrollTop=scroll.current.scrollHeight;},[active,tab.snapshot]);
@@ -87,7 +86,7 @@ export function Conversation({tab, workspace, active, legacyUrl,onSettings}: {ta
         </div></div>
         {showJump && <button className="jump" onClick={() => {following.current=true;setShowJump(false);scroll.current?.scrollTo({top:scroll.current.scrollHeight});}}>Jump to latest ↓</button>}
         <Decisions tab={tab} workspace={workspace}/>
-        <Composer tab={tab} workspace={workspace} legacyUrl={legacyUrl} onSettings={onSettings}/>
+        <Composer tab={tab} workspace={workspace} onSettings={onSettings}/>
     </section>;
 }
 
@@ -121,7 +120,7 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
     },[appearance]);
     const connections=[...fleet.connections.values()], voyages=voyageList(connections,query,(connection,voyage)=>{const tab=workspace.tabs.get(JSON.stringify([connection.id,voyage.session_id]));return tab&&!tab.stale&&Date.now()-tab.freshAt<35000?tab.snapshot:null;});
     const selected=active ? workspace.tabs.get(active) : null;
-    return <div className="helm-preview">
+    return <div className="helm-console">
         <button className="mobile-toggle icon-button" aria-label="Open voyage navigation" aria-expanded={mobile} onClick={()=>setMobile(!mobile)}><Icon name="menu"/></button>
         {mobile && <button className="sidebar-backdrop" aria-label="Close voyage navigation" onClick={()=>setMobile(false)}/>}
         <aside className={`sidebar ${mobile?'mobile-open':''}`} aria-label="Voyages">
@@ -137,13 +136,12 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
             <footer className="sidebar-footer"><p className="connection-state" role="status">{selected ? selected.stale?'Reconnecting…':`Connected · ${selected.snapshot?.run?.state||'idle'}` : connections.some((c:any)=>c.client)?'Ready':connections.length?'Connecting…':'No Vessels connected'}</p>
                 <div className="footer-controls"><details className="popover connections"><summary><Icon name="server"/><span>{connections.filter((c:any)=>c.client).length}/{connections.length} connected</span><Icon name="chevron"/></summary><div className="popover-panel"><strong>Vessel connections</strong>{connections.map((c:any)=><p key={c.id}>{c.name} · {c.status}</p>)}<button onClick={()=>setManage(true)}>Manage Vessels</button></div></details>
                 <button className="icon-button" aria-label="Reconnect Vessels" title="Reconnect Vessels" onClick={()=>fleet.reconnect()}><Icon name="refresh"/></button>
-                <details className="popover profile"><summary aria-label="Profile menu"><Icon name="user"/></summary><div className="popover-panel"><strong>Appearance</strong><div className="appearance">{['light','dark','system'].map(mode=><button key={mode} aria-pressed={appearance===mode} onClick={()=>setAppearance(mode)}>{mode}</button>)}</div><button onClick={()=>setManage(true)}>Vessel connections</button><a href={bootstrap.legacyUrl}>Existing console ↗</a><form action={bootstrap.logoutUrl} method="post"><input type="hidden" name="_token" value={csrf()}/><button>Sign out</button></form></div></details></div>
-                <a className="preview-label" href={bootstrap.legacyUrl} title="Return to the existing console">React preview · existing console ↗</a>
+                <details className="popover profile"><summary aria-label="Profile menu"><Icon name="user"/></summary><div className="popover-panel"><strong>Appearance</strong><div className="appearance">{['light','dark','system'].map(mode=><button key={mode} aria-pressed={appearance===mode} onClick={()=>setAppearance(mode)}>{mode}</button>)}</div><button onClick={()=>setManage(true)}>Vessel connections</button><form action={bootstrap.logoutUrl} method="post"><input type="hidden" name="_token" value={csrf()}/><button>Sign out</button></form></div></details></div>
             </footer>
         </aside>
-        <main className="voyage-workspace" aria-label="Conversation">{!active && <section className="conversation"><div className="transcript"><div className="thread empty">Choose a voyage from any connected Vessel. <button onClick={()=>setSettings({})}>New voyage</button></div></div><Composer workspace={workspace} legacyUrl={bootstrap.legacyUrl} onSettings={()=>setSettings({})}/></section>}
+        <main className="voyage-workspace" aria-label="Conversation">{!active && <section className="conversation"><div className="transcript"><div className="thread empty">Choose a voyage from any connected Vessel. <button onClick={()=>setSettings({})}>New voyage</button></div></div><Composer workspace={workspace} onSettings={()=>setSettings({})}/></section>}
             {selected && <HostBrowser key={selected.key} tab={selected} client={fleet.connections.get(selected.vessel)?.client}/> }
-            {[...workspace.tabs.values()].map(tab=><Conversation key={tab.key} tab={tab} workspace={workspace} active={active===tab.key} legacyUrl={bootstrap.legacyUrl} onSettings={()=>setSettings({tab})}/>)}
+            {[...workspace.tabs.values()].map(tab=><Conversation key={tab.key} tab={tab} workspace={workspace} active={active===tab.key} onSettings={()=>setSettings({tab})}/>)}
         </main>
         {manage&&<Connections bootstrap={bootstrap} onClose={()=>setManage(false)}/>}
         {settings&&<Settings fleet={fleet} workspace={workspace} tab={settings.tab} tenant={bootstrap.tenantId} onClose={()=>setSettings(null)} onCreated={(vessel,process)=>setActive(workspace.open(vessel,process.session_id,process.name||'New voyage'))}/>}

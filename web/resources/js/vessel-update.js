@@ -5,6 +5,12 @@ import {request, uuid} from './vessel-client.js';
 export function vesselUpdate(root, {show, resume}) {
     const $ = id => root.querySelector(`#${id}`);
     let context = null, generation = 0, pending = null, timer = null, busy = false;
+    const listeners = [];
+    function listen(id, callback) {
+        const node = $(id);
+        node.addEventListener('click', callback);
+        listeners.push(() => node.removeEventListener('click', callback));
+    }
     const storageKey = c => `helm-web:update:${root.dataset.tenantId}:${c.id}:${c.vessel_id}`;
     const text = (id, value) => { $(id).textContent = String(value ?? ''); };
     const active = (c, n) => context?.c === c && generation === n;
@@ -73,22 +79,22 @@ export function vesselUpdate(root, {show, resume}) {
         // Resolve the already journalled identity after an uncertain response.
         if (active(c,n)) await refresh();
     }
-    $('update-check').addEventListener('click',() => {
+    listen('update-check',() => {
         if (busy || !context?.caps.remote_updates || !mayPrepare(pending)) return;
         const record={operation_id:uuid(),phase:'preparing'};
         try { remember(record); } catch { return text('update-status','Browser recovery storage is unavailable. Enable it before preparing an update.'); }
         mutate('update_prepare',{operation_id:record.operation_id,channel:$('update-channel').value});
     });
-    $('update-approve').addEventListener('click',() => {
+    listen('update-approve',() => {
         if (pending?.phase !== 'ready' || busy) return;
         const fields={operation_id:pending.operation_id,release_id:pending.release_id};
         pending={...pending,phase:'applying'}; render(pending);
         mutate('update_apply',fields);
     });
-    $('update-discard').addEventListener('click',() => pending?.phase === 'ready' && mutate('update_discard',{operation_id:pending.operation_id}));
-    $('update-refresh').addEventListener('click',refresh);
-    $('update-continue').addEventListener('click',() => resume());
-    $('setup-update-open').addEventListener('click',() => { show(); refresh(); });
+    listen('update-discard',() => pending?.phase === 'ready' && mutate('update_discard',{operation_id:pending.operation_id}));
+    listen('update-refresh',refresh);
+    listen('update-continue',() => resume());
+    listen('setup-update-open',() => { show(); refresh(); });
     return {
         bind(c,caps) {
             ++generation; clearTimeout(timer); busy=false; pending=null; context=c && caps ? {c,caps}:null;
@@ -104,5 +110,6 @@ export function vesselUpdate(root, {show, resume}) {
             } else if (pending?.operation_id) refresh();
         },
         required() { show(); },
+        dispose() { ++generation; clearTimeout(timer); context=null; listeners.forEach(remove=>remove()); },
     };
 }

@@ -7,36 +7,29 @@ records delivery evidence and its limits.
 
 ## Helm Web
 
-[Helm Web](helm-web.md) is an opt-in personal-tenant Laravel/Livewire/Flux client
-alongside the product site. OAuth provider identities own separate tenants and
-multiple public HTTPS/WSS Vessel connections, with no shared default Vessel.
-A JavaScript-owned conversation pane connects directly to each public Vessel over
-WSS for snapshots/history, live observations and submit/steer/respond/cancel.
-Laravel retains login, tenant connections and short-lived credential bootstrap;
-the Node conversation gateway is not in the normal path. Owner pairing provides
-full Vessel access without workspace/account/rights selection; old scoped
-credentials remain limited. Pairing credentials stay encrypted on the web host,
-temporary browser credentials expire in at most 120 seconds, and provider
-credentials stay on executing hosts. Browser intent identities are saved before
-dispatch and uncertain admissions use receipt reads only.
+[Helm Web](helm-web.md) is a React/TypeScript console at `/` with Laravel
+sessions, OAuth, personal tenants and short-lived credential bootstrap. `/react`
+redirects to the production root. The Livewire/Flux console is archived outside
+application routes and builds; shared public/login pages still use Flux.
 
-The console is disabled by default. Offline HTTP, DOM and local WebSocket fixture
-checks are recorded in the guide; live OAuth-provider journeys, real-provider voyage execution and native
-browser/mobile interaction certification require separate evidence.
-New voyage creation and provider-account/model selection are available in the web
-console. The default Livewire console opens one responsive Setup flyout for a new
-voyage's location, profile, account/model choices, ChatGPT account sign-in, access
-and reasoning. Profile selection and management stay within that surface; an
-existing voyage applies a selected profile to its next run only after Vessel
-confirmation. Access uses its separate authority and confirmation flow. Web and
-TUI composers support picture attachments and memory-only unsent composition;
-first Send creates a prepared new voyage. Shared drafts and unsent-content
-persistence are removed. Private terminal execution and API-key account
-enrollment remain native-client capabilities. The web client is not Ratzilla.
+Each tenant has its own public HTTPS/WSS Vessel connections. React connects
+directly to Vessels; independent Voyage processes own execution and provider
+credentials. Shared transport and receipt journals retain exact pending command
+identities. An admitted message is distinct from a completed run; the conversation
+pane shows run/decision/recovery status. Uncertain commands are observed, never
+replayed automatically.
+
+Settings support profiles, workspace/account/model choices, account enrollment and
+reviewed Vessel updates. **Create voyage** explicitly creates the voyage before
+its first message. Unsent text and pictures remain in page memory across voyage
+selection and are lost on reload. Existing conversations remain on their Vessels.
+Advanced actions, approvals and browser viewing preserve the backend's authority.
+The web console is disabled by default until configured. Native and live-provider
+certification remain separate from local offline tests and deployment checks.
 
 ## Execution profiles
 
-Helm TUI and both Web console views use a Vessel-local profile picker for model,
+Helm TUI and the React Web console use a Vessel-local profile picker for model,
 service tier, thinking level and provider account. Profile management supports
 create, edit, duplicate, delete and a default; these profiles contain no instructions,
 tool permissions or workspace configuration. Owner and full-access human connections

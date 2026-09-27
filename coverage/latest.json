@@ -1,8 +1,8 @@
 {
-  "measured_at_utc": "2026-09-27T16:35:07.973921+00:00",
-  "source_commit": "df1b27cee6cda27c88c1cb50c7f04e9ecc08aac9",
+  "measured_at_utc": "2026-09-27T17:24:46.179453+00:00",
+  "source_commit": "acc3d4be41d1f0b2ed71fcdcf4325e558ec985e3",
   "dirty": true,
-  "source_fingerprint_sha256": "9ef30d70189e8bce3ea489367616459c4b9d83aeb07b26045b045d78e6c2bf21",
+  "source_fingerprint_sha256": "a281d953f68512f7b5b906b9bb32c7c4afa51dc2450b1860a0ac0c5820cec215",
   "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including protected Linux control storage and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10291,
-      "covered": 7449,
-      "percent": 72.38363618695948
+      "covered": 7450,
+      "percent": 72.39335341560587
     },
     "instantiations": {
       "count": 23304,
-      "covered": 9401,
-      "percent": 40.34071404050807
+      "covered": 9400,
+      "percent": 40.33642293168555
     },
     "lines": {
       "count": 107716,
-      "covered": 80900,
-      "percent": 75.10490549222028
+      "covered": 80918,
+      "percent": 75.12161610160051
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 176921,
-      "covered": 126785,
-      "notcovered": 50136,
-      "percent": 71.66192820524415
+      "covered": 126806,
+      "notcovered": 50115,
+      "percent": 71.67379790980155
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/privileged-storage -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; (umask 077; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/react-production -j 8)",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -118,23 +118,11 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
-    "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
-    "Change in percentage points: lines -0.0074, functions +0.0138, regions -0.0048",
-    "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate.",
-    "New root-only storage test is ignored in the default workspace scope and passed separately in a disposable native KVM fixture; no coverage scope was narrowed."
-  ],
-  "native_checks": [
-    {
-      "scope": "protected_linux storage tests",
-      "platform": "Disposable Ubuntu 24.04 KVM VM; Linux 6.8.0-142-generic; initial UID mapping 0 to 0",
-      "tests": {
-        "passed": 4,
-        "failed": 0,
-        "ignored": 0
-      },
-      "command": "cd $FIXTURE && VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_EXECUTABLE=$FIXTURE/storage-tests VOYAGE_TEST_LINUX_LOADER=$FIXTURE/lib/ld-linux-x86-64.so.2 VOYAGE_TEST_LINUX_LIBS=$FIXTURE/lib $FIXTURE/lib/ld-linux-x86-64.so.2 --library-path $FIXTURE/lib ./storage-tests --include-ignored protected_linux --nocapture",
-      "notes": "Current development test executable with matching loader/libraries. Includes actual root and ordinary UID/GID 1000 denial checks. Separate native evidence, not merged into workspace coverage totals; not system installer or complete privileged Vessel evidence."
-    }
+    "All 13 current Cargo workspace test executables plus the three exercised current binaries selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
+    "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this Web-only delivery.",
+    "Initial measurement with umask 022 failed private-directory fixtures (36 failures); a fresh run with private fixture creation umask 077 passed without source or policy changes. Both logs/reports retained.",
+    "Active Web verification is separate: 47 shared/backend plus 41 React tests. Legacy console-only fixtures archived with the retired implementation; Rust coverage scope is unchanged.",
+    "No native root fixture or live-provider inference was rerun for this Web cutover.",
+    "Percentage-point changes from prior measurement: {\"lines\": 0.0167, \"functions\": 0.0097, \"regions\": 0.0119}"
   ]
 }

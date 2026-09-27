@@ -26,6 +26,15 @@ Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
 into current runtime instructions. Issue #333 establishes the browser target: Voyage owns a browser on the Vessel host, with authenticated full-site viewing and human control in both Helm clients. The shared viewer uses bounded DOM snapshots and changes over the existing Helm–Vessel connection, with element-addressed control and private-pipe cross-origin child-frame mirrors. Canvas/video and unsupported frames have localized visual fallback. The task browser retains website execution and control authority. Preserve explicit private-input fencing, isolated voyage state, exact receipts and observed cleanup without making users operate a separate companion. Helm is a viewer/controller, not a general executor. Existing opt-in local browser execution retains its independent local consent boundary until deliberately retired. See [host-browser design](docs/host-browser.md).
 
+## Web console implementation
+
+React/TypeScript in `web/resources/react` is the production Helm Web console at
+`/`; `/react` is a compatibility redirect. Shared transport/browser helpers remain
+in `web/resources/js`. The retired console is in `archive/helm-web-flux`, outside
+routes, builds and active tests. Do not implement console work in that archive.
+Laravel retains OAuth, tenant isolation and public/login pages; those shared pages
+may still use Flux. See [Helm Web](docs/helm-web.md) and [deployment](web/README.md).
+
 ## End-to-end delivery ownership
 
 Own the user's objective from investigation through verified delivery, not merely

@@ -14,7 +14,7 @@ const {chromium} = await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE || `
 const build = `${root}/web/public/build`;
 const manifest = JSON.parse(await readFile(`${build}/manifest.json`, 'utf8'));
 const entry = manifest['resources/react/main.tsx'];
-const bootstrap = {tenantId:'layout-fixture',vessels:[{id:'c',vessel_id:'v',name:'Fixture Vessel'}],ticketUrl:'/console/ticket',legacyUrl:'/',connectionsUrl:'/connections',logoutUrl:'/console/logout'};
+const bootstrap = {tenantId:'layout-fixture',vessels:[{id:'c',vessel_id:'v',name:'Fixture Vessel'}],ticketUrl:'/console/ticket',connectionsUrl:'/connections',logoutUrl:'/console/logout'};
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="fixture">${entry.css.map(css=>`<link rel="stylesheet" href="/build/${css}">`).join('')}</head><body><div id="helm-react" data-bootstrap='${JSON.stringify(bootstrap)}'></div><script type="module" src="/build/${entry.file}"></script></body></html>`;
 const server = createServer(async (req,res)=>{
     try {

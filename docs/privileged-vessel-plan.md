@@ -96,7 +96,7 @@ Primary code entry points:
   `runtime_policy.rs`, `tools/roots.rs`, `accounts.rs`, `accounts/`, `subagent/`.
 - Contracts: `crates/voyage-protocol/src/process/`, account/decision contracts and
   `crates/voyage-storage/src/` migrations and ownership boundaries.
-- Clients: `helm/src/process_client/`, `web/resources/js/voyage-settings.js`,
+- Clients: `helm/src/process_client/`, `web/resources/react/Settings.tsx`,
   `web/resources/js/vessel-update.js`, Web decision rendering, gateway schemas,
   Flux Blade components, and the alternate React client's supported contracts.
 

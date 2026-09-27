@@ -12,7 +12,7 @@ installer process on the Vessel host performs it.
 
 ## Review and approval
 
-In voyage setup, open **Location → Vessel updates**. Choose the latest stable
+In React voyage settings, open **Vessel updates**. Choose the latest stable
 release or explicitly choose the latest completed development build. Preparing
 an update downloads and checks its archive, binary and browser-asset hashes,
 platform loader, managed services and updater compatibility. It does not publish
@@ -91,7 +91,8 @@ Run the Rust workspace coverage gate in `AGENTS.md`. Focused checks include:
 cargo test -p voyage-installer -p vessel --locked remote_update -j 8
 cargo test -p voyage-installer --locked -j 8
 python3 installer/src/test_source_acquire.py -v
-node --test web/tests/vessel-update.test.mjs web/tests/voyage-settings-location.test.mjs web/tests/voyage-settings-stale.test.mjs web/tests/voyage-settings-oauth.test.mjs
+npm run test:react --prefix web
+node --test web/tests/php.test.mjs
 ```
 
 These offline checks cover authority refusal, exact approval/replay, expired or

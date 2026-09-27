@@ -12,7 +12,8 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
  const dir=mkdtempSync(join(tmpdir(),'helm-tenant-test-'));const database=join(dir,'db.sqlite');writeFileSync(database,'');const p=await port();
  const views=join(dir,'views');mkdirSync(views);
  const pairingSecret=randomBytes(32).toString('hex');
- const env={...process.env,APP_ENV:'local',APP_DEBUG:'false',APP_KEY:`base64:${randomBytes(32).toString('base64')}`,APP_URL:'https://helm.example',VIEW_COMPILED_PATH:views,DB_CONNECTION:'sqlite',DB_DATABASE:database,SESSION_DRIVER:'database',CACHE_STORE:'database',SESSION_SECURE_COOKIE:'false',SESSION_COOKIE:'helm_tenant_test',HELM_WEB_ENABLED:'true',HELM_WEB_GATEWAY_SECRET:'',HELM_WEB_LEGACY_GATEWAY_ENABLED:'false',GOOGLE_CLIENT_ID:'',GOOGLE_CLIENT_SECRET:'',X_CLIENT_ID:'',X_CLIENT_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''};
+ const storage=join(dir,'storage');for(const child of ['framework/views','framework/sessions','framework/cache','logs'])mkdirSync(join(storage,child),{recursive:true});
+ const env={...process.env,LARAVEL_STORAGE_PATH:storage,APP_ENV:'local',APP_DEBUG:'false',APP_KEY:`base64:${randomBytes(32).toString('base64')}`,APP_URL:'https://helm.example',VIEW_COMPILED_PATH:views,DB_CONNECTION:'sqlite',DB_DATABASE:database,SESSION_DRIVER:'database',CACHE_STORE:'database',SESSION_SECURE_COOKIE:'false',SESSION_COOKIE:'helm_tenant_test',HELM_WEB_ENABLED:'true',HELM_WEB_GATEWAY_SECRET:'',HELM_WEB_LEGACY_GATEWAY_ENABLED:'false',GOOGLE_CLIENT_ID:'',GOOGLE_CLIENT_SECRET:'',X_CLIENT_ID:'',X_CLIENT_SECRET:'',GITHUB_CLIENT_ID:'',GITHUB_CLIENT_SECRET:''};
  const php=code=>{const r=spawnSync('php',['-r',`require 'vendor/autoload.php'; $app=require 'bootstrap/app.php'; $app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap(); ${code}`],{cwd,env,encoding:'utf8'});assert.equal(r.status,0,r.stderr+r.stdout);return r.stdout;};
  const migrate=spawnSync('php',['artisan','migrate','--force'],{cwd,env,encoding:'utf8'});assert.equal(migrate.status,0,migrate.stdout+migrate.stderr);
  const seed=JSON.parse(php(`
@@ -57,14 +58,15 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
  };
  try {
   for(let i=0;i<50;i++){try{await call('/up');break;}catch{await new Promise(r=>setTimeout(r,100));}}
-  assert.equal((await call('/')).status,302);assert.equal((await call('/console')).status,404);
+  const signedOut=await call('/');assert.equal(signedOut.status,302,await signedOut.text());assert.equal((await call('/console')).status,404);
   const login=await call('/console/login');assert.equal(login.status,200);assert.match(await login.text(),/being configured/);
   assert.equal((await call('/console/login',{method:'POST'})).status,405);
   assert.equal((await call('/auth/google')).status,404);
   assert.equal((await call('/react')).status,302);
-  const react=await call('/react',{},'alice');const reactHtml=await react.text();
+  const alias=await call('/react?manage-vessels=1',{},'alice');assert.equal(alias.status,302);assert.equal(new URL(alias.headers.get('location')).pathname,'/');assert.equal(new URL(alias.headers.get('location')).search,'?manage-vessels=1');
+  const react=await call('/',{},'alice');const reactHtml=await react.text();
   assert.equal(react.status,200);assert.match(react.headers.get('cache-control'),/no-store/);
-  assert.match(reactHtml,/Helm React/);assert.match(reactHtml,/alice vessel/);
+  assert.match(reactHtml,/Helm Console/);assert.match(reactHtml,/alice vessel/);
   assert.ok(!reactHtml.includes('bob vessel'));assert.ok(!reactHtml.includes('a'.repeat(64)));assert.ok(!reactHtml.includes(pairingSecret));
   assert.doesNotMatch(reactHtml,/livewire(?:\.min)?\.js|flux(?:\.min)?\.js/);
   const a=await call('/',{},'alice');const html=await a.text();assert.equal(a.status,200);assert.match(html,/alice vessel/);assert.ok(!html.includes('bob vessel'));assert.ok(!html.includes('a'.repeat(64)));assert.ok(!html.includes(pairingSecret));
@@ -72,13 +74,13 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   const post=(path,body,who='alice',token=csrf)=>call(path,{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':token,Origin:'https://helm.example'},body:JSON.stringify(body)},who);
   assert.equal((await post('/console/ticket',{vessel:seed.bob.connection})).status,404);
   assert.equal((await call('/connections/'+seed.bob.connection,{method:'DELETE',headers:{Accept:'application/json','X-CSRF-TOKEN':csrf}},'alice')).status,404);
-  const connections=await call('/connections',{},'alice');assert.equal(connections.status,302);assert.match(connections.headers.get('location'),/manage-vessels=1/);const list=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/data-flux-modal-trigger/);assert.match(list,/Cloudflare Tunnel/);assert.ok(list.indexOf('vessel pair-invite') > list.indexOf('<dialog'));assert.doesNotMatch(list,/<dialog[^>]*\sopen(?:\s|>)/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
+  const connections=await call('/connections',{},'alice');assert.equal(connections.status,302);assert.match(connections.headers.get('location'),/manage-vessels=1/);const list=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/id="helm-react"/);assert.doesNotMatch(list,/livewire(?:\.min)?\.js|flux(?:\.min)?\.js|data-flux-modal/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
   const reactInvalid=await call('/connections/pair',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-TOKEN':csrf,'X-Helm-Client':'react'},body:JSON.stringify({name:'React invalid',invitation:'invalid-private-fixture'})},'alice');
-  assert.equal(reactInvalid.status,302);assert.match(reactInvalid.headers.get('location'),/react\?manage-vessels=1/);
-  const reactError=await (await call('/react?manage-vessels=1',{},'alice')).text();assert.match(reactError,/Connection not confirmed/);assert.ok(!reactError.includes('invalid-private-fixture'));
+  assert.equal(reactInvalid.status,302);assert.equal(new URL(reactInvalid.headers.get('location')).pathname,'/');assert.equal(new URL(reactInvalid.headers.get('location')).search,'?manage-vessels=1');
+  const reactError=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(reactError,/Connection not confirmed/);assert.ok(!reactError.includes('invalid-private-fixture'));
   const invalidPair=await call('/connections/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':csrf,Referer:`http://127.0.0.1:${p}/`},body:new URLSearchParams({name:'',invitation:pairingSecret})},'alice');
   assert.equal(invalidPair.status,302);
-  const failedPage=await (await call('/',{},'alice')).text();assert.match(failedPage,/Check the supplied fields/);assert.match(failedPage,/\$nextTick\(\(\) => \$flux.modal/);assert.ok(!failedPage.includes(pairingSecret));
+  const failedPage=await (await call('/',{},'alice')).text();assert.match(failedPage,/Connection not confirmed/);assert.ok(!failedPage.includes(pairingSecret));
   const mintBody={vessel:seed.alice.connection};
   const mintHeaders={Accept:'application/json','Content-Type':'application/json','X-CSRF-TOKEN':csrf};
   for(const origin of [null,'https://evil.example',`http://127.0.0.1:${p}`,'https://helm.example/']) {

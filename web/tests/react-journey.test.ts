@@ -32,7 +32,7 @@ test('React journey connects, preserves drafts on navigation and submits once',a
  const {App}=await import('../resources/react/App.tsx');const root=createRoot(dom.window.document.querySelector('#mount')!);
  const settle=()=>new Promise(resolve=>setTimeout(resolve,10));
  try{
-  await React.act(async()=>{root.render(React.createElement(App,{bootstrap:{tenantId:'t',vessels:[{id:'c',vessel_id:'v',name:'Vessel'}],ticketUrl:'/console/ticket',legacyUrl:'/',connectionsUrl:'/connections',logoutUrl:'/console/logout'}}));await settle();});
+  await React.act(async()=>{root.render(React.createElement(App,{bootstrap:{tenantId:'t',vessels:[{id:'c',vessel_id:'v',name:'Vessel'}],ticketUrl:'/console/ticket',connectionsUrl:'/connections',logoutUrl:'/console/logout'}}));await settle();});
   assert.equal(dom.window.document.querySelectorAll('.voyage-card').length,2);
   await React.act(async()=>{dom.window.document.querySelector<HTMLButtonElement>('.voyage-card')!.click();await settle();});
   const active=()=>dom.window.document.querySelector<HTMLElement>('.conversation:not([hidden])')!;

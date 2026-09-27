@@ -44,14 +44,10 @@ test('mobile viewer traps focus, Escape restores action and conversation DOM sur
     }
 });
 
-test('desktop split and mobile overlay CSS contracts for both shells', () => {
+test('desktop split and mobile overlay CSS contracts for the production console', () => {
     // JSDOM does not implement viewport layout: actual screenshots are a separate integration check.
     const react = readFileSync(new URL('../resources/react/style.css',import.meta.url),'utf8');
-    const livewire = readFileSync(new URL('../resources/css/console.css',import.meta.url),'utf8');
     assert.match(react,/grid-template-columns:minmax\(300px,32%\) minmax\(0,1fr\)/);
     assert.match(react,/\.task-browser-panel\.expanded/);
     assert.match(react,/@media\(max-width:1000px\)[\s\S]*\.task-browser-panel\{position:fixed;inset:0/);
-    assert.match(livewire,/grid-template-columns: minmax\(300px, 32%\) minmax\(0, 1fr\)/);
-    assert.match(livewire,/\.browser-workspace\.browser-expanded/);
-    assert.match(livewire,/@media \(max-width: 1000px\)[\s\S]*position: fixed; inset: 0/);
 });

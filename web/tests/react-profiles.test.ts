@@ -19,3 +19,16 @@ test('profiles editor saves, duplicates, defaults and deletes without mutating v
  await click('Make default');assert.equal(catalogue.default_profile_id,catalogue.profiles[1].id);await click('Delete');assert.equal(catalogue.profiles.length,1);assert.equal(commands.some(c=>c.op==='set_account_inference'||c.op==='start_account'),false);
  }finally{await act(async()=>root.unmount());dom.window.close();}
 });
+
+test('old Vessel settings expose the updater without requesting unsupported profiles',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{url:'https://helm.test'});Object.assign(globalThis,{window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,IS_REACT_ACT_ENVIRONMENT:true});
+ dom.window.HTMLDialogElement.prototype.showModal=function(){};dom.window.HTMLDialogElement.prototype.close=function(){};
+ const commands:string[]=[];
+ const connection:any={id:'old',name:'Old Vessel',vessel_id:'v',client:{async exchange({command}:any){commands.push(command.op);return {protocol:1,outcome_unknown:false,error:null,result:{vessel_id:'v',scope:'owner',version:'1.0.0',features:[],workspaces:[]}};}}};
+ const root=createRoot(document.getElementById('root')!);
+ try{await act(async()=>root.render(React.createElement(Settings,{fleet:{connections:new Map([['old',connection]])},workspace:{} as any,tenant:'test',onClose(){},onCreated(){assert.fail('No voyage should be created');}})));
+ assert.deepEqual(commands,['capabilities']);assert.match(document.body.textContent!,/one-time remote administrator/);
+ assert.equal(document.querySelector<HTMLElement>('#update-source')!.hidden,true);
+ assert.equal(document.querySelector<HTMLDetailsElement>('details')!.open,true);
+ }finally{await act(async()=>root.unmount());dom.window.close();}
+});

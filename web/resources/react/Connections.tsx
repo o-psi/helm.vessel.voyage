@@ -9,9 +9,9 @@ export function Connections({bootstrap,onClose}:{bootstrap:any;onClose:()=>void}
             const response=await fetch(path,{method,credentials:'same-origin',headers:{'X-Helm-Client':'react','Content-Type':'application/json',Accept:'application/json','X-CSRF-TOKEN':document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content||''},body:JSON.stringify(body)});
             // Existing controller redirects to the console after a confirmed attempt.
             // Reload bootstrap, including pending pairings/errors; never replay a failed fetch.
-            if(response.redirected){const html=await response.text();const page=new DOMParser().parseFromString(html,'text/html');const data=JSON.parse((page.querySelector('#helm-react') as HTMLElement)?.dataset.bootstrap||'{}');setData(data);if(data.connectionError){setNotice(data.connectionError);return;}location.assign('/react?manage-vessels=1');return;}
+            if(response.redirected){const html=await response.text();const page=new DOMParser().parseFromString(html,'text/html');const data=JSON.parse((page.querySelector('#helm-react') as HTMLElement)?.dataset.bootstrap||'{}');setData(data);if(data.connectionError){setNotice(data.connectionError);return;}location.assign('/?manage-vessels=1');return;}
             if(!response.ok)throw new Error('Connection request not confirmed. Check fields and pending pairings before trying again.');
-            location.assign('/react?manage-vessels=1');
+            location.assign('/?manage-vessels=1');
         }catch(error){setNotice(error instanceof Error?error.message:'Connection outcome uncertain. Reload to inspect; do not repeat blindly.');}finally{setBusy(false);}
     }
     return <dialog className="settings-dialog" ref={dialog} onCancel={event=>{if(busy)event.preventDefault();else onClose();}}><header><h2>Vessel connections</h2><button disabled={busy} aria-label="Close Vessel connections" onClick={onClose}>×</button></header><p>Connecting grants this web account access to your Vessel. Provider credentials stay on that computer.</p>

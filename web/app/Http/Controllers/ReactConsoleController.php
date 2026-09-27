@@ -9,6 +9,11 @@ use Illuminate\Http\Request;
 
 class ReactConsoleController extends Controller
 {
+    public function redirect(Request $request): \Illuminate\Http\RedirectResponse
+    {
+        return redirect()->route('console', $request->boolean('manage-vessels') ? ['manage-vessels' => 1] : []);
+    }
+
     public function __invoke(Request $request): View
     {
         return view('console.react', [
@@ -21,7 +26,6 @@ class ReactConsoleController extends Controller
                 'vessels' => VesselConnection::where('tenant_id', $request->user()->tenant_id)
                     ->get(['id', 'name', 'vessel_id'])->toArray(),
                 'ticketUrl' => route('console.ticket', absolute: false),
-                'legacyUrl' => route('console', absolute: false),
                 'connectionsUrl' => route('connections', absolute: false),
                 'logoutUrl' => route('console.logout', absolute: false),
             ],

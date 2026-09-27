@@ -1,4 +1,4 @@
-<x-layouts.console>
+<x-layouts.auth>
     <flux:main class="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center" role="main">
         <flux:heading size="xl">Sign in to Helm</flux:heading>
         <flux:text class="mt-2">Your own workspace. Connect your Vessels and continue your voyages.</flux:text>
@@ -17,4 +17,4 @@
         <flux:text size="sm">Each provider identity has its own personal tenant. Accounts are not merged by email.</flux:text>
         <flux:link href="{{ route('home') }}" class="mt-4 inline-block">Back to landing</flux:link>
     </flux:main>
-</x-layouts.console>
+</x-layouts.auth>
