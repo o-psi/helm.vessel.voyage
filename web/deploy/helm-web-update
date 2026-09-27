@@ -8,6 +8,7 @@ root=/srv/helm
 repository=https://github.com/o-psi/helm.vessel.voyage.git
 receipt="$root/deployments/helm-web-self-update.json"
 unit=helm-web-update.service
+stage= backup= release= source=unknown switched=0 stopped=0
 
 write_receipt() {
     local phase=$1 source=${2:-unknown}
@@ -37,7 +38,6 @@ run_update() {
     [[ $EUID == 0 ]] || { echo 'Root service required' >&2; exit 1; }
     exec 9>/run/lock/helm-web-update.lock
     flock -n 9 || { echo 'A Helm Web update is already running' >&2; exit 1; }
-    local stage backup release= source=unknown switched=0 stopped=0
     stage=$(mktemp -d "$root/update-stage.XXXXXXXX")
     chown helm:helm "$stage"
     backup=$(mktemp -d "$root/backups/self-update.XXXXXXXX")
@@ -73,6 +73,11 @@ run_update() {
 
     install -d -o helm -g helm -m 755 "$stage/app"
     as_helm rsync -a "$stage/repository/web/" "$stage/app/"
+    # The Web build imports the shared browser viewer and status vocabulary.
+    install -d -o helm -g helm -m 755 "$stage/helm/browser-view" "$stage/helm/assets" "$stage/voyage/browser"
+    as_helm rsync -a "$stage/repository/helm/browser-view/viewer.css" "$stage/repository/helm/browser-view/viewer.mjs" "$stage/helm/browser-view/"
+    as_helm rsync -a "$stage/repository/helm/assets/working-statuses.json" "$stage/helm/assets/"
+    as_helm rsync -a "$stage/repository/voyage/browser/rrweb-vendor.mjs" "$stage/voyage/browser/"
     ln -s "$root/runtime/.env" "$stage/app/.env"
     ln -s "$root/private/composer-auth.json" "$stage/app/auth.json"
     # Laravel storage is external so a release switch cannot replace live state.
