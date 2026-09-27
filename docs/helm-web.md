@@ -34,7 +34,9 @@ New voyage settings choose Vessel, workspace and profile; **Create voyage** crea
 an independent voyage without inference. Sending a message starts a run. Profile
 management, account enrollment, reasoning/service choices, attachments, typed
 approval/question dialogs, advanced voyage actions and the shared browser remain
-available. Reloading loses unsent text/pictures, not server-side conversations.
+available. The composer previews selected PNG/JPEG/WebP pictures and displays
+validation errors by the picker (up to four pictures and 2 MiB total). Reloading
+loses unsent text/pictures, not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default
