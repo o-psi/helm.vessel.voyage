@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-27T23:45:04.594628+00:00",
-  "source_commit": "a86f977adaada38474cc17a32a51711f294c5f59",
+  "measured_at_utc": "2026-09-27T23:52:39.562246+00:00",
+  "source_commit": "e40a2aa4326cafd97c974adc1cfb3e4b48664692",
   "dirty": true,
-  "source_fingerprint_sha256": "b60ad6b88266ad8df270d480b40f32b657edac2608aacdac8e32836a8f1e43f2",
-  "source_fingerprint_method": "SHA-256 over sorted workspace Rust/Cargo paths, each path + NUL + bytes (or MISSING) + NUL",
+  "source_fingerprint_sha256": "86c6bd56828e092506ba71716a9e6371be37dba0b25b91db018630dee6d63b29",
+  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths (including concurrent changes), each path + NUL + file bytes; missing files marked MISSING",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1883,
+    "passed": 1884,
     "failed": 0,
     "ignored": 3
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10320,
-      "covered": 7623,
-      "percent": 73.86627906976744
+      "count": 13996,
+      "covered": 11250,
+      "percent": 80.38010860245784
     },
     "instantiations": {
-      "count": 23050,
-      "covered": 9574,
-      "percent": 41.53579175704989
+      "count": 27547,
+      "covered": 13456,
+      "percent": 48.84742440193124
     },
     "lines": {
-      "count": 108008,
-      "covered": 82776,
-      "percent": 76.6387674987038
+      "count": 165574,
+      "covered": 140271,
+      "percent": 84.71801128196455
     },
     "mcdc": {
       "count": 0,
@@ -42,36 +42,54 @@
       "percent": 0
     },
     "regions": {
-      "count": 177446,
-      "covered": 130215,
-      "notcovered": 47231,
-      "percent": 73.38288831531847
+      "count": 272650,
+      "covered": 225083,
+      "notcovered": 47567,
+      "percent": 82.55382358334862
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/image-history-354 -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
-    "-summary-only",
     "-instr-profile=$WORKSPACE/target/voyage.profdata",
-    "-object=$WORKSPACE/target/debug/deps/helm-d2cad40fe9ada1b0",
-    "-object=$WORKSPACE/target/debug/deps/helm-8a8c0f90001821b6",
-    "-object=$WORKSPACE/target/debug/deps/offline_main_cli_tests-716171b16004b822",
-    "-object=$WORKSPACE/target/debug/deps/vessel-6335cd54fd28fa0e",
-    "-object=$WORKSPACE/target/debug/deps/vessel-9e02a17ee9662428",
-    "-object=$WORKSPACE/target/debug/deps/offline_auth_main_tests-480096360e98ddfe",
-    "-object=$WORKSPACE/target/debug/deps/voyage-694285c824604a30",
-    "-object=$WORKSPACE/target/debug/deps/voyage-e40f670100a50131",
-    "-object=$WORKSPACE/target/debug/deps/chatgpt_conversation-4f56da2e6dadd70e",
-    "-object=$WORKSPACE/target/debug/deps/completion_final_tests-1d720f7e6f0371cf",
-    "-object=$WORKSPACE/target/debug/deps/voyage_installer-de5d3d31cdcb0076",
-    "-object=$WORKSPACE/target/debug/deps/voyage_protocol-f4369f6b84b8bb0a",
-    "-object=$WORKSPACE/target/debug/deps/voyage_storage-046a16532f0d6755",
+    "-object",
+    "$WORKSPACE/target/debug/deps/chatgpt_conversation-4f56da2e6dadd70e",
+    "-object",
+    "$WORKSPACE/target/debug/deps/completion_final_tests-1d720f7e6f0371cf",
+    "-object",
+    "$WORKSPACE/target/debug/deps/helm-8a8c0f90001821b6",
+    "-object",
+    "$WORKSPACE/target/debug/deps/helm-d2cad40fe9ada1b0",
+    "-object",
+    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-480096360e98ddfe",
+    "-object",
+    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-716171b16004b822",
+    "-object",
+    "$WORKSPACE/target/debug/deps/vessel-6335cd54fd28fa0e",
+    "-object",
+    "$WORKSPACE/target/debug/deps/vessel-9e02a17ee9662428",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage-694285c824604a30",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage-e40f670100a50131",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_installer-de5d3d31cdcb0076",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_protocol-f4369f6b84b8bb0a",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_storage-046a16532f0d6755",
+    "-object",
+    "$WORKSPACE/target/debug/helm",
+    "-object",
+    "$WORKSPACE/target/debug/vessel",
+    "-object",
+    "$WORKSPACE/target/debug/voyage",
     "-ignore-filename-regex",
-    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/(target|\\.worktrees)/"
+    "-ignore-filename-regex",
+    "-summary-only"
   ],
-  "report_filename_filter": "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/(target|\\.worktrees)/",
   "exclusions": [
     "Doctests",
     "Ignored live-provider tests",
@@ -82,9 +100,7 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "Full workspace default-feature tests passed under umask 077. Current workspace test binaries were selected from this exact passing Cargo run; historical-worktree artifacts were excluded.",
-    "The direct llvm-cov export has no diagnostics and all included source paths exist in this checkout. HTML/raw profiles remain under target/.",
-    "No live-provider or native macOS/Windows browser qualification. Concurrent unrelated dirty Rust source is included in the fingerprint.",
-    "Compared with prior record: lines 76.6747% -> 76.6388%, functions 73.9114% -> 73.8663%, regions 73.4180% -> 73.3829%. Same workspace scope and exclusions."
+    "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
+    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint."
   ]
 }

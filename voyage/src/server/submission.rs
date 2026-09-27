@@ -159,21 +159,19 @@ pub(super) async fn submit(
         let session_id = state.registration.session_id;
         tokio::task::spawn_blocking(move || -> Result<()> {
             let store = crate::images::Store::open(&directory, session_id)?;
-            let mut total = 0u64;
-            let mut count = 0usize;
             for message in &all {
                 for part in &message.parts {
                     if let voyage_protocol::content::ContentPart::Image { attachment } = part {
-                        total = total.checked_add(attachment.byte_size).context("image request size overflow")?;
-                        count += 1;
-                        ensure!(total <= crate::images::MAX_BYTES as u64 && count <= 4,
-                            "retained images exceed request limit; compact older image turns or start a new voyage");
+                        // Verify retained references, but do not apply a per-request
+                        // raster budget to the entire canonical conversation. Dispatch
+                        // projects the newest image suffix with explicit omissions.
                         store.resolve(attachment)?;
                     }
                 }
             }
             Ok(())
-        }).await??;
+        })
+        .await??;
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

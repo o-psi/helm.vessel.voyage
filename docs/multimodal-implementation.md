@@ -124,8 +124,10 @@ existing platform restrictions elsewhere in Helm/Vessel private storage and tran
 | Private image database | 64 MiB including overhead; at most 128 immutable uploads |
 | Private Helm draft | 16 MiB after transport increase (2 × 8 MiB Vessel envelope) |
 
-If retained images exceed a request limit, compact older image turns or start a new
-voyage. Removing an inline element removes it from the draft, not from an already
+Older images exceeding the provider request budget are represented by explicit
+omission markers in the provider-only projection; canonical history and stored
+attachments remain intact. A new valid image turn is not refused because older
+turns contain images. Removing an inline element removes it from the draft, not from an already
 accepted turn. Uploaded blobs remain bounded and retained until session deletion;
 clear/compact does not silently reclaim evidence-bearing blobs.
 

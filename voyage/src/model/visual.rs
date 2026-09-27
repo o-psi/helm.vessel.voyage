@@ -123,6 +123,36 @@ mod checks {
     use super::*;
     use voyage_protocol::tool_result::ToolOutput;
     #[test]
+    fn historical_user_images_do_not_block_new_image_turns() {
+        use voyage_protocol::content::{ImageAttachment, ImageMediaType};
+        let mut history = Vec::new();
+        for _ in 0..6 {
+            let id = uuid::Uuid::new_v4();
+            let mut message = Message::new(Role::User, "photo");
+            message.parts = vec![ContentPart::Image {
+                attachment: ImageAttachment {
+                    id,
+                    sha256: "a".repeat(64),
+                    name: "photo.jpg".into(),
+                    media_type: ImageMediaType::Jpeg,
+                    byte_size: 2 * 1024 * 1024,
+                    width: 1024,
+                    height: 1024,
+                },
+            }];
+            message.image_data.insert(id, vec![1]);
+            history.push(message);
+        }
+        let canonical = serde_json::to_string(&history).unwrap();
+        let mut projected = history.clone();
+        project(&mut projected, None).unwrap();
+        assert!(projected[..4].iter().all(|m| m.image_data.is_empty()));
+        assert!(projected[..4].iter().all(|m| matches!(&m.parts[0], ContentPart::Text { text } if text.contains("historical image omitted"))));
+        assert!(projected[4..].iter().all(|m| m.image_data.len() == 1));
+        assert_eq!(serde_json::to_string(&history).unwrap(), canonical);
+    }
+
+    #[test]
     fn authorized_hydration_projection_and_canonical_references() {
         let directory = tempfile::tempdir().unwrap();
         let scope = artifacts::Scope {
