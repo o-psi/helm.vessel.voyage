@@ -383,6 +383,17 @@ Durable decision identities and response receipts deduplicate consent, not exter
 effects. Grants are in memory only: restart never reconstructs authority from old
 approved decisions, and uncertain tool effects are never replayed.
 
+The runtime checks directory read/search access (plus write for a write request)
+using its effective OS identity before consent, after consent and on subsequent
+dispatch. Linux `faccessat2` checks a pinned directory descriptor; an unavailable
+kernel check fails closed. This requires Linux 5.8 or newer for this tool. Read-only
+mounts are distinguished from OS access denial. An OS denial can come from Unix
+permissions, ACLs or mandatory policy; the kernel error alone does not identify
+which one. Filesystem consent never changes UID, groups or host permissions.
+Directory access is not proof that existing descendants are accessible, nor a
+guarantee against later permission changes. Actual operations retain their own
+checks and errors. Preflight is not an OS sandbox or authorization to bypass it.
+
 New file operations and bounded shell launches use the same dispatch snapshot and
 sandbox roots. With sandbox off, these remain application policy, **not OS
 confinement**. Required-sandbox setup failures never fall back to unsandboxed launch.

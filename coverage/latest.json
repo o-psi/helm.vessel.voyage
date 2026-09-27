@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-27T14:21:06.903060+00:00",
-  "source_commit": "7fdbd4773b97882b779dda99c2b52be0af4cf768",
+  "measured_at_utc": "2026-09-27T16:03:15.498463+00:00",
+  "source_commit": "a527980567ffa4a8b7acf2e5e3af6da02b2c16a9",
   "dirty": true,
-  "source_fingerprint_sha256": "6d3cdb182431ecf4e628d0ed68819c8000bc90f7dd4902970f4faf0fc6742d52",
-  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including configured-start regression and unrelated staged Rust edit",
+  "source_fingerprint_sha256": "b17860a37fa79d8bd4a817c57e2fad6a2f2c1cce98e025371d806c6916627837",
+  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including staged execution-identity contracts, OS access preflight and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1766,
+    "passed": 1773,
     "failed": 0,
     "ignored": 2
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10258,
-      "covered": 7421,
-      "percent": 72.34353675180347
+      "count": 10275,
+      "covered": 7436,
+      "percent": 72.3698296836983
     },
     "instantiations": {
-      "count": 23244,
-      "covered": 9373,
-      "percent": 40.324384787472034
+      "count": 23272,
+      "covered": 9388,
+      "percent": 40.340323135097975
     },
     "lines": {
-      "count": 107250,
-      "covered": 80494,
-      "percent": 75.05268065268065
+      "count": 107523,
+      "covered": 80763,
+      "percent": 75.1123015540861
     },
     "mcdc": {
       "count": 0,
@@ -42,42 +42,42 @@
       "percent": 0
     },
     "regions": {
-      "count": 176053,
-      "covered": 126051,
-      "notcovered": 50002,
-      "percent": 71.59832550425156
+      "count": 176545,
+      "covered": 126524,
+      "notcovered": 50021,
+      "percent": 71.66671386898524
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/creation-default-account -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/privileged-foundations -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
     "-format=text",
     "-instr-profile=$WORKSPACE/target/voyage.profdata",
     "-object",
-    "$WORKSPACE/target/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
+    "$WORKSPACE/target/debug/deps/chatgpt_conversation-4f56da2e6dadd70e",
     "-object",
-    "$WORKSPACE/target/debug/deps/completion_final_tests-31668c60333e0c82",
+    "$WORKSPACE/target/debug/deps/completion_final_tests-1d720f7e6f0371cf",
     "-object",
-    "$WORKSPACE/target/debug/deps/helm-1e673a1ff7d584f2",
+    "$WORKSPACE/target/debug/deps/helm-8a8c0f90001821b6",
     "-object",
-    "$WORKSPACE/target/debug/deps/helm-3abf021cb7f6ace0",
+    "$WORKSPACE/target/debug/deps/helm-d2cad40fe9ada1b0",
     "-object",
-    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-5f54bed537a9a348",
+    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-480096360e98ddfe",
     "-object",
-    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-6d0c5675aec018f1",
+    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-716171b16004b822",
     "-object",
-    "$WORKSPACE/target/debug/deps/vessel-4686a92ea5f37d5a",
+    "$WORKSPACE/target/debug/deps/vessel-6335cd54fd28fa0e",
     "-object",
-    "$WORKSPACE/target/debug/deps/vessel-e5e32e6712ceb8fd",
+    "$WORKSPACE/target/debug/deps/vessel-9e02a17ee9662428",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage-3f49471a24057a3c",
+    "$WORKSPACE/target/debug/deps/voyage-694285c824604a30",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage-98aaba8c7c8a49cd",
+    "$WORKSPACE/target/debug/deps/voyage-e40f670100a50131",
     "-object",
     "$WORKSPACE/target/debug/deps/voyage_installer-de5d3d31cdcb0076",
     "-object",
-    "$WORKSPACE/target/debug/deps/voyage_protocol-0ba333dc0230bf7a",
+    "$WORKSPACE/target/debug/deps/voyage_protocol-f4369f6b84b8bb0a",
     "-object",
     "$WORKSPACE/target/debug/deps/voyage_storage-046a16532f0d6755",
     "-object",
@@ -91,18 +91,18 @@
     "-summary-only"
   ],
   "report_objects": [
-    "chatgpt_conversation-9a8de6b18f135c17",
-    "completion_final_tests-31668c60333e0c82",
-    "helm-1e673a1ff7d584f2",
-    "helm-3abf021cb7f6ace0",
-    "offline_auth_main_tests-5f54bed537a9a348",
-    "offline_main_cli_tests-6d0c5675aec018f1",
-    "vessel-4686a92ea5f37d5a",
-    "vessel-e5e32e6712ceb8fd",
-    "voyage-3f49471a24057a3c",
-    "voyage-98aaba8c7c8a49cd",
+    "chatgpt_conversation-4f56da2e6dadd70e",
+    "completion_final_tests-1d720f7e6f0371cf",
+    "helm-8a8c0f90001821b6",
+    "helm-d2cad40fe9ada1b0",
+    "offline_auth_main_tests-480096360e98ddfe",
+    "offline_main_cli_tests-716171b16004b822",
+    "vessel-6335cd54fd28fa0e",
+    "vessel-9e02a17ee9662428",
+    "voyage-694285c824604a30",
+    "voyage-e40f670100a50131",
     "voyage_installer-de5d3d31cdcb0076",
-    "voyage_protocol-0ba333dc0230bf7a",
+    "voyage_protocol-f4369f6b84b8bb0a",
     "voyage_storage-046a16532f0d6755",
     "helm",
     "vessel",
@@ -120,7 +120,7 @@
   "notes": [
     "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
     "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
-    "Change in percentage points: lines +0.0329, functions +0.0292, regions +0.0289",
+    "Change in percentage points: lines +0.0596, functions +0.0263, regions +0.0684",
     "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate."
   ]
 }

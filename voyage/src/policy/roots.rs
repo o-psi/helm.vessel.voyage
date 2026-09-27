@@ -4,6 +4,21 @@ use crate::tools::roots::RootPermission;
 use std::sync::{Arc, Mutex};
 use tokio_util::sync::CancellationToken;
 
+#[cfg(target_os = "linux")]
+#[path = "root_access.rs"]
+mod access;
+
+fn root_access_error(error: std::io::Error) -> anyhow::Error {
+    #[cfg(target_os = "linux")]
+    {
+        access::access_error(error)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        error.into()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RootCandidate {
     path: PathBuf,
@@ -14,15 +29,17 @@ pub(crate) struct RootCandidate {
 impl RootCandidate {
     fn verify(&self) -> Result<()> {
         anyhow::ensure!(
-            self.path.canonicalize()? == self.path && self.path.is_dir(),
+            self.path.canonicalize().map_err(root_access_error)? == self.path && self.path.is_dir(),
             "root moved or disappeared"
         );
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            let m = std::fs::metadata(&self.path)?;
+            let m = std::fs::metadata(&self.path).map_err(root_access_error)?;
             anyhow::ensure!((m.dev(), m.ino()) == self.identity, "root identity changed");
         }
+        #[cfg(target_os = "linux")]
+        access::verify(&self.path, self.permission, self.identity)?;
         Ok(())
     }
 }
@@ -76,7 +93,9 @@ impl Policy {
     ) -> Result<RootCandidate> {
         self.validate_root_scope()?;
         anyhow::ensure!(
-            path.is_absolute() && path.canonicalize()? == path && path.is_dir(),
+            path.is_absolute()
+                && path.canonicalize().map_err(root_access_error)? == path
+                && path.is_dir(),
             "root must be the exact canonical absolute existing directory"
         );
         anyhow::ensure!(
@@ -90,7 +109,7 @@ impl Policy {
             #[cfg(unix)]
             identity: {
                 use std::os::unix::fs::MetadataExt;
-                let m = std::fs::metadata(path)?;
+                let m = std::fs::metadata(path).map_err(root_access_error)?;
                 (m.dev(), m.ino())
             },
         };
@@ -366,6 +385,67 @@ mod tests {
                 .prepare_root(&path, RootPermission::Write)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn root_consent_rechecks_os_access_before_publication_and_dispatch() {
+        use std::os::unix::fs::PermissionsExt;
+        // Root legitimately bypasses these Unix mode bits. The read-only mount
+        // fixture separately exercises denial independent of DAC override.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let policy = policy(workspace.path());
+        let run = uuid::Uuid::new_v4();
+        let d = policy.for_run_dispatch(run);
+        let candidate = d
+            .prepare_root(external.path(), RootPermission::Write)
+            .unwrap();
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let error = d
+            .install_root(candidate, CancellationToken::new())
+            .unwrap_err();
+        assert!(error.to_string().contains("os_access_denied"), "{error}");
+        assert!(
+            d.prepare_root(external.path(), RootPermission::Write)
+                .is_err()
+        );
+        assert!(
+            d.prepare_root(external.path(), RootPermission::Read)
+                .is_ok()
+        );
+        assert!(
+            policy
+                .for_run_dispatch(run)
+                .resolve_write(&external.path().join("file"))
+                .is_err()
+        );
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let d = policy.for_run_dispatch(run);
+        d.install_root(
+            d.prepare_root(external.path(), RootPermission::Write)
+                .unwrap(),
+            CancellationToken::new(),
+        )
+        .unwrap();
+        let current = policy.for_run_dispatch(run);
+        assert!(current.resolve_write(&external.path().join("file")).is_ok());
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        assert!(
+            current
+                .resolve_write(&external.path().join("file"))
+                .is_err()
+        );
+        assert!(
+            policy
+                .for_run_dispatch(run)
+                .resolve_write(&external.path().join("file"))
+                .is_err()
+        );
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(std::fs::read_dir(external.path()).unwrap().count(), 0);
     }
 }
 

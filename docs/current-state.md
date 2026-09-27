@@ -1073,6 +1073,19 @@ for revocation, process-lifetime and application-policy limits. Existing session
 must execute the updated Voyage binary to expose the new tool; updating installed
 files does not modify a running process or authorize a denied host configuration.
 
+Directory consent now includes non-destructive OS access preflight under the
+runtime's effective identity, repeated after approval and before later dispatch.
+OS denial prevents the review; a permission change during review prevents grant
+publication. Read-only mounts are reported separately. This does not elevate the
+process or guarantee access to existing descendants. The check requires Linux
+`faccessat2` (5.8+); an unavailable check refuses the grant.
+
+Execution identity/review/receipt contracts are staged in `voyage-protocol` for
+[#344](https://github.com/o-psi/helm.vessel.voyage/issues/344). They are not an
+advertised capability or a callable administrator-execution API. The installer
+and supervisor still use the existing user-service/identity behavior; system
+installation, administrator review and identity transitions remain unimplemented.
+
 ## Remote update admission
 
 Helm Web capability-gates profile setup and exposes owner-reviewed remote updates

@@ -49,7 +49,7 @@ impl Tool for RequestFilesystemRoot {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "request_filesystem_root".into(),
-            description: "Request human consent for an exact existing canonical absolute directory, with read or write access for this run only. Write includes read. Never auto-approved, including unrestricted mode. Host ceilings still apply. Children and already-running processes do not inherit grants. Persistent PTY starts refuse temporary overlays; use bounded shell. Refuses unsupported platforms and unavailable human interfaces; no configuration edits or uncertain-effect replay.".into(),
+            description: "Request human consent for an exact existing canonical absolute directory, with read or write access for this run only. Write includes read. Never auto-approved, including unrestricted mode. Host ceilings and OS permissions still apply: access is checked as the runtime user before and after consent. Consent does not elevate privileges. Directory access does not guarantee access to existing descendants or future operations. Children and already-running processes do not inherit grants. Persistent PTY starts refuse temporary overlays; use bounded shell. Refuses unsupported platforms and unavailable human interfaces; no configuration edits or uncertain-effect replay.".into(),
             input_schema: json!({"type":"object","properties":{
                 "path":{"type":"string","minLength":1},
                 "permission":{"enum":["read","write"]},
@@ -182,6 +182,74 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    struct PermissionChangeHuman {
+        called: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait]
+    impl Approver for PermissionChangeHuman {
+        async fn approve(&self, _: &ApprovalRequest) -> ApprovalOutcome {
+            panic!("filesystem consent cannot become generic approval");
+        }
+        async fn request_root(
+            &self,
+            request: &RootGrantRequest,
+            _: &ToolContext,
+        ) -> ApprovalOutcome {
+            use std::os::unix::fs::PermissionsExt;
+            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::fs::set_permissions(&request.path, std::fs::Permissions::from_mode(0o500))
+                .unwrap();
+            ApprovalOutcome::Approved
+        }
+    }
+
+    #[tokio::test]
+    async fn os_denial_prevents_consent_and_changed_permissions_prevent_false_grant() {
+        use std::{os::unix::fs::PermissionsExt, sync::atomic::Ordering};
+        if unsafe { libc::geteuid() } == 0 {
+            return; // Mode-bit denial is checked under an ordinary native UID.
+        }
+        let workspace = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let mut ctx = crate::tools::reliability_tests::context(workspace.path());
+        ctx.policy = Arc::new(
+            (*ctx.policy)
+                .clone()
+                .with_live_access(Some(Arc::new(crate::policy::LiveAccess::new(
+                    AccessMode::Unrestricted,
+                ))))
+                .enable_run_roots(),
+        );
+        let human = Arc::new(PermissionChangeHuman {
+            called: false.into(),
+        });
+        ctx.approver = human.clone();
+        let mut tools = ToolRegistry::default();
+        tools.register(RequestFilesystemRoot);
+        let args = json!({"path":external.path(), "permission":"write", "lifetime":"current_run", "reason":"fixture"});
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let error = tools
+            .execute("request_filesystem_root", args.clone(), &ctx)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("os_access_denied"), "{error}");
+        assert!(!human.called.load(Ordering::SeqCst));
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let error = tools
+            .execute("request_filesystem_root", args, &ctx)
+            .await
+            .unwrap_err();
+        assert!(human.called.load(Ordering::SeqCst));
+        assert!(error.to_string().contains("os_access_denied"), "{error}");
+        assert!(
+            ctx.policy
+                .for_run_dispatch(ctx.execution_id)
+                .resolve_write(&external.path().join("file"))
+                .is_err()
+        );
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 }
 

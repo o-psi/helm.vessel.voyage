@@ -4035,6 +4035,7 @@ version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
 ]

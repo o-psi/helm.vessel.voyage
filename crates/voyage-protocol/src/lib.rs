@@ -56,3 +56,6 @@ pub mod start_settings;
 pub mod model_discovery;
 
 pub mod execution_profiles;
+
+/// Staged execution-identity contracts; not yet an advertised capability.
+pub mod execution_identity;

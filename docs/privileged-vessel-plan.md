@@ -1,19 +1,36 @@
 # Privileged Vessel and per-voyage execution identities
 
-Status: implementation plan, not current runtime behavior. Approved direction:
+Status: implementation started; the full privileged-supervisor feature is not
+current runtime behavior. Approved direction:
 **a privileged Vessel supervisor launches independent Voyage processes under an
 explicitly configured execution identity** (option 2).
 
 Tracking: [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344).
+Foundations: [#345](https://github.com/o-psi/helm.vessel.voyage/issues/345).
 Related: [filesystem consent #327](https://github.com/o-psi/helm.vessel.voyage/issues/327),
 [remote updates #343](https://github.com/o-psi/helm.vessel.voyage/issues/343),
 [browser ownership #333](https://github.com/o-psi/helm.vessel.voyage/issues/333),
 [accounts #213](https://github.com/o-psi/helm.vessel.voyage/issues/213), and
 [recovery #238](https://github.com/o-psi/helm.vessel.voyage/issues/238).
 
-Baseline inspected: `470eb82a030357537200883620659a2249302ffa`. No host privilege,
-service, credential, or filesystem ownership changes are part of this planning
-delivery. Release milestone and implementation schedule remain unassigned.
+Planning baseline: `470eb82a030357537200883620659a2249302ffa`; implementation starts
+from `a527980567ffa4a8b7acf2e5e3af6da02b2c16a9`. Release milestone remains unassigned.
+
+Initial implementation adds strict identity/review/receipt records and an exact
+review-freshness validator in `crates/voyage-protocol/src/execution_identity.rs`.
+They are staged contracts, not a public command or authorization engine. Default
+capability is unavailable; no transport advertises identity selection yet. The
+independent filesystem preflight prerequisite is implemented in
+`voyage/src/policy/root_access.rs` and integrated into grant preparation,
+publication and dispatch. It uses the runtime's effective identity, checks a
+pinned directory without writing and reports OS denial/read-only mounts.
+Catalogue migrations, privileged storage/IPC, launch, installer, administrator
+authorization, transitions, client parity and adoption remain outstanding.
+
+The user authorized any available test host. HelmWeb is the selected first live
+adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
+deferred. Destructive tests remain confined to disposable fixtures. No live
+installation has been converted by the foundation changes.
 
 ## 1. Outcome and boundaries
 
@@ -448,7 +465,6 @@ previously deferred access remains deferred. A final operational guide must cove
 installation, administrative owner enrollment/revocation, identity management,
 account setup, transition recovery, update/rollback and uninstall.
 
-Before implementation leaves P0, confirm the proposed per-run administrator
-consent lifetime and whether account namespaces must be shared on the same host.
-Until changed explicitly, use fresh administrator review and separate authorized
-account contexts. These are recorded defaults, not assumptions about any host.
+Implementation uses fresh administrator review per run/process replacement and
+separate authorized account contexts, following the plan's defaults. These are
+explicit product choices, not assumptions about any host.
