@@ -41,15 +41,21 @@ export function vesselUpdate(root, {show, resume}) {
             const record = await exchange(c,'update_status',{operation_id:pending?.operation_id || '00000000-0000-0000-0000-000000000000'});
             if (!active(c,n)) return;
             if (pending?.operation_id && record.operation_id !== pending.operation_id) throw Error('Update identity changed. Reopen update review.');
+            let verified = false;
             if (record.phase === 'complete') {
                 const capabilities = await exchange(c,'capabilities',{});
                 if (!active(c,n)) return;
-                if (capabilities.vessel_id !== c.vessel_id || capabilities.running_release !== record.release_id || !capabilities.features?.includes('execution_profiles')) {
-                    throw Error('The approved update is recorded, but this connection has not verified the new Vessel yet. Check again after it reconnects.');
-                }
+                if (capabilities.vessel_id !== c.vessel_id) throw Error('Vessel identity changed. Reconnect before reviewing updates.');
+                verified = capabilities.running_release === record.release_id && capabilities.features?.includes('execution_profiles');
                 text('update-current',`Installed Vessel version: ${capabilities.version || 'unknown'}`);
             }
             remember(record); render(record);
+            if (record.phase === 'complete') {
+                $('update-continue').hidden = !verified;
+                text('update-status',verified
+                    ? 'Update complete. Reconnected to the verified Vessel version.'
+                    : 'This saved update is complete, but this connection does not match its reviewed release. Check for updates to review the current installation.');
+            }
         } catch (error) { if (active(c,n)) text('update-status',error.message); }
         if (active(c,n) && pending?.operation_id && !['ready','complete','failed','discarded','unconfirmed'].includes(pending.phase)) {
             clearTimeout(timer); timer=setTimeout(refresh,3000);

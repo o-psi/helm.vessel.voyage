@@ -59,7 +59,9 @@ that expected process replacement must not be mistaken for a configuration edit.
 Helm retains the operation identity through reloads and polls its receipt after
 reconnect. A completed receipt is followed by a fresh capability check for the same
 Vessel and exact running release before setup can continue. Interrupted application
-is reported as unconfirmed. Status checks can reconcile a stopped updater only
+is reported as unconfirmed. A historical completed receipt whose release differs
+from the current connection permits a fresh review, but does not count as verified
+activation of that old release. Status checks can reconcile a stopped updater only
 when the exact installed hashes and all live services are observed; otherwise it
 blocks a new update pending inspection; reboot or
 process loss is never described as successful completion. Private installer
