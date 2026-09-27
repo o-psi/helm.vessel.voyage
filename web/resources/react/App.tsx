@@ -11,6 +11,7 @@ import {voyageList, activityLabel, cardStatus} from './presentation';
 import {marked} from 'marked';
 import DOMPurify from 'dompurify';
 import {Workspace, type Tab} from './workspace';
+import {voyageLocation, voyagePath} from './voyage-url';
 import workingStatuses from '../../../helm/assets/working-statuses.json';
 
 type Bootstrap = {tenantId: string; vessels: any[]; ticketUrl: string; connectionsUrl: string; logoutUrl: string};
@@ -39,7 +40,7 @@ function Composer({tab, workspace, onSettings}: {tab?: Tab; workspace: Workspace
     const enabled = tab && workspace.actionable(tab) && workspace.permitted(tab,running?'steer':'submit');
     const send = () => { if (tab && enabled) void workspace.act(tab.key, running ? 'steer' : 'submit'); };
     return <form className="composer" aria-label="Message composer" onPaste={event=>{if(tab&&event.clipboardData.files.length){event.preventDefault();void pickFiles([...event.clipboardData.files]);}}} onDragOver={event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();}} onDrop={event=>{if(tab&&event.dataTransfer.files.length){event.preventDefault();void pickFiles([...event.dataTransfer.files]);}}} onSubmit={event => {event.preventDefault(); send();}}>
-        <div className="composer-box"><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';void pickFiles(files);}}/>{attaching && <p className="composer-feedback" role="status">Preparing pictures…</p>}{tab?.notice && <p className="composer-feedback" role="status">{tab.notice}</p>}{!!tab?.pictures.length&&<div className="pictures">{tab.pictures.map(picture=><figure key={picture.id}><img src={picture.url} alt={picture.name}/><figcaption>{picture.name}</figcaption><button type="button" disabled={tab.busy} aria-label={`Remove ${picture.name}`} onClick={()=>workspace.removePicture(tab.key,picture.id)}>×</button></figure>)}</div>}<textarea aria-label="Message" rows={2} value={tab?.draft || ''} disabled={!tab} onChange={event => tab && workspace.draft(tab.key,event.target.value)} placeholder="Ask anything…" onKeyDown={event => {if(event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing){event.preventDefault();send();}}}/>
+        <div className="composer-box"><input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.heic,.heif" multiple hidden onChange={event=>{const files=[...(event.target.files||[])];event.target.value='';void pickFiles(files);}}/>{attaching && <p className="composer-feedback" role="status">Preparing pictures…</p>}{tab?.notice && <p className="composer-feedback" role="status">{tab.notice}</p>}{!!tab?.pictures.length&&<div className="pictures">{tab.pictures.map(picture=><figure key={picture.id}><img src={picture.url} alt={picture.name}/><figcaption>{picture.name}</figcaption><button type="button" disabled={tab.busy} aria-label={`Remove ${picture.name}`} onClick={()=>workspace.removePicture(tab.key,picture.id)}>×</button></figure>)}</div>}<textarea aria-label="Message" rows={2} value={tab?.draft || ''} disabled={!tab} onChange={event => tab && workspace.draft(tab.key,event.target.value)} placeholder="Ask anything…" onKeyDown={event => {if(event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing){event.preventDefault();send();}}}/>
         <div className="composer-toolbar"><div className="composer-options">
             <button type="button" onClick={onSettings} title="Location"><Icon name="folder"/><span>{tab?.snapshot?.workspace || 'Location'}</span><Icon name="chevron"/></button>
             <button type="button" disabled={!tab||tab.busy||attaching} aria-label="Attach pictures" title="Attach pictures" onClick={()=>fileInput.current?.click()}><Icon name="clip"/></button>
@@ -152,6 +153,17 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
     const {fleet, workspace} = runtime;
     useSyncExternalStore(workspace.subscribe, workspace.getVersion, workspace.getVersion);
     const [active, setActive] = useState<string | null>(null), [query, setQuery] = useState('');
+    const [route, setRoute] = useState(() => typeof window === 'undefined' ? null : voyageLocation(window.location.pathname));
+    const selectVoyage = (vessel: string, session: string, title: string) => {
+        const path = voyagePath(vessel, session);
+        if (window.location.pathname !== path) window.history.pushState(null, '', path + window.location.search + window.location.hash);
+        setRoute({vessel, session}); setActive(workspace.open(vessel, session, title)); setMobile(false);
+    };
+    useEffect(() => {
+        const changed = () => setRoute(voyageLocation(window.location.pathname));
+        window.addEventListener('popstate', changed);
+        return () => window.removeEventListener('popstate', changed);
+    }, []);
     useEffect(() => {
         fleet.start(); const timer = setInterval(() => { fleet.poll(); for (const key of workspace.tabs.keys()) void workspace.refresh(key); workspace.changed(); }, 5000);
         return () => { clearInterval(timer); workspace.close(); fleet.close(); };
@@ -167,7 +179,14 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
         return ()=>media.removeEventListener('change',update);
     },[appearance]);
     const connections=[...fleet.connections.values()], voyages=voyageList(connections,query,(connection,voyage)=>{const tab=workspace.tabs.get(JSON.stringify([connection.id,voyage.session_id]));return tab&&!tab.stale&&Date.now()-tab.freshAt<35000?tab.snapshot:null;});
-    const selected=active ? workspace.tabs.get(active) : null;
+    useEffect(() => {
+        if (!route) { setActive(null); return; }
+        const connection = fleet.connections.get(route.vessel);
+        const voyage = connection?.voyages.find((item: any) => item.session_id === route.session);
+        if (voyage) setActive(workspace.open(route.vessel, route.session, voyage.name || route.session));
+        else setActive(null); // Never open an unlisted voyage or borrow another Vessel's session.
+    }, [route?.vessel, route?.session, fleet.connections.get(route?.vessel || '')?.voyages.some((item: any) => item.session_id === route?.session), runtime]);
+    const selected=active && route && active === JSON.stringify([route.vessel, route.session]) ? workspace.tabs.get(active) : null;
     return <div className="helm-console">
         <button className="mobile-toggle icon-button" aria-label="Open voyage navigation" aria-expanded={mobile} onClick={()=>setMobile(!mobile)}><Icon name="menu"/></button>
         {mobile && <button className="sidebar-backdrop" aria-label="Close voyage navigation" onClick={()=>setMobile(false)}/>}
@@ -177,7 +196,7 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
             <nav className="voyage-list" aria-label="Voyages">{voyages.map((voyage:any)=>{
                 const key=JSON.stringify([voyage.connection.id,voyage.session_id]),tab=workspace.tabs.get(key);
                 const status=cardStatus(voyage,Boolean(voyage.connection.client),tab&&!tab.stale ? tab.snapshot : null);
-                return <div className="voyage-row" key={key}><button className="voyage-card" data-status-tone={status.tone} data-animated={status.animated || undefined} aria-current={active===key} onClick={()=>{setActive(workspace.open(voyage.connection.id,voyage.session_id,voyage.name||voyage.session_id));setMobile(false);}}>
+                return <div className="voyage-row" key={key}><button className="voyage-card" data-status-tone={status.tone} data-animated={status.animated || undefined} aria-current={active===key} onClick={()=>selectVoyage(voyage.connection.id,voyage.session_id,voyage.name||voyage.session_id)}>
                     <span className="card-title">{voyage.name||voyage.session_id}{tab?.draft && <span title="Unsent draft"> •</span>}</span><span className="card-meta"><span>{voyage.connection.name}</span><time title={voyage.activity?.iso}>{activityLabel(voyage.activity)}</time></span><span className="card-status"><i aria-hidden="true"/>{status.label}</span>
                 </button><VoyageActions connection={voyage.connection} voyage={voyage} onChanged={()=>workspace.connectionChanged()}/></div>;
             })}{!voyages.length && <p className="empty">{query?'No matching voyages.':'No voyages yet.'}</p>}</nav>
@@ -188,10 +207,11 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
             </footer>
         </aside>
         <main className="voyage-workspace" aria-label="Conversation">{!active && <section className="conversation"><div className="transcript"><div className="thread empty">Choose a voyage from any connected Vessel. <button onClick={()=>setSettings({})}>New voyage</button></div></div><Composer workspace={workspace} onSettings={()=>setSettings({})}/></section>}
+            {route && !selected && <p className="empty" role="status">Waiting for this voyage on its Vessel. If it does not appear, check your connection or access.</p>}
             {selected && <HostBrowser key={selected.key} tab={selected} client={fleet.connections.get(selected.vessel)?.client}/> }
             {[...workspace.tabs.values()].map(tab=><Conversation key={tab.key} tab={tab} workspace={workspace} active={active===tab.key} onSettings={()=>setSettings({tab})}/>)}
         </main>
         {manage&&<Connections bootstrap={bootstrap} states={Object.fromEntries(connections.map(connection => [connection.id, {connected: Boolean(connection.client), status: connection.status}]))} onReconnect={()=>fleet.reconnect()} onClose={()=>setManage(false)}/>}
-        {settings&&<Settings fleet={fleet} workspace={workspace} tab={settings.tab} tenant={bootstrap.tenantId} onClose={()=>setSettings(null)} onCreated={(vessel,process)=>setActive(workspace.open(vessel,process.session_id,process.name||'New voyage'))}/>}
+        {settings&&<Settings fleet={fleet} workspace={workspace} tab={settings.tab} tenant={bootstrap.tenantId} onClose={()=>setSettings(null)} onCreated={(vessel,process)=>selectVoyage(vessel,process.session_id,process.name||'New voyage')}/>}
     </div>;
 }

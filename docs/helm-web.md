@@ -16,6 +16,7 @@ make them a second console. Implement all new console behavior in
 ## Routes and interaction
 
 - `/`: authenticated React console; signed-out requests redirect to `/landing`.
+- `/voyages/{connection UUID}/{session UUID}`: bookmarkable React conversation. Selection and browser history update the URL; reloading restores the voyage after its Vessel catalogue confirms it. The URL grants no access: Laravel serves only the tenant-scoped shell, and Vessel tickets, catalogue and snapshots still enforce authority. Missing/offline voyages stay at their URL with an unavailable message rather than selecting another session.
 - `/react`: compatibility redirect to `/`, preserving `manage-vessels=1`.
 - `/landing`, `/helm`, `/vessel`, `/voyage`: public product pages.
 - `/console/login`, `/auth/{provider}`, `/auth/{provider}/callback`: existing login.
@@ -34,9 +35,11 @@ New voyage settings choose Vessel, workspace and profile; **Create voyage** crea
 an independent voyage without inference. Sending a message starts a run. Profile
 management, account enrollment, reasoning/service choices, attachments, typed
 approval/question dialogs, advanced voyage actions and the shared browser remain
-available. The composer previews selected PNG/JPEG/WebP pictures and displays
-validation errors by the picker (up to four pictures and 2 MiB total). Reloading
-loses unsent text/pictures, not server-side conversations.
+available. The composer previews PNG/JPEG/WebP pictures and can resize large
+phone photos to JPEG before upload. HEIC/HEIF works only in browsers able to decode
+it; otherwise export to JPEG or WebP. Original photos are not uploaded. The
+per-message limit remains four pictures and 2 MiB after conversion; errors appear
+by the picker. Reloading loses unsent text/pictures, not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default
