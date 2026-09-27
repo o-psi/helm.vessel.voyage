@@ -39,6 +39,30 @@ reboot persistence and live model quality need separate evidence. Live provider
 work requires an approved provider and budget. No skipped or unavailable check is
 a pass.
 
+## Privileged control storage fixtures
+
+The staged Linux control-directory primitive has focused ordinary-UID checks:
+
+```sh
+cargo test -p voyage-storage --locked protected_linux -j 8
+```
+
+Its native-root test is ignored in the default workspace coverage run. It must
+run only in an explicitly disposable Linux root fixture, with an ordinary account
+named `voyageordinary` and a root-owned non-writable source/test working directory:
+
+```sh
+VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 cargo test -p voyage-storage --locked --lib -- --ignored --exact protected_linux::tests::native_root_records_exclude_ordinary_identity
+```
+
+Do not create that account or run this command as root on a development or
+production host. The test changes ownership only on its temporary fixture record,
+launches an ordinary UID/GID child with cleared groups, and checks denial of control
+record reads/writes. Native evidence is separate from default coverage and does
+not establish a working privileged Vessel or installer. The Linux fixture used for
+[#346](https://github.com/o-psi/helm.vessel.voyage/issues/346) is a disposable KVM VM;
+matching development loader/libraries were used for its copied test executable.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

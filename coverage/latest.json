@@ -1,17 +1,17 @@
 {
-  "measured_at_utc": "2026-09-27T16:03:15.498463+00:00",
-  "source_commit": "a527980567ffa4a8b7acf2e5e3af6da02b2c16a9",
+  "measured_at_utc": "2026-09-27T16:35:07.973921+00:00",
+  "source_commit": "df1b27cee6cda27c88c1cb50c7f04e9ecc08aac9",
   "dirty": true,
-  "source_fingerprint_sha256": "b17860a37fa79d8bd4a817c57e2fad6a2f2c1cce98e025371d806c6916627837",
-  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including staged execution-identity contracts, OS access preflight and unrelated staged Rust edit",
+  "source_fingerprint_sha256": "9ef30d70189e8bce3ea489367616459c4b9d83aeb07b26045b045d78e6c2bf21",
+  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including protected Linux control storage and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1773,
+    "passed": 1776,
     "failed": 0,
-    "ignored": 2
+    "ignored": 3
   },
   "totals": {
     "branches": {
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10275,
-      "covered": 7436,
-      "percent": 72.3698296836983
+      "count": 10291,
+      "covered": 7449,
+      "percent": 72.38363618695948
     },
     "instantiations": {
-      "count": 23272,
-      "covered": 9388,
-      "percent": 40.340323135097975
+      "count": 23304,
+      "covered": 9401,
+      "percent": 40.34071404050807
     },
     "lines": {
-      "count": 107523,
-      "covered": 80763,
-      "percent": 75.1123015540861
+      "count": 107716,
+      "covered": 80900,
+      "percent": 75.10490549222028
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 176545,
-      "covered": 126524,
-      "notcovered": 50021,
-      "percent": 71.66671386898524
+      "count": 176921,
+      "covered": 126785,
+      "notcovered": 50136,
+      "percent": 71.66192820524415
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/privileged-foundations -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/privileged-storage -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -120,7 +120,21 @@
   "notes": [
     "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
     "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
-    "Change in percentage points: lines +0.0596, functions +0.0263, regions +0.0684",
-    "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate."
+    "Change in percentage points: lines -0.0074, functions +0.0138, regions -0.0048",
+    "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate.",
+    "New root-only storage test is ignored in the default workspace scope and passed separately in a disposable native KVM fixture; no coverage scope was narrowed."
+  ],
+  "native_checks": [
+    {
+      "scope": "protected_linux storage tests",
+      "platform": "Disposable Ubuntu 24.04 KVM VM; Linux 6.8.0-142-generic; initial UID mapping 0 to 0",
+      "tests": {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      "command": "cd $FIXTURE && VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_EXECUTABLE=$FIXTURE/storage-tests VOYAGE_TEST_LINUX_LOADER=$FIXTURE/lib/ld-linux-x86-64.so.2 VOYAGE_TEST_LINUX_LIBS=$FIXTURE/lib $FIXTURE/lib/ld-linux-x86-64.so.2 --library-path $FIXTURE/lib ./storage-tests --include-ignored protected_linux --nocapture",
+      "notes": "Current development test executable with matching loader/libraries. Includes actual root and ordinary UID/GID 1000 denial checks. Separate native evidence, not merged into workspace coverage totals; not system installer or complete privileged Vessel evidence."
+    }
   ]
 }

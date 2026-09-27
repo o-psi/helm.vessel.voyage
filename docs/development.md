@@ -30,6 +30,7 @@ operator interfaces. Paths in backticks require the source checkout.
 | `crates/voyage-protocol/src/process/` | Private runtime IPC and shared identity/authority data |
 | `vessel/src/process/api.rs` | Public-to-private operation adapter and public response normalization |
 | `crates/voyage-storage/src/` | Native private-storage primitives |
+| `crates/voyage-storage/src/protected_linux.rs` | Staged root control-record storage; not yet a system-service backend |
 | `installer/src/service/` | Linux private installation and explicit service lifecycle |
 | `installer/src/install/` | Verified release manifests, atomic installation and rollback |
 | `installer/src/cli.rs`, `flow.rs`, `ui.rs` | Installer arguments, review/apply planning and interactive UI |

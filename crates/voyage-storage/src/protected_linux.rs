@@ -1,0 +1,283 @@
+//! Descriptor-relative root control storage. This protects against ordinary host
+//! identities, not against an unrestricted host administrator. Runtime journals
+//! must never be placed here or parsed by a root control reader.
+use anyhow::{Context, Result, ensure};
+use ring::rand::{SecureRandom, SystemRandom};
+use std::{
+    ffi::{CString, OsStr},
+    fs::File,
+    io::{Read, Write},
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{ffi::OsStrExt, fs::MetadataExt},
+    },
+    path::{Component, Path},
+};
+
+/// An already checked control directory. No path resolution through an untrusted
+/// ancestor occurs after opening it. Callers must serialize logical transactions
+/// with `lock`; atomic file publication is not a multi-record transaction.
+pub struct RootDirectory {
+    directory: File,
+    owner: u32,
+}
+
+fn name(value: &OsStr) -> Result<CString> {
+    let path = Path::new(value);
+    ensure!(
+        matches!(path.components().next(), Some(Component::Normal(_)))
+            && path.components().count() == 1
+            && !value.as_bytes().contains(&b'/'),
+        "control name must be one path component"
+    );
+    Ok(CString::new(value.as_bytes())?)
+}
+fn file_at(parent: &File, name: &CString, flags: i32, mode: libc::mode_t) -> Result<File> {
+    // SAFETY: parent and CString remain live; ownership of a successful descriptor
+    // is transferred exactly once. CLOEXEC prevents control handles leaking to tools.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            mode,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+fn check_directory(directory: &File, owner: u32, private: bool) -> Result<()> {
+    let m = directory.metadata()?;
+    ensure!(
+        m.is_dir() && (m.uid() == 0 || m.uid() == owner) && m.mode() & 0o022 == 0,
+        "control directory has an unsafe owner or writable permissions"
+    );
+    if private {
+        ensure!(
+            m.uid() == owner && m.mode() & 0o077 == 0,
+            "control directory must be private and owned by its authority"
+        );
+    }
+    Ok(())
+}
+fn check_file(file: &File, owner: u32, limit: u64) -> Result<()> {
+    let m = file.metadata()?;
+    ensure!(
+        m.is_file()
+            && m.uid() == owner
+            && m.mode() & 0o077 == 0
+            && m.nlink() == 1
+            && m.len() <= limit,
+        "unsafe or oversized control record"
+    );
+    Ok(())
+}
+
+impl RootDirectory {
+    /// Existing root-owned private directory under root-owned non-writable
+    /// ancestors. No credentials or runtime data are loaded by this operation.
+    pub fn open(path: &Path) -> Result<Self> {
+        Self::open_owned(path, 0)
+    }
+    fn open_owned(path: &Path, owner: u32) -> Result<Self> {
+        ensure!(path.is_absolute(), "control directory must be absolute");
+        let mut directory = File::open("/")?;
+        check_directory(&directory, owner, false)?;
+        for part in path.components() {
+            match part {
+                Component::RootDir => {}
+                Component::Normal(value) => {
+                    directory = file_at(
+                        &directory,
+                        &name(value)?,
+                        libc::O_RDONLY | libc::O_DIRECTORY,
+                        0,
+                    )?;
+                    check_directory(&directory, owner, false)?;
+                }
+                _ => anyhow::bail!("control path must not contain relative components"),
+            }
+        }
+        check_directory(&directory, owner, true)?;
+        Ok(Self { directory, owner })
+    }
+    fn current(&self) -> Result<()> {
+        check_directory(&self.directory, self.owner, true)
+    }
+    pub fn child(&self, entry: &OsStr) -> Result<Self> {
+        self.current()?;
+        let directory = file_at(
+            &self.directory,
+            &name(entry)?,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )?;
+        check_directory(&directory, self.owner, true)?;
+        Ok(Self {
+            directory,
+            owner: self.owner,
+        })
+    }
+    /// Creates one private descendant; never repairs permissions/ownership on an
+    /// existing object. System setup must provision the root anchor separately.
+    pub fn create_child(&self, entry: &OsStr) -> Result<Self> {
+        self.current()?;
+        ensure!(
+            unsafe { libc::geteuid() } == self.owner,
+            "control creation requires its owning OS identity"
+        );
+        let entry_name = name(entry)?;
+        let result =
+            unsafe { libc::mkdirat(self.directory.as_raw_fd(), entry_name.as_ptr(), 0o700) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            ensure!(
+                error.raw_os_error() == Some(libc::EEXIST),
+                "control directory creation failed: {error}"
+            );
+        }
+        let child = self.child(entry)?;
+        self.directory.sync_all()?;
+        Ok(child)
+    }
+    /// Reads a bounded regular private file. Never follows symbolic links, opens
+    /// a pipe/device, or accepts a hardlinked record as supervisor authority.
+    pub fn read(&self, entry: &OsStr, limit: u64) -> Result<Vec<u8>> {
+        self.current()?;
+        let pinned = file_at(&self.directory, &name(entry)?, libc::O_PATH, 0)?;
+        check_file(&pinned, self.owner, limit)?;
+        // Reopen the checked inode, not its potentially replaced directory entry.
+        // The first O_PATH open cannot trigger FIFO/device open behavior.
+        let mut file = File::open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))?;
+        let expected = pinned.metadata()?;
+        let actual = file.metadata()?;
+        ensure!(
+            (expected.dev(), expected.ino()) == (actual.dev(), actual.ino()),
+            "control descriptor identity changed"
+        );
+        check_file(&file, self.owner, limit)?;
+        let mut bytes = Vec::new();
+        (&mut file)
+            .take(
+                limit
+                    .checked_add(1)
+                    .context("control read limit overflow")?,
+            )
+            .read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 <= limit,
+            "control record grew beyond limit"
+        );
+        check_file(&file, self.owner, limit)?;
+        self.current()?;
+        Ok(bytes)
+    }
+    /// Publishes a new record without replacing an existing name. The durable
+    /// content is complete before rename. Uncertain sync/publication failures must
+    /// be resolved by reading the exact operation record, never blind replay.
+    pub fn publish_new(&self, entry: &OsStr, bytes: &[u8], limit: usize) -> Result<()> {
+        self.current()?;
+        ensure!(bytes.len() <= limit, "control record exceeds limit");
+        ensure!(
+            unsafe { libc::geteuid() } == self.owner,
+            "control publication requires its owning OS identity"
+        );
+        let destination = name(entry)?;
+        let mut nonce = [0u8; 16];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| anyhow::anyhow!("control nonce unavailable"))?;
+        let temporary = CString::new(format!(
+            ".pending-{}",
+            nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        ))?;
+        let mut file = file_at(
+            &self.directory,
+            &temporary,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+        )?;
+        let result = (|| -> Result<()> {
+            check_file(&file, self.owner, limit as u64)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            check_file(&file, self.owner, limit as u64)?;
+            self.current()?;
+            // RENAME_NOREPLACE is a kernel-enforced admission, including dangling
+            // symlinks. No exists()/rename() race and no hardlink publication.
+            let result = unsafe {
+                libc::renameat2(
+                    self.directory.as_raw_fd(),
+                    temporary.as_ptr(),
+                    self.directory.as_raw_fd(),
+                    destination.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            ensure!(
+                result == 0,
+                "control publication failed: {}",
+                std::io::Error::last_os_error()
+            );
+            self.directory.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            // Only this operation's random temporary name. If publication already
+            // happened, unlinkat cannot remove the destination or someone else's data.
+            unsafe {
+                libc::unlinkat(self.directory.as_raw_fd(), temporary.as_ptr(), 0);
+            }
+        }
+        result
+    }
+    /// Returns an exclusive nonblocking transaction lock. Retain the handle for
+    /// the whole logical operation; contention is a bounded refusal.
+    pub fn lock(&self, entry: &OsStr) -> Result<File> {
+        self.current()?;
+        let entry = name(entry)?;
+        let file = match file_at(
+            &self.directory,
+            &entry,
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+        ) {
+            Ok(file) => {
+                self.directory.sync_all()?;
+                file
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| e.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
+                let pinned = file_at(&self.directory, &entry, libc::O_PATH, 0)?;
+                check_file(&pinned, self.owner, 0)?;
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(format!("/proc/self/fd/{}", pinned.as_raw_fd()))?;
+                let expected = pinned.metadata()?;
+                let actual = file.metadata()?;
+                ensure!(
+                    (expected.dev(), expected.ino()) == (actual.dev(), actual.ino()),
+                    "control lock identity changed"
+                );
+                file
+            }
+            Err(error) => return Err(error),
+        };
+        check_file(&file, self.owner, 0)?;
+        ensure!(
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+            "control transaction already active"
+        );
+        Ok(file)
+    }
+}
+
+#[cfg(test)]
+#[path = "protected_linux_tests.rs"]
+mod tests;

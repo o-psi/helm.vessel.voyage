@@ -7,6 +7,7 @@ explicitly configured execution identity** (option 2).
 
 Tracking: [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344).
 Foundations: [#345](https://github.com/o-psi/helm.vessel.voyage/issues/345).
+Control/runtime separation: [#346](https://github.com/o-psi/helm.vessel.voyage/issues/346).
 Related: [filesystem consent #327](https://github.com/o-psi/helm.vessel.voyage/issues/327),
 [remote updates #343](https://github.com/o-psi/helm.vessel.voyage/issues/343),
 [browser ownership #333](https://github.com/o-psi/helm.vessel.voyage/issues/333),
@@ -26,6 +27,15 @@ publication and dispatch. It uses the runtime's effective identity, checks a
 pinned directory without writing and reports OS denial/read-only mounts.
 Catalogue migrations, privileged storage/IPC, launch, installer, administrator
 authorization, transitions, client parity and adoption remain outstanding.
+
+The next storage increment stages `voyage-storage::protected_linux::RootDirectory`:
+root-owned private control directories reached through checked non-writable
+ancestors, descriptor-relative reads, bounded regular/private/single-link records,
+atomic new-record publication and nonblocking locks. It is not yet wired into the
+supervisor or installer. Ordinary-UID checks and a separate disposable Ubuntu KVM
+root fixture verify this primitive, including actual ordinary-user refusal and
+changed-owner rejection. This is storage evidence, not privileged launch, account
+isolation, IPC, system-service or adoption evidence. See #346 for exact results.
 
 The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
