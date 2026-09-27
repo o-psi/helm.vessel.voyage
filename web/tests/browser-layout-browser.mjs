@@ -89,8 +89,8 @@ try {
     await page.waitForTimeout(150);
     const opened=await geometry();
     await page.screenshot({path:`${output}/${label}-open.png`});
-    await page.getByRole('button',{name:'Take control privately',exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector('.browser-primary')?.textContent==='Return to agent');
+    await page.getByRole('button',{name:'Browse privately',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('.browser-primary')?.textContent==='Continue agent'&&!document.querySelector('.browser-primary')?.hidden);
     const privateState=await geometry();
     const privateLabel=await page.locator('.browser-primary').textContent();
     const privateAccessibleLabel=await page.locator('.browser-primary').getAttribute('aria-label');
@@ -100,7 +100,7 @@ try {
     check(before.toggle.right<=viewport.width && before.toggle.y>=0,`${label}: Browser toggle outside viewport`);
     check(before.documentWidth<=viewport.width,`${label}: closed shell overflows horizontally`);
     check(opened.documentWidth<=viewport.width,`${label}: open shell overflows horizontally`);
-    check(privateLabel==='Return to agent',`${label}: private control label did not change`);
+    check(privateLabel==='Continue agent',`${label}: private control label did not change`);
     check(privateAccessibleLabel===privateLabel,`${label}: private accessible label differs`);
     check(commandsBeforeClose.includes('control'),`${label}: control was not forwarded`);
     check(errors.length===0,`${label}: page errors: ${errors.join('; ')}`);

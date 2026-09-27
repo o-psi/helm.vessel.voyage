@@ -26,13 +26,15 @@
 .browser-next-name{font-size:10px;font-weight:800;letter-spacing:.14em;color:var(--bv-muted)}
 .browser-next-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:12px;font-weight:650;color:var(--bv-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .browser-next-status::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:#a1afbf;box-shadow:0 0 0 3px color-mix(in srgb,#a1afbf 18%,transparent)}
-.browser-next[data-state=agent] .browser-next-status::before,.browser-next[data-state=watching] .browser-next-status::before{background:#16a085;box-shadow:0 0 0 3px #16a08522}
+.browser-next[data-state=agent] .browser-next-status::before,.browser-next[data-state=watching] .browser-next-status::before,.browser-next[data-state=human] .browser-next-status::before{background:#16a085;box-shadow:0 0 0 3px #16a08522}
 .browser-next[data-state=private] .browser-next-status{color:var(--bv-private)}
 .browser-next[data-state=private] .browser-next-status::before{background:var(--bv-private);box-shadow:0 0 0 3px var(--bv-private-soft)}
 .browser-next[data-state=error] .browser-next-status::before,.browser-next[data-state=needs-review] .browser-next-status::before{background:#d97706;box-shadow:0 0 0 3px #d9770622}
 .browser-next-actions{display:flex;flex:none;align-items:center;gap:4px}
 .browser-next .browser-next-primary{background:var(--bv-accent);border-color:var(--bv-accent);color:#fff;font-weight:700;padding-inline:12px}
 .browser-next .browser-next-primary:hover:not(:disabled){background:color-mix(in srgb,var(--bv-accent) 85%,black)}
+.browser-next .browser-next-privacy{border-color:var(--bv-line);font-size:12px;font-weight:650}
+.browser-next .browser-next-privacy[aria-pressed=true]{border-color:var(--bv-private);color:var(--bv-private);background:var(--bv-private-soft)}
 .browser-next[data-state=private] .browser-next-primary{background:var(--bv-private);border-color:var(--bv-private);color:#fff}
 .browser-next .browser-next-scale{border-color:var(--bv-line);font-size:12px;font-weight:650}
 .browser-next-more{position:relative}

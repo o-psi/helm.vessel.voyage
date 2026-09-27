@@ -49,7 +49,7 @@ export class Worker {
           if(old){if(old.digest!==digest(req))refuse('id_conflict');scheduled=Promise.resolve({receipt:old,content_withheld:true});return;}
           const r=ephemeral?{id:req.id,digest:digest(req),state:'dispatched',ephemeral:true}:await this.journal.begin(req);
           if(ephemeral){this.ephemeral.set(req.id,r);if(this.ephemeral.size>2048)this.ephemeral.delete(this.ephemeral.keys().next().value);}
-          const urgent=['control','disconnect','close','shutdown','policy','status'].includes(req.op)||(req.op==='input'&&(req.action?.kind==='dialog'||(req.action?.kind==='history'&&req.action.direction==='stop')));
+          const urgent=['control','disconnect','close','shutdown','policy','status'].includes(req.op)||(req.op==='input'&&(req.claim===true||req.action?.kind==='dialog'||(req.action?.kind==='history'&&req.action.direction==='stop')));
           const execute=()=>this.execute(req,r);
           if(req.op==='mirror')scheduled=execute();
           else {const lane=urgent?'urgent':'ordinary';scheduled=this[lane].then(execute);this[lane]=scheduled.catch(()=>{});}
@@ -127,7 +127,10 @@ export class Worker {
         return null;
       }
       case 'mirror':return this.mirror(req);
-      case 'input':{const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}}
+      case 'input':{
+        if(req.claim===true)return this.claimInput(req);
+        const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}
+      }
       case 'agent':this.agentActive++;this.agentAction=['inspect','navigate','click','fill','scroll','tabs','screenshot','upload','download'].includes(req.action?.kind)?req.action.kind:null;try{return await this.agent(req.action);}finally{this.agentActive--;this.agentAction=null;}
       default:refuse('unknown_operation');
     }
@@ -413,7 +416,40 @@ export class Worker {
     if(a.operation==='close'){if(this.tabs.size===1)refuse('last_tab');const active=this.active===a.tab;await p.close({runBeforeUnload:false});this.guard(stamp);if(active)await this.select(this.tabs.keys().next().value,stamp);return null;}
     refuse('invalid_tab_operation');
   }
-  async input(req){
+  async claimInput(req){
+    const viewer=this.viewer(req.viewer);this.requireOpen();
+    if(this.mode!=='agent'||this.controller)refuse('controller_busy');
+    if(!Number.isSafeInteger(req.seq)||req.seq!==viewer.seq+1)refuse('input_sequence');
+    const action=req.action;
+    const element=action?.kind==='element'&&['click','surface_click','wheel'].includes(action.action);
+    if(!element&&!['history','navigate','tabs'].includes(action?.kind))refuse('invalid_claim');
+    const page=this.page,document=this.epochs.document,tab=this.epochs.tab;
+    let claimed=null;
+    try{
+      if(element){
+        const id=number(action.node_id,1,Number.MAX_SAFE_INTEGER);
+        let frame=page.mainFrame();
+        if(action.frame_id!==undefined){
+          const frameId=identifier(action.frame_id);
+          frame=page.frames().find(item=>this.frameIds.get(item)===frameId);
+          if(!frame||frame===page.mainFrame())beforeEffect('stale_frame');
+        }
+        const handle=await frame.evaluateHandle(node=>globalThis.__voyageMirror?.node(node)??null,id);
+        claimed={handle,frame};
+        if(!handle.asElement())beforeEffect('stale_reference');
+      }
+      this.checkAgent();
+      if(page!==this.page||document!==this.epochs.document||tab!==this.epochs.tab)beforeEffect('stale_document');
+      this.mode='human';this.controller=req.viewer;
+      await this.fence([...this.viewers.keys()]);
+      if(page!==this.page||document!==this.epochs.document||tab!==this.epochs.tab)beforeEffect('stale_document');
+      if(claimed&&!await claimed.handle.evaluate(node=>node.isConnected).catch(()=>false))beforeEffect('stale_reference');
+      const effect=this.input(req,claimed);
+      this.effects.add(effect);
+      try{return await effect;}finally{this.effects.delete(effect);}
+    }finally{await claimed?.handle.dispose().catch(()=>{});}
+  }
+  async input(req,claimed=null){
     const viewer=this.viewer(req.viewer);if(this.controller!==req.viewer||this.mode==='agent')refuse('not_controller');this.requireOpen();
     if(!Number.isSafeInteger(req.seq)||req.seq!==viewer.seq+1)refuse('input_sequence');viewer.seq=req.seq;
     const a=req.action,stamp=this.epochs.control;if(!a)refuse('invalid_input');
@@ -424,7 +460,8 @@ export class Worker {
         if(!['click','surface_click','fill','select','wheel','upload'].includes(a.action))refuse('invalid_input');
         let frame=this.page.mainFrame();
         if(a.frame_id!==undefined){const frameId=identifier(a.frame_id);frame=this.page.frames().find(item=>this.frameIds.get(item)===frameId);if(!frame||frame===this.page.mainFrame())beforeEffect('stale_frame');}
-        const handle=await frame.evaluateHandle(node=>globalThis.__voyageMirror?.node(node)??null,id);
+        if(claimed&&claimed.frame!==frame)beforeEffect('stale_frame');
+        const handle=claimed?.handle??await frame.evaluateHandle(node=>globalThis.__voyageMirror?.node(node)??null,id);
         try{
           const element=handle.asElement();if(!element)beforeEffect('stale_reference');
           if(!await element.isVisible())beforeEffect('element_hidden');

@@ -44,6 +44,31 @@ test('tab selection stops old frame recorders and clears viewer cursors',async()
  assert.equal(viewer.frameCursors.size,0);
 });
 
+test('first page click claims human control and acts once under the fence',{timeout:45000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-claim-'));
+ const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html');res.end('<button onclick="document.body.dataset.clicks=Number(document.body.dataset.clicks||0)+1">Click once</button>');});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const origin=`http://127.0.0.1:${server.address().port}`,worker=new Worker();
+ t.after(async()=>{await worker.dispose();await new Promise(resolve=>server.close(resolve));await fs.rm(root,{recursive:true,force:true});});
+ const request=(op,args={})=>worker.request({id:randomUUID(),op,browser:worker.browser,epochs:{...worker.epochs},...args});
+ const call=async(op,args={})=>{const reply=await request(op,args);assert.equal(reply.ok,true,JSON.stringify(reply));return reply.result;};
+ await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],width:640,height:480}});
+ await call('open');await call('agent',{action:{kind:'navigate',url:origin}});
+ const viewer=randomUUID(),observer=randomUUID();await call('join',{viewer});await call('join',{viewer:observer});
+ await call('mirror',{viewer,since:0});
+ const id=await worker.page.evaluate(()=>globalThis.__voyageMirror.id(document.querySelector('button')));
+ const invalid=await request('input',{viewer,seq:1,claim:true,action:{kind:'text',text:'no claim'}});
+ assert.equal(invalid.error.code,'invalid_claim');assert.equal(worker.mode,'agent');
+ await call('input',{viewer,seq:1,claim:true,action:{kind:'element',action:'click',node_id:id,button:'left'}});
+ assert.equal(worker.mode,'human');assert.equal(worker.controller,viewer);
+ assert.equal(await worker.page.locator('body').getAttribute('data-clicks'),'1');
+ assert.deepEqual(worker.status().viewers,[viewer,observer]);
+ assert.equal((await request('agent',{action:{kind:'inspect'}})).error.code,'agent_fenced');
+ assert.equal((await request('input',{viewer:observer,seq:1,action:{kind:'text',text:'other'}})).error.code,'not_controller');
+ await call('control',{viewer,mode:'agent'});
+ assert.match((await call('agent',{action:{kind:'inspect'}})).value.text,/Click once/);
+});
+
 test('one sandboxed browser serves bounded live DOM to authorized viewers',{timeout:90000},async t=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker333-'));
  const worker=new Worker(),sockets=new Set();

@@ -328,7 +328,8 @@ These checks verify staging and integrity, not browser execution. Browser
 execution and cleanup use `npm test --prefix voyage/browser` after pinned npm
 preparation, and `python3 voyage/tests/host_browser.py --binaries
 /absolute/path/to/built/bin` with actual locally built Helm, Vessel and Voyage.
-The process journey checks both Helm clients, DOM replay, private takeover,
+The process journey checks both Helm clients, DOM replay, ordinary first-action
+claim and private takeover,
 multiple voyages, suspended-owner preparation and observed cleanup. Crash
 qualification remains a separate adverse check.
 

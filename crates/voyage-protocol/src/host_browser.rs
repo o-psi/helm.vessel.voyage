@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const MAX_TEXT_BYTES: usize = 16 * 1024;
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 /// Private transport provenance; never accepted inside a public VoyageCommand.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +128,20 @@ pub enum HostBrowserInput {
     },
 }
 impl HostBrowserInput {
+    pub fn claimable(&self) -> bool {
+        matches!(
+            self,
+            Self::Click { .. }
+                | Self::SurfaceClick { .. }
+                | Self::Wheel { .. }
+                | Self::History { .. }
+                | Self::Navigate { .. }
+                | Self::Tab { .. }
+        ) || matches!(self, Self::FrameElement { input, .. } if matches!(input,
+            HostBrowserFrameElementInput::Click { .. }
+                | HostBrowserFrameElementInput::SurfaceClick { .. }
+                | HostBrowserFrameElementInput::Wheel { .. }))
+    }
     pub fn valid(&self) -> bool {
         match self {
             Self::History { .. } => true,
@@ -313,6 +330,10 @@ pub enum HostBrowserOperation {
         command_id: Uuid,
         binding: HostBrowserBinding,
         sequence: u64,
+        /// Claim ordinary human control and apply this first action under one
+        /// fence. Private control always requires a separate explicit choice.
+        #[serde(default, skip_serializing_if = "is_false")]
+        claim: bool,
         input: HostBrowserInput,
     },
     Receipt {
@@ -372,8 +393,11 @@ impl HostBrowserOperation {
             Self::Mirror { since, .. } => *since <= 9_007_199_254_740_991,
             Self::Receipt { command_id } => !command_id.is_nil(),
             Self::Input {
-                sequence, input, ..
-            } => *sequence > 0 && input.valid(),
+                sequence,
+                claim,
+                input,
+                ..
+            } => *sequence > 0 && input.valid() && (!claim || input.claimable()),
             _ => true,
         }
     }
@@ -438,6 +462,47 @@ mod tests {
         );
     }
     #[test]
+    fn first_human_input_is_bounded_to_claimable_actions() {
+        let id = Uuid::new_v4();
+        let binding = HostBrowserBinding {
+            incarnation: id,
+            browser_id: id,
+            attachment_id: id,
+            tab_id: id,
+            document_epoch: 1,
+            viewport_epoch: 1,
+            controller_epoch: 1,
+            capture_epoch: 1,
+        };
+        let click = HostBrowserOperation::Input {
+            command_id: id,
+            binding: binding.clone(),
+            sequence: 1,
+            claim: true,
+            input: HostBrowserInput::Click {
+                node_id: 12,
+                button: HostBrowserButton::Left,
+            },
+        };
+        assert!(click.valid());
+        assert_eq!(click.required_right(), ProcessRight::Execute);
+        assert_eq!(
+            serde_json::from_value::<HostBrowserOperation>(serde_json::to_value(&click).unwrap())
+                .unwrap(),
+            click
+        );
+        let text = HostBrowserOperation::Input {
+            command_id: id,
+            binding,
+            sequence: 1,
+            claim: true,
+            input: HostBrowserInput::Text {
+                text: "secret".into(),
+            },
+        };
+        assert!(!text.valid());
+    }
+    #[test]
     fn attachment_fences_and_strict_input_shapes() {
         let id = Uuid::new_v4();
         let binding = HostBrowserBinding {
@@ -482,6 +547,7 @@ mod tests {
                 command_id: id,
                 binding,
                 sequence: 0,
+                claim: false,
                 input: HostBrowserInput::Text { text: "x".into() }
             }
             .valid()

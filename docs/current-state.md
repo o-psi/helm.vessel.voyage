@@ -103,9 +103,12 @@ host browser. The worker transfers bounded rrweb snapshots and changes through
 the authenticated Helm–Vessel command connection; Helm reconstructs the full
 page in script-free iframes, including bounded cross-origin child-frame mirrors.
 Human clicks and form edits target live page element IDs and short-lived frame IDs
-for cross-origin elements. Canvas/video and unsupported iframe areas have localized visual fallback. Tabs,
-navigation, private control, text composition, upload, download and dialog
-controls use typed, fenced operations. Uncertain input is not replayed.
+for cross-origin elements. The first ordinary click, wheel, tab or navigation action
+claims human control under the same fence; the target is checked again before
+the effect. Private control is an explicit choice before entering secrets.
+Canvas/video and unsupported iframe areas have localized visual fallback. Tabs,
+navigation, text composition, upload, download and dialog controls use typed,
+fenced operations. Uncertain input is not replayed.
 
 Control changes fence old effects and other viewers before private takeover.
 Receipts keep exact identities without retaining private page contents. The

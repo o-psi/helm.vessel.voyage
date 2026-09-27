@@ -29,7 +29,7 @@ async function decoded(page, label){
  for(let tries=0;tries<150;tries++) {
   state=await page.evaluate(()=>{const frame=document.querySelector('.browser-next-mirror iframe');
    const body=frame?.contentDocument?.body;
-   return {ready:document.querySelector('.host-browser-viewer')?.dataset.state==='live'||['agent','private','watching'].includes(document.querySelector('.host-browser-viewer')?.dataset.state),
+   return {ready:['agent','human','private','watching'].includes(document.querySelector('.host-browser-viewer')?.dataset.state),
     document:!!body,heading:body?.querySelector('h1')?.textContent||'',text:body?.innerText?.slice(0,120)||'',url:document.querySelector('[aria-label="Website address"]')?.value||'',phase:window.mounted?.session.phase,issue:window.mounted?.session.issue,error:window.mounted?.session.lastError,rrweb:!!window.rrweb,streaming:window.mounted?.session.streaming};});
   if(state.ready&&state.document&&(!state.url.includes(cfg.site)||state.heading==='Synthetic voyage browser'))break;
   await new Promise(r=>setTimeout(r,200));
@@ -68,7 +68,7 @@ async function layout(page,label){
   await decoded(page,label+' '+size);
   assert.equal(await page.locator('.browser-next-chrome').evaluate(e=>getComputedStyle(e).display),'flex','production CSS must load');
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth && document.querySelector('.host-browser-viewer').scrollWidth<=innerWidth),'horizontal overflow');
-  assert.ok(await page.getByRole('button',{name:'Take control privately',exact:true}).isVisible());
+  assert.ok(await page.getByRole('button',{name:'Browse privately',exact:true}).isVisible());
   assert.ok(await page.getByRole('button',{name:'Close viewer',exact:true}).isVisible());
   for(const name of ['Disconnect viewer','Close browser'])assert.equal(await page.getByRole('button',{name,exact:true}).isVisible(),false,'secondary controls belong under More');
   assert.equal(await page.getByRole('button',{name:'Start / Connect',exact:true}).count(),0);
@@ -81,15 +81,15 @@ async function layout(page,label){
 async function native(item,observer){
  const page=await browser.newPage();
  await page.goto(new URL('file://'+item.launcher).href);
- await page.getByRole('button',{name:'Take control privately',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Browse privately',exact:true}).waitFor();
  assert.equal(new URL(page.url()).hash,'','bootstrap must remove launch secret from history');
  await decoded(page,'native '+item.native_route);
  evidence.nativeStage='before private '+item.native_route;save();
- await mode(page,'Take control privately','private');
+ await mode(page,'Browse privately','private');
  evidence.nativeStage='before navigate '+item.native_route;save();
  await navigate(page,cfg.site+'/native-'+item.native_route);
  evidence.nativeStage='before agent '+item.native_route;save();
- await mode(page,'Return to agent','agent');
+ await mode(page,'Continue agent','agent');
  evidence.nativeStage='before agent replay '+item.native_route;save();
  await decoded(page,'native return '+item.native_route);
  evidence.nativeStage='before close '+item.native_route;save();
@@ -124,7 +124,7 @@ async function suspendedNative(item){
   assert.equal(ops[1].running,true);
   assert.equal(ops.filter(o=>o.action==='start').length,1,'Start must not replay');
   evidence.steps.push({native_route:item.native_route,real_suspended_owner:item.incarnation,operations:ops});save();
-  await mode(page,'Take control privately','private',false);
+  await mode(page,'Browse privately','private',false);
   await navigate(page,cfg.site+'/suspended-native-'+item.native_route);
   await decoded(page,'suspended native '+item.native_route);
  }finally{
@@ -155,7 +155,7 @@ async function suspendedWeb(item){
  assert.equal(trace[2].running,false);assert.equal(trace[3].running,true);
  assert.equal(trace.filter(t=>t.action==='start').length,1);
  evidence.steps.push({web:item.label,preparation:trace.slice(0,4)});save();
- await mode(page,'Take control privately','private',false);
+ await mode(page,'Browse privately','private',false);
  await navigate(page,cfg.site+'/suspended-web-'+item.label);
  await decoded(page,'suspended Web '+item.label);
  await more(page,'Close browser');
@@ -185,7 +185,10 @@ try{
   assert.equal(operations.filter(o=>o.action==='start').length,0,'running host must not restart');
   assert.equal(operations.filter(o=>o.action==='mirror').length>0,true,'mount must request the live page');
   await layout(page,p.item.label);
-  await mode(page,'Take control privately','private');
+  await navigate(page,cfg.site+'/ordinary-first-action');
+  await page.waitForFunction(()=>window.mounted.session.status?.mode==='human');
+  evidence.steps.push({ordinary_navigation_claimed_human:true});save();
+  await mode(page,'Browse privately','private');
   await navigate(page,cfg.site+'/history-one');
   await page.getByRole('group',{name:'Browser tabs',exact:true}).getByRole('button',{name:'Synthetic /history-one',exact:true}).waitFor();
   await navigate(page,cfg.site+'/history-two');
@@ -218,7 +221,7 @@ try{
    const s=window.mounted.session;return {phase:s.phase,issue:s.issue,busy:s.busy,sending:s.sending,streaming:s.streaming,
     can_input:s.canInput,queue:s.queue.length,sequence:s.sequence,dialog:s.status?.dialog,mode:s.status?.mode};}),
    recent_operations:operations.slice(-12)});save();throw error;}
-  await mode(page,'Return to agent','agent');
+  await mode(page,'Continue agent','agent');
   assert.equal(operations.filter(o=>o.action==='start').length,0,'no incidental host restart');
   assert.equal(operations.filter(o=>o.action==='attach').length,0,'reuse pre-attached fixture without duplicate attachment');
   await page.getByRole('button',{name:'Close viewer',exact:true}).click();

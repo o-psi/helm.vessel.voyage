@@ -1028,8 +1028,14 @@ impl HostBrowser {
                 request["mode"] = serde_json::to_value(mode)?;
             }
             HostBrowserOperation::Input {
-                sequence, input, ..
+                sequence,
+                claim,
+                input,
+                ..
             } => {
+                if claim {
+                    ensure!(status["mode"] == "agent", "browser already controlled");
+                }
                 {
                     let mut inner = self.inner.lock().await;
                     let viewer = inner
@@ -1046,8 +1052,12 @@ impl HostBrowser {
                     );
                     viewer.input_sequence = sequence;
                 }
+                if claim {
+                    self.fence.fetch_add(1, Ordering::AcqRel);
+                }
                 request["op"] = json!("input");
                 request["seq"] = json!(sequence);
+                request["claim"] = json!(claim);
                 request["action"] = input_action(input)?;
             }
             HostBrowserOperation::Close { .. } => {

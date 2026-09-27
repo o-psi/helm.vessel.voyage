@@ -50,10 +50,12 @@ const transport=async operation=>{
  if(operation.action==='attach')state.binding.attachment_id=operation.binding.attachment_id;
  if(operation.action==='control'){state.mode=operation.mode;state.controller=operation.mode==='agent'?null:state.binding.attachment_id;state.binding.controller_epoch++;state.binding.capture_epoch++;}
  if(operation.action==='input'){state.input_sequence=operation.sequence;const action=operation.input;
+  if(operation.claim){state.mode='human';state.controller=state.binding.attachment_id;state.binding.controller_epoch++;state.binding.capture_epoch++;}
   if(action.type==='resize'){state.viewport={width:action.width,height:action.height};state.binding.viewport_epoch++;}
   if(action.type==='navigate'){state.page={url:action.url,title:'Navigated page',can_go_back:true,can_go_forward:false};state.tab_details=[{id:'tab',title:'Navigated page'}];}
  }
- return {status:structuredClone(state),value:operation.action==='mirror'?{encoding:'gzip',data_base64:payload,reset:true,cursor:recorded.length,latest:recorded.length,visuals:[],frames:[{frame_id:childId,parent_frame_id:null,host_node_id:childHost,encoding:'gzip',data_base64:childPayload,reset:true,cursor:childEvents.length,visuals:[childVisual]},{frame_id:nestedId,parent_frame_id:childId,host_node_id:nestedHost,encoding:'gzip',data_base64:nestedPayload,reset:true,cursor:nestedEvents.length,visuals:[nestedVisual]}]}:null};
+ const reset=operation.action==='mirror'&&operation.since===0;
+ return {status:structuredClone(state),value:operation.action==='mirror'?{encoding:'gzip',data_base64:reset?payload:emptyPayload,reset,cursor:recorded.length,latest:recorded.length,visuals:[],frames:[{frame_id:childId,parent_frame_id:null,host_node_id:childHost,encoding:'gzip',data_base64:reset?childPayload:emptyPayload,reset,cursor:childEvents.length,visuals:[childVisual]},{frame_id:nestedId,parent_frame_id:childId,host_node_id:nestedHost,encoding:'gzip',data_base64:reset?nestedPayload:emptyPayload,reset,cursor:nestedEvents.length,visuals:[nestedVisual]}]}:null};
 };
 const workspace=document.createElement('div');workspace.className='workspace';workspace.innerHTML='<aside class="conversation"><h1>Example voyage</h1><div class="messages">Conversation</div><textarea>Unsent draft</textarea></aside><main id="viewer"></main>';
 document.body.replaceChildren(workspace);
@@ -89,14 +91,26 @@ try{
    console.error('REPLAY',await page.evaluate(()=>({phase:window.viewer?.session.phase,issue:window.viewer?.session.issue,streaming:window.viewer?.session.streaming,commands:window.fixtureCommands?.map(c=>c.action),mirror:document.querySelector('.browser-next-mirror')?.outerHTML?.slice(0,1000),frame:document.querySelector('.browser-next-mirror iframe')?.contentDocument?.body?.outerHTML?.slice(0,1000)})));
    throw error;
   });
+  await frame.locator('meta[http-equiv="Content-Security-Policy"]').waitFor({state:'attached',timeout:5000});
   assert.equal(await frame.locator('meta[http-equiv="Content-Security-Policy"]').count(),1,'replay CSP must survive full snapshot reconstruction');
-  await page.getByRole('button',{name:'Take control privately'}).click();
-  await page.locator('.browser-next[data-state="private"]').waitFor({timeout:15000});
   await frame.getByRole('button',{name:'Open details'}).click();
-  await page.waitForFunction(()=>window.fixtureCommands.some(c=>c.action==='input'&&c.input?.type==='click'&&c.input.node_id>0),null,{timeout:5000}).catch(async error=>{
+  await page.locator('.browser-next[data-state="human"]').waitFor({timeout:15000});
+  await page.waitForFunction(()=>window.fixtureCommands.some(c=>c.action==='input'&&c.claim&&c.input?.type==='click'&&c.input.node_id>0),null,{timeout:5000}).catch(async error=>{
    console.error('INPUT',JSON.stringify(await page.evaluate(()=>({phase:window.viewer?.session.phase,canInput:window.viewer?.session.canInput,commands:window.fixtureCommands.filter(c=>c.action==='input').map(c=>c.input),frames:[...document.querySelectorAll('.browser-next-mirror iframe')].map(f=>f.contentDocument?.body?.innerHTML?.slice(0,1000))})),null,2));
    throw error;
   });
+  await page.getByRole('button',{name:'Continue agent',exact:true}).click();
+  await page.locator('.browser-next[data-state="agent"]').waitFor({timeout:5000});
+  await frame.getByRole('textbox',{name:'Your name'}).click();
+  await page.locator('.browser-next[data-state="human"]').waitFor({timeout:5000});
+  await page.keyboard.type('First click focused');
+  await page.waitForFunction(()=>window.fixtureCommands.some(c=>c.action==='input'&&c.input?.type==='fill'&&c.input.text==='First click focused'),null,{timeout:5000}).catch(async error=>{
+   console.error('FOCUS',JSON.stringify(await page.evaluate(()=>({state:document.querySelector('.browser-next')?.dataset.state,pending:window.viewer?.session?.busy,
+    active:document.querySelector('.browser-next-mirror iframe')?.contentDocument?.activeElement?.outerHTML,
+    commands:window.fixtureCommands.filter(c=>c.action==='input').map(c=>({claim:c.claim,input:c.input}))})),null,2));throw error;
+  });
+  await page.getByRole('button',{name:'Browse privately',exact:true}).click();
+  await page.locator('.browser-next[data-state="private"]').waitFor({timeout:15000});
   await frame.getByRole('textbox',{name:'Your name'}).fill('Voyager');
   await page.waitForFunction(()=>window.fixtureCommands.some(c=>c.action==='input'&&c.input?.type==='fill'&&c.input.text==='Voyager'));
   const childFrame=page.frameLocator('.browser-next-frames > .browser-next-frame > .replayer-wrapper > iframe');

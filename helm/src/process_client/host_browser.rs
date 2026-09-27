@@ -262,6 +262,7 @@ async fn operation(State(a): State<Arc<Adapter>>, headers: HeaderMap, body: Byte
             | Op::Control { .. }
             | Op::Detach { .. }
             | Op::Close { .. }
+            | Op::Input { claim: true, .. }
             | Op::Input {
                 input: voyage_protocol::host_browser::HostBrowserInput::Dialog { .. }
                     | voyage_protocol::host_browser::HostBrowserInput::History {

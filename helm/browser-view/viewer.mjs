@@ -52,6 +52,8 @@ export class BrowserConnection {
     get controls(){return this.attached && ['human','private'].includes(this.status?.mode)
         && this.status.controller===this.status.binding.attachment_id;}
     get canInput(){return this.controls&&this.streaming&&!this.busy&&!this.issue&&!this.closed;}
+    get canClaim(){return this.attached&&this.status?.running&&this.status.mode==='agent'
+        &&!this.busy&&!this.issue&&!this.closed;}
     discardQueued(reason){this.queue.splice(0).forEach(item=>item.reject?.(Error(reason)));}
     clearMirror(){
         this.cursor=0;this.streaming=false;
@@ -75,7 +77,7 @@ export class BrowserConnection {
         player.on('fullsnapshot-rebuilded',()=>{
             if(frameId===null){
                 if(this.replayer!==player)return;
-                this.streaming=true;this.phase='live';this.issue=null;this.emit();
+                this.streaming=true;this.phase='live';if(this.issue==='page-unavailable')this.issue=null;this.emit();
                 this.onVisuals(this.latestVisuals||[],player);
             }else if(this.frames.get(frameId)?.player!==player)return;
             this.onReplay(player,this,frameId);
@@ -210,8 +212,9 @@ export class BrowserConnection {
         this.pollTimer=setTimeout(async()=>{
             if(this.polling){this.schedulePoll(180);return;}
             this.polling=true;
-            try{await this.pull();this.issue=null;}
-            catch(error){this.lastError=String(error);if(!this.closed){this.clearMirror();this.fail('page-unavailable');}}
+            const observed=pageKey(this.status);
+            try{await this.pull();if(this.issue==='page-unavailable')this.issue=null;}
+            catch(error){this.lastError=String(error);if(!this.closed&&!this.busy&&observed===pageKey(this.status)){this.clearMirror();this.fail('page-unavailable');}}
             finally{this.polling=false;this.schedulePoll(this.streaming?260:600);}
         },delay);
     }
@@ -259,6 +262,15 @@ export class BrowserConnection {
         let committed=false;
         try{await this.request(this.operation('control',{mode}));committed=true;this.clearMirror();await this.pull();this.issue=null;}
         catch{this.fail(committed?'page-unavailable':'control-unknown');}
+        finally{this.busy=false;this.emit();}
+    }
+    async claimInput(input){
+        if(!this.canClaim)return false;
+        this.busy=true;this.phase='switching';this.emit();
+        try{
+            await this.request(this.operation('input',{sequence:++this.sequence,claim:true,input}));
+            this.clearMirror();await this.pull();this.issue=null;return true;
+        }catch{this.fail('input-unknown');return false;}
         finally{this.busy=false;this.emit();}
     }
     enqueue(input,resolve=null,reject=null){
@@ -337,11 +349,13 @@ export function mountBrowserViewer(root,options={}){
     node('span',identity,'browser-next-name','BROWSER');
     const status=node('span',identity,'browser-next-status','Opening…');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const actions=node('div',chrome,'browser-next-actions');
-    const primary=button('Take control privately',actions,()=>void connection.control(connection.controls?'agent':'private'),'browser-primary browser-next-primary');
+    const primary=button('Continue agent',actions,()=>void connection.control('agent'),'browser-primary browser-next-primary');
+    const privacy=button('Browse privately',actions,()=>void connection.control(connection.status?.mode==='private'?'human':'private'),'browser-privacy browser-next-privacy');
     const scale=button('View at actual size',actions,()=>{actual=!actual;scaleChosen=true;paintScale();},'browser-next-scale','100%');
     const more=node('details',actions,'browser-next-more');
     const summary=node('summary',more,'','More');summary.setAttribute('aria-label','More browser options');
     const menu=node('div',more,'browser-next-menu');
+    const browse=button('Use browser',menu,()=>{void connection.control('human');more.open=false;});
     const downloads=node('div',menu,'browser-next-downloads');
     const disconnect=button('Disconnect viewer',menu,()=>{connection.disconnect();more.open=false;});
     const closeBrowser=button('Close browser',menu,()=>{void connection.closeBrowser();more.open=false;},'browser-next-danger');
@@ -381,7 +395,7 @@ export function mountBrowserViewer(root,options={}){
     const welcome=node('div',stage,'browser-next-welcome');
     node('span',welcome,'browser-next-welcome-mark','↗');node('h3',welcome,'','Your voyage’s browser');
     node('p',welcome,'','Enter an address above, or ask the agent to open a site. The browser stays with this voyage when you leave this view.');
-    button('Browse privately',welcome,async()=>{await connection.control('private');address.focus();},'browser-next-welcome-action');
+    button('Enter a website address',welcome,()=>address.focus(),'browser-next-welcome-action');
     const recovery=node('section',stage,'browser-next-recovery');recovery.hidden=true;recovery.setAttribute('role','status');
     const recoveryTitle=node('h3',recovery),recoveryBody=node('p',recovery);
     const recoveryAction=button('Check browser status',recovery,()=>void(connection.phase==='stopped'?connection.connect({start:true}):connection.recover()));
@@ -403,7 +417,7 @@ export function mountBrowserViewer(root,options={}){
     const dialogInput=node('input',dialogPanel);dialogInput.setAttribute('aria-label','Website dialog response');
     button('Accept dialog',dialogPanel,()=>{void connection.urgentInput({type:'dialog',accept:true,text:dialogInput.value||null});dialogInput.value='';});
     button('Dismiss dialog',dialogPanel,()=>{void connection.urgentInput({type:'dialog',accept:false,text:null});dialogInput.value='';});
-    let actual=false,scaleChosen=false,resizeTimer=null,resizeTarget='',disposed=false,tabFingerprint='',downloadFingerprint='',frameFence='';
+    let actual=false,scaleChosen=false,resizeTimer=null,resizeTarget='',disposed=false,tabFingerprint='',downloadFingerprint='',frameFence='',pendingFocus=null;
     const visualNodes=new Map();
     const connection=new BrowserConnection({...options,mirror,frameLayer,onReplay,onVisuals,changed:()=>{render();options.changed?.(connection);}});
     function paintScale(){
@@ -425,7 +439,7 @@ export function mountBrowserViewer(root,options={}){
     }
     async function navigateAction(input){
         if(!connection.attached||connection.busy)return false;
-        if(!connection.controls)await connection.control('private');
+        if(!connection.controls)return connection.claimInput(input);
         if(!connection.canInput)return false;
         if(input.type==='history'&&input.direction==='stop')return connection.urgentInput(input);
         try{await connection.confirmedInput(input);return true;}catch{return false;}
@@ -466,40 +480,46 @@ export function mountBrowserViewer(root,options={}){
     }
     function renderTabs(){
         const current=connection.status,details=current?.tab_details||[];
-        const key=JSON.stringify([current?.tabs,details,current?.binding?.tab_id,connection.busy,connection.attached]);
+        const key=JSON.stringify([current?.tabs,details,current?.binding?.tab_id,connection.busy,connection.controls,connection.canClaim]);
         if(key===tabFingerprint)return;tabFingerprint=key;tabs.replaceChildren();
         (current?.tabs||[]).forEach((id,index)=>{
             const detail=details.find(item=>item.id===id),title=safe(detail?.title||detail?.url)||`Tab ${index+1}`;
             const tab=node('div',tabs,'browser-next-tab');
             const select=button(title,tab,()=>void navigateAction({type:'tab',operation:'select',tab_id:id}));
-            select.setAttribute('aria-pressed',String(id===current?.binding?.tab_id));select.disabled=!connection.attached||connection.busy;
+            select.setAttribute('aria-pressed',String(id===current?.binding?.tab_id));select.disabled=!connection.controls&&!connection.canClaim||connection.busy;
             const close=button(`Close ${title}`,tab,()=>void navigateAction({type:'tab',operation:'close',tab_id:id}),'browser-next-tab-close','×');
-            close.disabled=!connection.attached||connection.busy||(current?.tabs?.length||0)<2;
+            close.disabled=!connection.controls&&!connection.canClaim||connection.busy||(current?.tabs?.length||0)<2;
         });
         const add=button('New tab',tabs,()=>void navigateAction({type:'tab',operation:'new',tab_id:null}),'browser-next-new-tab','+');
-        add.disabled=!connection.attached||connection.busy;
+        add.disabled=!connection.controls&&!connection.canClaim||connection.busy;
     }
     function render(){
         if(disposed)return;
         const current=connection.status,phase=connection.phase,privateControl=connection.controls&&current?.mode==='private';
-        root.dataset.state=phase==='live'?(privateControl?'private':current?.mode==='agent'?'agent':'watching'):phase;
-        mirror.style.pointerEvents=connection.canInput?'auto':'none';
-        frameLayer.dataset.control=String(connection.canInput);
-        status.textContent=phase==='live'?privateControl?'Private control · Agent paused':current?.agent_active?'Agent working':'Watching browser'
+        root.dataset.state=phase==='live'?(privateControl?'private':connection.controls?'human':current?.mode==='agent'?'agent':'watching'):phase;
+        mirror.style.pointerEvents=connection.canInput||connection.canClaim&&connection.streaming?'auto':'none';
+        frameLayer.dataset.control=String(connection.canInput||connection.canClaim&&connection.streaming);
+        status.textContent=phase==='live'?privateControl?'Private browsing · Agent paused':connection.controls?'You are browsing':current?.agent_active?'Agent working':'Watching browser'
             :phase==='switching'?'Switching control…':phase==='connecting'?'Opening browser…':phase==='recovering'?'Restoring page…'
             :phase==='stopped'?'Browser stopped':phase==='unavailable'?'Browser unavailable':phase==='waiting-page'?'Loading page…'
             :phase==='needs-review'?'Action needs review':'Browser connection needs attention';
-        primary.textContent=connection.controls?'Return to agent':'Take control privately';
+        primary.textContent='Continue agent';primary.hidden=!connection.controls;
         primary.setAttribute('aria-label',primary.textContent);primary.title=primary.textContent;
         primary.disabled=!connection.attached||connection.busy||connection.closed;
+        privacy.textContent=privateControl?'Finish private browsing':'Browse privately';
+        privacy.setAttribute('aria-label',privacy.textContent);privacy.title=privacy.textContent;
+        privacy.setAttribute('aria-pressed',String(privateControl));
+        privacy.disabled=!connection.attached||connection.busy||connection.closed||current?.mode==='human'&&!connection.controls;
+        browse.hidden=connection.controls||current?.mode!=='agent';browse.disabled=!connection.canClaim;
         closeBrowser.disabled=!connection.controls||connection.busy;
         disconnect.disabled=!connection.attached||connection.busy;
         const metadata=current?.mode==='private'&&!connection.controls?null:current,page=metadata?.page;
         if(doc.activeElement!==address)address.value=page?.url==='about:blank'?'':safe(page?.url,8192);
-        address.disabled=!connection.attached||connection.busy;go.disabled=address.disabled;
-        back.disabled=!connection.attached||connection.busy||page?.can_go_back!==true;
-        forward.disabled=!connection.attached||connection.busy||page?.can_go_forward!==true;
-        reload.disabled=!connection.attached||connection.busy;
+        const canNavigate=connection.controls||connection.canClaim;
+        address.disabled=!canNavigate||connection.busy;go.disabled=address.disabled;
+        back.disabled=!canNavigate||connection.busy||page?.can_go_back!==true;
+        forward.disabled=!canNavigate||connection.busy||page?.can_go_forward!==true;
+        reload.disabled=!canNavigate||connection.busy;
         reload.textContent=page?.loading?'■':'↻';reload.setAttribute('aria-label',page?.loading?'Stop loading':'Reload');
         const blank=connection.attached&&(!page?.url||page.url==='about:blank');welcome.hidden=!blank||phase==='unavailable';
         recovery.hidden=!connection.issue&&phase!=='stopped'&&phase!=='unavailable'&&phase!=='disconnected';
@@ -514,28 +534,46 @@ export function mountBrowserViewer(root,options={}){
                 :'Check the voyage state and try again.';
             recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';recoveryAction.disabled=connection.busy;
         }
-        modeHint.textContent=privateControl?'Private: your input stays out of agent history. Return control when finished.'
-            :connection.controls?'You control this browser.':'Take private control to type, paste, and navigate.';
+        modeHint.textContent=privateControl?'Private: other viewers and agent capture are paused. Continue agent when finished.'
+            :connection.controls?'You are browsing. Other connected viewers can see this page.'
+            :'Click the page to browse. Choose Private before entering secrets.';
         compose.hidden=!connection.controls;composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;
         const dialog=connection.controls?current?.dialog:null;
         dialogPanel.hidden=!dialog;dialogMessage.textContent=safe(dialog?.message,4096);dialogInput.hidden=dialog?.type!=='prompt';
         const fence=pageKey(current);if(fence!==frameFence){frameFence=fence;dialogInput.value='';}
         if(!scaleChosen)actual=privateControl&&scroll.clientWidth<680&&Math.abs((current?.viewport?.width||0)-scroll.clientWidth)<20;
         renderTabs();renderDownloads();paintScale();scheduleViewport();
+        if(pendingFocus&&!connection.busy&&connection.streaming){
+            const wanted=pendingFocus;pendingFocus=null;
+            if(connection.controls&&current?.binding?.document_epoch===wanted.document){
+                const player=wanted.frameId?connection.frames.get(wanted.frameId)?.player:connection.replayer;
+                const document=player?.iframe?.contentDocument;
+                const target=document?.elementFromPoint(wanted.x,wanted.y)?.closest?.('input,textarea,[contenteditable]');
+                if(target&&[target.tagName,target.getAttribute('type'),target.getAttribute('name'),target.getAttribute('placeholder')].join('|')===wanted.signature)target.focus();
+            }
+        }
     }
     function onReplay(player,session,frameId){
         const frame=player.iframe,body=frame.contentDocument;
-        const send=input=>session.input(frameId?{type:'frame_element',frame_id:frameId,input}:input);
+        const send=input=>{
+            const action=frameId?{type:'frame_element',frame_id:frameId,input}:input;
+            return session.canInput?session.input(action):session.canClaim?session.claimInput(action):false;
+        };
         const targetId=target=>{
             const element=target?.nodeType===1?target:target?.parentElement;
             return element?player.getMirror().getId(element):-1;
         };
         body.addEventListener('click',event=>{
             event.preventDefault();event.stopPropagation();
-            if(!session.canInput)return;
+            if(!session.canInput&&!session.canClaim)return;
             const id=targetId(event.target);
+            const editable=event.target?.closest?.('input,textarea,[contenteditable]');
+            pendingFocus=null;
+            if(session.canClaim&&editable)pendingFocus={frameId,document:session.status?.binding?.document_epoch,
+                x:event.clientX,y:event.clientY,signature:[editable.tagName,editable.getAttribute('type'),editable.getAttribute('name'),editable.getAttribute('placeholder')].join('|')};
             if(event.target?.matches?.('input[type=file]')){
-                if(id>0){uploadNode={id,frameId};uploadPicker.click();}
+                if(id>0&&session.canInput){uploadNode={id,frameId};uploadPicker.click();}
+                else if(id>0)send({type:'click',node_id:id,button:'left'});
                 return;
             }
             if(event.target?.matches?.('canvas,video,iframe')){
@@ -549,7 +587,7 @@ export function mountBrowserViewer(root,options={}){
         },true);
         body.addEventListener('contextmenu',event=>{
             event.preventDefault();event.stopPropagation();
-            if(!session.canInput)return;
+            if(!session.canInput&&!session.canClaim)return;
             const id=targetId(event.target);
             if(id>0)send({type:'click',node_id:id,button:'right'});
         },true);
@@ -564,7 +602,7 @@ export function mountBrowserViewer(root,options={}){
             }
         },true);
         body.addEventListener('wheel',event=>{
-            if(!session.canInput)return;
+            if(!session.canInput&&!session.canClaim)return;
             const id=targetId(event.target);if(id<=0)return;
             event.preventDefault();
             const factor=event.deltaMode===1?16:event.deltaMode===2?session.status?.viewport?.height||720:1;
@@ -573,7 +611,7 @@ export function mountBrowserViewer(root,options={}){
         },{capture:true,passive:false});
         const keys=new Set();
         const key=(event,pressed)=>{
-            if(event.key==='Escape'){event.preventDefault();primary.focus();return;}
+            if(event.key==='Escape'){event.preventDefault();(primary.hidden?privacy:primary).focus();return;}
             if(!session.canInput||event.isComposing||['Process','Dead'].includes(event.key)||bytes(event.key)>128||/[\x00-\x1f\x7f]/.test(event.key))return;
             const editable=event.target?.matches?.('input,textarea,[contenteditable]');
             if(editable&&!['Enter','Tab','Escape','ArrowUp','ArrowDown'].includes(event.key))return;

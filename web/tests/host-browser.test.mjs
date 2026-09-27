@@ -57,6 +57,19 @@ test('private handoff clears replay and refuses queued input from an old fence',
     f.session.dispose();
 });
 
+test('first browser action claims ordinary human control once',async()=>{
+    const f=fixture(operation=>({status:operation.action==='input'&&operation.claim
+        ?status({mode:'human',controller:'viewer',binding:{...binding,controller_epoch:2,capture_epoch:2},input_sequence:1})
+        :status({mode:'agent',controller:null}),value:null}));
+    f.session.accept(status({mode:'agent',controller:null}));f.session.streaming=true;
+    let pulled=0;f.session.pull=async()=>{pulled++;f.session.streaming=true;};
+    assert.equal(await f.session.claimInput({type:'navigate',url:'https://example.com'}),true);
+    assert.equal(f.session.status.mode,'human');assert.equal(f.session.controls,true);
+    assert.equal(pulled,1);
+    assert.deepEqual(f.sent.filter(operation=>operation.action==='input').map(operation=>({claim:operation.claim,sequence:operation.sequence,input:operation.input.type})),[{claim:true,sequence:1,input:'navigate'}]);
+    f.session.dispose();
+});
+
 test('late page status cannot roll back a newer document fence',()=>{
     const f=fixture();
     f.session.accept(status({binding:{...binding,document_epoch:3}}));
@@ -102,7 +115,8 @@ test('browser chrome shows control and stopped recovery without a video stage',a
         assert.equal(root.querySelector('.browser-next-status').textContent,'Watching browser');
         assert.ok(root.querySelector('.browser-next-mirror'));
         assert.equal(root.querySelector('video'),null);
-        assert.equal(root.querySelector('.browser-next-primary').textContent,'Take control privately');
+        assert.equal(root.querySelector('.browser-next-primary').hidden,true);
+        assert.equal(root.querySelector('.browser-next-privacy').textContent,'Browse privately');
         view.session.accept(status({available:true,running:false,binding:null,mode:null,controller:null}));
         assert.match(root.querySelector('.browser-next-recovery').textContent,/This browser is stopped/);
     }finally{view.dispose();dom.window.close();}
