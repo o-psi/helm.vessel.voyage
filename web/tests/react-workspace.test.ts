@@ -115,7 +115,7 @@ test('history paging and expansion preserve canonical indices across refresh',as
 test('image submission uses promoted attachment and separate durable mutation receipt',async()=>{
  const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
  const original=f.connection.client.exchange.bind(f.connection.client);const uploads:any[]=[];
- f.connection.client.exchange=async(payload:any)=>{if(payload.command.op==='upload_image'){uploads.push(payload.command);return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation:'incarnation',result:{id:'artifact',media_type:'image/png'}}};}return original(payload);};
+ f.connection.client.exchange=async(payload:any)=>{if(payload.command.op==='upload_image'){uploads.push(payload.command);return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation:'incarnation',result:{id:'artifact',sha256:'a'.repeat(64),byte_size:7,media_type:'image/png'}}};}return original(payload);};
  await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);await f.workspace.act(key,'submit');
  assert.equal(uploads.length,1);assert.ok(uploads[0].upload_id);const command=f.commands.find(c=>c.op==='submit_content');assert.equal(command.content[0].attachment.id,'artifact');assert.equal(f.workspace.tabs.get(key)!.pictures.length,0);assert.equal(f.storage.length,0);f.workspace.close();
 });
@@ -160,4 +160,34 @@ test('uncertain image upload keeps its identity and requires status inspection b
  assert.equal(tab.pictures.length,1);assert.equal(attempts,1);
  assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
  f.workspace.close();
+});
+
+test('suspended upload resumes Voyage, preserves confirmed image and sends only after fresh status',async()=>{
+ const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
+ const original=f.connection.client.exchange.bind(f.connection.client);
+ const uploads:any[]=[];let incarnation='incarnation';
+ f.connection.client.exchange=async(payload:any)=>{
+   const c=payload.command;
+   if(c.op==='upload_image'){
+     uploads.push(c);incarnation='resumed';
+     return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation,result:{id:'artifact',sha256:'a'.repeat(64),byte_size:7,media_type:'image/png'}}};
+   }
+   if(c.op==='snapshot')return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation,result:{session_id:'a',revision:1,observation_cursor:3,messages:[],run:{state:'idle'}}}};
+   if(c.op==='decisions')return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation,result:[]}};
+   return original(payload);
+ };
+ // First read observed the old owner, upload is answered by its resumed owner.
+ await f.workspace.refresh(key);
+ await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);
+ await f.workspace.act(key,'submit');
+ const tab=f.workspace.tabs.get(key)!;
+ assert.match(tab.notice,/Voyage resumed during picture upload/);
+ assert.match(tab.notice,/no message was submitted/);
+ assert.equal(tab.pictures.length,1);assert.equal(tab.pictures[0].attachment.id,'artifact');
+ assert.equal(tab.incarnation,'resumed');assert.equal(tab.stale,false);
+ assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
+ await f.workspace.act(key,'submit');
+ assert.equal(uploads.length,1,'confirmed upload is never repeated');
+ assert.equal(f.commands.filter(c=>c.op==='submit_content').length,1);
+ assert.equal(tab.pictures.length,0);f.workspace.close();
 });

@@ -76,7 +76,7 @@ export class Workspace {
             finally { this.changed(); }
         })();
         this.reads.set(key, task);
-        try { await task; } finally { this.reads.delete(key); if(this.queued.delete(key) && !this.closed) queueMicrotask(()=>void this.refresh(key)); }
+        try { await task; } finally { this.reads.delete(key); if(this.queued.delete(key) && !this.closed) void this.refresh(key); }
     }
     async act(key: string, op: string, fields: Record<string, unknown> = {}) {
         const tab = this.tabs.get(key);
@@ -93,6 +93,7 @@ export class Workspace {
         const origin = structuredClone(tab.snapshot), incarnation = tab.incarnation;
         let command: any;
         let stage: 'upload' | 'submit' = 'upload';
+        let uploadResumed = false;
         this.epochs.set(key, (this.epochs.get(key) || 0) + 1);
         tab.busy = true; this.changed();
         try {
@@ -103,9 +104,16 @@ export class Workspace {
                         const upload = await connection.client.exchange(request('upload_image', {session_id: tab.session, upload_id: picture.uploadId, name: picture.name, data_base64: picture.base64}));
                         if (upload?.error && upload.outcome_unknown === false) throw new Error(`Picture upload refused: ${upload.error}`);
                         const attachment = voyageResult(upload, tab.session).result;
-                        if (upload.result.incarnation !== incarnation) throw new Error('Voyage identity changed during picture upload.');
+                        if (!attachment || typeof attachment.id !== 'string' || typeof attachment.sha256 !== 'string' || typeof attachment.byte_size !== 'number') throw new Error('Invalid picture upload receipt.');
                         if (this.closed || this.connections().get(tab.vessel)?.client !== connection.client || tab.incarnation !== incarnation) throw new Error('Voyage connection changed while uploading pictures.');
+                        // A suspended Voyage can resume during this idempotent upload.
+                        // Retain its confirmed artifact, but never submit against the
+                        // old snapshot or upload it again under a new identity.
                         picture.attachment = attachment;
+                        if (upload.result.incarnation !== incarnation) {
+                            tab.stale = true; uploadResumed = true;
+                            throw new Error('Voyage resumed during picture upload. Review its refreshed status, then send the retained draft again.');
+                        }
                     }
                     content.push({type: 'image', attachment: picture.attachment});
                 }
@@ -128,7 +136,9 @@ export class Workspace {
         } catch (error) {
             const reason = error instanceof Error ? error.message : 'Unexpected error';
             if (stage === 'upload' && !command) {
-                tab.notice = `${reason} Draft and pictures retained; no message was submitted. If the upload outcome is uncertain, check its status before trying again.`;
+                tab.notice = uploadResumed
+                    ? `${reason} Draft and confirmed picture retained; no message was submitted.`
+                    : `${reason} Draft and pictures retained; no message was submitted. If the upload outcome is uncertain, check its status before trying again.`;
             } else {
                 tab.notice = `Action not confirmed: ${reason} Draft retained. Check receipts before sending again; do not resend an uncertain command.`;
             }
