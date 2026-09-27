@@ -8,6 +8,137 @@ use std::{
 };
 use uuid::Uuid;
 
+fn slot_owner(bytes: &[u8]) -> Option<Uuid> {
+    std::str::from_utf8(bytes).ok()?.parse().ok()
+}
+
+#[cfg(target_os = "linux")]
+fn read_private(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::symlink_metadata(path)?;
+    ensure!(
+        meta.is_file()
+            && !meta.file_type().is_symlink()
+            && meta.nlink() == 1
+            && meta.uid() == unsafe { libc::geteuid() }
+            && meta.mode() & 0o077 == 0
+            && meta.len() <= limit,
+        "browser recovery evidence is not a bounded private file"
+    );
+    Ok(fs::read(path)?)
+}
+
+/// A stale slot is released only after the browser's independent subreaper has
+/// positively reported descendant and private-profile cleanup. A dead PID or
+/// a stopped Voyage on its own is never sufficient.
+#[cfg(target_os = "linux")]
+fn reclaim_observed_slot(path: &Path, sessions: &Path) -> Result<bool> {
+    use serde_json::{Value, json};
+    let owner = match slot_owner(&read_private(path, 128)?) {
+        Some(owner) if !owner.is_nil() => owner,
+        _ => return Ok(false),
+    };
+    let session_dir = sessions.join(owner.to_string());
+    if !session_dir.is_dir() {
+        return Ok(false);
+    }
+    crate::attachment::journal::prepare_directory(session_dir.clone())?;
+    let guardian =
+        crate::attachment::journal::open_private_file(&session_dir.join("guardian.lock"))?;
+    if guardian.try_lock().is_err() {
+        return Ok(false);
+    }
+    let startup = crate::attachment::journal::open_private_file(&session_dir.join("startup.lock"))?;
+    if startup.try_lock().is_err() {
+        return Ok(false);
+    }
+    let execution = crate::attachment::journal::open_private_file(
+        &session_dir
+            .join("journal")
+            .join(format!("{owner}.execution.lock")),
+    )?;
+    if execution.try_lock().is_err() {
+        return Ok(false);
+    }
+    let registration: Value = serde_json::from_slice(&read_private(
+        &session_dir.join("registration.json"),
+        16_384,
+    )?)?;
+    ensure!(
+        registration["session_id"] == owner.to_string(),
+        "browser slot session identity mismatch"
+    );
+    let worker_dir = session_dir.join("journal/host-browser");
+    crate::attachment::journal::prepare_directory(worker_dir.clone())?;
+    let worker_path = worker_dir.join("worker.lock");
+    let worker: Value = serde_json::from_slice(&read_private(&worker_path, 4096)?)?;
+    let pid = worker["pid"]
+        .as_u64()
+        .context("browser worker lock lacks PID")?;
+    ensure!(
+        pid > 1 && pid <= i32::MAX as u64,
+        "invalid browser worker PID"
+    );
+    if Path::new(&format!("/proc/{pid}")).exists() {
+        return Ok(false);
+    }
+    let marker: Value = serde_json::from_slice(&read_private(
+        &worker_dir.join("guardian-cleanup.json"),
+        4096,
+    )?)?;
+    if ![
+        "observed",
+        "cleanup_complete",
+        "descendants_terminated",
+        "descendants_reaped",
+        "temporary_cleaned",
+    ]
+    .iter()
+    .all(|field| marker[*field] == true)
+    {
+        return Ok(false);
+    }
+    // Re-read while both session fences are held. A concurrent recovery must
+    // not let an old owner remove a new reservation.
+    ensure!(
+        slot_owner(&read_private(path, 128)?) == Some(owner),
+        "browser slot changed during recovery"
+    );
+    let recovery = Uuid::new_v4();
+    let audit = session_dir.join(format!("browser-capacity-recovery-{recovery}.json"));
+    let record = json!({"recovery_id":recovery,"session_id":owner,"worker_pid":pid,
+        "reason":"automatic guardian-observed browser cleanup",
+        "observed_no_descendants":true,"external_effects_reconciled":false,
+        "observed_at_utc":chrono::Utc::now().to_rfc3339()});
+    write_audit(&audit, &record)?;
+    File::open(&session_dir)?.sync_all()?;
+    // Releasing capacity precedes retiring the old worker lock. An interrupted
+    // recovery can leave a locked old session, but cannot double-book a slot.
+    fs::remove_file(path)?;
+    File::open(path.parent().context("browser capacity root missing")?)?.sync_all()?;
+    fs::rename(
+        &worker_path,
+        worker_dir.join(format!("worker.lock.recovered-{recovery}")),
+    )?;
+    File::open(&worker_dir)?.sync_all()?;
+    Ok(true)
+}
+
+#[cfg(target_os = "linux")]
+fn write_audit(path: &Path, record: &serde_json::Value) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options.open(path)?;
+    file.write_all(serde_json::to_string_pretty(record)?.as_bytes())?;
+    file.sync_all()?;
+    Ok(())
+}
+
 /// Operator recovery is deliberately separate from dropping a reservation. It
 /// records the observed cleanup and retains the stale worker lock as evidence.
 #[cfg(target_os = "linux")]
@@ -18,7 +149,6 @@ pub(crate) fn recover(
     reason: &str,
 ) -> Result<serde_json::Value> {
     use serde_json::{Value, json};
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
     ensure!(
         !session.is_nil() && observed_no_descendants,
@@ -39,19 +169,7 @@ pub(crate) fn recover(
         .context("session guardian still owned")?;
     let startup = crate::attachment::journal::open_private_file(&session_dir.join("startup.lock"))?;
     startup.try_lock().context("session startup still owned")?;
-    let read_private = |path: &Path| -> Result<Vec<u8>> {
-        let meta = fs::symlink_metadata(path)?;
-        ensure!(
-            meta.is_file()
-                && !meta.file_type().is_symlink()
-                && meta.nlink() == 1
-                && meta.uid() == unsafe { libc::geteuid() }
-                && meta.mode() & 0o077 == 0
-                && meta.len() <= 16_384,
-            "recovery evidence is not a bounded private file"
-        );
-        Ok(fs::read(path)?)
-    };
+    let read_private = |path: &Path| read_private(path, 16_384);
     let registration: Value =
         serde_json::from_slice(&read_private(&session_dir.join("registration.json"))?)?;
     let stopped: Value = serde_json::from_slice(&read_private(&session_dir.join("stopped.json"))?)?;
@@ -78,7 +196,7 @@ pub(crate) fn recover(
     for index in 0..4 {
         let path = root.join(format!("browser-slot-{index}"));
         match fs::symlink_metadata(&path) {
-            Ok(_) if read_private(&path)? == session.to_string().as_bytes() => {
+            Ok(_) if slot_owner(&read_private(&path)?) == Some(session) => {
                 slots.push((index, path))
             }
             Ok(_) => {}
@@ -95,20 +213,12 @@ pub(crate) fn recover(
         "reason": reason, "observed_no_descendants": true,
         "external_effects_reconciled": false,
         "observed_at_utc": chrono::Utc::now().to_rfc3339()});
-    let mut options = OpenOptions::new();
-    options
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-    let mut file = options.open(&audit)?;
-    file.write_all(serde_json::to_string_pretty(&record)?.as_bytes())?;
-    file.sync_all()?;
+    write_audit(&audit, &record)?;
     fs::rename(&worker_path, &retained)?;
     File::open(&worker_dir)?.sync_all()?;
     for (_, path) in &slots {
         ensure!(
-            read_private(path)? == session.to_string().as_bytes(),
+            slot_owner(&read_private(path)?) == Some(session),
             "browser slot changed during recovery"
         );
         fs::remove_file(path)?;
@@ -163,6 +273,32 @@ impl Capacity {
         }
         anyhow::bail!("browser capacity is in use or awaiting observed cleanup")
     }
+    #[cfg(target_os = "linux")]
+    pub fn acquire_for_session(
+        root: &Path,
+        session_dir: &Path,
+        owner: Uuid,
+        slots: usize,
+    ) -> Result<Self> {
+        let sessions = session_dir.parent().context("session parent missing")?;
+        match Self::acquire(root, owner, slots) {
+            Ok(capacity) => return Ok(capacity),
+            Err(error)
+                if error.to_string()
+                    != "browser capacity is in use or awaiting observed cleanup" =>
+            {
+                return Err(error);
+            }
+            Err(_) => {}
+        }
+        for index in 0..slots {
+            let path = root.join(format!("browser-slot-{index}"));
+            if path.exists() && reclaim_observed_slot(&path, sessions).unwrap_or(false) {
+                return Self::acquire(root, owner, slots);
+            }
+        }
+        anyhow::bail!("browser capacity is in use or awaiting observed cleanup")
+    }
     /// Only call after worker + browser cleanup has been positively observed.
     pub fn release(self) -> Result<()> {
         let current = fs::symlink_metadata(&self.path)?;
@@ -197,6 +333,93 @@ impl Capacity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn observed_guardian_cleanup_recovers_stale_slot_without_attesting_effects() {
+        use serde_json::json;
+        use std::os::unix::fs::PermissionsExt;
+        let private_write = |path: &Path, value: String| {
+            fs::write(path, value).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions =
+            crate::attachment::journal::prepare_directory(tmp.path().join("sessions")).unwrap();
+        let old = Uuid::new_v4();
+        let current = Uuid::new_v4();
+        let old_dir =
+            crate::attachment::journal::prepare_directory(sessions.join(old.to_string())).unwrap();
+        let journal =
+            crate::attachment::journal::prepare_directory(old_dir.join("journal")).unwrap();
+        let worker_dir =
+            crate::attachment::journal::prepare_directory(journal.join("host-browser")).unwrap();
+        private_write(
+            &old_dir.join("registration.json"),
+            json!({"session_id":old}).to_string(),
+        );
+        private_write(
+            &worker_dir.join("worker.lock"),
+            json!({"pid":i32::MAX}).to_string(),
+        );
+        let capacity_root = tmp.path().join("capacity");
+        let slot = Capacity::acquire(&capacity_root, old, 1).unwrap();
+        drop(slot);
+        assert!(
+            Capacity::acquire_for_session(
+                &capacity_root,
+                &sessions.join(current.to_string()),
+                current,
+                1
+            )
+            .is_err()
+        );
+        private_write(
+            &worker_dir.join("guardian-cleanup.json"),
+            json!({"observed":true,
+                "cleanup_complete":true,"descendants_terminated":true,
+                "descendants_reaped":true,"temporary_cleaned":true})
+            .to_string(),
+        );
+        let execution = crate::attachment::journal::open_private_file(
+            &journal.join(format!("{old}.execution.lock")),
+        )
+        .unwrap();
+        execution.try_lock().unwrap();
+        assert!(
+            Capacity::acquire_for_session(
+                &capacity_root,
+                &sessions.join(current.to_string()),
+                current,
+                1
+            )
+            .is_err()
+        );
+        drop(execution);
+        let next = Capacity::acquire_for_session(
+            &capacity_root,
+            &sessions.join(current.to_string()),
+            current,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(&next.path).unwrap(),
+            current.to_string().as_bytes()
+        );
+        assert!(!worker_dir.join("worker.lock").exists());
+        assert_eq!(
+            fs::read_dir(&old_dir)
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("browser-capacity-recovery-"))
+                .count(),
+            1
+        );
+        next.release().unwrap();
+    }
     #[test]
     fn reservations_are_exclusive_and_drop_never_attests_cleanup() {
         let tmp = tempfile::tempdir().unwrap();

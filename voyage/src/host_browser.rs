@@ -529,11 +529,22 @@ impl HostBrowser {
             std::fs::remove_file(&marker)?;
         }
         // Reservations survive failed launch/cleanup, including process death.
-        let capacity = crate::host_browser_capacity::Capacity::acquire(
-            &crate::config::default_data_dir().join("host-browser-capacity"),
-            self.session,
-            4,
-        )?;
+        let capacity = {
+            let capacity_root = crate::config::default_data_dir().join("host-browser-capacity");
+            #[cfg(target_os = "linux")]
+            {
+                crate::host_browser_capacity::Capacity::acquire_for_session(
+                    &capacity_root,
+                    &self.directory,
+                    self.session,
+                    4,
+                )?
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                crate::host_browser_capacity::Capacity::acquire(&capacity_root, self.session, 4)?
+            }
+        };
         let reservation =
             match crate::host_resources::Reservation::acquire("executors", self.session, 3) {
                 Ok(r) => r,
