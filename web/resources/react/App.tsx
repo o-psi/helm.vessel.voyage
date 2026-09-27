@@ -43,6 +43,26 @@ function Composer({tab, workspace, legacyUrl,onSettings}: {tab?: Tab; workspace:
         <div className="preview-caption"><span>React preview</span><a href={legacyUrl}>Compare with existing console ↗</a></div>
     </form>;
 }
+export function RunStatus({tab}: {tab: Tab}) {
+    const snapshot = tab.snapshot, run = snapshot?.run;
+    if (!snapshot) return null;
+    const active = ['accepted', 'running', 'awaiting_decision', 'cancel_requested'].includes(run?.state);
+    const pending = Boolean(snapshot.pending_cleanup_run);
+    const show = run && (active || run.state !== 'completed' || pending || Boolean(run.live_text));
+    const labels: Record<string, string> = {accepted:'Starting', running:'Working', awaiting_decision:'Waiting for you', cancel_requested:'Stopping', completed:'Finishing response…', failed:'Needs attention', cancelled:'Stopped', interrupted:'Interrupted'};
+    const cleanup = snapshot.cleanup?.run_id === run?.run_id ? snapshot.cleanup : null;
+    return <div className="run-status" role="status" aria-live="polite">
+        {snapshot.recovery_notice && <p>{snapshot.recovery_notice}</p>}
+        {show && <><p className="run-status-label">{snapshot.recovery_pending ? 'Previous run interrupted · saved output' : active && tab.decisions.length ? 'Waiting for you' : labels[run.state] || 'Needs attention'}</p>
+            {run.failure_summary && <p>{run.failure_summary}</p>}
+            {!active && cleanup?.reason && <p>{cleanup.reason}</p>}
+            {pending && !active && <><p>{cleanup?.phase === 'running' ? 'Finishing cleanup. Your draft is kept.' : cleanup?.retryable ? 'Cleanup needs attention. Send again to retry cleanup; your draft is kept.' : 'Previous program cleanup cannot yet be verified. Recovery checks automatically; your draft is kept.'}</p>
+                {(cleanup?.pending || []).map((component: string, index: number)=><p key={index}>Waiting for: {component}</p>)}</>}
+            {!active && !pending && !snapshot.lifecycle?.archived && ['cancelled','interrupted','failed'].includes(run.state) && <p>Ready to continue.</p>}
+        </>}
+    </div>;
+}
+
 export function Conversation({tab, workspace, active, legacyUrl,onSettings}: {tab: Tab; workspace: Workspace; active: boolean; legacyUrl: string; onSettings:()=>void}) {
     const run = tab.snapshot?.run, scroll = useRef<HTMLDivElement>(null), following = useRef(true);
     const [showJump,setShowJump] = useState(false);
@@ -61,6 +81,7 @@ export function Conversation({tab, workspace, active, legacyUrl,onSettings}: {ta
             {tab.snapshot?.message_offset > 0 && <button className="history-link" disabled={tab.busy} onClick={async()=>{const el=scroll.current!;const height=el.scrollHeight;following.current=false;await workspace.earlier(tab.key);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-height;});}}>Load earlier messages</button>}
             {threadRows(tab.snapshot?.messages||[]).map(row=>row.entries?<ToolGroup key={row.key} entries={row.entries} running={['running','starting','cancelling'].includes(run?.state)} messageStart={run?.message_start} decisions={tab.decisions.length>0} renderMessage={renderMessage}/>:<React.Fragment key={row.key}>{renderMessage(row.message)}</React.Fragment>)}
             <Output tab={tab} workspace={workspace}/>
+            <RunStatus tab={tab}/>
             {(run?.tool_previews || []).filter((preview:any)=>!(tab.snapshot?.messages||[]).some((message:any)=>message.tool_calls?.some((call:any)=>call.id===preview.call_id))).map((preview:any,index:number) => <details className="tool-entry" key={index}><summary>Tool preview · {preview.name || 'Tool'}</summary><pre>{content(preview.arguments)}</pre></details>)}
             {(run?.reasoning_previews||[]).map((preview:any,index:number)=><details className="tool-entry" key={index}><summary>{preview.kind==='summary'?'Reasoning summary':'Provider thinking'} · {preview.finalized?'finalized disclosure':'streaming · provisional'}</summary><pre>{preview.text}</pre>{preview.truncated&&<small>Preview truncated</small>}</details>)}
         </div></div>

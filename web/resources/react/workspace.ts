@@ -109,7 +109,7 @@ export class Workspace {
             const known = resolved(response, command.command.command_id, tab.session);
             if (known && receiptStatus(response) !== 'unknown_after_restart') connection.journal.settle(command.command.command_id);
             const status = receiptStatus(response);
-            tab.notice = response.error ? `Vessel refused: ${response.error}` : known ? `Receipt: ${status || 'acknowledged'}. Execution may still be pending.` : 'Outcome uncertain. Do not resend; check the receipt.';
+            tab.notice = response.error ? `Vessel refused: ${response.error}` : !known || status === 'unknown_after_restart' ? 'Outcome uncertain. Do not resend; check the receipt.' : status === 'not_applied' ? 'Message was not applied; draft retained.' : '';
             if (known && !response.error && ['accepted', 'queued', 'applied'].includes(status) && ['submit', 'steer', 'submit_content'].includes(op)) {
                 if (tab.draft === draft) tab.draft = '';
                 tab.pictures = tab.pictures.filter(picture => !pictures.includes(picture)); pictures.forEach(picture => URL.revokeObjectURL(picture.url));

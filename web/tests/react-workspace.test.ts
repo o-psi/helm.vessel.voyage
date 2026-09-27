@@ -63,6 +63,7 @@ test('confirmed admission clears only the submitted draft', async () => {
     const f = fixture(), key = f.workspace.open('vessel', 'a', 'A'); await f.workspace.refresh(key);
     f.workspace.draft(key, 'Hello'); await f.workspace.act(key, 'submit');
     assert.equal(f.workspace.tabs.get(key)?.draft, ''); assert.equal(f.storage.length, 0);
+    assert.equal(f.workspace.tabs.get(key)?.notice, '', 'successful admission uses the in-thread run status rather than a receipt banner');
     const command = f.commands.find(c => c.op === 'submit');
     assert.equal(command.expected_revision, 1); assert.equal(command.prompt, 'Hello'); assert.ok(command.command_id);
     f.workspace.close();

@@ -34,3 +34,5 @@
 .voyage-workspace,.conversation,.composer,.composer-box,.composer-toolbar{min-width:0;max-width:100%}.composer-options{width:0;min-width:0;overflow-x:auto}.task-browser-action{min-height:44px;min-width:88px}.task-browser-heading-actions button{min-height:40px}
 /* Visually hidden labels must remain clipped within their scrollable owner. */
 .composer-options{position:relative;contain:inline-size}.access-picker{position:relative}.composer{overflow:clip}
+
+.run-status{margin:12px 0 32px;color:var(--muted);font-size:13px;line-height:1.5}.run-status:empty{display:none}.run-status p{margin:4px 0}.run-status-label{font-weight:600;color:var(--ink)}
