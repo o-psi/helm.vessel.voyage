@@ -60,7 +60,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (typeof window.Flux?.modal === 'function') window.Flux.modal('voyage-setup').close();
         else setupDialog()?.removeAttribute('open');
     }
-    const updates = vesselUpdate(root, {show: () => showScreen('update'), resume: () => { showScreen('location', false); return loadVessel(); }});
+    const updates = vesselUpdate(root, {show: () => showScreen('update'), resume: () => { goBack(); return loadVessel(); }});
     let capabilities = null;
     const screens = ['update','overview','location','profiles','manage','editor','picker','enrollment','access','delete','reasoning'];
     function showScreen(next, push = true) {
