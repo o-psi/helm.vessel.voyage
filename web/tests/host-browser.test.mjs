@@ -4,6 +4,10 @@ import {gzipSync} from 'node:zlib';
 import {BrowserConnection, mountBrowserViewer} from '../../helm/browser-view/viewer.mjs';
 import {mountHostBrowser,hostBrowserAdapter} from '../resources/js/host-browser.js';
 
+test('module-imported rrweb vendor exposes the replay API used by Helm Web',()=>{
+    assert.equal(typeof globalThis.rrweb?.Replayer,'function');
+});
+
 const nil='00000000-0000-0000-0000-000000000000';
 const binding={incarnation:'inc',browser_id:'browser',attachment_id:'viewer',tab_id:'tab',document_epoch:1,viewport_epoch:1,controller_epoch:1,capture_epoch:1};
 const status=(changes={})=>({available:true,running:true,binding:{...binding},mode:'human',controller:'viewer',tabs:['tab'],viewport:{width:640,height:480},input_sequence:0,...changes});

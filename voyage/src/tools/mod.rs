@@ -1,6 +1,4 @@
-mod browser;
 mod host_browser;
-pub use browser::BrowserTool;
 pub use host_browser::HostBrowserTool;
 pub(crate) mod action_schema;
 pub(crate) mod evidence;
@@ -900,10 +898,6 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "host_browser" => {
             matches!(action, Some("inspect" | "screenshot"))
                 || (action == Some("tabs") && arguments["operation"] == "list")
-        }
-        "browser" => {
-            serde_json::from_value::<voyage_protocol::browser::BrowserAction>(arguments.clone())
-                .is_ok_and(|a| a.observation_only())
         }
         "questions" | "read_file" | "list_directory" | "search_files" | "result" => true,
         "request_filesystem_root" => arguments["permission"] == "read",

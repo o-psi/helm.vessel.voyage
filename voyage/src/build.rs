@@ -138,9 +138,6 @@ pub async fn build_authorized_agent_bundle(
         }
         if let Some(browser) = &config.browser {
             managed_resources.register_browser(browser.clone())?;
-            // Presence is capability, not local sharing authority. A human may
-            // share during this run; every call/claim checks live availability.
-            tools.register_arc(Arc::new(crate::tools::BrowserTool(browser.clone())))?;
         }
         if let Some(tool) = extra_tool {
             tools.register_arc(tool)?;

@@ -1,6 +1,9 @@
 > Legacy opt-in local-browser implementation. For the Voyage-owned host browser
 > and current Helm viewer direction, see [host browser](host-browser.md). F6 and
 > `/browser` now target the host viewer; this document is not its setup guide.
+> The legacy `browser` agent tool has been removed from the live tool inventory.
+> The procedures below describe retained compatibility code and no longer make
+> a local browser available to a Voyage agent.
 
 # Share a local browser with a Voyage
 

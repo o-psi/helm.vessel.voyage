@@ -8,6 +8,121 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Operator recovery is deliberately separate from dropping a reservation. It
+/// records the observed cleanup and retains the stale worker lock as evidence.
+#[cfg(target_os = "linux")]
+pub(crate) fn recover(
+    session_dir: &Path,
+    session: Uuid,
+    observed_no_descendants: bool,
+    reason: &str,
+) -> Result<serde_json::Value> {
+    use serde_json::{Value, json};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    ensure!(
+        !session.is_nil() && observed_no_descendants,
+        "explicit session and observed descendant cleanup required"
+    );
+    ensure!(
+        !reason.trim().is_empty() && reason.len() <= 512,
+        "a short recovery reason is required"
+    );
+    ensure!(session_dir.is_dir(), "session directory missing");
+    crate::attachment::journal::prepare_directory(session_dir.to_path_buf())?;
+    // Hold both session locks while checking state and changing capacity. A
+    // concurrent Vessel resume cannot start another worker in this interval.
+    let guardian =
+        crate::attachment::journal::open_private_file(&session_dir.join("guardian.lock"))?;
+    guardian
+        .try_lock()
+        .context("session guardian still owned")?;
+    let startup = crate::attachment::journal::open_private_file(&session_dir.join("startup.lock"))?;
+    startup.try_lock().context("session startup still owned")?;
+    let read_private = |path: &Path| -> Result<Vec<u8>> {
+        let meta = fs::symlink_metadata(path)?;
+        ensure!(
+            meta.is_file()
+                && !meta.file_type().is_symlink()
+                && meta.nlink() == 1
+                && meta.uid() == unsafe { libc::geteuid() }
+                && meta.mode() & 0o077 == 0
+                && meta.len() <= 16_384,
+            "recovery evidence is not a bounded private file"
+        );
+        Ok(fs::read(path)?)
+    };
+    let registration: Value =
+        serde_json::from_slice(&read_private(&session_dir.join("registration.json"))?)?;
+    let stopped: Value = serde_json::from_slice(&read_private(&session_dir.join("stopped.json"))?)?;
+    ensure!(
+        registration["session_id"] == session.to_string()
+            && stopped["session_id"] == session.to_string()
+            && stopped["suspended"] == true
+            && stopped["cleanup_observed"] == true,
+        "session is not suspended with observed cleanup"
+    );
+    let worker_dir = session_dir.join("journal/host-browser");
+    crate::attachment::journal::prepare_directory(worker_dir.clone())?;
+    let worker_path = worker_dir.join("worker.lock");
+    let worker: Value = serde_json::from_slice(&read_private(&worker_path)?)?;
+    let pid = worker["pid"].as_u64().context("worker lock lacks PID")?;
+    ensure!(pid > 1 && pid <= i32::MAX as u64, "invalid worker PID");
+    ensure!(
+        !Path::new(&format!("/proc/{pid}")).exists(),
+        "worker PID is present; cleanup unconfirmed"
+    );
+    let root = crate::config::default_data_dir().join("host-browser-capacity");
+    crate::attachment::local_actor::storage::Directory::open(&root)?.verify()?;
+    let mut slots = Vec::new();
+    for index in 0..4 {
+        let path = root.join(format!("browser-slot-{index}"));
+        match fs::symlink_metadata(&path) {
+            Ok(_) if read_private(&path)? == session.to_string().as_bytes() => {
+                slots.push((index, path))
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    ensure!(!slots.is_empty(), "session has no browser capacity slots");
+    let recovery = Uuid::new_v4();
+    let retained = worker_dir.join(format!("worker.lock.recovered-{recovery}"));
+    let audit = session_dir.join(format!("browser-capacity-recovery-{recovery}.json"));
+    let record = json!({"recovery_id": recovery, "session_id": session,
+        "worker_pid": pid, "slots": slots.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+        "reason": reason, "observed_no_descendants": true,
+        "external_effects_reconciled": false,
+        "observed_at_utc": chrono::Utc::now().to_rfc3339()});
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    let mut file = options.open(&audit)?;
+    file.write_all(serde_json::to_string_pretty(&record)?.as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&worker_path, &retained)?;
+    File::open(&worker_dir)?.sync_all()?;
+    for (_, path) in &slots {
+        ensure!(
+            read_private(path)? == session.to_string().as_bytes(),
+            "browser slot changed during recovery"
+        );
+        fs::remove_file(path)?;
+    }
+    File::open(&root)?.sync_all()?;
+    File::open(session_dir)?.sync_all()?;
+    Ok(record)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn recover(_: &Path, _: Uuid, _: bool, _: &str) -> Result<serde_json::Value> {
+    anyhow::bail!("browser capacity recovery requires Linux process evidence")
+}
+
 #[derive(Debug)]
 pub struct Capacity {
     path: PathBuf,

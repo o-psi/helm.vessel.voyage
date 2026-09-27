@@ -117,7 +117,8 @@ native macOS/Windows behavior. See [host-browser design](host-browser.md), the
 [worker contract](../voyage/browser/CONTRACT.md).
 
 Legacy explicit local-browser code and cleanup receipts remain for compatibility;
-it is no longer the F6/default browser path. Its old setup instructions in
+the `browser` agent tool is no longer registered. Helm Web and new runs use
+`host_browser`. It is no longer the F6/default browser path. Its old setup instructions in
 [local browser](local-browser.md) describe that legacy implementation, not the
 new host-browser viewer. [Visual tool results](visual-tool-results.md) still govern
 image/artifact provenance.

@@ -90,13 +90,9 @@ fn builtin_preflight(config: &crate::Config, policy: &crate::policy::Policy) -> 
     // would require persistent ownership; only their shared pure contracts belong here.
     inventory.push(crate::tools::TodoTool::builtin_definition());
     inventory.push(crate::subagent::SubagentTool::builtin_definition());
-    // Managed build adds the browser after build_tools, only for an explicit offer.
-    // Cloning the broker does not claim sharing or contact the human browser.
+    // Managed build adds the Voyage-owned host browser after build_tools.
     if let Some(browser) = &config.host_browser {
         inventory.push(crate::tools::HostBrowserTool(browser.clone()).definition());
-    }
-    if let Some(browser) = &config.browser {
-        inventory.push(crate::tools::BrowserTool(browser.clone()).definition());
     }
     inventory.sort_by(|a, b| a.name.cmp(&b.name));
     policy.check_current()?;
@@ -238,6 +234,12 @@ mod tests {
                 env: Default::default(),
             },
         );
+        let legacy_root = tempfile::tempdir()?;
+        config.browser = Some(crate::browser::BrowserBroker::open(
+            legacy_root.path().join("legacy-browser"),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        )?);
         let controls = LiveControls::default();
         let first = inspect(&controls, "tools", &config, root.path()).await?;
         *controls.inventory.write().await = Some(json!([{"name":"stale_mcp_tool"}]));

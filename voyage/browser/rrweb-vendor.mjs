@@ -1,14 +1,8 @@
 /* rrweb 2.1.6, MIT: https://github.com/rrweb-io/rrweb/blob/main/LICENSE */
 (function (g, f) {
-    if ("object" == typeof exports && "object" == typeof module) {
-      module.exports = f();
-    } else if ("function" == typeof define && define.amd) {
-      define("rrweb", [], f);
-    } else if ("object" == typeof exports) {
-      exports["rrweb"] = f();
-    } else {
-      g["rrweb"] = f();
-    }
+    // The same vendored bundle runs as a classic script in Chromium and as a
+    // Vite-imported module in Helm Web. Always publish the replay API globally.
+    g["rrweb"] = f();
   }(globalThis, () => {
 var exports = {};
 var module = { exports };

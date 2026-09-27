@@ -515,6 +515,13 @@ impl HostBrowser {
             anyhow::anyhow!("host browser unavailable; install packaged worker, Node and Chromium")
         })?;
         let root = self.root()?;
+        match std::fs::symlink_metadata(root.join("worker.lock")) {
+            Ok(_) => anyhow::bail!(
+                "prior host browser worker lock remains; inspect cleanup before recovery"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         // Only this exclusive Voyage owner may retire its own prior guardian
         // evidence before a new launch. A worker lock still refuses uncertain reuse.
         let marker = root.join("guardian-cleanup.json");

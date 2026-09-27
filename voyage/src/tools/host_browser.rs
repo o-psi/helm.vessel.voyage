@@ -46,7 +46,14 @@ enum Tabs {
     Select,
     Close,
 }
-fn failed(_: impl std::fmt::Display) -> ToolError {
+fn failed(error: impl std::fmt::Display) -> ToolError {
+    let message = error.to_string();
+    if message.contains("browser capacity is in use or awaiting observed cleanup") {
+        return ToolError::Failed("Host browser capacity is full on this Vessel. An operator must inspect stale browser descendants and recover retained slots; switching to the local shared browser will not fix this host browser refusal.".into());
+    }
+    if message.contains("prior host browser worker lock remains") {
+        return ToolError::Failed("This voyage retains a prior host browser worker lock. An operator must verify cleanup before recovering it; do not replay uncertain browser effects.".into());
+    }
     ToolError::Failed("Host browser operation refused or outcome unknown. Do not replay uncertain effects; check browser status/receipt. Host must provision packaged worker, Node and Chromium.".into())
 }
 #[async_trait]

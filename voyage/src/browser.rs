@@ -806,6 +806,8 @@ impl BrowserBroker {
             },
         })
     }
+    // Retained with the legacy broker protocol; no agent tool admits new requests.
+    #[allow(dead_code)]
     pub(crate) fn enqueue(
         &self,
         action: BrowserAction,
@@ -886,6 +888,7 @@ impl BrowserBroker {
         inner.guards.insert(id, context.clone());
         Ok(id)
     }
+    #[allow(dead_code)]
     pub(crate) fn poll(
         &self,
         id: Uuid,

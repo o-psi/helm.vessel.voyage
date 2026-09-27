@@ -1,6 +1,6 @@
 # Voyage-owned host browser
 
-Issue [#333](https://github.com/o-psi/helm.vessel.voyage/issues/333) tracks the shared browser. Voyage starts and owns one sandboxed Chromium instance for its session on the Vessel host. Vessel supervises the Voyage process and carries authenticated Helm operations; Helm Web and native Helm use the same viewer. Disconnecting Helm does not end the browser or the voyage. The older opt-in local browser remains a separate feature and consent boundary.
+Issue [#333](https://github.com/o-psi/helm.vessel.voyage/issues/333) tracks the shared browser. Voyage starts and owns one sandboxed Chromium instance for its session on the Vessel host. Vessel supervises the Voyage process and carries authenticated Helm operations; Helm Web and native Helm use the same viewer. Disconnecting Helm does not end the browser or the voyage. The older opt-in local browser retains its separate consent boundary for compatibility, but its `browser` agent tool is no longer offered.
 
 ## Live page path
 
@@ -18,4 +18,8 @@ The worker retains a private Chromium profile, an origin/DNS-pinned proxy and ex
 
 ## Implementation and verification
 
-The Linux worker uses `voyage/browser/worker.mjs`, `mirror-source.mjs`, the vendored rrweb 2.1.6 runtime and its license, and `guardian.py`. The shared viewer is `helm/browser-view/viewer.mjs` and `viewer.css`, loaded by both Helm clients. `packaging/browser_assets.py` inventories every shipped browser asset. The exact local checks and their scope are in [quality](quality.md). The GitHub issue holds the delivered commit, build artifact and remaining qualification evidence.
+### Recovering retained browser capacity on Linux
+
+A browser slot survives a process crash because stopping the Voyage process does not prove its Chromium descendants stopped. If all slots are retained, inspect the suspended session, its `journal/host-browser/worker.lock` PID and all browser descendants on the executing host. Once cleanup is independently observed, run `voyage host-resources browser-capacity SESSION_UUID --session-dir SESSION_DIRECTORY --confirm SESSION_UUID --observed-no-descendants --reason 'observed worker and browser descendants absent'`. The command holds the session startup and guardian locks, verifies its suspended and cleanup-observed records and dead worker PID, records an audit, retains the old worker lock under a recovery name, and reclaims only that session's slots. It does not reconcile uncertain website effects. Never run it for an active session or use an absent PID alone as proof that descendants stopped. The CLI only supports Linux process evidence.
+
+The Linux worker uses `voyage/browser/worker.mjs`, `mirror-source.mjs`, the vendored rrweb 2.1.6 runtime and its license, and `guardian.py`. The vendored runtime must expose `globalThis.rrweb` in both a classic script and a Vite-imported module; otherwise the Web viewer receives mirror data but cannot replay it. The shared viewer is `helm/browser-view/viewer.mjs` and `viewer.css`, loaded by both Helm clients. `packaging/browser_assets.py` inventories every shipped browser asset. The exact local checks and their scope are in [quality](quality.md). The GitHub issue holds the delivered commit, build artifact and remaining qualification evidence.
