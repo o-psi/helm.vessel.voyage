@@ -40,6 +40,7 @@ test('Vessel manager separates overview, setup and destructive confirmation', as
         assert.match(query('.connections-card')!.textContent!, /vessel.example/);
         assert.match(query('.connections-pending')!.textContent!, /Laptop/);
         await click('View details');
+        assert.ok(query('.connections-detail-card .connections-status.is-connected'));
         assert.equal(query('.connections-confirm'), null);
         await click('Remove connection');
         assert.ok(query('.connections-confirm'));
