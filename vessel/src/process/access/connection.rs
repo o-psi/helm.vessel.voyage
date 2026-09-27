@@ -39,8 +39,21 @@ impl Supervisor {
                 "scope": if grant.full_access { "owner" } else { "workspaces" }, "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": self.connection_workspaces(&grant).await?,
+                "running_release": crate::process::updates::running_release(),
+                "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory),
                 "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment"]
             })),
+            command @ (VesselCommand::UpdatePrepare { .. }
+            | VesselCommand::UpdateStatus { .. }
+            | VesselCommand::UpdateApply { .. }
+            | VesselCommand::UpdateDiscard { .. }) => {
+                ensure!(
+                    grant.full_access,
+                    "Updating Vessel requires account-owner authority"
+                );
+                store::current_connection(&self.directory, &grant)?;
+                self.update(command).await
+            }
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
             | VesselCommand::Profiles { .. }

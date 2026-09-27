@@ -25,7 +25,7 @@ test('provider cards stay in the editor and usage loads automatically without st
     const client = {async exchange({command}) {
         requests.push(command);
         switch (command.op) {
-            case 'capabilities': return reply({vessel_id:'vessel', scope:'owner'});
+            case 'capabilities': return reply({vessel_id:'vessel', scope:'owner',features:['execution_profiles']});
             case 'inspect': return reply({...target, workspace:'/work'});
             case 'accounts': return reply({accounts:['personal','work','unavailable'].map(id => ({id, connection_id:'provider', identity_generation:1, label:id, state:'ready', availability:id === 'unavailable' ? 'unavailable' : 'available'})), connections:[{id:'provider',label:'Provider',revision:1,transports:['openai_responses']}]});
             case 'profiles': return reply({revision:1, can_manage:true, default_profile_id:'profile', profiles:[{id:'profile', name:'Everyday', account:binding('personal'), model:'model'}]});

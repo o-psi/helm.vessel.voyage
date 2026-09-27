@@ -1,3 +1,4 @@
+import {vesselUpdate} from './vessel-update.js';
 import {sameAccount, profileSettings, profileSummary, matchingProfile, duplicateName, profileNameError} from './execution-profiles.js';
 import {accountEnrollment} from './account-enrollment.js';
 import {setReasoning, reasoningValue} from './inference-controls.js';
@@ -59,7 +60,9 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         if (typeof window.Flux?.modal === 'function') window.Flux.modal('voyage-setup').close();
         else setupDialog()?.removeAttribute('open');
     }
-    const screens = ['overview','location','profiles','manage','editor','picker','enrollment','access','delete','reasoning'];
+    const updates = vesselUpdate(root, {show: () => showScreen('update'), resume: () => { showScreen('location', false); return loadVessel(); }});
+    let capabilities = null;
+    const screens = ['update','overview','location','profiles','manage','editor','picker','enrollment','access','delete','reasoning'];
     function showScreen(next, push = true) {
         if (push && next !== setupScreen) {
             screenStack.push(setupScreen);
@@ -70,7 +73,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         setupScreen = next;
         for (const screen of screens) raw(`setup-${screen}`).hidden = screen !== next;
         raw('setup-back').hidden = next === 'overview';
-        raw('setup-title').textContent = ({overview:creating() ? 'New voyage setup' : 'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Your profiles',editor:editingProfile?.name ? 'Edit profile' : 'New profile',picker:pickerKind === 'account' ? 'Choose account' : 'Choose model',enrollment:'Connect ChatGPT',access:'Access mode',delete:'Delete profile',reasoning:'Reasoning'})[next];
+        raw('setup-title').textContent = ({update:'Vessel update',overview:creating() ? 'New voyage setup' : 'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Your profiles',editor:editingProfile?.name ? 'Edit profile' : 'New profile',picker:pickerKind === 'account' ? 'Choose account' : 'Choose model',enrollment:'Connect ChatGPT',access:'Access mode',delete:'Delete profile',reasoning:'Reasoning'})[next];
         raw('setup-done').hidden = next !== 'overview';
         raw('edit-save').hidden = !['profiles','editor'].includes(next);
         raw('edit-save').textContent = next === 'editor' ? 'Save profile' : creating() ? 'Use profile' : 'Apply to next run';
@@ -197,7 +200,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
     async function loadVessel() {
         if (saving) return;
         raw('setup-oauth-status').textContent = '';
-        const mine = ++version; reset(); options('settings-workspace', []);
+        const mine = ++version; capabilities = null; updates.bind(null,null); reset(); options('settings-workspace', []);
         catalogue = {revision:0,profiles:[],can_manage:false}; renderProfiles();
         raw('edit-custom-workspace').hidden = true; raw('edit-workspace-path').value = ''; raw('edit-workspace-path').disabled = false;
         connection = fleet.connections.get($('settings-vessel').value);
@@ -208,6 +211,11 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
             const caps = await setupRead(mine,c,client,'capabilities');
             if (!readStillCurrent(mine,c,client)) return;
             if (caps.vessel_id !== c.vessel_id) throw new Error('Vessel identity changed. Reconnect before continuing.');
+            capabilities = caps; updates.bind(c,caps);
+            if (!caps.features?.includes('execution_profiles')) {
+                status(`Vessel ${caps.version || 'version unknown'} needs an update for this setup. Your draft is retained.`);
+                updates.required(); return;
+            }
             const required = creating() ? ['create','account_use'] : ['account_use'];
             if (caps.scope !== 'owner' && required.some(right => !caps.rights?.includes(right))) throw new Error('This older connection has limited access. Reconnect using the full-access setup instructions.');
             if (creating()) {
@@ -232,6 +240,7 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         } catch (error) { if (readStillCurrent(mine,c,client)) { status(error.message); if (creating() && !configuration()) unavailable(error.message); } }
     }
     async function loadAccounts(preferredProfile = null, preferredExpired = null) {
+        if (!capabilities?.features?.includes('execution_profiles')) return false;
         if (saving) return false;
         const mine = ++version; reset();
         catalogue = {revision:0,profiles:[],can_manage:false}; renderProfiles();

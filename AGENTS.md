@@ -233,6 +233,9 @@ The Rust workspace currently contains `helm/`, `vessel/`, `voyage/`, `installer/
 [docs/implementation.md](docs/implementation.md) for target delivery order.
 Check both ends when changing wire contracts. The installer supports Linux
 versioned installation, upgrades, rollback and user-service provisioning.
+Follow [remote updates](docs/remote-updates.md) when changing owner-approved
+self-updates: preserve pinned review, exact durable receipts, independent updater
+execution, service readiness, rollback and capability-gated client admission.
 Native private-storage changes require platform-specific security verification.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use

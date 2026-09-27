@@ -23,7 +23,7 @@ test('owner connection can choose a new folder; scoped connections retain their 
     const client={exchange:async envelope=>{
         const c=envelope.command; seen.push(c);
         let result;
-        if(c.op==='capabilities') result={vessel_id:'vessel',scope,rights:scope==='owner'?[]:['create','account_use'],workspaces:[{name:'Known',path:'/known'}]};
+        if(c.op==='capabilities') result={vessel_id:'vessel',scope,features:['execution_profiles'],rights:scope==='owner'?[]:['create','account_use'],workspaces:[{name:'Known',path:'/known'}]};
         else if(c.op==='accounts') result={accounts:[{id:account.account_id,connection_id:account.connection_id,identity_generation:1,state:'ready',availability:'available',label:'Account'}],connections:[{id:account.connection_id,revision:1,transports:[account.transport],label:'Provider'}]};
         else if(c.op==='profiles') result=structuredClone({...profiles,can_manage:scope==='owner'});
         else if(c.op==='save_profile') {assert.equal(c.expected_revision,profiles.revision);profiles.profiles.push(c.profile);profiles.revision++;result=structuredClone(profiles);}

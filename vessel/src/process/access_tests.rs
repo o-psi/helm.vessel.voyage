@@ -555,3 +555,46 @@ fn sidebar_voyage_mutations_keep_existing_lifecycle_authorization() {
         );
     }
 }
+
+#[tokio::test]
+async fn remote_updates_are_not_workspace_or_session_execution_rights() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut g = f.connection();
+    g.token_hash = store::hash(TOKEN);
+    g.rights = vec![
+        ProcessRight::Execute,
+        ProcessRight::Lifecycle,
+        ProcessRight::Create,
+    ];
+    f.save_connection(&g);
+    let caps = s
+        .connected(g.grant_id, TOKEN, VesselCommand::Capabilities)
+        .await
+        .unwrap();
+    assert_eq!(caps["remote_updates"], false);
+    for command in [
+        VesselCommand::UpdatePrepare {
+            operation_id: Uuid::new_v4(),
+            channel: "nightly".into(),
+        },
+        VesselCommand::UpdateApply {
+            operation_id: Uuid::new_v4(),
+            release_id: "a".repeat(64),
+        },
+        VesselCommand::UpdateStatus {
+            operation_id: Uuid::new_v4(),
+        },
+        VesselCommand::UpdateDiscard {
+            operation_id: Uuid::new_v4(),
+        },
+    ] {
+        assert!(
+            s.connected(g.grant_id, TOKEN, command)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("account-owner authority")
+        );
+    }
+}

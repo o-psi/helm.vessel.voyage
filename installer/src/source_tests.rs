@@ -15,7 +15,11 @@ for name in ['helm','vessel','voyage','voyage-installer']:
 fn preparation_reads_pinned_metadata_and_drop_cleans_only_staging() {
     let f = Fixture::new();
     set_acquire(SUCCESS);
-    for (source, name) in [(Source::Latest, "latest"), (Source::Main, "main")] {
+    for (source, name) in [
+        (Source::Latest, "latest"),
+        (Source::Main, "main"),
+        (Source::Nightly, "nightly"),
+    ] {
         let prepared = prepare(source, &AtomicBool::new(false)).unwrap();
         assert_eq!(prepared.description, format!("pinned {name}"));
         assert!(prepared.bin_dir.join("helm").is_file());

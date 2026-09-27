@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-27T04:40:07Z",
-  "source_commit": "548549e0a8e075fd8d4dddf00827a66f15158495",
+  "measured_at_utc": "2026-09-27T06:09:58.853308+00:00",
+  "source_commit": "e0ac1bc74d0f7e4e6983627fb431bd93b74c7f44",
   "dirty": true,
-  "source_fingerprint_sha256": "24b7fa9ba38ceb4a301c2797122f7cdda69332d3415c903e8f0af6bf569a851c",
-  "source_fingerprint_method": "SHA-256 over base commit SHA bytes + NUL + git diff --binary HEAD -- . before this coverage summary update; all tracked edits in the shared checkout",
+  "source_fingerprint_sha256": "107e4378742cfc79ef97dad648b0a5d8f53e0855fcb7e882a6cd5f2abd7ec82b",
+  "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including new updater files and unrelated staged Rust edit",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1756,
+    "passed": 1763,
     "failed": 0,
     "ignored": 2
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10033,
-      "covered": 7101,
-      "percent": 70.77643775540714
+      "count": 10252,
+      "covered": 7414,
+      "percent": 72.3175965665236
     },
     "instantiations": {
-      "count": 12134,
-      "covered": 8217,
-      "percent": 67.71880665897478
+      "count": 23238,
+      "covered": 9363,
+      "percent": 40.29176349083398
     },
     "lines": {
-      "count": 104453,
-      "covered": 76843,
-      "percent": 73.56705886858205
+      "count": 107186,
+      "covered": 80423,
+      "percent": 75.03125408168977
     },
     "mcdc": {
       "count": 0,
@@ -42,31 +42,71 @@
       "percent": 0
     },
     "regions": {
-      "count": 170714,
-      "covered": 120099,
-      "notcovered": 50615,
-      "percent": 70.35099640334126
+      "count": 175942,
+      "covered": 125933,
+      "notcovered": 50009,
+      "percent": 71.57642859578725
     }
   },
-  "command": "umask 077; CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
-  "report_command": "cargo test --workspace --locked --no-run --message-format=json -j 8 under cargo llvm-cov show-env; /usr/bin/llvm-cov export -format=text -instr-profile=$WORKSPACE/target/voyage.profdata with -object for every executable in that current-workspace Cargo artifact set and cargo-llvm-cov default source exclusions plus other-worktree and Rust stdlib exclusions",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/remote-updates-current -j 8",
+  "report_command": [
+    "/usr/bin/llvm-cov",
+    "export",
+    "-format=text",
+    "-instr-profile=$WORKSPACE/target/voyage.profdata",
+    "-object",
+    "$WORKSPACE/target/debug/deps/chatgpt_conversation-9a8de6b18f135c17",
+    "-object",
+    "$WORKSPACE/target/debug/deps/completion_final_tests-31668c60333e0c82",
+    "-object",
+    "$WORKSPACE/target/debug/deps/helm-1e673a1ff7d584f2",
+    "-object",
+    "$WORKSPACE/target/debug/deps/helm-3abf021cb7f6ace0",
+    "-object",
+    "$WORKSPACE/target/debug/deps/offline_auth_main_tests-5f54bed537a9a348",
+    "-object",
+    "$WORKSPACE/target/debug/deps/offline_main_cli_tests-6d0c5675aec018f1",
+    "-object",
+    "$WORKSPACE/target/debug/deps/vessel-4686a92ea5f37d5a",
+    "-object",
+    "$WORKSPACE/target/debug/deps/vessel-e5e32e6712ceb8fd",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage-3f49471a24057a3c",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage-98aaba8c7c8a49cd",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_installer-de5d3d31cdcb0076",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_protocol-0ba333dc0230bf7a",
+    "-object",
+    "$WORKSPACE/target/debug/deps/voyage_storage-046a16532f0d6755",
+    "-object",
+    "$WORKSPACE/target/debug/helm",
+    "-object",
+    "$WORKSPACE/target/debug/vessel",
+    "-object",
+    "$WORKSPACE/target/debug/voyage",
+    "-ignore-filename-regex",
+    "/rustc/|^/usr/src/debug/rust/|/\\.cargo/(registry|git)/|/\\.rustup/toolchains/|^$WORKSPACE(/.*)?/(tests|examples|benches)/|^$WORKSPACE(/.*)?/(tests\\.rs|[0-9a-zA-Z_-]+[_-]tests\\.rs)$|^$WORKSPACE/(target|\\.worktrees)/",
+    "-summary-only"
+  ],
   "report_objects": [
-    "voyage_installer-cafe619186177e69",
-    "vessel",
-    "offline_auth_main_tests-5f54bed537a9a348",
-    "vessel-e5e32e6712ceb8fd",
-    "helm-1e673a1ff7d584f2",
-    "vessel-4686a92ea5f37d5a",
-    "voyage-98aaba8c7c8a49cd",
-    "voyage",
-    "completion_final_tests-31668c60333e0c82",
-    "helm",
-    "helm-3abf021cb7f6ace0",
-    "offline_main_cli_tests-6d0c5675aec018f1",
     "chatgpt_conversation-9a8de6b18f135c17",
+    "completion_final_tests-31668c60333e0c82",
+    "helm-1e673a1ff7d584f2",
+    "helm-3abf021cb7f6ace0",
+    "offline_auth_main_tests-5f54bed537a9a348",
+    "offline_main_cli_tests-6d0c5675aec018f1",
+    "vessel-4686a92ea5f37d5a",
+    "vessel-e5e32e6712ceb8fd",
     "voyage-3f49471a24057a3c",
+    "voyage-98aaba8c7c8a49cd",
+    "voyage_installer-de5d3d31cdcb0076",
+    "voyage_protocol-0ba333dc0230bf7a",
     "voyage_storage-046a16532f0d6755",
-    "voyage_protocol-0ba333dc0230bf7a"
+    "helm",
+    "vessel",
+    "voyage"
   ],
   "exclusions": [
     "Doctests",
@@ -78,10 +118,10 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "Default-feature workspace Rust tests passed. The raw HTML and JSON report and profiles remain under ignored target/.",
-    "The shared target directory contained historical instrumented binaries: the unfiltered export mixed 1198 files and impossible source-line totals. The published totals select all 16 current-workspace Cargo executables, yielding 444 unique current-source files and no other-worktree/stdlib paths.",
-    "The dirty-tree fingerprint includes unrelated tracked changes in the shared checkout that were preserved and not included in this delivery commit.",
-    "Compared with the prior record, coverage changed by lines -1.5915 percentage points, functions -1.5734 percentage points, regions -1.3881 percentage points. The current artifact selection includes every current Cargo target/test executable; these percentages are not a like-for-like regression signal against the prior selected-object set.",
-    "Linux only. Browser JavaScript, Chromium journeys, process cleanup and live-provider acceptance are separate from this measurement."
+    "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
+    "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
+    "Change in percentage points: lines +1.4642, functions +1.5412, regions +1.2254",
+    "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate.",
+    "A cached voyage-storage test object initially pointed to a removed worktree; its crate was rebuilt from unchanged current source and the independent measurement rerun. Selected export contains 469 unique current-workspace source paths and no export diagnostics. Report object selection differs from historical mixed caches; percentage changes are not a like-for-like quality claim."
   ]
 }

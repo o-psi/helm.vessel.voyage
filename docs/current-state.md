@@ -1068,3 +1068,10 @@ platforms refuse explicitly. See [security](security.md#active-run-filesystem-co
 for revocation, process-lifetime and application-policy limits. Existing sessions
 must execute the updated Voyage binary to expose the new tool; updating installed
 files does not modify a running process or authorize a denied host configuration.
+
+## Remote update admission
+
+Helm Web capability-gates profile setup and exposes owner-reviewed remote updates
+for managed Linux Vessels. See [remote updates](remote-updates.md) for the exact
+prepare/approve/receipt contract, fixed artifact sources, platform requirements
+and pre-updater bootstrap limitation. Live deployment evidence remains in #343.

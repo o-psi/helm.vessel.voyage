@@ -233,6 +233,10 @@ impl Backend for BrowserBackend {
 fn allowed(command: &VesselCommand) -> bool {
     match command {
         VesselCommand::Capabilities
+        | VesselCommand::UpdatePrepare { .. }
+        | VesselCommand::UpdateStatus { .. }
+        | VesselCommand::UpdateApply { .. }
+        | VesselCommand::UpdateDiscard { .. }
         | VesselCommand::Catalogue
         | VesselCommand::Inspect { .. }
         | VesselCommand::Branch { .. }

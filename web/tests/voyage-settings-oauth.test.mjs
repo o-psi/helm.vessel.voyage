@@ -33,7 +33,7 @@ function fixture(t, refreshStatus) {
         const command = envelope.command;
         seen.push(command);
         let result;
-        if (command.op === 'capabilities') result = {vessel_id:'vessel-identity',scope:'owner',workspaces:[{name:'Home',path:'/home/psi'}]};
+        if (command.op === 'capabilities') result = {vessel_id:'vessel-identity',scope:'owner',features:['execution_profiles'],workspaces:[{name:'Home',path:'/home/psi'}]};
         else if (command.op === 'accounts') result = {accounts:[{id:binding.account_id,connection_id:binding.connection_id,identity_generation:1,state:'ready',availability,label:'Personal ChatGPT'}],connections:[{id:binding.connection_id,revision:1,transports:['chatgpt_oauth'],label:'ChatGPT'}]};
         else if (command.op === 'profiles') result = {revision:1,can_manage:true,default_profile_id:'profile',profiles:[{id:'profile',name:'Default',account:binding,model:'gpt-6-sol',reasoning_effort:null,service_tier:null}]};
         else if (command.op === 'account_usage') {

@@ -516,6 +516,21 @@ pub enum VesselCommand {
         command: Box<VesselCommand>,
     },
     Capabilities,
+    /// Owner-only managed-host update; paths and arbitrary commands are excluded.
+    UpdatePrepare {
+        operation_id: Uuid,
+        channel: String,
+    },
+    UpdateStatus {
+        operation_id: Uuid,
+    },
+    UpdateApply {
+        operation_id: Uuid,
+        release_id: String,
+    },
+    UpdateDiscard {
+        operation_id: Uuid,
+    },
     Catalogue,
     /// Safe host catalogue; scope is checked before reading account metadata.
     Accounts {

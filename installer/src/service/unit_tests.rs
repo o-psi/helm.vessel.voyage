@@ -119,3 +119,23 @@ fn effective_manager_configuration_rejects_unsafe_overrides() {
         f.done();
     }
 }
+
+#[test]
+fn credential_key_location_is_preserved_without_allowing_service_behavior_overrides() {
+    for content in [
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/voyage/key\n",
+        "# private key path\n[Service]\nEnvironment=\"VOYAGE_CREDENTIAL_KEY_FILE=/run/voyage/key\"\n",
+    ] {
+        assert!(super::credential_environment(content));
+    }
+    for content in [
+        "[Service]\nEnvironment=PATH=/tmp",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/key LD_PRELOAD=/tmp/loader",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/key\nKillMode=control-group",
+        "[Service]\nExecStop=/bin/false",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/../key",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/%n",
+    ] {
+        assert!(!super::credential_environment(content));
+    }
+}

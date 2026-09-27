@@ -47,7 +47,7 @@ test('browser journey: history, live output, submit, approval, question, cancel,
             if(command.op==='catalogue')result=[{session_id:id,name:'Synthetic voyage',state:'live',incarnation}];
 
             else if(command.op==='inspect')result={session_id:id,incarnation,workspace:'/fixture'};
-            else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',workspaces:[{name:'Fixture',path:'/fixture'}]};
+            else if(command.op==='capabilities')result={vessel_id:vessel,scope:'owner',features:['execution_profiles'],workspaces:[{name:'Fixture',path:'/fixture'}]};
             else if(command.op==='profiles')result={revision:1,can_manage:true,default_profile_id:'personal',profiles:[{id:'personal',name:'Everyday',account:{account_id:id,connection_id:id,identity_generation:1,connection_revision:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'high',service_tier:null},{id:'work',name:'Work',account:{account_id:'alternate-account',connection_id:id,identity_generation:2,connection_revision:1,transport:'openai_responses'},model:'fixture',reasoning_effort:'low',service_tier:null}]};
             else if(command.op==='account_models')result={account:command.account,models:[{id:'fixture',is_default:true,reasoning_efforts:['low','high'],service_tiers:['priority']}]};
             else if(command.op==='start_account'){

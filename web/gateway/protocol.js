@@ -8,6 +8,9 @@ const text = v => typeof v === 'string' && v.length > 0 && v.length <= 4096 && !
 const nullableText = v => v === null || text(v);
 const account = v => exact(v, ['account_id','connection_id','identity_generation','connection_revision','transport']) && uuid(v.account_id) && uuid(v.connection_id) && uint(v.identity_generation) && uint(v.connection_revision) && ['openai_responses','openai_chat','chatgpt_oauth','anthropic'].includes(v.transport);
 function accountCommand(c) {
+  if (c.op === 'update_prepare') return exact(c,['op','operation_id','channel']) && uuid(c.operation_id) && ['stable','nightly'].includes(c.channel);
+  if (['update_status','update_discard'].includes(c.op)) return exact(c,['op','operation_id']) && uuid(c.operation_id);
+  if (c.op === 'update_apply') return exact(c,['op','operation_id','release_id']) && uuid(c.operation_id) && typeof c.release_id === 'string' && /^[a-f0-9]{64}$/.test(c.release_id);
   if (c.op === 'set_access') return exact(c,['op','session_id','incarnation','command_id','expected_revision','expires_at_ms','access']) && uuid(c.session_id) && uuid(c.incarnation) && uuid(c.command_id) && uint(c.expected_revision) && uint(c.expires_at_ms) && ['read-only','approval','unrestricted'].includes(c.access);
   if (c.op === 'profiles') return exact(c,['op','workspace']) && text(c.workspace);
   if (['delete_profile','set_default_profile'].includes(c.op)) return exact(c,['op','command_id','workspace','expected_revision','profile_id']) && uuid(c.command_id) && text(c.workspace) && uint(c.expected_revision) && uuid(c.profile_id);
@@ -88,6 +91,8 @@ export function restrictCapabilities(value, vesselId) {
   if (!object(value) || value.protocol !== 1 || value.vessel_id !== vesselId || !Array.isArray(value.features) || !value.features.every(v => typeof v === 'string')) throw Error('invalid capabilities');
   const features = new Set(['sqlite_catalogue', 'catalogue', 'scoped_catalogue', 'inspect', 'durable_receipts', 'history_paging', 'events', 'duplex_socket', 'decisions', 'grant_revocation', 'revocation', 'provider_accounts', 'execution_profiles', 'account_start', 'start_resolution']);
   const result = { protocol: 1, vessel_id: vesselId, features: value.features.filter(f => features.has(f)) };
+  if (typeof value.running_release === 'string' && /^[a-f0-9]{64}$/.test(value.running_release)) result.running_release = value.running_release;
+  if (typeof value.remote_updates === 'boolean') result.remote_updates = value.remote_updates && value.scope === 'owner';
   if (typeof value.version === 'string') result.version = value.version;
   if (typeof value.scope === 'string') result.scope = value.scope;
   if (uint(value.expires_at_ms)) result.expires_at_ms = value.expires_at_ms;

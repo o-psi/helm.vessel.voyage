@@ -47,7 +47,7 @@ a different build gets its own retained directory even when the package version
 string is unchanged. Unknown installation metadata schemas are refused.
 
 `voyage-installer upgrade` resolves the latest published stable release from
-`o-psi/voyage` on GitHub, pins its tag, downloads the full Linux archive and verifies
+`o-psi/helm.vessel.voyage` on GitHub, pins its tag, downloads the full Linux archive and verifies
 its checksum, manifest, platform and four executable hashes before installation.
 It does **not** reuse sibling binaries, fetch source implicitly, or fall back to
 main when no release is available. An unavailable release/network error leaves the
@@ -209,3 +209,7 @@ After stopping the supervisor, `voyage-installer service-uninstall` removes its
 unit while retaining binaries, configuration and voyage data. It does not delete
 surviving processes or revoke remote grants. Native macOS/Windows service
 installation is unsupported; packaging those binaries is not deployment evidence.
+
+## Updates from Helm Web
+
+Managed Linux installations support the owner-approved [remote update flow](../docs/remote-updates.md). The updater prepares a pinned stable or explicitly selected nightly artifact, retains a durable operation receipt and runs outside the Vessel service during replacement. Pre-updater releases require one remote administrator bootstrap. Existing provider credentials and independent voyages are preserved.

@@ -109,11 +109,13 @@
                 </section>
                 <section id="setup-location" class="space-y-4" aria-label="Location" hidden>
                     <div id="edit-location-section" class="space-y-4">
+                        <flux:button id="setup-update-open" type="button" size="sm" variant="ghost" icon="arrow-up-circle" hidden>Vessel updates</flux:button>
                         <flux:select id="edit-vessel" label="Vessel" />
                         <flux:select id="edit-workspace" label="Workspace" />
                         <div id="edit-custom-workspace" hidden><flux:input id="edit-workspace-path" label="Folder on this Vessel" description="Existing absolute path on the Vessel, not your browser’s computer." /></div>
                     </div>
                 </section>
+                @include('console.vessel-update')
                 <section id="setup-profiles" class="space-y-4" aria-label="Profiles" hidden>
                     <div id="edit-profiles-section" class="space-y-3">
                         <flux:select id="edit-profile" variant="listbox" searchable label="Saved profile" placeholder="Choose a profile" />

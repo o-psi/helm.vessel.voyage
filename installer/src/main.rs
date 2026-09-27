@@ -2,6 +2,7 @@ mod cli;
 mod flow;
 mod install;
 mod planning;
+mod remote;
 mod service;
 mod source;
 mod ui;
@@ -13,6 +14,10 @@ fn run() -> Result<bool> {
     let mut args = fixture_tests::arguments();
     #[cfg(not(all(test, target_os = "linux")))]
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s| s == "remote-update") {
+        remote::run(&args[1..])?;
+        return Ok(false);
+    }
     match args.first().map(String::as_str) {
         Some("--help" | "-h") if args.len() == 1 => {
             cli::help();

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import zipfile
 
 MODE, ROOT = sys.argv[1], Path(sys.argv[2])
 BINARIES = ('helm', 'vessel', 'voyage', 'voyage-installer')
@@ -112,10 +113,10 @@ def latest(target):
     metadata = ROOT / 'latest.json'
     try:
         if AUTHENTICATED:
-            github_api('repos/o-psi/voyage/releases/latest', metadata,
+            github_api('repos/o-psi/helm.vessel.voyage/releases/latest', metadata,
                        'Resolve latest published release', 1048576)
         else:
-            fetch('https://api.github.com/repos/o-psi/voyage/releases/latest', metadata,
+            fetch('https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/latest', metadata,
                   'Resolve latest published release', 1048576)
     except Failure:
         raise Failure('Latest published release unavailable. Check GitHub/network availability (private repositories require gh auth login); if no release is published, use upgrade --dev explicitly to build main, or --bin-dir for a local build. No fallback was installed.') from None
@@ -127,7 +128,7 @@ def latest(target):
         raise Failure('Invalid latest stable release metadata.')
     name = f'voyage-{tag}-{target}'
     asset = name + '.tar.gz'
-    base = f'https://github.com/o-psi/voyage/releases/download/{tag}'
+    base = f'https://github.com/o-psi/helm.vessel.voyage/releases/download/{tag}'
     def asset_fetch(name, destination, label, limit):
         if not AUTHENTICATED:
             return fetch(f'{base}/{name}', destination, label, limit)
@@ -136,7 +137,7 @@ def latest(target):
                 or matches[0]['id'] <= 0 or type(matches[0].get('size')) is not int
                 or not 0 < matches[0]['size'] <= limit):
             raise Failure(f'Published release asset unavailable or oversized: {name}')
-        github_api(f"repos/o-psi/voyage/releases/assets/{matches[0]['id']}",
+        github_api(f"repos/o-psi/helm.vessel.voyage/releases/assets/{matches[0]['id']}",
                    destination, label, limit, binary=True)
 
     checksum = ROOT / 'checksum'
@@ -158,6 +159,65 @@ def latest(target):
     return binaries, f'Published release {tag} ({target}); archive SHA-256 {match[1].lower()}'
 
 
+def nightly(target):
+    if target != 'x86_64-unknown-linux-gnu':
+        raise Failure('Nightly downloads currently support Linux x86-64 only.')
+    if not AUTHENTICATED:
+        raise Failure('Nightly downloads require an existing GitHub CLI login on this Vessel. No credentials are copied from Helm.')
+    metadata = ROOT / 'artifacts.json'
+    github_api('repos/o-psi/helm.vessel.voyage/actions/artifacts?per_page=100', metadata,
+               'Find published nightly artifacts', 1048576)
+    artifacts = json.loads(metadata.read_text()).get('artifacts', [])
+    # Exact workflow, completed build and recorded source are verified before download.
+    candidates = [a for a in artifacts if not a.get('expired') and
+                  re.fullmatch(r'nightly-[0-9a-f]{40}-[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]+\.[0-9]+\.[0-9]+', str(a.get('name', '')))]
+    candidates.sort(key=lambda a: a.get('created_at', ''), reverse=True)
+    chosen = None
+    for artifact in candidates[:10]:
+        run_id = artifact.get('workflow_run', {}).get('id')
+        if type(run_id) is not int or run_id <= 0:
+            continue
+        run_meta = ROOT / 'run.json'
+        github_api(f'repos/o-psi/helm.vessel.voyage/actions/runs/{run_id}', run_meta,
+                   'Verify nightly workflow', 1048576)
+        run_data = json.loads(run_meta.read_text())
+        if (run_data.get('path') == '.github/workflows/nightly.yml' and
+                run_data.get('head_branch') == 'main' and run_data.get('status') == 'completed' and
+                run_data.get('conclusion') == 'success'):
+            chosen = artifact
+            break
+    if chosen is None:
+        raise Failure('No completed, unexpired nightly is available. Build publication must finish before updating.')
+    if type(chosen.get('id')) is not int or not 0 < chosen.get('size_in_bytes', 0) <= 536870912:
+        raise Failure('Invalid nightly artifact metadata.')
+    _, commit, version = chosen['name'].split('-', 2)
+    name = f'voyage-{version}-{target}'
+    archive_name = name + '.tar.gz'
+    zipped = ROOT / 'nightly.zip'
+    github_api(f"repos/o-psi/helm.vessel.voyage/actions/artifacts/{chosen['id']}/zip", zipped,
+               'Download pinned nightly', 536870912)
+    with zipfile.ZipFile(zipped) as archive:
+        if sorted(archive.namelist()) != sorted([archive_name, archive_name + '.sha256']):
+            raise Failure('Unexpected nightly ZIP membership.')
+        for item in archive.infolist():
+            limit = 4096 if item.filename.endswith('.sha256') else 536870912
+            if item.file_size > limit:
+                raise Failure('Oversized nightly ZIP member.')
+            with archive.open(item) as source, (ROOT / item.filename).open('xb') as destination:
+                shutil.copyfileobj(source, destination)
+    checksum = (ROOT / (archive_name + '.sha256')).read_text().strip()
+    match = re.fullmatch(r'([0-9a-f]{64})  ' + re.escape(archive_name), checksum)
+    if not match or digest(ROOT / archive_name) != match[1]:
+        raise Failure('Nightly archive checksum mismatch.')
+    binaries = extract(ROOT / archive_name, name)
+    manifest = json.loads((binaries.parent / 'release.json').read_text())
+    build = (binaries.parent / 'BUILD.txt').read_text()
+    if (manifest.get('version') != version or manifest.get('target') != target or
+            f'Source: {commit}\n' not in build or not manifest.get('assets')):
+        raise Failure('Nightly source, version, platform or browser inventory mismatch.')
+    return binaries, f'Nightly {version}; source {commit}; workflow {run_id}; archive SHA-256 {match[1]}'
+
+
 def main_build(target):
     # Explicit --dev trusts build code from canonical main, not local work or
     # global Git configuration. This is not an OS sandbox for Cargo build scripts.
@@ -176,7 +236,7 @@ def main_build(target):
     if AUTHENTICATED:
         git += ['-c', 'credential.helper=!gh auth git-credential']
     run(git + ['init', '--quiet', str(checkout)], 'Create private development checkout')
-    run(git + ['fetch', '--depth=1', 'https://github.com/o-psi/voyage.git', 'refs/heads/main'],
+    run(git + ['fetch', '--depth=1', 'https://github.com/o-psi/helm.vessel.voyage.git', 'refs/heads/main'],
         'Fetch GitHub main', cwd=checkout)
     commit = run(git + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
                  'Resolve main commit', cwd=checkout, capture=True)
@@ -212,7 +272,9 @@ def execute():
     os.environ['GH_PROMPT_DISABLED'] = '1'
     AUTHENTICATED = github_login()
     target = f'{arch}-unknown-linux-gnu'
-    binaries, description = latest(target) if MODE == 'latest' else main_build(target)
+    if MODE not in ('latest', 'main', 'nightly'):
+        raise Failure('Unsupported acquisition mode.')
+    binaries, description = {'latest': latest, 'main': main_build, 'nightly': nightly}[MODE](target)
     for name in BINARIES:
         if not (binaries / name).is_file():
             raise Failure(f'Release is missing {name}.')

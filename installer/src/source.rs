@@ -6,6 +6,7 @@ use std::{path::PathBuf, sync::atomic::AtomicBool};
 pub enum Source {
     Latest,
     Main,
+    Nightly,
 }
 
 pub struct Prepared {
@@ -24,6 +25,15 @@ pub fn cleanup_result() -> Result<()> {
         failures.join("; ")
     );
     Ok(())
+}
+
+impl Prepared {
+    pub fn staging_root(&self) -> &std::path::Path {
+        &self.root
+    }
+    pub fn retain(&mut self) {
+        self.retain = true;
+    }
 }
 
 impl Drop for Prepared {
@@ -165,6 +175,7 @@ mod linux {
             .arg(match source {
                 Source::Latest => "latest",
                 Source::Main => "main",
+                Source::Nightly => "nightly",
             })
             .arg(&prepared.root)
             .stdin(Stdio::null())
@@ -177,7 +188,7 @@ mod linux {
             .context("Automatic upgrades require Python 3.11+; could not start acquisition")?;
         let deadline = Instant::now()
             + Duration::from_secs(match source {
-                Source::Latest => 1000,
+                Source::Latest | Source::Nightly => 1000,
                 Source::Main => 4200,
             });
         let result = (|| -> Result<()> {

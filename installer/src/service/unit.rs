@@ -154,10 +154,20 @@ pub(super) fn check_effective(layout: &Layout) -> Result<()> {
             .any(|path| Path::new(path) == layout.units),
         "XDG_CONFIG_HOME unit directory is not in the running user manager's search path; align the user manager environment explicitly"
     );
-    ensure!(
-        command::query("DropInPaths")?.is_empty(),
-        "Refusing service overrides; review and remove drop-ins explicitly"
-    );
+    let overrides = command::query("DropInPaths")?;
+    for path in overrides.split_whitespace() {
+        let path = Path::new(path);
+        files::check_path(path, layout.uid)?;
+        let metadata = fs::symlink_metadata(path)?;
+        ensure!(
+            metadata.is_file() && metadata.len() <= 4096,
+            "Invalid credential environment override"
+        );
+        ensure!(
+            credential_environment(&fs::read_to_string(path)?),
+            "Refusing service behavior overrides; only the credential key-file environment is supported"
+        );
+    }
     let fragment = command::query("FragmentPath")?;
     ensure!(
         fragment.is_empty() || Path::new(&fragment) == layout.unit,
@@ -176,6 +186,46 @@ pub(super) fn check_effective(layout: &Layout) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Credential location is deployment configuration, not a service behavior override.
+// Preserve this exact narrow form; never allow PATH, loaders, Exec*, stop or kill
+// directives through the installer compatibility exception.
+fn credential_environment(content: &str) -> bool {
+    let mut section = false;
+    let mut environment = false;
+    for line in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        if line == "[Service]" && !section {
+            section = true;
+            continue;
+        }
+        let Some(value) = line.strip_prefix("Environment=") else {
+            return false;
+        };
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or(value);
+        let Some(path) = value.strip_prefix("VOYAGE_CREDENTIAL_KEY_FILE=") else {
+            return false;
+        };
+        if !section
+            || environment
+            || !path.starts_with('/')
+            || path.split('/').any(|part| matches!(part, "." | ".."))
+            || !path
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"/_-.".contains(&c))
+        {
+            return false;
+        }
+        environment = true;
+    }
+    section && environment
 }
 
 #[cfg(test)]

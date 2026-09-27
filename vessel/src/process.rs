@@ -49,3 +49,5 @@ mod start_tests;
 mod account_flows_tests;
 
 mod execution_profiles;
+
+mod updates;

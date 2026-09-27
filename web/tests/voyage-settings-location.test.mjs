@@ -38,7 +38,7 @@ function fixture(t, {firstHasProfile = false} = {}) {
         const command = envelope.command;
         seen.push({vessel,command});
         const result = () => {
-            if (command.op === 'capabilities') return {vessel_id:`${vessel}-identity`,scope:'owner',workspaces:[{name:vessel,path:vessel === 'tax' ? '/tax-axis' : '/home/psi'}]};
+            if (command.op === 'capabilities') return {vessel_id:`${vessel}-identity`,scope:'owner',features:['execution_profiles'],workspaces:[{name:vessel,path:vessel === 'tax' ? '/tax-axis' : '/home/psi'}]};
             if (command.op === 'accounts') return {accounts:[{id:account(vessel).account_id,connection_id:account(vessel).connection_id,identity_generation:1,state:'ready',availability:'available',label:`${vessel} account`}],connections:[{id:account(vessel).connection_id,revision:1,transports:['openai_responses'],label:`${vessel} provider`}]};
             if (command.op === 'profiles') return structuredClone(catalogues[vessel]);
             if (command.op === 'account_models') return {account:command.account,models:[{id:`${vessel}-model`,is_default:true}]};

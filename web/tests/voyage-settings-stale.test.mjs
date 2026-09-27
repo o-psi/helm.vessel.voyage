@@ -28,7 +28,7 @@ test('setup gives a reload path when a client is lost or replaced during discove
     const modelOptions = () => root.querySelectorAll('#edit-model ui-option[data-settings-option]');
     const account = {account_id:'10000000-0000-4000-8000-000000000001',connection_id:'10000000-0000-4000-8000-000000000002',identity_generation:1,connection_revision:1,transport:'openai_responses'};
     const results = {
-        capabilities:{vessel_id:'vessel',scope:'owner',workspaces:[{name:'Known',path:'/known'}]},
+        capabilities:{vessel_id:'vessel',scope:'owner',features:['execution_profiles'],workspaces:[{name:'Known',path:'/known'}]},
         accounts:{accounts:[{id:account.account_id,connection_id:account.connection_id,identity_generation:1,state:'ready',availability:'available',label:'Account'}],connections:[{id:account.connection_id,revision:1,transports:[account.transport],label:'Provider'}]},
         profiles:{revision:1,can_manage:true,default_profile_id:'default',profiles:[{id:'default',name:'Default',account,model:'model',reasoning_effort:null,service_tier:null}]},
     };

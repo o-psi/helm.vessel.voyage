@@ -60,8 +60,9 @@ together when using `voyage-installer upgrade --bin-dir PATH/TO/bin`. The
 installer uses that manifest to include and verify the browser worker. Supplying
 only `bin/` creates a binary-only installation that cannot start `host_browser`.
 These are development binaries, not the full stable installation bundle: no
-release documentation, generated completions, signatures or automatic update
-channel is included. A successful build is not evidence of tested runtime behavior.
+release documentation, generated completions, signatures are included. Managed installations can opt into the reviewed
+[remote update flow](remote-updates.md); nightly download access is required on
+the executing host, and each installation needs explicit approval. A successful build is not evidence of tested runtime behavior.
 
 ## Artifact integrity
 
