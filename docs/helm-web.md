@@ -32,7 +32,9 @@ approval/question dialogs, advanced voyage actions and the shared browser remain
 available. Reloading loses unsent text/pictures, not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and
-model screens. Header/back navigation and footer actions stay visible while the
+model screens. Each profile row has a three-dot menu for edit, duplicate, default
+and delete; the fixed header keeps Create profile (+) available even in empty or
+filtered lists. Header/back navigation and footer actions stay visible while the
 current screen scrolls. Unsaved profile edits survive picker navigation and Vessel connection renewal.
 A changed catalogue revision requires review before saving; reasoning
 and service tier have their own step. Profile deletion requires confirmation.

@@ -1,13 +1,14 @@
 import {sameAccount,profileSettings,profileSummary,matchingProfile,duplicateName,profileNameError} from '../js/execution-profiles.js';
 import {uuid} from '../js/vessel-client.js';
 import React,{useEffect,useRef,useState} from 'react';
+import {ProfileActions} from './ProfileActions';
 import {Enrollment} from './Enrollment';
 import {VesselUpdate} from './VesselUpdate';
 import {accountChoices,Creation,vesselRead} from './settings';
 import type {Tab,Workspace} from './workspace';
 
-type Screen='overview'|'location'|'profiles'|'manage'|'editor'|'accounts'|'models'|'reasoning'|'enrollment'|'delete'|'usage';
-const titles:Record<Screen,string>={overview:'Voyage setup',location:'Location',profiles:'Choose profile',manage:'Your profiles',editor:'Edit profile',accounts:'Choose account',models:'Choose model',reasoning:'Reasoning & service',enrollment:'Connect ChatGPT',delete:'Delete profile',usage:'Account usage'};
+type Screen='overview'|'location'|'profiles'|'editor'|'accounts'|'models'|'reasoning'|'enrollment'|'delete'|'usage';
+const titles:Record<Screen,string>={overview:'Voyage setup',location:'Location',profiles:'Profiles',editor:'Edit profile',accounts:'Choose account',models:'Choose model',reasoning:'Reasoning & service',enrollment:'Connect ChatGPT',delete:'Delete profile',usage:'Account usage'};
 const expiredOAuth=(account:any)=>account?.binding.transport==='chatgpt_oauth'&&account.state==='ready'&&account.availability==='expired';
 function SetupRow({label,detail,onClick,disabled=false}:{label:string;detail:string;onClick:()=>void;disabled?:boolean}){
     return <button type="button" className="setup-row" onClick={onClick} disabled={disabled}><span><strong>{label}</strong><small>{detail}</small></span><span aria-hidden="true">›</span></button>;
@@ -21,6 +22,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     const [usage,setUsage]=useState<any>(null),[usageNotice,setUsageNotice]=useState('');
     const [capabilityReload,setCapabilityReload]=useState(0),[accountsReload,setAccountsReload]=useState(0);
     const [catalogue,setCatalogue]=useState<any>(null),[profileId,setProfileId]=useState(''),[editor,setEditor]=useState<any>(null),[profileName,setProfileName]=useState('');
+    const [deleteTarget,setDeleteTarget]=useState<any>(null);
     const [notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[recovery,setRecovery]=useState(0);
     const connection=fleet.connections.get(vessel),selected=accounts.find(item=>sameAccount(item.binding,account?JSON.parse(account):null)),selectedModel=models.find(item=>item.id===model);
     const profile=catalogue?.profiles.find((item:any)=>item.id===profileId),profileAccount=accounts.find(item=>sameAccount(item.binding,profile?.account));
@@ -82,15 +84,15 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
             else {creation.current??=new Creation(localStorage,tenant);const process=await creation.current.start(connection,path,settings);onCreated(vessel,process);onClose();}
         }catch(error){setNotice(error instanceof Error?error.message:'Settings unavailable.');}finally{setBusy(false);}
     }
-    function editProfile(mode:string){
-        const value=mode==='new'?{id:uuid(),name:'',account:accounts.find(item=>item.ready)?.binding}:structuredClone(profile);if(!value)return;
+    function editProfile(mode:string,target=profile){
+        const value=mode==='new'?{id:uuid(),name:'',account:accounts.find(item=>item.ready)?.binding}:structuredClone(target);if(!value)return;
         if(mode==='duplicate'){value.id=uuid();value.name=duplicateName(value.name);}
         editorRevision.current=catalogue?.revision;editorSeed.current=value;setEditor(value);setProfileName(value.name);setAccount(value.account?JSON.stringify(value.account):'');setNotice('');navigate('editor');
     }
     async function mutate(op:string,fields:any){
         if(busy||!catalogue?.can_manage)return;setBusy(true);const epoch=generation.current;
-        try{const value=await vesselRead(connection,op,{command_id:uuid(),workspace:path,expected_revision:catalogue.revision,...fields});if(epoch!==generation.current)return;setCatalogue(value);setProfileId(fields.profile?.id||value.profiles.find((item:any)=>item.id===profileId)?.id||value.default_profile_id||value.profiles[0]?.id||'');setEditor(null);show('manage');setNotice('Profiles saved. Existing voyages retain their settings.');}
-        catch(error){if(epoch===generation.current){setCatalogue(null);setEditor(null);show('manage');setNotice(`${error instanceof Error?error.message:'Change unconfirmed.'} Reload profiles before retrying; the change may have completed.`);}}finally{setBusy(false);}
+        try{const value=await vesselRead(connection,op,{command_id:uuid(),workspace:path,expected_revision:catalogue.revision,...fields});if(epoch!==generation.current)return;setCatalogue(value);setProfileId(fields.profile?.id||value.profiles.find((item:any)=>item.id===profileId)?.id||value.default_profile_id||value.profiles[0]?.id||'');setEditor(null);show('profiles');setNotice('Profiles saved. Existing voyages retain their settings.');}
+        catch(error){if(epoch===generation.current){setCatalogue(null);setEditor(null);show('profiles');setNotice(`${error instanceof Error?error.message:'Change unconfirmed.'} Reload profiles before retrying; the change may have completed.`);}}finally{setBusy(false);}
     }
     function saveProfile(){if(!editor)return;if(catalogue?.revision!==editorRevision.current){setNotice('Saved profiles changed while you were editing. Cancel this edit and review the current profile before saving.');return;}const nameError=profileNameError(profileName);if(nameError){setNotice(nameError);return;}if(!selected?.ready||!selectedModel){setNotice('Choose an available account and model.');return;}return mutate('save_profile',{profile:{id:editor.id,name:profileName.trim(),account:selected.binding,model,reasoning_effort:reasoning||null,service_tier:service||null},make_default:false});}
     async function refreshSignIn(item:any){
@@ -115,7 +117,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     const canSave=!busy&&!recoveryState.error&&caps&&(screen==='editor'?selected?.ready&&selectedModel:profile&&profileAccount?.ready)&&(!!tab||path.startsWith('/'));
     return <dialog ref={dialog} className="settings-dialog profile-setup" aria-labelledby="profile-setup-title" onCancel={event=>{if(busy)event.preventDefault();else onClose();}}>
         <form onSubmit={event=>{event.preventDefault();void save();}}>
-            <header>{screen!=='overview'&&<button type="button" disabled={busy} aria-label="Back" onClick={back}>←</button>}<h2 id="profile-setup-title" ref={heading} tabIndex={-1}>{screen==='overview'?(tab?'Voyage setup':'New voyage'):titles[screen]}</h2><button type="button" disabled={busy} aria-label="Close settings" onClick={onClose}>×</button></header>
+            <header>{screen!=='overview'&&<button type="button" disabled={busy} aria-label="Back" onClick={back}>←</button>}<h2 id="profile-setup-title" ref={heading} tabIndex={-1}>{screen==='overview'?(tab?'Voyage setup':'New voyage'):titles[screen]}</h2><>{screen==='profiles'&&catalogue?.can_manage&&<button type="button" className="profile-create" aria-label="Create profile" title="Create profile" disabled={busy} onClick={()=>editProfile('new')}>+</button>}</><button type="button" disabled={busy} aria-label="Close settings" onClick={onClose}>×</button></header>
             <div ref={body} className="setup-body" aria-busy={busy}>
                 {screen==='overview'&&<>
                     <p>{tab?'Choose a saved profile for the next run.':'Choose where your voyage runs and the profile it uses.'}</p>
@@ -130,12 +132,14 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
                     <p>{tab?'An existing voyage keeps its Vessel and workspace.':'Use an existing folder on the Vessel.'}</p>
                     {caps&&<VesselUpdate connection={connection} caps={caps} tenant={tenant} onResume={()=>setCapabilityReload(value=>value+1)}/>}
                 </>}
-                {(screen==='profiles'||screen==='manage')&&<>
+                {screen==='profiles'&&<>
                     <label className="setup-search">Search profiles<input type="search" value={search} onChange={event=>setSearch(event.target.value)}/></label>
-                    <div className="setup-choices">{(catalogue?.profiles||[]).filter((item:any)=>matches(`${item.name} ${item.model}`)).map((item:any)=><button type="button" className="setup-choice" aria-pressed={profileId===item.id} disabled={busy} key={item.id} onClick={()=>{setProfileId(item.id);if(screen==='profiles')back();}}><strong>{item.name}{item.id===catalogue.default_profile_id&&<span className="setup-badge">Default</span>}</strong><small>{profileSummary(item,accounts)}</small></button>)}</div>
-                    {!catalogue?.profiles?.some((item:any)=>matches(`${item.name} ${item.model}`))&&<p>No profiles found.</p>}
-                    {screen==='profiles'&&catalogue?.can_manage&&<button type="button" disabled={busy} onClick={()=>navigate('manage')}>Manage profiles</button>}
-                    {screen==='manage'&&catalogue?.can_manage&&<><div className="setup-actions"><button type="button" disabled={busy} onClick={()=>editProfile('new')}>Create profile</button><button type="button" disabled={busy||!profile} onClick={()=>editProfile('edit')}>Edit</button><button type="button" disabled={busy||!profile} onClick={()=>editProfile('duplicate')}>Duplicate</button><button type="button" disabled={busy||!profile||profile.id===catalogue.default_profile_id} onClick={()=>void mutate('set_default_profile',{profile_id:profile.id})}>Make default</button><button type="button" disabled={busy||!profile} onClick={()=>navigate('delete')}>Delete</button></div><p>Profile changes affect future selections. Existing voyages keep their settings.</p></>}
+                    <div className="setup-choices">{(catalogue?.profiles||[]).filter((item:any)=>matches(`${item.name} ${item.model}`)).map((item:any)=><div className="profile-choice-row" key={item.id}>
+                        <button type="button" className="setup-choice" aria-pressed={profileId===item.id} disabled={busy} onClick={()=>{setProfileId(item.id);back();}}><strong>{item.name}{item.id===catalogue.default_profile_id&&<span className="setup-badge">Default</span>}</strong><small>{profileSummary(item,accounts)}</small></button>
+                        {catalogue?.can_manage&&<ProfileActions name={item.name} isDefault={item.id===catalogue.default_profile_id} disabled={busy} onEdit={()=>editProfile('edit',item)} onDuplicate={()=>editProfile('duplicate',item)} onDefault={()=>void mutate('set_default_profile',{profile_id:item.id})} onDelete={()=>{setDeleteTarget({profile:item,revision:catalogue.revision});navigate('delete');}}/>}
+                    </div>)}</div>
+                    {!catalogue?.profiles?.some((item:any)=>matches(`${item.name} ${item.model}`))&&<p>{search?'No profiles match your search.':'No saved profiles yet.'}</p>}
+                    <p>Choose a profile to use it. Profile edits affect future selections.</p>
                     {profileAccount&&!profileAccount.ready&&<div className="setup-warning"><p>The selected profile’s account is unavailable.</p>{refreshButton(profileAccount)}</div>}
                     <button type="button" disabled={busy} onClick={()=>setRecovery(value=>value+1)}>Reload profiles</button>
                 </>}
@@ -170,7 +174,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
                     <button type="button" disabled={busy||!selected?.ready} onClick={()=>void refreshUsage()}>Refresh usage</button>
                 </>}
                 {screen==='enrollment'&&connection&&path&&<Enrollment connection={connection} workspace={path} tenant={tenant} autoOpen onRefreshed={()=>{retainEditor();setAccountsReload(value=>value+1);back();}}/>}
-                {screen==='delete'&&<><p>Delete <strong>{profile?.name}</strong>? Existing voyages keep their current settings.</p><button type="button" className="setup-danger" disabled={busy||!profile} onClick={()=>void mutate('delete_profile',{profile_id:profile.id})}>Delete profile</button></>}
+                {screen==='delete'&&<><p>Delete <strong>{deleteTarget?.profile.name}</strong>? Existing voyages keep their current settings.</p><button type="button" className="setup-danger" disabled={busy||!deleteTarget||!catalogue} onClick={()=>{if(deleteTarget.revision!==catalogue.revision){setNotice('Profiles changed. Go back and review this profile before deleting.');return;}void mutate('delete_profile',{profile_id:deleteTarget.profile.id});}}>Delete profile</button></>}
             </div>
             <footer><p role="status">{recoveryState.error?'Recovery storage is unavailable. Do not clear it or repeat uncertain creation.':notice}</p>
                 {records.map(record=><button type="button" key={record.key} disabled={busy} onClick={async()=>{setBusy(true);try{const c=fleet.connections.get(record.vessel);const process=await creation.current!.reconcile(c,record);if(process){onCreated(c.id,process);onClose();}else setNotice('Creation was not admitted. You can review and try again.');}catch(error){setNotice(error instanceof Error?error.message:'Receipt unavailable.');}finally{setBusy(false);}}}>Check creation · {record.vessel}</button>)}

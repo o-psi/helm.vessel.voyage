@@ -5,13 +5,14 @@ import {JSDOM} from 'jsdom';
 import {Settings} from '../resources/react/Settings';
 
 const binding={account_id:'a',connection_id:'p',identity_generation:1,connection_revision:1,transport:'chatgpt_oauth'};
-async function mount({availability='available',usageReply,modelReply,existing=false}: {availability?:string;usageReply?:(command:any)=>Promise<any>;modelReply?:(command:any)=>Promise<any>;existing?:boolean}={}){
+async function mount({availability='available',usageReply,modelReply,existing=false,canManage=true,empty=false}: {availability?:string;canManage?:boolean;empty?:boolean;usageReply?:(command:any)=>Promise<any>;modelReply?:(command:any)=>Promise<any>;existing?:boolean}={}){
     const dom=new JSDOM('<div id="root"></div>',{url:'https://helm.test'});
     Object.assign(globalThis,{window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,IS_REACT_ACT_ENVIRONMENT:true});
     dom.window.HTMLDialogElement.prototype.showModal=function(){};dom.window.HTMLDialogElement.prototype.close=function(){};
     const {createRoot}=await import('react-dom/client');
     const commands:any[]=[],actions:any[]=[];let closed=0;
-    const catalogue={revision:1,can_manage:true,default_profile_id:'first',profiles:[{id:'first',name:'Everyday',account:{...binding},model:'m',reasoning_effort:'high',service_tier:'flex'}]};
+    const catalogue={revision:1,can_manage:canManage,default_profile_id:'first',profiles:[{id:'first',name:'Everyday',account:{...binding},model:'m',reasoning_effort:'high',service_tier:'flex'}]};
+    if(empty)catalogue.profiles=[];
     const connection:any={id:'c',name:'Vessel',vessel_id:'v',voyages:[],client:{async exchange({command}:any){
         commands.push(command);let result:any;
         switch(command.op){
@@ -38,7 +39,7 @@ async function mount({availability='available',usageReply,modelReply,existing=fa
 test('profile navigation preserves unsaved name/model and keeps the current step independent',async()=>{
     const view=await mount();try{
         assert.equal(document.querySelector('select'),null,'overview is compact');
-        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');
+        await view.click('Profile');await view.click('Actions for Everyday');await view.click('Edit');
         await view.fill('Profile name','My draft');
         await view.click('Model');await view.fill('Search models','Other');
         assert.equal(document.querySelectorAll('.setup-choice').length,1,'model search filters the actual choices');
@@ -91,7 +92,7 @@ test('wrong identity in refresh response is not presented as a successful refres
 test('late model reply from the previous account cannot replace current model choices',async()=>{
     let resolveOld!:(value:any)=>void;
     const view=await mount({modelReply:async command=>command.account.account_id==='a'?new Promise(resolve=>{resolveOld=resolve;}):{account:command.account,models:[{id:'personal-model',display_name:'Personal model',is_default:true}]}});try{
-        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');await view.click('Provider account');
+        await view.click('Profile');await view.click('Actions for Everyday');await view.click('Edit');await view.click('Provider account');
         await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('.setup-choice')].find(item=>item.textContent?.startsWith('Personal'))!.click());
         await act(async()=>resolveOld({account:binding,models:[{id:'stale-model',display_name:'Stale model'}]}));
         await view.click('Model');assert.match(view.text(),/Personal model/);assert.doesNotMatch(view.text(),/Stale model/);
@@ -101,7 +102,7 @@ test('late model reply from the previous account cannot replace current model ch
 
 test('connection renewal while in a picker retains the unsaved profile and model',async()=>{
     const view=await mount();try{
-        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');
+        await view.click('Profile');await view.click('Actions for Everyday');await view.click('Edit');
         await view.fill('Profile name','Keep this draft');await view.click('Model');
         await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('.setup-choice')].find(item=>item.textContent?.startsWith('Other model'))!.click());
         await view.click('Reasoning & service');await view.renew();await view.click('Done');
@@ -114,9 +115,26 @@ test('connection renewal while in a picker retains the unsaved profile and model
 
 test('renewal cannot silently approve overwriting a newer profile revision',async()=>{
     const view=await mount();try{
-        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');
+        await view.click('Profile');await view.click('Actions for Everyday');await view.click('Edit');
         await view.fill('Profile name','Keep for review');await view.renew(true);await view.click('Save profile');
         assert.match(view.text(),/Saved profiles changed/);assert.equal(document.querySelector<HTMLInputElement>('input')!.value,'Keep for review');
         assert.equal(view.commands.some(command=>command.op==='save_profile'),false);
+    }finally{await view.dispose();}
+});
+
+
+test('create remains available above an empty or filtered profile list',async()=>{
+    const view=await mount({empty:true});try{
+        await view.click('Profile');assert.match(view.text(),/No saved profiles yet/);
+        await view.fill('Search profiles','Nothing matches');assert.match(view.text(),/No profiles match/);
+        assert.ok(document.querySelector('header [aria-label="Create profile"]'));await view.click('Create profile');
+        assert.equal(document.querySelector<HTMLInputElement>('input')!.value,'');
+    }finally{await view.dispose();}
+});
+
+test('read-only catalogues allow profile choice without exposing mutation controls',async()=>{
+    const view=await mount({canManage:false});try{
+        await view.click('Profile');assert.equal(document.querySelector('[aria-label="Create profile"]'),null);assert.equal(document.querySelector('[aria-haspopup="menu"]'),null);
+        assert.ok(document.querySelector('.setup-choice'));assert.equal(view.commands.some(command=>command.op==='save_profile'),false);
     }finally{await view.dispose();}
 });
