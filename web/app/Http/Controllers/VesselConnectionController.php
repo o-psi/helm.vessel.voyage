@@ -38,6 +38,7 @@ class VesselConnectionController extends Controller {
         }
     }
     public function pair(Request $request, VesselGateway $gateway) {
+        $request->session()->flash('vessel_form', 'pair');
         $request->session()->flash('manage_vessels', true);
         $data = $request->validate(['name'=>['required','string','max:100'], 'invitation'=>['required','string','max:16384']]);
         try {

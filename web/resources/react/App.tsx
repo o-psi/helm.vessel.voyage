@@ -162,7 +162,7 @@ export function App({bootstrap}: {bootstrap: Bootstrap}) {
             {selected && <HostBrowser key={selected.key} tab={selected} client={fleet.connections.get(selected.vessel)?.client}/> }
             {[...workspace.tabs.values()].map(tab=><Conversation key={tab.key} tab={tab} workspace={workspace} active={active===tab.key} onSettings={()=>setSettings({tab})}/>)}
         </main>
-        {manage&&<Connections bootstrap={bootstrap} onClose={()=>setManage(false)}/>}
+        {manage&&<Connections bootstrap={bootstrap} states={Object.fromEntries(connections.map(connection => [connection.id, {connected: Boolean(connection.client), status: connection.status}]))} onReconnect={()=>fleet.reconnect()} onClose={()=>setManage(false)}/>}
         {settings&&<Settings fleet={fleet} workspace={workspace} tab={settings.tab} tenant={bootstrap.tenantId} onClose={()=>setSettings(null)} onCreated={(vessel,process)=>setActive(workspace.open(vessel,process.session_id,process.name||'New voyage'))}/>}
     </div>;
 }

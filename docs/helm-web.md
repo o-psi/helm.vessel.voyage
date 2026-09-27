@@ -85,7 +85,11 @@ fallback. Use a publicly resolvable hostname and a browser-trusted TLS certifica
 No cross-origin HTTP bootstrap is needed: browser bootstrap is same-origin to
 Laravel; only the authenticated WebSocket crosses origins.
 
-On `/connections`, copy your tenant's pairing principal. On the Vessel host:
+Open **Vessel connections** from the React console. Its overview shows saved
+Vessels, live connection state and pending pairings. **Add Vessel** opens a
+separate step for a new invitation or an existing credential; **How do I get an
+invitation?** shows the command with your tenant's pairing principal. On the
+Vessel host:
 
 ```sh
 vessel pair-invite --directory /path/to/vessel/state \
@@ -95,14 +99,22 @@ vessel pair-invite --directory /path/to/vessel/state \
   --output /private/invitation.json
 ```
 
-Paste the private invitation into the pairing form. It must target this tenant's
+Paste the private invitation into the Add Vessel form. It must target this tenant's
 principal. Pending attempts retain the exact command identity and encrypted
-invitation before dispatch. If delivery is uncertain, use **retry original
-pairing**: Vessel's exact pairing deduplication returns the original credential,
+invitation before dispatch. If delivery is uncertain, use **Check connection**
+on that pending pairing: Vessel's exact pairing deduplication returns the original credential,
 not a replacement connection. This differs from ordinary conversation mutations,
 which are reconciled through read-only receipts. A successful credential is
 verified against the public pinned Vessel, encrypted at rest and never embedded
 in the conversation page or browser bootstrap response.
+
+The manager keeps typed name and private invitation or credential in page memory
+after a rejected or uncertain request. **Check status** reads the current connection
+list before another attempt; it does not resubmit the private value. A matching
+name is a cue to inspect the saved connection or pairing, not proof that the last
+request succeeded. Closing or reloading the page discards the unsent private draft.
+Connection details show the saved endpoint and Vessel ID. Removing one requires
+an explicit confirmation inside the manager.
 
 Existing private credential JSON can also be imported. It must contain a public
 `endpoint`, exact `vessel_id`, `grant_id` and `token`. Use a dedicated connection credential.

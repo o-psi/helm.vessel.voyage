@@ -67,6 +67,7 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   const react=await call('/',{},'alice');const reactHtml=await react.text();
   assert.equal(react.status,200);assert.match(react.headers.get('cache-control'),/no-store/);
   assert.match(reactHtml,/Helm Console/);assert.match(reactHtml,/alice vessel/);
+  assert.match(reactHtml,/alice\.example\.com/);assert.ok(!reactHtml.includes('bob.example.com'));
   assert.ok(!reactHtml.includes('bob vessel'));assert.ok(!reactHtml.includes('a'.repeat(64)));assert.ok(!reactHtml.includes(pairingSecret));
   assert.doesNotMatch(reactHtml,/livewire(?:\.min)?\.js|flux(?:\.min)?\.js/);
   const a=await call('/',{},'alice');const html=await a.text();assert.equal(a.status,200);assert.match(html,/alice vessel/);assert.ok(!html.includes('bob vessel'));assert.ok(!html.includes('a'.repeat(64)));assert.ok(!html.includes(pairingSecret));
@@ -77,7 +78,7 @@ test('personal tenants: HTTP session, connection isolation, direct browser crede
   const connections=await call('/connections',{},'alice');assert.equal(connections.status,302);assert.match(connections.headers.get('location'),/manage-vessels=1/);const list=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(list,/alice vessel/);assert.ok(!list.includes('bob vessel'));assert.match(list,/id="helm-react"/);assert.doesNotMatch(list,/livewire(?:\.min)?\.js|flux(?:\.min)?\.js|data-flux-modal/);assert.ok(!list.includes('a'.repeat(64)));assert.match(list,/alice pending pairing/);assert.ok(!list.includes('bob pending pairing'));assert.ok(!list.includes(pairingSecret));
   const reactInvalid=await call('/connections/pair',{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-TOKEN':csrf,'X-Helm-Client':'react'},body:JSON.stringify({name:'React invalid',invitation:'invalid-private-fixture'})},'alice');
   assert.equal(reactInvalid.status,302);assert.equal(new URL(reactInvalid.headers.get('location')).pathname,'/');assert.equal(new URL(reactInvalid.headers.get('location')).search,'?manage-vessels=1');
-  const reactError=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(reactError,/Connection not confirmed/);assert.ok(!reactError.includes('invalid-private-fixture'));
+  const reactError=await (await call('/?manage-vessels=1',{},'alice')).text();assert.match(reactError,/Connection not confirmed/);assert.match(reactError,/&quot;connectionForm&quot;:&quot;pair&quot;/);assert.ok(!reactError.includes('invalid-private-fixture'));
   const invalidPair=await call('/connections/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':csrf,Referer:`http://127.0.0.1:${p}/`},body:new URLSearchParams({name:'',invitation:pairingSecret})},'alice');
   assert.equal(invalidPair.status,302);
   const failedPage=await (await call('/',{},'alice')).text();assert.match(failedPage,/Connection not confirmed/);assert.ok(!failedPage.includes(pairingSecret));

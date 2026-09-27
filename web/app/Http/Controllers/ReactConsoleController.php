@@ -19,12 +19,13 @@ class ReactConsoleController extends Controller
         return view('console.react', [
             'bootstrap' => [
                 'connectionStatus' => $request->session()->get('status'),
+                'connectionForm' => $request->session()->get('vessel_form'),
                 'connectionError' => $request->session()->has('errors') ? 'Connection not confirmed. Check pending pairings and supplied fields before trying again.' : null,
                 'tenantId' => $request->user()->tenant_id,
                 'principalId' => $request->user()->tenant->principal_id,
                 'pairings' => VesselPairing::where('tenant_id', $request->user()->tenant_id)->where('status', 'pending')->get(['id', 'name'])->toArray(),
                 'vessels' => VesselConnection::where('tenant_id', $request->user()->tenant_id)
-                    ->get(['id', 'name', 'vessel_id'])->toArray(),
+                    ->get(['id', 'name', 'vessel_id', 'endpoint'])->toArray(),
                 'ticketUrl' => route('console.ticket', absolute: false),
                 'connectionsUrl' => route('connections', absolute: false),
                 'logoutUrl' => route('console.logout', absolute: false),

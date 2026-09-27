@@ -44,3 +44,69 @@
 .working-indicator{display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap}.working-word{background:linear-gradient(100deg,var(--ink) 15%,var(--accent) 45%,var(--ink) 75%);background-size:240% 100%;background-clip:text;-webkit-background-clip:text;color:transparent;animation:working-shimmer 2.4s linear infinite}.working-spinner{color:var(--accent)}
 @keyframes working-shimmer{to{background-position:-240% 0}}
 @media(prefers-reduced-motion:reduce){.working-word{animation:none;background:none;color:var(--ink)}.working-spinner{display:none}}
+
+/* Vessel connections: one scrollable body with fixed navigation and actions. */
+.settings-dialog.connections-dialog[open]{display:flex;flex-direction:column;width:min(760px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:90dvh;padding:0;overflow:hidden}
+.connections-dialog .connections-header,.connections-dialog .connections-footer{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--page);flex-shrink:0}
+.connections-dialog .connections-header{border-bottom:1px solid var(--line);margin:0}
+.connections-dialog .connections-title{flex:1;min-width:0}
+.connections-dialog .connections-title h2{font-size:18px;overflow-wrap:anywhere}
+.connections-dialog .connections-title h2:focus{outline:none}
+.connections-dialog .connections-title p{margin:3px 0 0;color:var(--muted)}
+.connections-dialog .connections-close,.connections-dialog .connections-back{flex-shrink:0;width:34px;height:34px;padding:0;font-size:20px;line-height:1}
+.connections-dialog .connections-add,.connections-dialog .connections-primary,.connections-dialog .connections-empty button{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.connections-dialog .connections-add:hover,.connections-dialog .connections-primary:hover,.connections-dialog .connections-empty button:hover{background:var(--accent);filter:brightness(.95)}
+.connections-dialog .connections-body{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;padding:20px;scrollbar-gutter:stable}
+.connections-dialog .connections-footer{justify-content:flex-end;border-top:1px solid var(--line)}
+.connections-dialog .connections-notice{margin:12px 20px 0;border:1px solid var(--line);border-radius:10px;background:var(--side);padding:10px 12px;font-size:13px;line-height:1.45;display:flex;justify-content:space-between;align-items:center;gap:10px;overflow-wrap:anywhere}
+.connections-dialog .connections-notice.is-error{border-color:#e45b5b;color:#a32828}
+.dark .connections-dialog .connections-notice.is-error{color:#ffaaa5}
+.connections-dialog .connections-intro{margin:0 0 18px}
+.connections-dialog .connections-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.connections-dialog .connections-card,.connections-dialog .connections-detail-card{min-width:0;border:1px solid var(--line);border-radius:12px;background:var(--page);padding:16px}
+.connections-dialog .connections-card{display:flex;flex-direction:column;min-height:162px}
+.connections-dialog .connections-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.connections-dialog .connections-server{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;background:var(--hover);color:var(--muted);font-size:19px}
+.connections-dialog .connections-status{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;white-space:nowrap}
+.connections-dialog .connections-status i{width:8px;height:8px;border-radius:50%;background:#d97706;flex-shrink:0}
+.connections-dialog .connections-status.is-connected i{background:#059669}
+.connections-dialog .connections-card h3{font-size:15px;line-height:1.4;margin:14px 0 3px;overflow-wrap:anywhere}
+.connections-dialog .connections-card p{margin:0 0 12px;overflow-wrap:anywhere}
+.connections-dialog .connections-card-action{margin-top:auto;padding:0;border:0;text-align:left;color:var(--accent);align-self:flex-start;font-size:13px}
+.connections-dialog .connections-card-action:hover,.connections-dialog .connections-help-link:hover{text-decoration:underline;background:transparent}
+.connections-dialog .connections-pending{border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:18px;background:var(--side)}
+.connections-dialog .connections-pending h3,.connections-dialog .connections-danger h3{font-size:14px;margin:0 0 10px}
+.connections-dialog .connections-pending-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:8px}
+.connections-dialog .connections-pending-row + .connections-pending-row{border-top:1px solid var(--line);margin-top:12px}
+.connections-dialog .connections-pending-row div{min-width:0;display:grid;gap:3px}
+.connections-dialog .connections-pending-row strong{overflow-wrap:anywhere}
+.connections-dialog .connections-pending-row small{font-size:12px;color:var(--muted);line-height:1.4}
+.connections-dialog .connections-pending-row button{flex-shrink:0}
+.connections-dialog .connections-empty{text-align:center;padding:36px 16px;border:1px dashed var(--line);border-radius:12px;grid-column:1/-1}
+.connections-dialog .connections-empty>span{font-size:26px;color:var(--muted)}
+.connections-dialog .connections-empty h3{margin:8px 0}
+.connections-dialog .connections-method{display:flex;gap:5px;padding:4px;background:var(--hover);border-radius:10px;margin-bottom:20px}
+.connections-dialog .connections-method button{flex:1;border:0;background:transparent}
+.connections-dialog .connections-method button[aria-pressed=true]{background:var(--page);box-shadow:0 1px 3px #0002}
+.connections-dialog #vessel-add-form{max-width:600px}
+.connections-dialog #vessel-add-form label{font-size:13px;font-weight:600;margin:0 0 16px}
+.connections-dialog #vessel-add-form textarea{width:100%;min-height:124px;font-weight:400}
+.connections-dialog .connections-private{margin:0 0 16px;font-size:12px}
+.connections-dialog .connections-help-link{padding:0;border:0;color:var(--accent);font-size:13px}
+.connections-dialog .connections-guide{max-width:680px}
+.connections-dialog .connections-guide ol{padding-left:20px;line-height:1.6;font-size:13px}
+.connections-dialog .connections-guide li{margin-bottom:10px}
+.connections-dialog .connections-guide pre{background:var(--side);border:1px solid var(--line);border-radius:10px;padding:14px;max-height:none;white-space:pre;overflow:auto;font:12px/1.5 ui-monospace,monospace}
+.connections-dialog .connections-guide a{font-size:13px;color:var(--accent);text-decoration:underline}
+.connections-dialog .connections-details{display:grid;gap:16px}
+.connections-dialog .connections-detail-card dl{display:grid;gap:14px;margin:15px 0 0}
+.connections-dialog .connections-detail-card dt{font-size:12px;color:var(--muted)}
+.connections-dialog .connections-detail-card dd{margin:3px 0 0;font:12px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}
+.connections-dialog .connections-danger{border-top:1px solid var(--line);padding-top:16px}
+.connections-dialog .connections-danger p{max-width:600px}
+.connections-dialog .connections-remove{border-color:#d34b4b;color:#a32828}
+.dark .connections-dialog .connections-remove{color:#ffaaa5}
+.connections-dialog .connections-confirm{border:1px solid #d34b4b;border-radius:10px;padding:14px;display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.connections-dialog .connections-confirm p{margin:0;flex:1 0 100%;color:var(--ink)}
+.connections-dialog button:focus-visible,.connections-dialog a:focus-visible,.connections-dialog input:focus-visible,.connections-dialog textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:620px){.settings-dialog.connections-dialog[open]{width:calc(100vw - 16px);max-width:calc(100vw - 16px);max-height:92dvh}.connections-dialog .connections-header,.connections-dialog .connections-footer{padding:12px 16px}.connections-dialog .connections-body{padding:16px}.connections-dialog .connections-grid{grid-template-columns:1fr}.connections-dialog .connections-card{min-height:144px}.connections-dialog .connections-add{white-space:nowrap;font-size:12px}.connections-dialog .connections-pending-row{align-items:flex-start;flex-direction:column}.connections-dialog .connections-notice{margin:10px 16px 0;align-items:flex-start;flex-direction:column}}
