@@ -122,6 +122,10 @@ export function voyageSettings(root, fleet, {current, select, apply, draft, crea
         const value = selected != null && items.some(item => item.value === selected && !item.disabled) ? selected : items.find(item => !item.disabled)?.value ?? '';
         field.value = value;
         field.disabled = !items.some(item => !item.disabled);
+        if (custom) {
+            const search = field.querySelector('input[role="combobox"]');
+            if (search) { search.value = ''; search.dispatchEvent(new Event('input', {bubbles:true})); }
+        }
     }
     const workspace = () => creating() && $('settings-workspace').value === '__custom__' ? raw('edit-workspace-path').value.trim() : $('settings-workspace').value;
     function workspaceChanged() {
