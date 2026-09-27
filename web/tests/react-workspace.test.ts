@@ -162,7 +162,7 @@ test('uncertain image upload keeps its identity and requires status inspection b
  f.workspace.close();
 });
 
-test('suspended upload resumes Voyage, preserves confirmed image and sends only after fresh status',async()=>{
+test('two pictures wake Voyage and submit once from one Send after fresh status',async()=>{
  const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
  const original=f.connection.client.exchange.bind(f.connection.client);
  const uploads:any[]=[];let incarnation='incarnation';
@@ -178,16 +178,28 @@ test('suspended upload resumes Voyage, preserves confirmed image and sends only 
  };
  // First read observed the old owner, upload is answered by its resumed owner.
  await f.workspace.refresh(key);
- await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);
+ await f.workspace.attach(key,[new File(['picture'],'2587.jpg',{type:'image/jpeg'}),new File(['picture'],'2588.jpg',{type:'image/jpeg'})]);
  await f.workspace.act(key,'submit');
  const tab=f.workspace.tabs.get(key)!;
- assert.match(tab.notice,/Voyage resumed during picture upload/);
- assert.match(tab.notice,/no message was submitted/);
- assert.equal(tab.pictures.length,1);assert.equal(tab.pictures[0].attachment.id,'artifact');
+ assert.equal(tab.notice,'');
  assert.equal(tab.incarnation,'resumed');assert.equal(tab.stale,false);
- assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
- await f.workspace.act(key,'submit');
- assert.equal(uploads.length,1,'confirmed upload is never repeated');
+ assert.equal(uploads.length,2,'each picture uploaded only once');
  assert.equal(f.commands.filter(c=>c.op==='submit_content').length,1);
  assert.equal(tab.pictures.length,0);f.workspace.close();
+});
+
+test('post-upload changed revision or active run never silently submits',async()=>{
+ for(const change of [{revision:2},{run:{state:'running'}}]){
+  const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
+  let uploaded=false;const original=f.connection.client.exchange.bind(f.connection.client);
+  f.connection.client.exchange=async(payload:any)=>{
+   if(payload.command.op==='upload_image'){uploaded=true;return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation:'resumed',result:{id:'artifact',sha256:'a'.repeat(64),byte_size:7}}};}
+   if(uploaded&&payload.command.op==='snapshot')return {protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation:'resumed',result:{session_id:'a',revision:1,run:{state:'idle'},messages:[],...change}}};
+   return original(payload);
+  };
+  await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);await f.workspace.act(key,'submit');
+  assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
+  assert.equal(f.storage.length,0);assert.equal(f.workspace.tabs.get(key)!.pictures.length,1);
+  f.workspace.close();
+ }
 });

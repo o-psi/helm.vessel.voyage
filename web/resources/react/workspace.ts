@@ -83,6 +83,7 @@ export class Workspace {
         if (!tab || !this.actionable(tab) || !this.permitted(tab,op)) return;
         if (tab.snapshot.lifecycle?.archived || tab.snapshot.lifecycle?.deleted || (tab.snapshot.pending_cleanup_run && !['cancel','respond','set_access','steer'].includes(op) && !['running','starting','cancelling'].includes(tab.snapshot.run?.state))) { tab.notice='Voyage lifecycle or cleanup blocks this action. Review its status.'; this.changed(); return; }
         const connection = this.connections().get(tab.vessel)!;
+        const client = connection.client;
         const draft = tab.draft;
         if (['submit', 'steer'].includes(op)) {
             if ((!draft.trim() && !tab.pictures.length) || new TextEncoder().encode(draft).length > 65536) { tab.notice = 'Message must contain 1–65536 UTF-8 bytes.'; this.changed(); return; }
@@ -93,7 +94,6 @@ export class Workspace {
         const origin = structuredClone(tab.snapshot), incarnation = tab.incarnation;
         let command: any;
         let stage: 'upload' | 'submit' = 'upload';
-        let uploadResumed = false;
         this.epochs.set(key, (this.epochs.get(key) || 0) + 1);
         tab.busy = true; this.changed();
         try {
@@ -101,29 +101,32 @@ export class Workspace {
                 const content: any[] = draft ? [{type: 'text', text: draft}] : [];
                 for (const picture of pictures) {
                     if (!picture.attachment) {
-                        const upload = await connection.client.exchange(request('upload_image', {session_id: tab.session, upload_id: picture.uploadId, name: picture.name, data_base64: picture.base64}));
+                        const upload = await client.exchange(request('upload_image', {session_id: tab.session, upload_id: picture.uploadId, name: picture.name, data_base64: picture.base64}));
                         if (upload?.error && upload.outcome_unknown === false) throw new Error(`Picture upload refused: ${upload.error}`);
                         const attachment = voyageResult(upload, tab.session).result;
                         if (!attachment || typeof attachment.id !== 'string' || typeof attachment.sha256 !== 'string' || typeof attachment.byte_size !== 'number') throw new Error('Invalid picture upload receipt.');
-                        if (this.closed || this.connections().get(tab.vessel)?.client !== connection.client || tab.incarnation !== incarnation) throw new Error('Voyage connection changed while uploading pictures.');
-                        // A suspended Voyage can resume during this idempotent upload.
-                        // Retain its confirmed artifact, but never submit against the
-                        // old snapshot or upload it again under a new identity.
+                        if (this.closed || this.connections().get(tab.vessel)?.client !== client || tab.incarnation !== incarnation) throw new Error('Voyage connection changed while uploading pictures.');
+                        // Artifacts belong to the session, not its transient process.
+                        // Keep confirmed uploads even when the process resumes.
                         picture.attachment = attachment;
-                        if (upload.result.incarnation !== incarnation) {
-                            tab.stale = true; uploadResumed = true;
-                            throw new Error('Voyage resumed during picture upload. Review its refreshed status, then send the retained draft again.');
-                        }
+
                     }
                     content.push({type: 'image', attachment: picture.attachment});
                 }
+                // Snapshot is a read, not an upload/submit replay. Keep busy throughout
+                // so one click remains one admission even across a process wake-up.
+                const current = voyageResult(await client.exchange(request('snapshot', {session_id:tab.session})), tab.session).result;
+                if (this.closed || this.connections().get(tab.vessel)?.client !== client || this.tabs.get(key) !== tab) throw new Error('Voyage connection changed while preparing pictures.');
+                if (current?.session_id !== tab.session || current.revision !== origin.revision) throw new Error('Conversation changed while preparing pictures. Review the updated conversation before sending.');
+                if (current.lifecycle?.archived || current.lifecycle?.deleted || current.pending_cleanup_run || current.recovery_pending || ['accepted','running','awaiting_decision','cancel_requested','starting','cancelling'].includes(current.run?.state)) throw new Error('Voyage is not ready for a new message. Draft retained.');
                 op = 'submit_content'; fields = {content};
             }
             if (tab.incarnation !== incarnation || tab.snapshot.revision !== origin.revision) throw new Error('Voyage changed while preparing attachments. Nothing submitted.');
             command = mutation(op, origin, incarnation, fields);
+            if (this.closed || this.connections().get(tab.vessel)?.client !== client) throw new Error('Voyage connection changed before submission.');
             stage = 'submit';
             connection.journal.prepare(command.command);
-            const response = await connection.client.exchange(command);
+            const response = await client.exchange(command);
             const known = resolved(response, command.command.command_id, tab.session);
             if (known && receiptStatus(response) !== 'unknown_after_restart') connection.journal.settle(command.command.command_id);
             const status = receiptStatus(response);
@@ -136,9 +139,7 @@ export class Workspace {
         } catch (error) {
             const reason = error instanceof Error ? error.message : 'Unexpected error';
             if (stage === 'upload' && !command) {
-                tab.notice = uploadResumed
-                    ? `${reason} Draft and confirmed picture retained; no message was submitted.`
-                    : `${reason} Draft and pictures retained; no message was submitted. If the upload outcome is uncertain, check its status before trying again.`;
+                tab.notice = `${reason} Draft and pictures retained; no message was submitted.`;
             } else {
                 tab.notice = `Action not confirmed: ${reason} Draft retained. Check receipts before sending again; do not resend an uncertain command.`;
             }
