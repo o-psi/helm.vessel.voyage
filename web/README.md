@@ -44,8 +44,9 @@ public landing page announces v1.0.0 with pinned Linux x86-64 archive/checksum
 links, glibc 2.39+ requirements and review-first installation instructions. It links to focused `/helm`, `/vessel`, and
 `/voyage` product pages. The public pages do not execute agents, enroll users or collect email addresses.
 An opt-in authenticated **Helm Web console** at `/` gives each OAuth identity a
-personal tenant with its own publicly reachable Vessel connections through a
-scoped gateway. See [console setup and limits](../docs/helm-web.md).
+personal tenant with its own publicly reachable Vessel connections over a direct
+authenticated WebSocket after same-origin credential bootstrap. See
+[console setup and limits](../docs/helm-web.md).
 Signed-out visitors go to `/landing`. Google, X and GitHub sign-in are shown only
 when their application credentials are configured.
 The console never executes agents on the web host.

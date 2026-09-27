@@ -1,5 +1,8 @@
 # Helm Web: React console, personal tenants and public Vessels
 
+For a short user path, see [Your first voyage in Helm Web](getting-started-web.md).
+This document covers connection, deployment and current behavior in detail.
+
 React 19 / TypeScript is the production console at `/`. Laravel supplies sessions,
 OAuth, tenant-isolated connection storage and short-lived credential bootstrap.
 Helm remains a viewer/controller; Vessel-supervised Voyage processes own execution.

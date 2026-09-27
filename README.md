@@ -1,63 +1,56 @@
 # Voyage
 
-AI help for work in your terminal. Ask questions about a project, edit files,
-investigate problems, or automate a task—in a conversation you can return to later.
+Work with an AI agent from your browser or terminal. Ask about a project, edit
+files, and return to the same conversation later. Closing Helm does not cancel
+work already running on a Vessel.
 
-You interact through **Helm**, Voyage's terminal app. Work can keep running when
-you close Helm, so you can disconnect and come back without starting over.
+**Helm Web** is the browser interface. **Helm** is the terminal interface. Both
+connect to a **Vessel** on a machine you control; each **Voyage** runs there as an
+independent process. Your provider credentials stay on that executing machine.
 
-## Get started
+## Start with Helm Web
 
-### 1. Install
+1. Install a [current Vessel and Voyage build](installer/README.md#public-nightly-installation)
+   on a Linux machine you control. The public nightly is the current development
+   path for Web-compatible Vessel features.
+2. Give that Vessel an authenticated, publicly reachable HTTPS/WSS endpoint.
+   Installing the local service alone does not publish it to the internet.
+3. Open [Helm Web](https://helm.vessel.voyage/), choose an available sign-in option,
+   and pair your Vessel. Select its workspace and an AI account/profile, then
+   choose **Create voyage**. Sending a message starts the work.
 
-**Linux x86-64 only for now.** You'll need curl, Python 3.11+, glibc 2.39+ and
-a systemd user session. [Requirements and other installation options →](installer/README.md#download-a-published-version)
+Follow the [Helm Web first-voyage guide](docs/getting-started-web.md) for pairing,
+account setup, and the exact requirements. Helm Web provides the interface; it
+does not host agent compute or include provider credit.
 
-Run as your normal user, without `sudo`:
+## Start in the terminal
+
+**Linux x86-64** needs curl, Python 3.11+, glibc 2.39+, and a systemd user
+session. Run as your ordinary user, without `sudo`:
 
 ```sh
-curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://raw.githubusercontent.com/o-psi/voyage/main/install.sh -o install.sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh
 sh install.sh
-```
-
-This installs the latest release and starts its background service. Prefer to
-review first? Run `sh install.sh install --dry-run` before installing.
-
-### 2. Open a folder
-
-```sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /path/to/your/project
 helm --access read-only
 ```
 
-Replace `/path/to/your/project` with a folder you'd like help with. Read-only mode
-is a good place to start: Helm can inspect files without changing them. Choose a
-folder without secrets; relevant content may be sent to your AI provider.
+The bootstrap installs the latest stable release and starts the local Vessel.
+Replace the project path with a folder you are comfortable sharing with your AI
+provider. In Helm, open **Account** below the message box (or type `/account`) to
+connect an eligible provider account and choose a model. Voyage does not include
+AI credit. Then try asking: “What is in this folder, and where should I start?”
 
-### 3. Connect your AI account
-
-Open **Account** below the message box, or type `/account`. Add an account, choose
-its model, and follow the prompts to make it your default.
-
-Bring your own provider access; Voyage doesn't include AI credit. You can use an
-API account or the experimental ChatGPT subscription sign-in.
-[Account setup and billing options →](docs/provider-accounts.md)
-
-### 4. Try a task
-
-> What is in this folder? Summarize the main files and suggest where I should start.
-
-Press **Enter** to send and **F1** whenever you need help. Ready to make changes or
-come back to a conversation? Follow the [first-task walkthrough](docs/getting-started.md).
+The [terminal first-voyage guide](docs/getting-started.md) covers account setup,
+read-only work, and returning to a conversation. The [installer guide](installer/README.md)
+covers review-first installation, the public nightly, upgrades, and rollback.
 
 ## Learn more
 
-- [Getting started](docs/getting-started.md) — a guided first task, from sign-in to returning later.
-- [Accounts and models](docs/provider-accounts.md) — connect a provider or troubleshoot access.
-- [Install and upgrade](installer/README.md) — installation options, updates and rollback.
-- [Work on another machine](docs/vessel-connections.md) — connect Helm to a remote Vessel.
-- [Configuration](docs/configuration.md) — customize models, permissions and settings.
+- [Helm Web setup and limits](docs/helm-web.md) — login, public Vessel connections, pairing, and deployment.
+- [Accounts and models](docs/provider-accounts.md) — provider access and billing distinctions.
+- [Vessel connections](docs/vessel-connections.md) — local and remote connection management.
+- [Configuration](docs/configuration.md) — models, permissions, and settings.
 - [Build and contribute](docs/development.md) — work on Voyage itself.
-- [All documentation](docs/README.md) — including security and how Voyage works.
+- [All documentation](docs/README.md) — architecture, security, and verification.

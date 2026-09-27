@@ -1,6 +1,7 @@
 # Configuring the current implementation
 
-**New user? Start with [Your first voyage](getting-started.md).** It follows a local
+**New user? Start with [Helm Web](getting-started-web.md) or the
+[terminal first-voyage guide](getting-started.md).** The latter follows a local
 Linux installation and private named-account setup without requiring a TOML edit.
 This page is a reference for deliberate configuration changes, not an onboarding
 prerequisite. [Named accounts](provider-accounts.md) explains account selection,

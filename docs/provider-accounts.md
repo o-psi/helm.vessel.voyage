@@ -3,9 +3,9 @@
 Tracking: [#213](https://github.com/o-psi/voyage/issues/213). The design and
 acceptance matrix are in [the account plan](provider-accounts-plan.md).
 
-New here? Follow [Your first voyage](getting-started.md) for installation, private
-sign-in, a first task, and returning to the same conversation. This page is the
-account reference, including alternative providers and existing installations.
+New here? Follow the [Helm Web](getting-started-web.md) or
+[terminal](getting-started.md) first-voyage guide. This page is the account
+reference, including alternative providers and existing installations.
 
 ## Choose the right authentication path
 

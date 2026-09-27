@@ -1,4 +1,6 @@
-# Your first voyage
+# Your first voyage in the terminal
+
+For browser use, start with [Your first voyage in Helm Web](getting-started-web.md).
 
 Follow this guide for **local Linux terminal use**: install the programs, open
 Helm, set up an account privately, ask one small question about a folder, inspect
@@ -44,7 +46,7 @@ bootstrap, inspect it if desired, then install the latest published release:
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
-  https://raw.githubusercontent.com/o-psi/voyage/main/install.sh -o install.sh
+  https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh -o install.sh
 sh install.sh
 ```
 
@@ -71,7 +73,7 @@ your user and needs network access for uncached dependencies.
 In your normal shell:
 
 ```sh
-git clone https://github.com/o-psi/voyage.git
+git clone https://github.com/o-psi/helm.vessel.voyage.git voyage
 cd voyage
 cargo build --workspace --release --locked
 ./target/release/voyage-installer

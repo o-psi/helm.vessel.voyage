@@ -1,16 +1,17 @@
 # Documentation
 
-**Start here: [Your first voyage](getting-started.md)** — a local Linux walkthrough
-from installation and private account setup to a first task, inspection and resume.
-Provider, remote, administrator and developer alternatives stay separate.
-
+**Start here:** [Your first voyage in Helm Web](getting-started-web.md) or
+[Your first voyage in the terminal](getting-started.md). The browser guide covers
+sign-in and connecting an owner-operated Vessel; the terminal guide covers local
+Linux use. Both clients connect to Vessel-supervised Voyage processes.
 
 The architecture documents define the intended product. Current-operation guides
-only describe the binaries in the source tree. Commands for unimplemented features
-are not presented as usable commands.
+describe the clients and binaries in the source tree. Commands for unimplemented
+features are not presented as usable commands.
 
 | Read this | To understand |
 | --- | --- |
+| [Helm Web](helm-web.md) | Production React console, sign-in, public Vessel pairing and deployment |
 | [Architecture](architecture.md) | Helm, Vessel and the one-session-per-voyage-process boundary |
 | [Runtime contract](runtime-contract.md) | Ownership, persistence, decisions, reconnect and shutdown |
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
@@ -28,7 +29,8 @@ are not presented as usable commands.
 | [Vessel connections](vessel-connections.md) | In-app connection manager, remembered Vessels, pairing, workspaces and access recovery |
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
-| [Local shared browser](local-browser.md) | Local companion, full-duplex routing, privacy, file disclosure and recovery |
+| [Host browser](host-browser.md) | Voyage-owned browser and the shared viewer in both Helm clients |
+| [Legacy local shared browser](local-browser.md) | Earlier opt-in local companion and its separate consent boundary |
 | [Browser verification](local-browser-verification.md) | Actual synthetic TUI/runtime/browser journeys and remaining qualification limits |
 | [Visual tool results](visual-tool-results.md) | Provider image encodings, tool provenance and bounded artifact projection |
 | [Duplex transport](duplex-transport.md) | One authenticated socket for Helm commands, events and local capabilities |
@@ -58,8 +60,9 @@ are not presented as usable commands.
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |
 | [Local Git](local-git.md) | GitHub and this workspace's Git wrapper |
 
-The component entrypoints are [Helm](../helm/README.md) and
-[Vessel](../vessel/README.md), [voyage runtime](../voyage/README.md) and
-[installer](../installer/README.md). [Evaluation status](../eval/README.md) records the
-absence of the previous automated suite. Source code is authoritative for current
-behavior; the architecture contract governs future component boundaries.
+The component entrypoints are [Helm Web](../web/README.md),
+[Helm terminal](../helm/README.md), [Vessel](../vessel/README.md),
+[Voyage runtime](../voyage/README.md), and [installer](../installer/README.md).
+[Evaluation status](../eval/README.md) records the absence of the previous
+automated suite. Source code is authoritative for current behavior; the
+architecture contract governs future component boundaries.

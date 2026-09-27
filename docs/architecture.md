@@ -24,9 +24,9 @@ the shared graphical view and forwards typed authorized input. Legacy explicit
 local-browser code retains its independent local consent boundary. Neither path
 exposes a general executor in Helm. See [host browser](host-browser.md).
 
-**Helm Web is a separate, browser-native client.** Its Laravel/Livewire shell
-and JavaScript conversation pane connect directly to public Vessels over authenticated
-WSS. Laravel owns login, tenant connections and temporary credential bootstrap,
+**Helm Web is a separate, browser-native client.** Its React console and Laravel
+session shell connect directly to public Vessels over authenticated WSS. Laravel
+owns login, tenant connections and temporary credential bootstrap,
 not the ongoing conversation data path. The web host is trusted with explicitly owner-authorized
 full-access Vessel connections, not provider credentials. Existing scoped
 connections remain scoped. It does not own voyages or execute agents.

@@ -158,9 +158,9 @@ use `sh install.sh install --no-start` to leave an inactive service inactive, or
 Before installation, the bootstrap rejects root, requires Python 3.11+ and checks
 that the systemd user manager responds within ten seconds. Published downloads
 additionally require curl, Linux x86-64 and glibc 2.39+ (not musl/Alpine). Trusted
-local source overrides may use another libc baseline or Linux ARM64. The release
-endpoint remains `o-psi/voyage`, which GitHub currently redirects to
-`o-psi/helm.vessel.voyage`; changing a documentation URL does not change acquisition.
+local source overrides may use another libc baseline or Linux ARM64. The
+bootstrap resolves the canonical `o-psi/helm.vessel.voyage` repository for stable
+and public nightly downloads.
 
 After successful explicit installation (not dry-run), the bootstrap prints:
 ```sh

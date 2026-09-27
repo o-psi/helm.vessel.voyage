@@ -50,8 +50,9 @@ catalogue revision, and mutation identities bind exact requests and caller ident
 
 ## Guided setup and daily interaction
 
-The [local first-task guide](getting-started.md) is the front door; architecture,
-remote setup and custom configuration are separate paths. A first-send draft with
+The [Web](getting-started-web.md) and [local terminal](getting-started.md)
+first-voyage guides are the user entry points; architecture and custom configuration
+are separate paths. In the terminal, a first-send draft with
 no selected account opens account readiness without sending the prompt. Native
 ChatGPT setup skips a sole connection choice, names the account, and reviews an
 explicit persistent host default. API setup uses an executing-host private prompt
