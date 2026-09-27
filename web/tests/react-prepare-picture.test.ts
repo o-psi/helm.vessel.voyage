@@ -26,3 +26,11 @@ test('HEIC needs browser decode, unknown types and huge sources refuse before de
         assert.equal(calls,1);
     } finally {globalThis.createImageBitmap=original;}
 });
+
+test('valid 3 MiB JPEG is retained without lossy conversion',async()=>{
+    const file=new File([new Uint8Array(3*1024*1024)],'camera.jpg',{type:'image/jpeg'});
+    const original=globalThis.createImageBitmap;
+    globalThis.createImageBitmap=(async()=>({width:2048,height:1536,close(){}})) as any;
+    try {const prepared=await preparePicture(file);assert.equal(prepared.blob,file);assert.equal(prepared.name,'camera.jpg');}
+    finally {globalThis.createImageBitmap=original;}
+});

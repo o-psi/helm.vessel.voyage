@@ -110,7 +110,7 @@ existing platform restrictions elsewhere in Helm/Vessel private storage and tran
 | Boundary | Limit |
 |---|---|
 | Supported images | Fully decoded single-frame PNG, JPEG, WebP; signatures override extensions |
-| Image bytes / total images per turn | 2 MiB / 2 MiB |
+| Image bytes / total images per turn | 4 MiB / 4 MiB |
 | Images / ordered content parts per turn | 4 / 16 |
 | Composer / authored text | 64 KiB |
 | Dimensions | At most 8192 per axis and 16,777,216 pixels |
@@ -118,11 +118,11 @@ existing platform restrictions elsewhere in Helm/Vessel private storage and tran
 | Progressive JPEG work | At most 32 scans |
 | Clipboard metadata / text/file lists | 32 KiB / 64 KiB |
 | Clipboard helper lifetime | One shared five-second deadline across fallbacks |
-| Images retained in one provider request | 4 occurrences, totaling at most 2 MiB; duplicates count again |
-| Final serialized provider request | 8 MiB including escaping, tools and encoded images |
-| Public/private transport envelope | Existing 4 MiB limit |
+| Images retained in one provider request | 4 occurrences, totaling at most 4 MiB; duplicates count again |
+| Final serialized provider request | 12 MiB including escaping, tools and encoded images |
+| Public/private transport envelope | 8 MiB limit |
 | Private image database | 64 MiB including overhead; at most 128 immutable uploads |
-| Private Helm draft | 8 MiB |
+| Private Helm draft | 16 MiB after transport increase (2 × 8 MiB Vessel envelope) |
 
 If retained images exceed a request limit, compact older image turns or start a new
 voyage. Removing an inline element removes it from the draft, not from an already

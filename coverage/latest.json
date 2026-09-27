@@ -1,15 +1,15 @@
 {
-  "measured_at_utc": "2026-09-27T22:11:28.734911+00:00",
-  "source_commit": "426f0929c516c6f60a63e454ec92cebcce7046c4",
+  "measured_at_utc": "2026-09-27T23:11:12.199362+00:00",
+  "source_commit": "69e1e147c8e4ca1c91f536f2289a970e43fee762",
   "dirty": true,
-  "source_fingerprint_sha256": "5924551842d289abfbd58b65d03e8ea6a6cc0b880849f3b7da56f39152601adc",
-  "source_fingerprint_method": "SHA-256 over sorted workspace Rust files, Cargo manifests/lock and embedded installer Python, each path + NUL + bytes + NUL",
+  "source_fingerprint_sha256": "276ea6439c68fb78fbff22c55a38c2e30896f0d15785b1025087fd6cb8d80f36",
+  "source_fingerprint_method": "SHA-256 over sorted workspace Rust/Cargo paths, each path + NUL + bytes (or MISSING) + NUL",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1878,
+    "passed": 1881,
     "failed": 0,
     "ignored": 3
   },
@@ -21,19 +21,19 @@
       "percent": 0
     },
     "functions": {
-      "count": 10295,
-      "covered": 7635,
-      "percent": 74.16221466731423
+      "count": 10301,
+      "covered": 7639,
+      "percent": 74.15784875254829
     },
     "instantiations": {
-      "count": 23319,
-      "covered": 9606,
-      "percent": 41.19387623826064
+      "count": 23327,
+      "covered": 9610,
+      "percent": 41.1968963004244
     },
     "lines": {
-      "count": 107727,
-      "covered": 83100,
-      "percent": 77.13943579603999
+      "count": 107756,
+      "covered": 83111,
+      "percent": 77.1288837744534
     },
     "mcdc": {
       "count": 0,
@@ -42,13 +42,13 @@
       "percent": 0
     },
     "regions": {
-      "count": 176941,
-      "covered": 130501,
-      "notcovered": 46440,
-      "percent": 73.7539631854686
+      "count": 177005,
+      "covered": 130523,
+      "notcovered": 46482,
+      "percent": 73.7397248665292
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target cargo llvm-cov clean --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/coverage100-final -j 8",
+  "command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -100,9 +100,8 @@
     "Distribution Rust standard-library source outside the workspace"
   ],
   "notes": [
-    "Full workspace default-feature tests; complete current Cargo executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json. Default mixed-artifact report retained locally, not published. No export diagnostics.",
-    "Linux offline Rust evidence only; no live-provider, native macOS/Windows, packaging or TUI validation. Existing unrelated dirty source included in fingerprint.",
-    "#353 checkpoint, not100% completion: baseline80902/107716 ->83100/107727 lines (+2198 covered,+11 total).102 additional passing tests;1878 passed0failed3ignored. No additional exclusions. Existing inline installer baseline tests retained in original measured location; duplicate migrated copies removed.",
-    "Synthetic host-browser/remote-installer process seams exercise contracts, not real Chromium/systemd or root-protected/native-other-platform integration. Remaining24627 lines include reachable untested paths and separately documented environmental gaps. See docs/testing/coverage100-gap-ledger.md."
+    "Full workspace default-feature test command passed. Current Cargo workspace executable artifact set selected from instrumented cargo test --workspace --locked --no-run --message-format=json; mixed historical-worktree report retained only under target/. Selected llvm-cov export has no diagnostics.",
+    "Linux offline evidence only; no live-provider, native macOS/Windows or real phone qualification. Concurrent unrelated dirty Rust source included in fingerprint.",
+    "Compared with prior record: lines 77.1394% -> 77.1289%, functions 74.1622% -> 74.1578%, regions 73.7540% -> 73.7397%. Same workspace scope and exclusions."
   ]
 }

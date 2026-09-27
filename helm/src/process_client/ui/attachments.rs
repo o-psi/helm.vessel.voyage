@@ -15,7 +15,7 @@ use voyage_protocol::{
 };
 
 pub(super) const MAX_IMAGES: usize = 4;
-pub(super) const MAX_BYTES: usize = 2 * 1024 * 1024;
+pub(super) const MAX_BYTES: usize = 4 * 1024 * 1024;
 // Reserve ample space for the Vessel envelope, session identity and incarnation.
 const MAX_COMMAND_BYTES: usize = voyage_protocol::vessel::MAX_VESSEL_BODY - 64 * 1024;
 const MAX_BASE64_BYTES: usize = 4 * MAX_BYTES.div_ceil(3);
@@ -91,7 +91,7 @@ impl Image {
         );
         ensure!(
             !bytes.is_empty() && bytes.len() <= MAX_BYTES,
-            "An image must contain 1 byte to 2 MiB"
+            "An image must contain 1 byte to 4 MiB"
         );
         let (media_type, width, height) = voyage_runtime::images::validate(bytes)?;
         ensure!(width > 0 && height > 0, "Image dimensions are empty");
@@ -185,7 +185,7 @@ fn validate_limits(images: &[Image]) -> Result<()> {
         .context("Image size overflow")?;
     ensure!(
         total <= MAX_BYTES as u64,
-        "Images together must not exceed 2 MiB"
+        "Images together must not exceed 4 MiB"
     );
     Ok(())
 }

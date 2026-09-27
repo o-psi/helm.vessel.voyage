@@ -80,6 +80,42 @@ async fn upload_is_idempotent_and_conflicts_never_change_the_original_attachment
 }
 
 #[tokio::test]
+async fn above_old_two_mib_boundary_uploads_without_advancing_history() {
+    let (_root, state) = tests::fixture().await;
+    // A noisy valid raster stays above the old 2 MiB limit without exceeding
+    // dimension, pixel, image-store or frame budgets.
+    let mut raster = image::RgbImage::new(1100, 1100);
+    let mut seed = 1u32;
+    for pixel in raster.pixels_mut() {
+        for channel in &mut pixel.0 {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            *channel = (seed >> 16) as u8;
+        }
+    }
+    let mut data = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(raster)
+        .write_to(&mut data, image::ImageFormat::Png)
+        .unwrap();
+    let bytes = data.into_inner();
+    assert!(bytes.len() > 2 * 1024 * 1024 && bytes.len() <= crate::images::MAX_BYTES);
+    let before = state.owner.snapshot().await.unwrap();
+    let attachment = images::upload(
+        &state,
+        authorization(&state),
+        Uuid::new_v4(),
+        "camera.png".into(),
+        STANDARD.encode(&bytes),
+    )
+    .await
+    .unwrap();
+    assert_eq!(attachment["byte_size"], bytes.len() as u64);
+    assert_eq!(
+        state.owner.snapshot().await.unwrap().revision,
+        before.revision
+    );
+}
+
+#[tokio::test]
 async fn invalid_uploads_fail_before_storing_bytes_or_advancing_history() {
     let (_root, state) = tests::fixture().await;
     let before = state.owner.snapshot().await.unwrap().revision;
@@ -102,7 +138,7 @@ async fn invalid_uploads_fail_before_storing_bytes_or_advancing_history() {
             authorization(&state),
             Uuid::new_v4(),
             "pixel.png".into(),
-            "a".repeat((2 * 1024 * 1024_usize).div_ceil(3) * 4 + 1)
+            "a".repeat((crate::images::MAX_BYTES).div_ceil(3) * 4 + 1)
         )
         .await
         .unwrap_err()
@@ -130,7 +166,7 @@ async fn invalid_uploads_fail_before_storing_bytes_or_advancing_history() {
             authorization(&state),
             Uuid::new_v4(),
             "pixel.png".into(),
-            STANDARD.encode(vec![0; 2 * 1024 * 1024 + 1])
+            STANDARD.encode(vec![0; crate::images::MAX_BYTES + 1])
         )
         .await
         .unwrap_err()

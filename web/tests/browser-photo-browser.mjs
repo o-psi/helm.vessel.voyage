@@ -30,8 +30,8 @@ try {
         const result={original:source.size,compressed:prepared.blob.size,format:prepared.blob.type,width:decoded.width,height:decoded.height};
         decoded.close();return result;
     });
-    assert.ok(result.original>2*1024*1024,`fixture needs a large camera photo: ${result.original}`);
-    assert.ok(result.compressed>0&&result.compressed<=2*1024*1024);
+    assert.ok(result.original>4*1024*1024,`fixture needs a large camera photo: ${result.original}`);
+    assert.ok(result.compressed>0&&result.compressed<=4*1024*1024);
     assert.equal(result.format,'image/jpeg');assert.ok(result.width*result.height<=16*1024*1024);
     console.log(JSON.stringify({browser:browser.version(),result}));
 } finally {await browser?.close();await new Promise(resolve=>server.close(resolve));}

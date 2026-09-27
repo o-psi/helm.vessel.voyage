@@ -1,7 +1,7 @@
 import {request,voyageResult} from './vessel-client.js';
 export const imageTypes=['image/png','image/jpeg','image/webp'];
 export async function imageBytes(client, attachment, {session_id}={}) {
-    if(!imageTypes.includes(attachment.media_type) || attachment.byte_size>2*1024*1024) throw new Error('Unsupported image metadata.');
+    if(!imageTypes.includes(attachment.media_type) || attachment.byte_size>4*1024*1024) throw new Error('Unsupported image metadata.');
     const chunks=[]; let offset=0;
     while(offset<attachment.byte_size) {
         const value=voyageResult(await client.exchange(request('read_artifact',{session_id,artifact_id:attachment.id,offset,limit:65536})),session_id).result;

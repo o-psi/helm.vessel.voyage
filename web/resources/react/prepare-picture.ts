@@ -1,6 +1,6 @@
 // Normalize camera pictures before the bounded Voyage upload. No original bytes are
 // sent to Vessel or retained by the draft once conversion has succeeded.
-export const MAX_PICTURE_BYTES = 2 * 1024 * 1024;
+export const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
 export const MAX_PICTURES = 4;
 const MAX_SOURCE_BYTES = 32 * 1024 * 1024;
 const MAX_SOURCE_PIXELS = 64 * 1024 * 1024;
@@ -28,7 +28,7 @@ export async function preparePicture(file: File, budget = MAX_PICTURE_BYTES): Pr
             } finally { probe.close(); }
         } catch { return {blob:file,name:file.name}; } // Voyage validates the original signature.
     }
-    if (typeof createImageBitmap !== 'function') throw new Error(`${file.name}: this browser cannot resize this photo. Export a JPEG under 2 MiB.`);
+    if (typeof createImageBitmap !== 'function') throw new Error(`${file.name}: this browser cannot resize this photo. Export a JPEG under 4 MiB.`);
     let image: ImageBitmap;
     try { image = await createImageBitmap(file); }
     catch { throw new Error(`${file.name}: this browser cannot decode the photo. Export it as JPEG or WebP.`); }
@@ -55,6 +55,6 @@ export async function preparePicture(file: File, budget = MAX_PICTURE_BYTES): Pr
             canvas.width=nextWidth;canvas.height=nextHeight;
             canvas.getContext('2d')?.drawImage(previous,0,0,nextWidth,nextHeight);
         }
-        throw new Error(`${file.name}: photo could not be reduced below 2 MiB.`);
+        throw new Error(`${file.name}: photo could not be reduced below 4 MiB.`);
     } finally { image.close(); }
 }

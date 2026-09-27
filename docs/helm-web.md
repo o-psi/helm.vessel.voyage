@@ -38,7 +38,7 @@ approval/question dialogs, advanced voyage actions and the shared browser remain
 available. The composer previews PNG/JPEG/WebP pictures and can resize large
 phone photos to JPEG before upload. HEIC/HEIF works only in browsers able to decode
 it; otherwise export to JPEG or WebP. Original photos are not uploaded. The
-per-message limit remains four pictures and 2 MiB after conversion; errors appear
+per-message limit remains four pictures and 4 MiB after conversion; errors appear
 by the picker. Reloading loses unsent text/pictures, not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and

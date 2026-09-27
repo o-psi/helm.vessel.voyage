@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const VESSEL_API_VERSION: u32 = 1;
-pub const MAX_VESSEL_BODY: usize = 4 * 1024 * 1024;
+pub const MAX_VESSEL_BODY: usize = 8 * 1024 * 1024;
 pub const COMMAND_PATH: &str = "/v1/vessel/command";
 pub const PAIR_PATH: &str = "/v1/vessel/pair";
 pub const PAIR_CAPABILITIES_PATH: &str = "/v1/vessel/pair/capabilities";

@@ -22,8 +22,8 @@ use voyage_protocol::content::ImageAttachment;
 use voyage_protocol::content::{ContentLimits, ContentPart, ImageMediaType, validate_content};
 use voyage_protocol::tool_result::{ArtifactReference, ToolContent};
 
-pub(crate) const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_REQUEST_BYTES: usize = 12 * 1024 * 1024;
 #[derive(Clone, Copy)]
 pub(crate) enum Wire {
     Chat,
@@ -105,7 +105,7 @@ fn parts(message: &Message) -> Result<std::borrow::Cow<'_, [ContentPart]>, Provi
                 .ok_or_else(|| invalid("tool image size overflow"))?;
             if count > 4 || size > MAX_IMAGE_BYTES as u64 {
                 return Err(invalid(
-                    "visual tool output exceeds four images or aggregate 2 MiB limit",
+                    "visual tool output exceeds four images or aggregate 4 MiB limit",
                 ));
             }
         }
@@ -262,9 +262,9 @@ pub(crate) fn validate_request(request: &ModelRequest) -> Result<(), ProviderErr
                     .ok_or_else(|| invalid("image data unavailable; attach the image again"))?;
                 total = total
                     .checked_add(bytes.len())
-                    .ok_or_else(|| invalid("request images exceed aggregate 2 MiB limit"))?;
+                    .ok_or_else(|| invalid("request images exceed aggregate 4 MiB limit"))?;
                 if total > MAX_IMAGE_BYTES {
-                    return Err(invalid("request images exceed aggregate 2 MiB limit"));
+                    return Err(invalid("request images exceed aggregate 4 MiB limit"));
                 }
             }
         }

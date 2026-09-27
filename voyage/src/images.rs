@@ -13,7 +13,7 @@ use voyage_protocol::content::{
     ContentLimits, ContentPart, ImageAttachment, ImageMediaType, validate_content,
 };
 
-pub const MAX_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DATABASE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_IMAGES: u64 = 128;
 const MAX_DIMENSION: u32 = 8192;
@@ -289,7 +289,7 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS scope (singleton INTEGER PRIMARY KEY CHECK(singleton=1), session TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS images (id TEXT PRIMARY KEY, session TEXT NOT NULL, principal TEXT NOT NULL,
-                metadata TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32), bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 2097152));")?;
+                metadata TEXT NOT NULL, digest BLOB NOT NULL CHECK(length(digest)=32), bytes BLOB NOT NULL CHECK(length(bytes) BETWEEN 1 AND 4194304));")?;
         tx.execute(
             "INSERT OR IGNORE INTO scope VALUES (1, ?1)",
             [session.to_string()],
@@ -420,7 +420,7 @@ impl Store {
             attachment: attachment.clone(),
         }])?;
         let row: Option<(String, String, Vec<u8>, Vec<u8>)> = self.connection.query_row(
-            "SELECT principal, metadata, digest, bytes FROM images WHERE id=?1 AND session=?2 AND length(bytes) BETWEEN 1 AND 2097152",
+            "SELECT principal, metadata, digest, bytes FROM images WHERE id=?1 AND session=?2 AND length(bytes) BETWEEN 1 AND 4194304",
             params![attachment.id.to_string(), self.session.to_string()],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional()?;
         let (principal, encoded, digest, bytes) =

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const PROCESS_PROTOCOL: u32 = 1;
-pub const MAX_PROCESS_FRAME: usize = 4 * 1024 * 1024;
+pub const MAX_PROCESS_FRAME: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]

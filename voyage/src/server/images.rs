@@ -12,7 +12,7 @@ pub(super) async fn upload(
 ) -> Result<Value> {
     ensure!(!id.is_nil(), "invalid image upload identity");
     ensure!(
-        data.len() <= (2 * 1024 * 1024_usize).div_ceil(3) * 4,
+        data.len() <= (crate::images::MAX_BYTES).div_ceil(3) * 4,
         "image upload exceeds limit"
     );
     let _admission = state.admission.lock().await;
@@ -31,7 +31,7 @@ pub(super) async fn upload(
         .decode(&data)
         .map_err(|_| anyhow::anyhow!("image upload is not canonical base64"))?;
     ensure!(
-        bytes.len() <= 2 * 1024 * 1024 && STANDARD.encode(&bytes) == data,
+        bytes.len() <= crate::images::MAX_BYTES && STANDARD.encode(&bytes) == data,
         "image upload is not bounded canonical base64"
     );
     let attachment = state

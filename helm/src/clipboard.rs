@@ -4,7 +4,7 @@ use std::{fmt, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command, time::Instant};
 use tokio_util::sync::CancellationToken;
 
-const IMAGE: usize = 2 * 1024 * 1024;
+const IMAGE: usize = 4 * 1024 * 1024;
 const TEXT: usize = 64 * 1024;
 const TYPES: usize = 32 * 1024;
 
@@ -293,7 +293,7 @@ pub(crate) fn pasted_paths(text: &str) -> Option<Vec<PathBuf>> {
 async fn windows(r: &Reader) -> Result<Content> {
     // Constant scripts only. No clipboard content is ever interpreted as code.
     const FILES: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; $v=[Windows.Forms.Clipboard]::GetFileDropList(); if($v.Count -eq 0){exit 0}; $s=[string]::Join("`n",$v); $e=[Text.UTF8Encoding]::new($false); if($e.GetByteCount($s) -gt 65536){exit 2}; $b=$e.GetBytes($s); [Console]::OpenStandardOutput().Write($b,0,$b.Length)"#;
-    const PNG: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'public class ClipboardBoundedStream : System.IO.MemoryStream { public override void Write(byte[] b,int o,int n) { if(n>2097152-Length) throw new System.IO.IOException(); base.Write(b,o,n); } public override void WriteByte(byte b) { if(Length>=2097152) throw new System.IO.IOException(); base.WriteByte(b); } }'; $i=[Windows.Forms.Clipboard]::GetImage(); if($null -eq $i){exit 0}; $w=[long]$i.Width; $h=[long]$i.Height; if($w -le 0 -or $h -le 0 -or $w -gt 8192 -or $h -gt 8192 -or ($w*$h) -gt 16777216){$i.Dispose(); exit 2}; $s=[ClipboardBoundedStream]::new(); try { $i.Save($s,[Drawing.Imaging.ImageFormat]::Png); $s.Position=0; $s.CopyTo([Console]::OpenStandardOutput()) } finally { $s.Dispose(); $i.Dispose() }"#;
+    const PNG: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'public class ClipboardBoundedStream : System.IO.MemoryStream { public override void Write(byte[] b,int o,int n) { if(n>4194304-Length) throw new System.IO.IOException(); base.Write(b,o,n); } public override void WriteByte(byte b) { if(Length>=4194304) throw new System.IO.IOException(); base.WriteByte(b); } }'; $i=[Windows.Forms.Clipboard]::GetImage(); if($null -eq $i){exit 0}; $w=[long]$i.Width; $h=[long]$i.Height; if($w -le 0 -or $h -le 0 -or $w -gt 8192 -or $h -gt 8192 -or ($w*$h) -gt 16777216){$i.Dispose(); exit 2}; $s=[ClipboardBoundedStream]::new(); try { $i.Save($s,[Drawing.Imaging.ImageFormat]::Png); $s.Position=0; $s.CopyTo([Console]::OpenStandardOutput()) } finally { $s.Dispose(); $i.Dispose() }"#;
     const STRING: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; $s=[Windows.Forms.Clipboard]::GetText(); $e=[Text.UTF8Encoding]::new($false); if($e.GetByteCount($s) -gt 65536){exit 2}; $b=$e.GetBytes($s); [Console]::OpenStandardOutput().Write($b,0,$b.Length)"#;
     for (script, limit, kind) in [(FILES, TEXT, 0), (PNG, IMAGE, 1), (STRING, TEXT, 2)] {
         let Some(bytes) = r

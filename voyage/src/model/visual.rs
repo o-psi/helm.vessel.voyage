@@ -38,7 +38,7 @@ pub(crate) fn project(
         if !fits {
             if Some(index) == newest {
                 return Err(invalid(
-                    "newest image result exceeds four images or aggregate 2 MiB limit",
+                    "newest image result exceeds four images or aggregate 4 MiB limit",
                 ));
             }
             cutoff = true;

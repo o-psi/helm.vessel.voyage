@@ -61,6 +61,22 @@ mod notification_tests {
         assert_eq!(encoded["after"], 9);
     }
     #[tokio::test]
+    async fn image_upload_frame_fits_four_mib_binary_with_eight_mib_transport() {
+        let data = "A".repeat((4 * 1024 * 1024_usize).div_ceil(3) * 4);
+        let command = RuntimeCommand::UploadImage {
+            upload_id: uuid::Uuid::new_v4(),
+            name: "camera.jpg".into(),
+            data_base64: data,
+        };
+        let (mut sender, mut receiver) = tokio::io::duplex(65536);
+        let send = async { write_frame(&mut sender, &command).await };
+        let receive = async { read_frame::<RuntimeCommand>(&mut receiver).await };
+        let (sent, read) = tokio::join!(send, receive);
+        sent.unwrap();
+        assert!(matches!(read.unwrap(), RuntimeCommand::UploadImage { .. }));
+    }
+
+    #[tokio::test]
     async fn notification_command_uses_existing_private_frame_codec() {
         let (mut sender, mut receiver) = tokio::io::duplex(4096);
         let command = RuntimeCommand::NotificationEvents {

@@ -166,7 +166,7 @@ pub(super) async fn submit(
                     if let voyage_protocol::content::ContentPart::Image { attachment } = part {
                         total = total.checked_add(attachment.byte_size).context("image request size overflow")?;
                         count += 1;
-                        ensure!(total <= 2 * 1024 * 1024 && count <= 4,
+                        ensure!(total <= crate::images::MAX_BYTES as u64 && count <= 4,
                             "retained images exceed request limit; compact older image turns or start a new voyage");
                         store.resolve(attachment)?;
                     }
