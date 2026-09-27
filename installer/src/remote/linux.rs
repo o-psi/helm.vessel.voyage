@@ -163,6 +163,14 @@ fn unit_definition(unit: &str) -> Result<String> {
         "--property=ExecStart,FragmentPath,DropInPaths",
     ])
 }
+fn persistent_gateway_command(command: Option<&[u8]>, home: &std::path::Path) -> bool {
+    [
+        ".local/bin/vessel",
+        ".local/share/voyage/install/current/bin/vessel",
+    ]
+    .iter()
+    .any(|relative| command == Some(home.join(relative).as_os_str().as_encoded_bytes()))
+}
 fn gateways() -> Result<Vec<Gateway>> {
     let exe = home()?
         .join(".local/share/voyage/install/current/bin/vessel")
@@ -171,7 +179,6 @@ fn gateways() -> Result<Vec<Gateway>> {
         .map(PathBuf::from)
         .unwrap_or(home()?.join(".local/state"))
         .join("voyage/vessel");
-    let persistent = home()?.join(".local/bin/vessel");
     let units: Vec<serde_json::Value> = serde_json::from_str(&systemctl(&[
         "list-units",
         "--type=service",
@@ -202,8 +209,8 @@ fn gateways() -> Result<Vec<Gateway>> {
             continue;
         }
         ensure!(
-            args.first().copied() == Some(persistent.as_os_str().as_encoded_bytes()),
-            "Gateway must use the managed .local/bin/vessel command before remote update"
+            persistent_gateway_command(args.first().copied(), &home()?),
+            "Gateway must use a managed command or install/current/bin/vessel before remote update"
         );
         ensure!(
             name.ends_with(".service")
@@ -678,6 +685,24 @@ mod tests {
     use super::*;
     use crate::fixture_tests::Fixture;
     const OP: &str = "10000000-0000-4000-8000-000000000001";
+    #[test]
+    fn gateway_restart_requires_a_path_that_follows_the_release_pointer() {
+        let home = std::path::Path::new("/home/operator");
+        for command in [
+            "/home/operator/.local/bin/vessel",
+            "/home/operator/.local/share/voyage/install/current/bin/vessel",
+        ] {
+            assert!(persistent_gateway_command(Some(command.as_bytes()), home));
+        }
+        for command in [
+            "/home/operator/.local/share/voyage/install/releases/old/bin/vessel",
+            "/home/other/.local/bin/vessel",
+            "/usr/local/bin/vessel",
+        ] {
+            assert!(!persistent_gateway_command(Some(command.as_bytes()), home));
+        }
+        assert!(!persistent_gateway_command(None, home));
+    }
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| (*v).into()).collect()
     }

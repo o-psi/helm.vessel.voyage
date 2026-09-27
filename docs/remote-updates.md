@@ -44,8 +44,10 @@ The updater runs outside the supervisor's service so replacing Vessel does not
 kill the installer. Existing transactional installation, supervisor readiness and
 rollback checks preserve independent voyages. Public gateway services are included
 only when their live executable belongs to this installation, their exact process
-directory matches, and they use the persistent managed `~/.local/bin/vessel`
-command. Their definitions are checked again before application. No unrelated
+directory matches, and they use either persistent managed path: `~/.local/bin/vessel`
+or `~/.local/share/voyage/install/current/bin/vessel`. Immutable release paths are
+refused because restarting them would launch the old version. Their definitions
+are checked again before application. No unrelated
 service is restarted. Credential key-file environment drop-ins are preserved;
 custom execution, loader, stop and kill overrides are refused.
 
