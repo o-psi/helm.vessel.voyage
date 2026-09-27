@@ -33,7 +33,8 @@ available. Reloading loses unsent text/pictures, not server-side conversations.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Header/back navigation and footer actions stay visible while the
-current screen scrolls. Unsaved profile edits survive picker navigation; reasoning
+current screen scrolls. Unsaved profile edits survive picker navigation and Vessel connection renewal.
+A changed catalogue revision requires review before saving; reasoning
 and service tier have their own step. Profile deletion requires confirmation.
 Expired ChatGPT accounts offer an explicit exact-binding sign-in refresh followed
 by catalogue reload; an uncertain refresh is not replayed, and a mismatched reply

@@ -26,28 +26,33 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     const profile=catalogue?.profiles.find((item:any)=>item.id===profileId),profileAccount=accounts.find(item=>sameAccount(item.binding,profile?.account));
     const generation=useRef(0),usageGeneration=useRef(0),refreshAttempts=useRef(new Set<string>());
     const creation=useRef<Creation|null>(null),origin=useRef({incarnation:tab?.incarnation,revision:tab?.snapshot?.revision});
+    const lastVessel=useRef(vessel),editorRevision=useRef<number|null>(null);
     const editorSeed=useRef<any>(null),restoreFocus=useRef<HTMLElement|null>(null);
     function navigate(next:Screen){history.current.push({screen,focus:document.activeElement as HTMLElement});setSearch('');setScreen(next);}
     function back(){if(busy)return;const previous=history.current.pop();restoreFocus.current=previous?.focus||null;setSearch('');setScreen(previous?.screen||'overview');if(screen==='editor')setEditor(null);}
     function show(next:Screen){history.current=[];setSearch('');setScreen(next);}
     useEffect(()=>{dialog.current?.showModal();return()=>dialog.current?.close();},[]);
     useEffect(()=>{body.current?.scrollTo?.(0,0);const focus=restoreFocus.current;restoreFocus.current=null;if(focus?.isConnected)focus.focus();else heading.current?.focus();},[screen]);
-    useEffect(()=>{usageGeneration.current++;setUsage(null);setUsageNotice('');return()=>{usageGeneration.current++;};},[vessel,path,account,screen]);
+    useEffect(()=>{usageGeneration.current++;setUsage(null);setUsageNotice('');return()=>{usageGeneration.current++;};},[vessel,path,account,screen,connection?.client]);
     useEffect(()=>{generation.current++;return()=>{generation.current++;};},[vessel,path,connection?.client]);
     useEffect(()=>{
-        let alive=true;setCaps(null);setPath('');setAccounts([]);setCatalogue(null);setEditor(null);setNotice('Loading Vessel…');
+        let alive=true;const changedVessel=lastVessel.current!==vessel;lastVessel.current=vessel;
+        retainEditor();setCaps(null);setAccounts([]);setCatalogue(null);
+        if(changedVessel){setPath('');setEditor(null);}
+        setNotice('Loading Vessel…');
         vesselRead(connection,'capabilities').then(async value=>{
             if(value.vessel_id!==connection.vessel_id)throw new Error('Vessel identity changed.');
             if(!value.features?.includes('execution_profiles')){if(alive){setCaps(value);setScreen('location');setNotice(`Vessel ${value.version||'version unknown'} needs an update before profile setup.`);}return;}
             if(value.scope!=='owner'&&(!value.rights?.includes('account_use')||(!tab&&!value.rights?.includes('create'))))throw new Error('This connection does not permit account use or creation.');
-            let location=tab?.snapshot?.workspace||'';
+            let location=tab?.snapshot?.workspace||(changedVessel?'':path);
             if(tab){const process=await vesselRead(connection,'inspect',{session_id:tab.session});if(process.incarnation!==tab.incarnation)throw new Error('Voyage changed. Reopen settings.');location=process.workspace;}
             if(alive){setCaps(value);setPath(location||value.workspaces?.[0]?.path||'');setNotice('');}
         }).catch(error=>alive&&setNotice(error.message));return()=>{alive=false;};
     },[vessel,connection?.client,capabilityReload]);
+    useEffect(()=>{setEditor(null);setProfileId('');},[path,vessel]);
     useEffect(()=>{
-        let alive=true;setCatalogue(null);setEditor(null);setProfileId('');
-        if(path.startsWith('/'))vesselRead(connection,'profiles',{workspace:path}).then(value=>{if(alive){setCatalogue(value);setProfileId(matchingProfile(value.profiles,tab?.snapshot?.inference)?.id||value.default_profile_id||value.profiles[0]?.id||'');}}).catch(error=>alive&&setNotice(error.message));
+        let alive=true;setCatalogue(null);
+        if(path.startsWith('/'))vesselRead(connection,'profiles',{workspace:path}).then(value=>{if(alive){setCatalogue(value);setProfileId(current=>value.profiles.some((item:any)=>item.id===current)?current:matchingProfile(value.profiles,tab?.snapshot?.inference)?.id||value.default_profile_id||value.profiles[0]?.id||'');}}).catch(error=>alive&&setNotice(error.message));
         return()=>{alive=false;};
     },[path,vessel,connection?.client,recovery]);
     useEffect(()=>{
@@ -68,7 +73,7 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     },[account,accounts,editor]);
     const pending=()=>{try{creation.current??=new Creation(localStorage,tenant);return {records:creation.current.pending(),error:false};}catch{return {records:[],error:true};}};
     const recoveryState=pending(),records=recoveryState.records;
-    function retainEditor(){editorSeed.current={...editor,account:selected?.binding,model,reasoning_effort:reasoning,service_tier:service};}
+    function retainEditor(){if(!editor||!selected||!model)return;editorSeed.current={...editor,account:selected?.binding,model,reasoning_effort:reasoning,service_tier:service};}
     async function save(){
         if(screen==='editor')return saveProfile();if(screen!=='overview'||busy||!caps||!profile)return;setBusy(true);
         try{
@@ -80,14 +85,14 @@ export function Settings({fleet,workspace,tab,tenant,onClose,onCreated}:{fleet:a
     function editProfile(mode:string){
         const value=mode==='new'?{id:uuid(),name:'',account:accounts.find(item=>item.ready)?.binding}:structuredClone(profile);if(!value)return;
         if(mode==='duplicate'){value.id=uuid();value.name=duplicateName(value.name);}
-        editorSeed.current=value;setEditor(value);setProfileName(value.name);setAccount(value.account?JSON.stringify(value.account):'');setNotice('');navigate('editor');
+        editorRevision.current=catalogue?.revision;editorSeed.current=value;setEditor(value);setProfileName(value.name);setAccount(value.account?JSON.stringify(value.account):'');setNotice('');navigate('editor');
     }
     async function mutate(op:string,fields:any){
         if(busy||!catalogue?.can_manage)return;setBusy(true);const epoch=generation.current;
         try{const value=await vesselRead(connection,op,{command_id:uuid(),workspace:path,expected_revision:catalogue.revision,...fields});if(epoch!==generation.current)return;setCatalogue(value);setProfileId(fields.profile?.id||value.profiles.find((item:any)=>item.id===profileId)?.id||value.default_profile_id||value.profiles[0]?.id||'');setEditor(null);show('manage');setNotice('Profiles saved. Existing voyages retain their settings.');}
         catch(error){if(epoch===generation.current){setCatalogue(null);setEditor(null);show('manage');setNotice(`${error instanceof Error?error.message:'Change unconfirmed.'} Reload profiles before retrying; the change may have completed.`);}}finally{setBusy(false);}
     }
-    function saveProfile(){const nameError=profileNameError(profileName);if(nameError){setNotice(nameError);return;}if(!selected?.ready||!selectedModel){setNotice('Choose an available account and model.');return;}return mutate('save_profile',{profile:{id:editor.id,name:profileName.trim(),account:selected.binding,model,reasoning_effort:reasoning||null,service_tier:service||null},make_default:false});}
+    function saveProfile(){if(!editor)return;if(catalogue?.revision!==editorRevision.current){setNotice('Saved profiles changed while you were editing. Cancel this edit and review the current profile before saving.');return;}const nameError=profileNameError(profileName);if(nameError){setNotice(nameError);return;}if(!selected?.ready||!selectedModel){setNotice('Choose an available account and model.');return;}return mutate('save_profile',{profile:{id:editor.id,name:profileName.trim(),account:selected.binding,model,reasoning_effort:reasoning||null,service_tier:service||null},make_default:false});}
     async function refreshSignIn(item:any){
         const key=JSON.stringify([vessel,path,item.binding]);if(busy||!expiredOAuth(item)||refreshAttempts.current.has(key))return;
         refreshAttempts.current.add(key);setBusy(true);setNotice(`Refreshing sign-in for ${item.label}…`);retainEditor();

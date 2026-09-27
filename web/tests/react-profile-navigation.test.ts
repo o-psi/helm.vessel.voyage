@@ -27,11 +27,12 @@ async function mount({availability='available',usageReply,modelReply,existing=fa
         return {protocol:1,outcome_unknown:false,error:null,result};
     }}};
     const root=createRoot(document.getElementById('root')!);
-    await act(async()=>root.render(React.createElement(Settings,{fleet:{connections:new Map([['c',connection]])},workspace:{async act(...args:any[]){actions.push(args);return true;}} as any,tenant:'test',tab:existing?{key:'k',vessel:'c',session:'s',incarnation:'i',snapshot:{revision:4,run:{state:'idle'},workspace:'/work',inference:catalogue.profiles[0]}} as any:undefined,onClose(){closed++;},onCreated(){assert.fail('No creation expected');}})));
+    const props={fleet:{connections:new Map([['c',connection]])},workspace:{async act(...args:any[]){actions.push(args);return true;}} as any,tenant:'test',tab:existing?{key:'k',vessel:'c',session:'s',incarnation:'i',snapshot:{revision:4,run:{state:'idle'},workspace:'/work',inference:catalogue.profiles[0]}} as any:undefined,onClose(){closed++;},onCreated(){assert.fail('No creation expected');}};
+    await act(async()=>root.render(React.createElement(Settings,props)));
     function button(label:string){const match=[...document.querySelectorAll<HTMLButtonElement>('button')].find(item=>(item.getAttribute('aria-label')||item.textContent||'')===label||(item.classList.contains('setup-row')&&item.querySelector('strong')?.textContent===label));assert.ok(match,label);return match;}
     async function click(label:string){await act(async()=>button(label).click());}
     async function fill(label:string,value:string){const input=[...document.querySelectorAll('label')].find(item=>item.textContent?.startsWith(label))?.querySelector('input');assert.ok(input,label);await act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value')!.set!.call(input,value);input.dispatchEvent(new dom.window.Event('input',{bubbles:true}));});}
-    return {commands,actions,button,click,fill,closed:()=>closed,text:()=>document.body.textContent!,async dispose(){await act(async()=>root.unmount());dom.window.close();}};
+    return {commands,actions,button,click,fill,async renew(profilesChanged=false){if(profilesChanged)catalogue.revision++;connection.client={...connection.client};await act(async()=>root.render(React.createElement(Settings,{...props})));},closed:()=>closed,text:()=>document.body.textContent!,async dispose(){await act(async()=>root.unmount());dom.window.close();}};
 }
 
 test('profile navigation preserves unsaved name/model and keeps the current step independent',async()=>{
@@ -94,5 +95,28 @@ test('late model reply from the previous account cannot replace current model ch
         await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('.setup-choice')].find(item=>item.textContent?.startsWith('Personal'))!.click());
         await act(async()=>resolveOld({account:binding,models:[{id:'stale-model',display_name:'Stale model'}]}));
         await view.click('Model');assert.match(view.text(),/Personal model/);assert.doesNotMatch(view.text(),/Stale model/);
+    }finally{await view.dispose();}
+});
+
+
+test('connection renewal while in a picker retains the unsaved profile and model',async()=>{
+    const view=await mount();try{
+        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');
+        await view.fill('Profile name','Keep this draft');await view.click('Model');
+        await act(async()=>[...document.querySelectorAll<HTMLButtonElement>('.setup-choice')].find(item=>item.textContent?.startsWith('Other model'))!.click());
+        await view.click('Reasoning & service');await view.renew();await view.click('Done');
+        assert.equal(document.querySelector<HTMLInputElement>('input')!.value,'Keep this draft');assert.match(view.text(),/Other model/);
+        await view.click('Save profile');assert.equal(view.commands.find(command=>command.op==='save_profile').profile.model,'other');
+        assert.equal(view.actions.length,0);
+    }finally{await view.dispose();}
+});
+
+
+test('renewal cannot silently approve overwriting a newer profile revision',async()=>{
+    const view=await mount();try{
+        await view.click('Profile');await view.click('Manage profiles');await view.click('Edit');
+        await view.fill('Profile name','Keep for review');await view.renew(true);await view.click('Save profile');
+        assert.match(view.text(),/Saved profiles changed/);assert.equal(document.querySelector<HTMLInputElement>('input')!.value,'Keep for review');
+        assert.equal(view.commands.some(command=>command.op==='save_profile'),false);
     }finally{await view.dispose();}
 });
