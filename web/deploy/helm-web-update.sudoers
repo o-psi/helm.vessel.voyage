@@ -1,0 +1,2 @@
+# Vessel can request only the fixed root-owned deployment job, without arguments.
+vessel ALL=(root) NOPASSWD: /usr/local/sbin/helm-web-update request

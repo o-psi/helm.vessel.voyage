@@ -231,6 +231,13 @@ requires matching old browser assets and gateway, not just PHP. Setting
 `HELM_WEB_ENABLED=false` disables new console access; temporary credentials already
 issued expire within their bounded lifetime, without cancelling voyages.
 
+On CT 106, the `vessel` execution user cannot directly write the `helm` website
+or private backups. The administrator-installed [scoped Helm Web update job](../web/README.md#scoped-update-from-a-helmweb-voyage)
+allows a voyage to request a fixed deployment of canonical `main` without general
+sudo membership or access to runtime secrets. Its receipt must report success for
+the exact commit; then verify the authenticated console in a browser. Vessel
+binary updates remain a separate owner-reviewed operation.
+
 ## Verification and limits
 
 From `web/`: `npm run typecheck`, `npm test`, `npm run build`, then

@@ -1,0 +1,12 @@
+[Unit]
+Description=Update Helm Web from canonical GitHub main
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/helm-web-update run
+TimeoutStartSec=30min
+PrivateTmp=true
+NoNewPrivileges=true
+

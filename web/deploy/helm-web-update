@@ -1,0 +1,143 @@
+#!/bin/bash
+# Root-owned CT 106 entry point. Only `request` is delegated to the Vessel user.
+set -Eeuo pipefail
+umask 077
+export PATH=/opt/helm-web/node-v24.21.0/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+root=/srv/helm
+repository=https://github.com/o-psi/helm.vessel.voyage.git
+receipt="$root/deployments/helm-web-self-update.json"
+unit=helm-web-update.service
+
+write_receipt() {
+    local phase=$1 source=${2:-unknown}
+    install -d -o root -g root -m 755 "$root/deployments"
+    printf '{"phase":"%s","source":"%s","recorded_at":"%s"}\n' \
+        "$phase" "$source" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$receipt.tmp"
+    chmod 644 "$receipt.tmp"
+    mv -f "$receipt.tmp" "$receipt"
+}
+
+as_helm() { runuser -u helm -- env PATH="$PATH" HOME="$root" "$@"; }
+
+restore_previous() {
+    systemctl stop php8.4-fpm.service || true
+    if [[ -L "$root/app" ]]; then rm "$root/app"; elif [[ -e "$root/app" ]]; then mv "$root/app" "$backup/failed-app"; fi
+    mv "$backup/app" "$root/app"
+    if [[ -f "$backup/database.sqlite" ]]; then
+        rm -f "$root/runtime/database/database.sqlite-wal" "$root/runtime/database/database.sqlite-shm"
+        install -o helm -g www-data -m 660 "$backup/database.sqlite" "$root/runtime/database/database.sqlite"
+    fi
+    systemctl start php8.4-fpm.service
+    as_helm php "$root/app/artisan" up --no-interaction
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1/up >/dev/null
+}
+
+run_update() {
+    [[ $EUID == 0 ]] || { echo 'Root service required' >&2; exit 1; }
+    exec 9>/run/lock/helm-web-update.lock
+    flock -n 9 || { echo 'A Helm Web update is already running' >&2; exit 1; }
+    local stage backup release= source=unknown switched=0 stopped=0
+    stage=$(mktemp -d "$root/update-stage.XXXXXXXX")
+    chown helm:helm "$stage"
+    backup=$(mktemp -d "$root/backups/self-update.XXXXXXXX")
+    write_receipt preparing
+    finish() {
+        local result=$?
+        local failure_phase=failed
+        trap - EXIT
+        if (( result != 0 )); then
+            if (( switched )); then
+                restore_previous || failure_phase=recovery_required
+            elif (( stopped )); then
+                systemctl start php8.4-fpm.service || failure_phase=recovery_required
+                as_helm php "$root/app/artisan" up --no-interaction || failure_phase=recovery_required
+            fi
+            if [[ -n $release && -d $release && ( ! -L "$root/app" || $(readlink "$root/app") != "$release" ) ]]; then
+                mv "$release" "$backup/failed-release" || failure_phase=recovery_required
+            fi
+            write_receipt "$failure_phase" "$source"
+        fi
+        rm -rf -- "$stage"
+        exit "$result"
+    }
+    trap finish EXIT
+
+    as_helm git clone --depth 1 --branch main --single-branch "$repository" "$stage/repository"
+    source=$(as_helm git -C "$stage/repository" rev-parse HEAD)
+    [[ $source =~ ^[0-9a-f]{40}$ ]]
+    if [[ -f "$root/app/.helm-source" ]] && [[ $(cat "$root/app/.helm-source") == "$source" ]]; then
+        write_receipt current "$source"
+        return
+    fi
+
+    install -d -o helm -g helm -m 755 "$stage/app"
+    as_helm rsync -a "$stage/repository/web/" "$stage/app/"
+    ln -s "$root/runtime/.env" "$stage/app/.env"
+    ln -s "$root/private/composer-auth.json" "$stage/app/auth.json"
+    # Laravel storage is external so a release switch cannot replace live state.
+    rm -rf "$stage/app/storage"
+    ln -s "$root/runtime/storage" "$stage/app/storage"
+    install -d -o helm -g www-data -m 2775 "$stage/app/bootstrap/cache"
+    as_helm composer install --working-dir="$stage/app" --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+    as_helm npm --prefix "$stage/app" ci --no-audit --no-fund
+    as_helm npm --prefix "$stage/app" run typecheck
+    as_helm npm --prefix "$stage/app" run build
+    as_helm php "$stage/app/artisan" package:discover --ansi --no-interaction >/dev/null
+    find "$stage/app/app" "$stage/app/routes" -name '*.php' -type f -print0 | xargs -0 -r -n1 php -l >/dev/null
+    test -s "$stage/app/public/build/manifest.json"
+    as_helm rm -rf "$stage/app/node_modules"
+    printf '%s\n' "$source" > "$stage/app/.helm-source"
+    chown helm:www-data "$stage/app/.helm-source"
+    chmod 644 "$stage/app/.helm-source"
+
+    write_receipt activating "$source"
+    # Stop PHP writes before the consistent SQLite snapshot and schema migration.
+    systemctl stop php8.4-fpm.service
+    stopped=1
+    php -r '$from=new SQLite3($argv[1], SQLITE3_OPEN_READONLY); $to=new SQLite3($argv[2]); if (!$from->backup($to)) exit(1);' \
+        "$root/runtime/database/database.sqlite" "$backup/database.sqlite"
+    chmod 600 "$backup/database.sqlite"
+    tar -C "$root" --exclude='runtime/database/database.sqlite*' -czf "$backup/private-runtime.tar.gz" runtime private
+    chmod 600 "$backup/private-runtime.tar.gz"
+
+    release="$root/releases/$source"
+    install -d -o root -g root -m 755 "$root/releases"
+    [[ ! -e "$release" ]] || { echo 'Prepared release path already exists' >&2; exit 1; }
+    mv "$stage/app" "$release"
+    mv "$root/app" "$backup/app"
+    switched=1
+    ln -s "$release" "$root/app"
+    as_helm php "$root/app/artisan" config:clear --no-interaction >/dev/null
+    as_helm php "$root/app/artisan" migrate --force --no-interaction >/dev/null
+    systemctl start php8.4-fpm.service
+    stopped=0
+    as_helm php "$root/app/artisan" up --no-interaction >/dev/null
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1/up >/dev/null
+    curl --fail --silent --show-error --max-time 10 http://127.0.0.1/landing >/dev/null
+    local asset
+    asset=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["resources/react/main.tsx"]["file"])' "$root/app/public/build/manifest.json")
+    curl --fail --silent --show-error --max-time 10 "http://127.0.0.1/build/$asset" >/dev/null
+    write_receipt succeeded "$source"
+    echo "Helm Web updated to $source"
+}
+
+case ${1:-} in
+    request)
+        [[ $# == 1 && $EUID == 0 ]] || exit 2
+        systemctl start --no-block "$unit"
+        echo 'Helm Web update requested; use status to check the receipt.'
+        ;;
+    status)
+        [[ $# == 1 ]] || exit 2
+        if [[ -r "$receipt" ]]; then cat "$receipt"; else printf '{"phase":"not_requested"}\n'; fi
+        ;;
+    run)
+        [[ $# == 1 ]] || exit 2
+        run_update
+        ;;
+    *)
+        echo 'Usage: helm-web-update {request|status}' >&2
+        exit 2
+        ;;
+esac

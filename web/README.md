@@ -126,6 +126,52 @@ matching built assets to the CT; alternatively, upgrade the CT's Node before
 building there. Run Composer as `helm` and reapply shared directory permissions
 after caching.
 
+### Scoped update from a HelmWeb voyage
+
+CT 106 has a separate `vessel` execution account. A filesystem grant in a voyage
+cannot make that account the `helm` application owner or root. Provision the
+root-owned deployment job once from an administrator shell on the CT:
+
+```sh
+/path/to/checkout/web/deploy/provision-helm-web-update
+```
+
+The provisioner installs a checksum-checked official Node 24 runtime in
+`/opt/helm-web`, `sudo`, a systemd job and an exact sudoers command. It **does not**
+add `vessel` to the sudo group. The only delegated command starts a fixed job
+that fetches canonical GitHub `main`; the caller cannot select a repository,
+commit, shell command or destination. It builds as `helm`, not root, and runs
+independently of the requesting voyage. To update from a HelmWeb voyage:
+
+```sh
+sudo -n /usr/local/sbin/helm-web-update request
+/usr/local/sbin/helm-web-update status
+```
+
+The receipt reports `preparing`, `activating`, `succeeded`, `failed`,
+`recovery_required` or `current`
+with the exact source commit. Check `journalctl -u helm-web-update.service` as an
+administrator for failure details. `request` returning means the job was queued,
+not that deployment succeeded. Do not issue repeated requests while one is active.
+
+The job prepares Composer dependencies and Vite assets away from the live site,
+checks TypeScript and PHP syntax, stops PHP-FPM for a consistent SQLite backup,
+preserves private `.env`/Composer auth, applies migrations, and verifies `/up`,
+`/landing` and the built React asset. An unsuccessful activation restores the
+previous app and SQLite snapshot before reopening the site. Private backups stay
+under `/srv/helm/backups` and remain root-only; the `vessel` account never receives
+read access to `/srv/helm/runtime` or `/srv/helm/private`. A successful deployment
+retains its prior app and private backup for administrator rollback. The first run
+converts `/srv/helm/app` to a link to a versioned release. Keep Nginx/PHP-FPM
+pointing to `/srv/helm/app`, and do not edit a release in place.
+
+This is website deployment authority, separate from the reviewed Vessel binary
+updater. A host administrator must deliberately provision it; an ordinary Vessel
+installation never grants it. Any process running as CT user `vessel` can request
+the fixed job after provisioning, so use it only on a Vessel host trusted for that
+website. Treat a failed or uncertain receipt as unresolved until the running site
+and database are inspected; never assume a queued request updated production.
+
 `deploy/nginx.conf` is installed in `/etc/nginx/sites-available/helm` and linked
 under `sites-enabled`. It assumes all requests arrive through the local HTTPS
 Cloudflare connector and sets FastCGI HTTPS accordingly. Do not expose this origin
