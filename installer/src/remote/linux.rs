@@ -157,11 +157,41 @@ fn systemctl(args: &[&str]) -> Result<String> {
     }
 }
 fn unit_definition(unit: &str) -> Result<String> {
-    systemctl(&[
+    stable_unit_definition(&systemctl(&[
         "show",
         unit,
         "--property=ExecStart,FragmentPath,DropInPaths",
-    ])
+    ])?)
+}
+fn stable_unit_definition(definition: &str) -> Result<String> {
+    let mut stable = String::new();
+    for line in definition.lines() {
+        if line.starts_with("ExecStart=") && line.contains(" ; start_time=") {
+            // systemd appends process observations to the configured command.
+            // A supervisor restart can also restart Requires= gateways.
+            let (command, observations) = line.rsplit_once(" ; start_time=").unwrap();
+            ensure!(
+                observations.contains(" ; stop_time=")
+                    && observations.contains(" ; pid=")
+                    && observations.contains(" ; code=")
+                    && observations.contains(" ; status=")
+                    && observations.ends_with(" }")
+                    && !observations.contains("argv[]="),
+                "Unrecognized gateway command observations"
+            );
+            stable.push_str(command);
+            stable.push_str(" }");
+        } else {
+            stable.push_str(line);
+        }
+        stable.push('\n');
+    }
+    Ok(stable)
+}
+fn unchanged_gateway(gateway: &Gateway) -> Result<bool> {
+    // Normalize receipts produced before runtime observations were excluded,
+    // allowing read-only reconciliation of their already-stopped operations.
+    Ok(unit_definition(&gateway.unit)? == stable_unit_definition(&gateway.definition)?)
 }
 fn persistent_gateway_command(command: Option<&[u8]>, home: &std::path::Path) -> bool {
     [
@@ -369,7 +399,7 @@ fn apply_worker(record: &mut Record) -> Result<()> {
     let activated = (|| -> Result<()> {
         for gateway in &record.gateways {
             ensure!(
-                unit_definition(&gateway.unit)? == gateway.definition,
+                unchanged_gateway(gateway)?,
                 "Gateway definition changed during update"
             );
             systemctl(&["restart", &gateway.unit])?;
@@ -387,7 +417,7 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         service::configure(&previous.release_dir.join("bin"), false, false)?;
         for gateway in &record.gateways {
             ensure!(
-                unit_definition(&gateway.unit)? == gateway.definition,
+                unchanged_gateway(gateway)?,
                 "Refusing rollback over changed gateway configuration"
             );
             systemctl(&["restart", &gateway.unit])?;
@@ -451,10 +481,7 @@ fn reconcile(record: &mut Record) -> Result<()> {
         );
     }
     for gateway in &record.gateways {
-        ensure!(
-            unit_definition(&gateway.unit)? == gateway.definition,
-            "Gateway configuration changed"
-        );
+        ensure!(unchanged_gateway(gateway)?, "Gateway configuration changed");
     }
     cleanup_staging(record)?;
     if Some(installed.as_str()) == record.release_id.as_deref() {
@@ -685,6 +712,26 @@ mod tests {
     use super::*;
     use crate::fixture_tests::Fixture;
     const OP: &str = "10000000-0000-4000-8000-000000000001";
+    #[test]
+    fn gateway_configuration_comparison_ignores_only_runtime_observations() {
+        let before = "ExecStart={ path=/managed/vessel ; argv[]=/managed/vessel --bind localhost ; ignore_errors=no ; start_time=[before] ; stop_time=[n/a] ; pid=1 ; code=(null) ; status=0/0 }\nFragmentPath=/unit\nDropInPaths=/credentials\n";
+        let restarted = before
+            .replace("[before]", "[after]")
+            .replace("pid=1", "pid=2");
+        let stable = stable_unit_definition(before).unwrap();
+        assert_eq!(stable, stable_unit_definition(&restarted).unwrap());
+        assert_eq!(stable, stable_unit_definition(&stable).unwrap());
+        for changed in [
+            restarted.replace("--bind localhost", "--bind another"),
+            restarted.replace("path=/managed/vessel", "path=/other/vessel"),
+            restarted.replace("ignore_errors=no", "ignore_errors=yes"),
+            restarted.replace("FragmentPath=/unit", "FragmentPath=/other"),
+            restarted.replace("DropInPaths=/credentials", "DropInPaths=/other"),
+        ] {
+            assert_ne!(stable, stable_unit_definition(&changed).unwrap());
+        }
+        assert!(stable_unit_definition("ExecStart={ path=x ; start_time=unexpected }").is_err());
+    }
     #[test]
     fn gateway_restart_requires_a_path_that_follows_the_release_pointer() {
         let home = std::path::Path::new("/home/operator");
