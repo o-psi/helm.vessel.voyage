@@ -129,3 +129,35 @@ test('delayed output from an old run is rejected',async()=>{
  const original=f.connection.client.exchange.bind(f.connection.client);f.connection.client.exchange=async(payload:any)=>payload.command.op==='run_output'?await new Promise(resolve=>{release=()=>resolve({protocol:1,outcome_unknown:false,result:{session_id:'a',incarnation:'incarnation',result:{run_id:'old',offset:3,next_offset:7,data:'PAGE',has_more:false}}});}):original(payload);
  const pending=f.workspace.output(key,3);tab.snapshot={...tab.snapshot,run:{run_id:'new',live_text:'NEW'}};release();await assert.rejects(pending,/Output identity changed/);f.workspace.close();
 });
+
+test('image upload refusal is explained and does not reserve a submit command',async()=>{
+ const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
+ const original=f.connection.client.exchange.bind(f.connection.client);
+ f.connection.client.exchange=async(payload:any)=>payload.command.op==='upload_image'
+   ? {protocol:1,outcome_unknown:false,error:'invalid image header or resource limit'} : original(payload);
+ await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);
+ await f.workspace.act(key,'submit');
+ const tab=f.workspace.tabs.get(key)!;
+ assert.match(tab.notice,/invalid image header or resource limit/);
+ assert.match(tab.notice,/no message was submitted/);
+ assert.equal(tab.pictures.length,1);
+ assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
+ assert.equal(f.storage.length,0);
+ f.workspace.close();
+});
+
+test('uncertain image upload keeps its identity and requires status inspection before retry',async()=>{
+ const f=fixture(),key=f.workspace.open('vessel','a','A');await f.workspace.refresh(key);
+ let attempts=0;const original=f.connection.client.exchange.bind(f.connection.client);
+ f.connection.client.exchange=async(payload:any)=>{
+   if(payload.command.op==='upload_image'){attempts++;throw new Error('Reply timed out; command outcome may be unknown.');}
+   return original(payload);
+ };
+ await f.workspace.attach(key,[new File(['picture'],'example.png',{type:'image/png'})]);
+ await f.workspace.act(key,'submit');
+ const tab=f.workspace.tabs.get(key)!;
+ assert.match(tab.notice,/outcome may be unknown/);
+ assert.equal(tab.pictures.length,1);assert.equal(attempts,1);
+ assert.equal(f.commands.some(c=>c.op==='submit_content'),false);
+ f.workspace.close();
+});

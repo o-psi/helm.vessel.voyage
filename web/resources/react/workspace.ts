@@ -92,19 +92,28 @@ export class Workspace {
         if (pictures.length && op === 'steer') { tab.notice = 'Pictures cannot be sent as steering. Wait for this run to finish.'; this.changed(); return; }
         const origin = structuredClone(tab.snapshot), incarnation = tab.incarnation;
         let command: any;
+        let stage: 'upload' | 'submit' = 'upload';
         this.epochs.set(key, (this.epochs.get(key) || 0) + 1);
         tab.busy = true; this.changed();
         try {
             if (op === 'submit' && pictures.length) {
                 const content: any[] = draft ? [{type: 'text', text: draft}] : [];
                 for (const picture of pictures) {
-                    if (!picture.attachment) picture.attachment = await this.read(key, 'upload_image', {upload_id: picture.uploadId, name: picture.name, data_base64: picture.base64});
+                    if (!picture.attachment) {
+                        const upload = await connection.client.exchange(request('upload_image', {session_id: tab.session, upload_id: picture.uploadId, name: picture.name, data_base64: picture.base64}));
+                        if (upload?.error && upload.outcome_unknown === false) throw new Error(`Picture upload refused: ${upload.error}`);
+                        const attachment = voyageResult(upload, tab.session).result;
+                        if (upload.result.incarnation !== incarnation) throw new Error('Voyage identity changed during picture upload.');
+                        if (this.closed || this.connections().get(tab.vessel)?.client !== connection.client || tab.incarnation !== incarnation) throw new Error('Voyage connection changed while uploading pictures.');
+                        picture.attachment = attachment;
+                    }
                     content.push({type: 'image', attachment: picture.attachment});
                 }
                 op = 'submit_content'; fields = {content};
             }
             if (tab.incarnation !== incarnation || tab.snapshot.revision !== origin.revision) throw new Error('Voyage changed while preparing attachments. Nothing submitted.');
             command = mutation(op, origin, incarnation, fields);
+            stage = 'submit';
             connection.journal.prepare(command.command);
             const response = await connection.client.exchange(command);
             const known = resolved(response, command.command.command_id, tab.session);
@@ -116,8 +125,15 @@ export class Workspace {
                 tab.pictures = tab.pictures.filter(picture => !pictures.includes(picture)); pictures.forEach(picture => URL.revokeObjectURL(picture.url));
             }
             return Boolean(known && !response.error && !['not_applied','unknown_after_restart'].includes(status));
-        } catch { tab.notice = 'Action not confirmed. Draft retained. Check receipts before sending again.'; }
-        finally { tab.busy = false; tab.stale = true; this.changed(); await this.refresh(key); }
+        } catch (error) {
+            const reason = error instanceof Error ? error.message : 'Unexpected error';
+            if (stage === 'upload' && !command) {
+                tab.notice = `${reason} Draft and pictures retained; no message was submitted. If the upload outcome is uncertain, check its status before trying again.`;
+            } else {
+                tab.notice = `Action not confirmed: ${reason} Draft retained. Check receipts before sending again; do not resend an uncertain command.`;
+            }
+        }
+        finally { tab.busy = false; if (stage === 'submit') tab.stale = true; this.changed(); await this.refresh(key); }
     }
     async attach(key: string, files: File[], guard?: () => boolean) {
         const tab = this.tabs.get(key); if (!tab || tab.busy || this.closed || guard && !guard()) return false;
