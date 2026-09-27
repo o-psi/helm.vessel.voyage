@@ -31,7 +31,15 @@ management, account enrollment, reasoning/service choices, attachments, typed
 approval/question dialogs, advanced voyage actions and the shared browser remain
 available. Reloading loses unsent text/pictures, not server-side conversations.
 
-**Vessel updates** in settings uses the existing reviewed updater and saved operation
+Profile setup uses a compact overview with separate searchable profile, account and
+model screens. Header/back navigation and footer actions stay visible while the
+current screen scrolls. Unsaved profile edits survive picker navigation; reasoning
+and service tier have their own step. Profile deletion requires confirmation.
+Expired ChatGPT accounts offer an explicit exact-binding sign-in refresh followed
+by catalogue reload; an uncertain refresh is not replayed, and a mismatched reply
+requires explicit reload before use. Account usage is loaded only on request.
+
+**Vessel updates** under Location uses the existing reviewed updater and saved operation
 journal. It checks capabilities before profile discovery, reviews an exact release,
 applies only on approval and verifies the running release after reconnect. A Vessel
 predating the updater still needs one administrator bootstrap. See

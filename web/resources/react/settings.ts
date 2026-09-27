@@ -8,7 +8,7 @@ export async function vesselRead(connection:any,op:string,fields:Record<string,u
 export function accountChoices(catalogue:any) {
     return (catalogue.accounts||[]).flatMap((account:any)=>{
         const provider=catalogue.connections?.find((connection:any)=>connection.id===account.connection_id);
-        return (provider?.transports||[]).map((transport:string)=>({label:`${account.label} · ${provider.label} · ${transport.replaceAll('_',' ')}`,ready:account.state==='ready'&&account.availability==='available',binding:{account_id:account.id,connection_id:provider.id,identity_generation:account.identity_generation,connection_revision:provider.revision,transport}}));
+        return (provider?.transports||[]).map((transport:string)=>({label:`${account.label} · ${provider.label} · ${transport.replaceAll('_',' ')}`,state:account.state,availability:account.availability,ready:account.state==='ready'&&account.availability==='available',binding:{account_id:account.id,connection_id:provider.id,identity_generation:account.identity_generation,connection_revision:provider.revision,transport}}));
     });
 }
 // Creation intent is separate from message submission and is never automatically replayed.

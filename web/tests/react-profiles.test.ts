@@ -15,8 +15,8 @@ test('profiles editor saves, duplicates, defaults and deletes without mutating v
  try{await act(async()=>root.render(React.createElement(Settings,{fleet:{connections:new Map([['c',connection]])},workspace:{} as any,tenant:'test',onClose(){},onCreated(){}})));
  assert.equal([...document.querySelectorAll('label')].some(label=>label.textContent?.startsWith('Model')),false);
  assert.equal(commands.filter(command=>command.op==='account_models').length,0,'choosing a saved profile does not discover models');
- await click('Duplicate');assert.ok([...document.querySelectorAll('label')].some(label=>label.textContent?.startsWith('Model')));await click('Save profile');assert.equal(catalogue.profiles.length,2);assert.equal(catalogue.profiles[1].name,'Everyday copy');
- await click('Make default');assert.equal(catalogue.default_profile_id,catalogue.profiles[1].id);await click('Delete');assert.equal(catalogue.profiles.length,1);assert.equal(commands.some(c=>c.op==='set_account_inference'||c.op==='start_account'),false);
+ await act(async()=>document.querySelector<HTMLButtonElement>('.setup-row:last-of-type')!.click());await click('Manage profiles');await click('Duplicate');assert.match(document.body.textContent!,/Reasoning & service/);await click('Save profile');assert.equal(catalogue.profiles.length,2);assert.equal(catalogue.profiles[1].name,'Everyday copy');
+ await click('Make default');assert.equal(catalogue.default_profile_id,catalogue.profiles[1].id);await click('Delete');assert.equal(catalogue.profiles.length,2,'delete requires its confirmation screen');await click('Delete profile');assert.equal(catalogue.profiles.length,1);assert.equal(commands.some(c=>c.op==='set_account_inference'||c.op==='start_account'),false);
  }finally{await act(async()=>root.unmount());dom.window.close();}
 });
 

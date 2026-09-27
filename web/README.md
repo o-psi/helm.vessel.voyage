@@ -26,8 +26,11 @@ No unknown command is automatically replayed. Provider credentials remain on Ves
 
 Create voyage explicitly prepares an independent voyage before its first message.
 Unsent text and pictures live in page memory and survive switching conversations,
-but not reloading. The profile editor manages accounts/models/reasoning/service;
-Vessel updates exposes exact prepare/review/apply/status and capability-gates older
+but not reloading. Profile setup carries over the archived console’s compact
+overview, separate searchable pickers, back navigation, fixed actions, deletion
+confirmation and expired-sign-in refresh. React owns the screens and draft state;
+no Flux console code is loaded. Reasoning/service and account usage have dedicated
+steps. Vessel updates under Location exposes exact prepare/review/apply/status and capability-gates older
 hosts. Existing private keys, tenants, connections and conversation journals need
 no migration for this interface cutover.
 
