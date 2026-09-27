@@ -19,7 +19,7 @@ write_receipt() {
     mv -f "$receipt.tmp" "$receipt"
 }
 
-as_helm() { runuser -u helm -- env PATH="$PATH" HOME="$root" "$@"; }
+as_helm() { (umask 022; runuser -u helm -- env PATH="$PATH" HOME="$root" "$@"); }
 
 restore_previous() {
     systemctl stop php8.4-fpm.service || true
@@ -110,6 +110,12 @@ run_update() {
     install -d -o root -g root -m 755 "$root/releases"
     [[ ! -e "$release" ]] || { echo 'Prepared release path already exists' >&2; exit 1; }
     mv "$stage/app" "$release"
+    # Check the actual PHP/Nginx identity through the final release path.
+    local asset
+    asset=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["resources/react/main.tsx"]["file"])' "$release/public/build/manifest.json")
+    runuser -u www-data -- test -r "$release/vendor/autoload.php"
+    runuser -u www-data -- test -r "$release/public/build/$asset"
+    runuser -u www-data -- test -r "$release/.env"
     mv "$root/app" "$backup/app"
     switched=1
     ln -s "$release" "$root/app"
@@ -120,8 +126,6 @@ run_update() {
     as_helm php "$root/app/artisan" up --no-interaction >/dev/null
     curl --fail --silent --show-error --max-time 10 http://127.0.0.1/up >/dev/null
     curl --fail --silent --show-error --max-time 10 http://127.0.0.1/landing >/dev/null
-    local asset
-    asset=$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["resources/react/main.tsx"]["file"])' "$root/app/public/build/manifest.json")
     curl --fail --silent --show-error --max-time 10 "http://127.0.0.1/build/$asset" >/dev/null
     write_receipt succeeded "$source"
     echo "Helm Web updated to $source"
