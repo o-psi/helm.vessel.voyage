@@ -51,6 +51,11 @@ are checked again before application. No unrelated
 service is restarted. Credential key-file environment drop-ins are preserved;
 custom execution, loader, stop and kill overrides are refused.
 
+Service comparison retains the configured executable, arguments and unit/drop-in
+paths while excluding systemd's PID, exit-status and timestamp observations.
+`Requires=voyage-vessel.service` can restart a gateway during supervisor activation;
+that expected process replacement must not be mistaken for a configuration edit.
+
 Helm retains the operation identity through reloads and polls its receipt after
 reconnect. A completed receipt is followed by a fresh capability check for the same
 Vessel and exact running release before setup can continue. Interrupted application

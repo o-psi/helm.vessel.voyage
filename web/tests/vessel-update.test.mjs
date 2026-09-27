@@ -36,7 +36,7 @@ test('prepare requires a separate exact approval and lost apply reply is only ob
  const {root,$}=fixture(t),seen=[];let record={phase:'idle'},loseApply=false;
  const c={id:'v',vessel_id:'identity',name:'HelmWeb',client:{exchange:async({command})=>{
    seen.push(command);
-   if(command.op==='capabilities')return reply({vessel_id:'identity',running_release:'a'.repeat(64),features:['execution_profiles']});
+   if(command.op==='capabilities')return reply({vessel_id:'identity',version:'next',running_release:'a'.repeat(64),features:['execution_profiles']});
    if(command.op==='update_prepare')record={operation_id:command.operation_id,channel:command.channel,phase:'ready',version:'next',release_id:'a'.repeat(64),description:'pinned source',services:['voyage-vessel.service']};
    if(command.op==='update_apply'){assert.equal(command.release_id,'a'.repeat(64));record={...record,phase:'complete'};if(loseApply)throw Error('Disconnected');}
    return reply(structuredClone(record));
@@ -50,9 +50,25 @@ test('prepare requires a separate exact approval and lost apply reply is only ob
  loseApply=true;$('update-approve').click();$('update-approve').click();await settle();
  assert.equal(seen.filter(c=>c.op==='update_apply').length,1);
  assert.equal($('update-continue').hidden,false);
+ assert.equal($('update-current').textContent,'Installed Vessel version: next');
  controller.bind(c,{remote_updates:true,scope:'owner'});$('setup-update-open').click();await settle();
  assert.equal(seen.filter(c=>c.op==='update_apply').length,1,'reopening observes the receipt without reapplying');
  $('update-continue').click();assert.equal(resumed,1);
+});
+test('reload observes the saved operation before allowing another preparation',async t=>{
+ const {root,$}=fixture(t),seen=[];let resolve;
+ localStorage.setItem('helm-web:update:update-test:v:identity',JSON.stringify({operation_id:'saved-operation'}));
+ const c={id:'v',vessel_id:'identity',name:'HelmWeb',client:{exchange:({command})=>{seen.push(command);return new Promise(r=>{resolve=r;});}}};
+ const update=vesselUpdate(root,{show:()=>{},resume:()=>{}});
+ update.bind(c,{remote_updates:true,scope:'owner',version:'old'});
+ assert.equal($('update-source').hidden,true);
+ assert.equal($('update-continue').hidden,true);
+ $('update-check').click();
+ assert.deepEqual(seen,[{op:'update_status',operation_id:'saved-operation'}]);
+ resolve(reply({operation_id:'saved-operation',phase:'ready',release_id:'a'.repeat(64),version:'next'}));await settle();
+ assert.equal($('update-review').hidden,false);
+ assert.equal($('update-source').hidden,true);
+ assert.equal(seen.some(command=>command.op==='update_apply'),false);
 });
 test('switching Vessel drops stale update replies and owner-only controls stay unavailable',async t=>{
  const {root,$}=fixture(t);let resolve;

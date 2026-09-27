@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-09-27T06:32:03.857528+00:00",
-  "source_commit": "31b2ca6c37b51f4f84ed5d512d1bd850606a6222",
+  "measured_at_utc": "2026-09-27T06:37:39.607690+00:00",
+  "source_commit": "954b80b8093cb976cc2df3d3961081a89071aa05",
   "dirty": true,
   "source_fingerprint_sha256": "32516f9161bc860ae8f993f5689e5ab4be3b0414d81b9c2865aed27228d36eaa",
   "source_fingerprint_method": "SHA-256 over sorted workspace member Rust files, member/root Cargo manifests, Cargo.lock and embedded installer source_acquire.py; each relative path + NUL + bytes + NUL, including new updater files and unrelated staged Rust edit",
@@ -22,18 +22,18 @@
     },
     "functions": {
       "count": 10258,
-      "covered": 7418,
-      "percent": 72.31429128485085
+      "covered": 7419,
+      "percent": 72.32403977383505
     },
     "instantiations": {
       "count": 23244,
-      "covered": 9367,
-      "percent": 40.298571674410596
+      "covered": 9368,
+      "percent": 40.30287385992084
     },
     "lines": {
       "count": 107249,
-      "covered": 80462,
-      "percent": 75.02354334306148
+      "covered": 80477,
+      "percent": 75.03752948745442
     },
     "mcdc": {
       "count": 0,
@@ -43,12 +43,12 @@
     },
     "regions": {
       "count": 176050,
-      "covered": 126001,
-      "notcovered": 50049,
-      "percent": 71.5711445612042
+      "covered": 126024,
+      "notcovered": 50026,
+      "percent": 71.58420903152513
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/remote-updates-systemd -j 8",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$WORKSPACE/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/remote-updates-recovery -j 8",
   "report_command": [
     "/usr/bin/llvm-cov",
     "export",
@@ -120,7 +120,7 @@
   "notes": [
     "All current Cargo workspace target/test executables selected; historical instrumented binaries excluded. Raw default and selected reports retained under target.",
     "Unrelated staged Rust work is included in the measurement fingerprint and preserved outside this delivery.",
-    "Change in percentage points: lines -0.0121, functions -0.0114, regions -0.0088",
+    "Change in percentage points: lines +0.0140, functions +0.0097, regions +0.0131",
     "Linux offline Rust evidence; JavaScript/Python, deployed update and provider journeys are separate."
   ]
 }

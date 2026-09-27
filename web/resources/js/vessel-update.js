@@ -8,6 +8,7 @@ export function vesselUpdate(root, {show, resume}) {
     const storageKey = c => `helm-web:update:${root.dataset.tenantId}:${c.id}:${c.vessel_id}`;
     const text = (id, value) => { $(id).textContent = String(value ?? ''); };
     const active = (c, n) => context?.c === c && generation === n;
+    const mayPrepare = record => !record || ['idle','discarded','complete','failed'].includes(record.phase);
     function remember(record) {
         pending = record;
         if (record?.operation_id) localStorage.setItem(storageKey(context.c), JSON.stringify({operation_id:record.operation_id}));
@@ -15,7 +16,7 @@ export function vesselUpdate(root, {show, resume}) {
     function render(record) {
         const phase = record?.phase || 'idle';
         text('update-status', record?.message || 'Check for a verified update. Nothing is installed until you approve the prepared build.');
-        $('update-source').hidden = !['idle','discarded','complete','failed'].includes(phase);
+        $('update-source').hidden = !mayPrepare(record);
         $('update-review').hidden = phase !== 'ready';
         $('update-refresh').hidden = ['idle','discarded'].includes(phase);
         $('update-continue').hidden = phase !== 'complete';
@@ -46,6 +47,7 @@ export function vesselUpdate(root, {show, resume}) {
                 if (capabilities.vessel_id !== c.vessel_id || capabilities.running_release !== record.release_id || !capabilities.features?.includes('execution_profiles')) {
                     throw Error('The approved update is recorded, but this connection has not verified the new Vessel yet. Check again after it reconnects.');
                 }
+                text('update-current',`Installed Vessel version: ${capabilities.version || 'unknown'}`);
             }
             remember(record); render(record);
         } catch (error) { if (active(c,n)) text('update-status',error.message); }
@@ -66,7 +68,7 @@ export function vesselUpdate(root, {show, resume}) {
         if (active(c,n)) await refresh();
     }
     $('update-check').addEventListener('click',() => {
-        if (busy) return;
+        if (busy || !context?.caps.remote_updates || !mayPrepare(pending)) return;
         const record={operation_id:uuid(),phase:'preparing'};
         try { remember(record); } catch { return text('update-status','Browser recovery storage is unavailable. Enable it before preparing an update.'); }
         mutate('update_prepare',{operation_id:record.operation_id,channel:$('update-channel').value});
@@ -88,11 +90,12 @@ export function vesselUpdate(root, {show, resume}) {
             if (!context) return;
             text('update-vessel-name',`Update ${c.name}`); text('update-current',`Installed Vessel version: ${caps.version || 'unknown'}`);
             try { pending=JSON.parse(localStorage.getItem(storageKey(c)) || 'null'); } catch { pending=null; }
-            render(null);
+            if (pending?.operation_id) pending={operation_id:pending.operation_id,phase:'observing',message:'Checking the saved update. Approval will not be repeated.'};
+            render(pending);
             if (!caps.remote_updates) {
                 $('update-source').hidden=true; $('update-refresh').hidden=true;
                 text('update-status',caps.scope !== 'owner' ? 'Only this Vessel’s account owner can approve an update.' : 'This version predates remote updates. Its updater needs a one-time remote administrator installation; a browser reconnect cannot add that capability. Your draft is retained.');
-            }
+            } else if (pending?.operation_id) refresh();
         },
         required() { show(); },
     };
