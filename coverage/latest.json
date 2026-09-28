@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-28T19:02:07.707558+00:00",
-  "source_commit": "a54cbe5947cac5a63b246988107085d0ba663418",
+  "measured_at_utc": "2026-09-28T20:00:32.056140+00:00",
+  "source_commit": "189a6d167ef97b6ddaa3898eb84a093e7e63e260",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1893,
+    "passed": 1894,
     "failed": 0,
     "ignored": 4
   },
   "totals": {
     "lines": {
-      "count": 108473,
-      "covered": 83758,
-      "percent": 77.21552828814544
+      "count": 108558,
+      "covered": 83827,
+      "percent": 77.2186296726174
     },
     "functions": {
-      "count": 10371,
-      "covered": 7701,
-      "percent": 74.25513450969048
+      "count": 10378,
+      "covered": 7707,
+      "percent": 74.2628637502409
     },
     "regions": {
-      "count": 178204,
-      "covered": 131568,
-      "notcovered": 46636,
-      "percent": 73.82999259275887
+      "count": 178361,
+      "covered": 131680,
+      "notcovered": 46681,
+      "percent": 73.82779867796211
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov clean --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run-owner-only.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary.json",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov clean --workspace --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run-189a6d1.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary-189a6d1.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,6 +40,6 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests under owner-only umask in this checkout; raw profiles were cleared before the passing measurement. Thirteen executed test binaries produced a report with 472 current checkout source files and no shared-target artifacts. An initial run with a permissive umask failed existing private-storage fixtures and was retained under ignored target/coverage-report; the corrected independent run passed. LLVM warned that distribution Rust standard-library source was unavailable, while report generation completed."
+    "Full workspace default-feature Rust tests under owner-only umask in this checkout; raw profiles were cleared before the passing measurement. Thirteen executed test binaries produced a report with 473 source entries, one of which is unavailable distribution Rust standard-library source; no other checkout source was present. The clean step warned that --workspace is ignored with --profraw-only. All tests passed and report generation completed. Native root, browser and installation journeys are separate."
   ]
 }
