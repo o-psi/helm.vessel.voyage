@@ -44,7 +44,9 @@ a pass.
 
 ## Privileged control storage fixtures
 
-The staged Linux control-directory primitive has focused ordinary-UID checks:
+The staged Linux control and runtime-directory primitives have focused
+ordinary-UID checks. The runtime fixture verifies a trusted execute-only parent,
+private session ownership, invalid names, symlinks and changed permissions:
 
 ```sh
 cargo test -p voyage-storage --locked protected_linux -j 8

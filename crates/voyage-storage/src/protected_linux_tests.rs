@@ -170,6 +170,60 @@ fn protected_control_rejects_unsafe_ancestors_and_retains_pinned_directory() {
 }
 
 #[test]
+fn runtime_parent_fences_names_ownership_and_child_control() {
+    let fixture = Fixture::new();
+    mode(&fixture.0, 0o711);
+    let owner = unsafe { libc::geteuid() };
+    let group = unsafe { libc::getegid() };
+    let runtime = RuntimeRoot::open_owned(&fixture.0, owner).unwrap();
+    let session = OsStr::new("641458d0-9562-46e6-b617-a34d1c0e53b7");
+    let directory = runtime.create_session(session, owner, group).unwrap();
+    assert_eq!(directory.metadata().unwrap().mode() & 0o777, 0o700);
+    assert!(runtime.create_session(session, owner, group).is_ok());
+    assert!(
+        runtime
+            .session(session, owner.wrapping_add(1), group)
+            .is_err()
+    );
+    for name in [
+        "..",
+        "other",
+        "00000000-0000-0000-0000-000000000000",
+        "641458D0-9562-46e6-b617-a34d1c0e53b7",
+    ] {
+        assert!(
+            runtime
+                .create_session(OsStr::new(name), owner, group)
+                .is_err()
+        );
+    }
+    std::os::unix::fs::symlink(
+        session,
+        fixture.0.join("641458d0-9562-46e6-b617-a34d1c0e53b8"),
+    )
+    .unwrap();
+    assert!(
+        runtime
+            .session(
+                OsStr::new("641458d0-9562-46e6-b617-a34d1c0e53b8"),
+                owner,
+                group
+            )
+            .is_err()
+    );
+    mode(&fixture.0, 0o713);
+    assert!(runtime.session(session, owner, group).is_err());
+    assert!(RuntimeRoot::open_owned(&fixture.0, owner).is_err());
+    mode(&fixture.0, 0o711);
+    mode(&fixture.0.join(session), 0o777);
+    assert!(runtime.session(session, owner, group).is_err());
+    assert!(runtime.create_session(session, owner, group).is_err());
+    if owner != 0 {
+        assert!(RuntimeRoot::open(&fixture.0).is_err());
+    }
+}
+
+#[test]
 #[ignore = "requires an explicitly disposable native Linux root fixture"]
 fn native_root_records_exclude_ordinary_identity() {
     assert_eq!(

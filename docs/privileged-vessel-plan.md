@@ -41,7 +41,7 @@ Bound registrations also refuse legacy stopped/recovered markers and restart or
 recovery helpers as proof of cleanup. Those paths require protected process
 observation before administrator launches can be enabled.
 
-The next storage increment stages `voyage-storage::protected_linux::RootDirectory`:
+A storage increment stages `voyage-storage::protected_linux::RootDirectory`:
 root-owned private control directories reached through checked non-writable
 ancestors, descriptor-relative reads, bounded regular/private/single-link records,
 atomic new-record publication and nonblocking locks. It is not yet wired into the
@@ -51,6 +51,11 @@ Ubuntu KVM
 root fixture verify this primitive, including actual ordinary-user refusal and
 changed-owner rejection. This is storage evidence, not privileged launch, account
 isolation, IPC, system-service or adoption evidence. See #346 for exact results.
+`RuntimeRoot` now also opens a root-controlled, execute-only runtime parent and
+creates private, explicitly UID/GID-owned session directories by descriptor.
+It refuses symlinks, unsafe ancestors, wrong owner/mode and malformed session
+names. This primitive is not yet connected to the supervisor or installer;
+runtime contents must remain untrusted to root when it is integrated.
 
 A separate Linux launch primitive now resolves the saved account name, UID, GID,
 home and groups immediately before spawn, clears ambient capabilities and drops

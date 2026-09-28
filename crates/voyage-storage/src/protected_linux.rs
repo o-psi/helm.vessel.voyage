@@ -1,6 +1,6 @@
-//! Descriptor-relative root control storage. This protects against ordinary host
-//! identities, not against an unrestricted host administrator. Runtime journals
-//! must never be placed here or parsed by a root control reader.
+//! Descriptor-relative Linux control and runtime-directory boundaries. These
+//! protect against ordinary host identities, not an unrestricted administrator.
+//! Runtime journals must never be parsed by a root control reader.
 use anyhow::{Context, Result, ensure};
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{
@@ -22,6 +22,15 @@ pub struct RootDirectory {
     owner: u32,
 }
 
+/// A root-controlled, execute-only parent for per-voyage runtime directories.
+/// Children own their own journals and IPC; the parent contains no root secrets.
+/// A child may change contents of its directory but cannot replace its entry in
+/// this parent. Never use child-owned data as supervisor authority.
+pub struct RuntimeRoot {
+    directory: File,
+    owner: u32,
+}
+
 fn name(value: &OsStr) -> Result<CString> {
     let path = Path::new(value);
     ensure!(
@@ -31,6 +40,27 @@ fn name(value: &OsStr) -> Result<CString> {
         "control name must be one path component"
     );
     Ok(CString::new(value.as_bytes())?)
+}
+fn session_name(value: &OsStr) -> Result<CString> {
+    let text = value
+        .to_str()
+        .context("runtime session name must be UTF-8")?;
+    let bytes = text.as_bytes();
+    ensure!(
+        bytes.len() == 36
+            && bytes
+                .iter()
+                .any(|byte| byte.is_ascii_hexdigit() && *byte != b'0')
+            && bytes.iter().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    *byte == b'-'
+                } else {
+                    byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
+                }
+            }),
+        "runtime session name must be a lowercase UUID"
+    );
+    name(value)
 }
 fn file_at(parent: &File, name: &CString, flags: i32, mode: libc::mode_t) -> Result<File> {
     // SAFETY: parent and CString remain live; ownership of a successful descriptor
@@ -73,6 +103,117 @@ fn check_file(file: &File, owner: u32, limit: u64) -> Result<()> {
         "unsafe or oversized control record"
     );
     Ok(())
+}
+
+impl RuntimeRoot {
+    /// Opens an administrator-provisioned root-owned parent with mode 0711.
+    /// Every ancestor is opened without following symlinks and must be owned by
+    /// root and unwritable by other identities.
+    pub fn open(path: &Path) -> Result<Self> {
+        Self::open_owned(path, 0)
+    }
+    fn open_owned(path: &Path, owner: u32) -> Result<Self> {
+        ensure!(path.is_absolute(), "runtime root must be absolute");
+        let mut directory = File::open("/")?;
+        check_directory(&directory, owner, false)?;
+        for part in path.components() {
+            match part {
+                Component::RootDir => {}
+                Component::Normal(value) => {
+                    directory = file_at(
+                        &directory,
+                        &name(value)?,
+                        libc::O_RDONLY | libc::O_DIRECTORY,
+                        0,
+                    )?;
+                    check_directory(&directory, owner, false)?;
+                }
+                _ => anyhow::bail!("runtime root path must not contain relative components"),
+            }
+        }
+        let metadata = directory.metadata()?;
+        ensure!(
+            metadata.uid() == owner && metadata.mode() & 0o777 == 0o711,
+            "runtime parent must be authority-owned with mode 0711"
+        );
+        Ok(Self { directory, owner })
+    }
+    fn current(&self) -> Result<()> {
+        let metadata = self.directory.metadata()?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == self.owner && metadata.mode() & 0o777 == 0o711,
+            "runtime parent authority or mode changed"
+        );
+        Ok(())
+    }
+    /// Open a named runtime directory under the pinned trusted parent. Its
+    /// contents remain untrusted even when their owner matches the binding.
+    pub fn session(&self, entry: &OsStr, uid: u32, gid: u32) -> Result<File> {
+        self.current()?;
+        let directory = file_at(
+            &self.directory,
+            &session_name(entry)?,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )?;
+        let metadata = directory.metadata()?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.uid() == uid
+                && metadata.gid() == gid
+                && metadata.mode() & 0o777 == 0o700,
+            "runtime session directory identity or mode changed"
+        );
+        self.current()?;
+        Ok(directory)
+    }
+    /// Provision a new private runtime directory. Existing entries are never
+    /// chowned or repaired. A failed ownership change leaves an inaccessible
+    /// root-owned directory for explicit operator reconciliation.
+    pub fn create_session(&self, entry: &OsStr, uid: u32, gid: u32) -> Result<File> {
+        self.current()?;
+        ensure!(
+            unsafe { libc::geteuid() } == self.owner,
+            "runtime directory creation requires its owning OS identity"
+        );
+        let entry_name = session_name(entry)?;
+        let result =
+            unsafe { libc::mkdirat(self.directory.as_raw_fd(), entry_name.as_ptr(), 0o700) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            ensure!(
+                error.raw_os_error() == Some(libc::EEXIST),
+                "runtime session directory creation failed: {error}"
+            );
+            return self.session(entry, uid, gid);
+        }
+        let directory = file_at(
+            &self.directory,
+            &entry_name,
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )?;
+        let metadata = directory.metadata()?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == self.owner,
+            "new runtime session directory changed before ownership assignment"
+        );
+        ensure!(
+            unsafe { libc::fchmod(directory.as_raw_fd(), 0o700) } == 0,
+            "runtime session permission assignment failed: {}",
+            std::io::Error::last_os_error()
+        );
+        if metadata.uid() != uid || metadata.gid() != gid {
+            ensure!(
+                unsafe { libc::fchown(directory.as_raw_fd(), uid, gid) } == 0,
+                "runtime session ownership assignment failed: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+        directory.sync_all()?;
+        self.directory.sync_all()?;
+        self.session(entry, uid, gid)
+    }
 }
 
 impl RootDirectory {
