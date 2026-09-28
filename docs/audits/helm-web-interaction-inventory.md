@@ -13,6 +13,9 @@ final actions were not exercised. This is an interaction inventory, not a
 functional pass for every outcome. See the [Helm Web overview](../helm-web.md)
 for the console's ownership and connection model.
 
+For necessity, safe automation, and flow improvements for these controls, see
+the [interaction decision audit](helm-web-ux-decision-audit.md).
+
 ## Navigation and account menu
 
 - **New voyage** appears in the sidebar and the empty conversation view.
