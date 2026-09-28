@@ -134,7 +134,7 @@ def release_markdown(text: str, name: str, included: set[str], version: str) -> 
             raise ValueError(f"document link escapes release root: {name}: {url}")
         if dest in included:
             return match.group(0)
-        replacement = f"https://github.com/o-psi/voyage/blob/{version}/{quote(dest, safe='/')}"
+        replacement = f"https://github.com/o-psi/helm.vessel.voyage/blob/{version}/{quote(dest, safe='/')}"
         if parsed.query:
             replacement += "?" + parsed.query
         if parsed.fragment:
@@ -201,7 +201,7 @@ def normalized(info: tarfile.TarInfo) -> tarfile.TarInfo:
 
 def package(bin_dir: Path, version: str, output: Path, *, source: Path = ROOT) -> list[Path]:
     if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
-        raise ValueError("version must be a product tag such as v1.0.1")
+        raise ValueError("version must be a product tag such as v1.0.2")
     if platform.system() != "Linux" or platform.machine() not in ("x86_64", "amd64"):
         raise ValueError("this packager executes binaries and requires Linux x86-64")
     output = output.absolute()
@@ -269,7 +269,7 @@ def interrupted(number: int, _frame: object) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True, help="directory containing the four prebuilt executables")
-    parser.add_argument("--version", required=True, help="product tag, e.g. v1.0.1 (binaries report 1.0.1)")
+    parser.add_argument("--version", required=True, help="product tag, e.g. v1.0.2 (binaries report 1.0.2)")
     parser.add_argument("--output", type=Path, required=True, help="local output directory; assets are never overwritten")
     args = parser.parse_args()
     for number in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):

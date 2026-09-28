@@ -1,7 +1,7 @@
 # Packaging and releases
 
-The current binary release is v1.0.1 for Linux x86-64 only. See the
-[release guide](releases-v1.0.1.md) for scope and installation. The current packagers distribute `helm`,
+The current binary release is v1.0.2 for Linux x86-64 only. See the
+[release guide](releases-v1.0.2.md) for scope and installation. The current packagers distribute `helm`,
 `vessel`, the independent `voyage` runtime, and `voyage-installer`. The supported
 Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
@@ -14,7 +14,7 @@ and failure handling. Build from a clean committed source checkout:
 
 ```sh
 cargo build --workspace --release --locked -j 8
-python3 packaging/package_linux.py --version v1.0.1 --bin-dir target/release --output dist/linux-release
+python3 packaging/package_linux.py --version v1.0.2 --bin-dir target/release --output dist/linux-release
 (cd dist/linux-release && sha256sum -c *.sha256)
 ```
 
@@ -42,8 +42,8 @@ download. Changes anywhere on main, including docs, count as changed source.
 
 The next intended release is recorded in
 [`packaging/nightly-version.txt`](../packaging/nightly-version.txt), currently
-`1.0.2`. In the temporary build checkout only, the workflow sets the Cargo workspace
-and lock entries to `1.0.2-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
+`1.0.3`. In the temporary build checkout only, the workflow sets the Cargo workspace
+and lock entries to `1.0.3-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
 run and attempt numbers prevent version reuse. Checked-in Cargo versions remain
 the stable baseline. The version guard refuses a target equal to or older than a
 shipped stable tag; reconcile the next target after a stable release.
@@ -59,7 +59,7 @@ Review the script before execution. This requires Linux x86-64, glibc 2.39+,
 Python 3.11+, curl and a working systemd user manager under an ordinary user.
 The public download does not require GitHub login. `VOYAGE_VERSION=latest` (the
 default) remains the latest stable release. A specific published nightly version
-can be pinned with `VOYAGE_VERSION=1.0.2-nightly...`.
+can be pinned with `VOYAGE_VERSION=1.0.3-nightly...`.
 
 The archive contains `helm`, `vessel`, `voyage`, `voyage-installer`, `BUILD.txt`
 and `release.json` with binary and browser worker hashes. Keep its `bin/`,
@@ -99,7 +99,7 @@ participant execution until the relevant workflows are implemented and verified.
 
 The new `packaging/release_bundle.py` supports explicit-asset bundle preparation,
 OpenSSH detached signatures and verification against independently pinned trust,
-version and target. See the [release bundle guide](https://github.com/o-psi/voyage/blob/main/packaging/README.md).
+version and target. See the [release bundle guide](../packaging/README.md).
 It copies only selected assets, records source commit/tree and hashes, and emits
 an SPDX Cargo.lock inventory. It never restores or implicitly depends on deleted
 packaging scripts. Historical packager commands above require those files to be

@@ -7,8 +7,8 @@ Helm, set up an account privately, ask one small question about a folder, inspec
 the result, and return to the same conversation. No remote server or project map
 is required.
 
-The Linux x86-64 v1.0.1 binary release is described in the
-[release guide](releases-v1.0.1.md). These instructions are not a
+The Linux x86-64 v1.0.2 binary release is described in the
+[release guide](releases-v1.0.2.md). These instructions are not a
 claim that a new user's live login or paid request has been tested. Subscription
 sign-in uses an experimental provider endpoint. Installation, authentication,
 account selection, and model access are different checks; none guarantees the next.
@@ -60,7 +60,7 @@ pair Helm Web. A running service stays active with `--no-start` during an upgrad
 
 After success, use the printed PATH command, then continue to **2. Launch Helm**.
 For a pinned release or manual archive verification, see the
-[v1.0.1 release installation](releases-v1.0.1.md) and
+[v1.0.2 release installation](releases-v1.0.2.md) and
 [bootstrap details](../installer/README.md#download-a-published-version).
 
 The installer does not edit shell startup files. Add the printed PATH entry using

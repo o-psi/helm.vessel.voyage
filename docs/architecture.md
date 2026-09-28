@@ -4,14 +4,15 @@ Status: canonical component model. The Linux implementation uses these process
 boundaries; see [current state](current-state.md) and [delivery evidence](implementation.md)
 for supported paths, verification and deployment limits.
 
-## Browser direction for v1.0.2
+## Browser ownership and qualification
 
 Issue #333 puts the browser on the Vessel host inside its Voyage process. Both Helm
 clients use one live DOM viewer with typed, element-addressed human control over
 the authenticated Vessel connection. Voyage remains the sole website execution
 owner. See [host-browser design](host-browser.md) and
 [current state](current-state.md). The opt-in local-browser feature retains its
-separate consent boundary.
+separate consent boundary. Broader site and native-platform qualification remains
+planned for v1.0.3.
 
 ## Three programs
 

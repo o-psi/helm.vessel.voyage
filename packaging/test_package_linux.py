@@ -82,7 +82,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertEqual(archive.getmember(f"{root}/bin/{name}").mode, 0o755)
             text = archive.extractfile(root + "/README.md").read().decode()
             self.assertIn("(docs/guide.md#intro)", text)
-            self.assertIn("https://github.com/o-psi/voyage/blob/v1.0.0/src/main.rs", text)
+            self.assertIn("https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.0/src/main.rs", text)
         self.assertNotIn("https:", (self.source / "README.md").read_text())
 
     def test_existing_assets_and_symlinks_are_preserved(self):
@@ -174,7 +174,7 @@ class PackagingTests(unittest.TestCase):
         text = "[home]: ../README.md#top\n[code]: <../src/main.rs>\n[external](https://example.org) [anchor](#here)"
         result = pack.release_markdown(text, "docs/guide.md", {"README.md"}, "v1.0.0")
         self.assertIn("[home]: ../README.md#top", result)
-        self.assertIn("[code]: <https://github.com/o-psi/voyage/blob/v1.0.0/src/main.rs>", result)
+        self.assertIn("[code]: <https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.0/src/main.rs>", result)
         self.assertIn("[anchor](#here)", result)
         with self.assertRaises(ValueError):
             pack.release_markdown("[bad](../../secret)", "README.md", set(), "v1.0.0")

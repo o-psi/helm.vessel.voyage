@@ -1,7 +1,7 @@
 # Linux x86-64 release packaging
 
 `package_linux.py` is the maintained packager for the Linux x86-64 scope of
-[#305](https://github.com/o-psi/voyage/issues/305). It packages already-built,
+[#305](https://github.com/o-psi/helm.vessel.voyage/issues/305). It packages already-built,
 trusted executables; it does not build, install, tag, sign, upload or publish a
 GitHub release. Version changes, builds, workflows and release notes belong to
 the release coordinator. No Rust build is needed to test this Python code.
@@ -11,7 +11,7 @@ the release coordinator. No Rust build is needed to test this Python code.
 Run on Linux x86-64 with Python 3.11 or later, from the checkout root:
 
 ```sh
-python3 packaging/package_linux.py --version v1.0.1 --bin-dir target/release --output dist/linux-release
+python3 packaging/package_linux.py --version v1.0.2 --bin-dir target/release --output dist/linux-release
 (cd dist/linux-release && sha256sum -c *.sha256)
 ```
 
@@ -20,7 +20,7 @@ All arguments are required. `--bin-dir` explicitly selects the directory contain
 output or `TARGET` environment variable is used. Other files in that directory
 are ignored. These must be executable regular files, not symlinks. Each copied
 executable must have an ELF64 little-endian AMD64 header and report exactly
-`NAME 1.0.1` from `--version` for tag `v1.0.1`. Product tags use
+`NAME 1.0.2` from `--version` for tag `v1.0.2`. Product tags use
 `vMAJOR.MINOR.PATCH`, without prerelease or build suffixes. The fixed target is
 `x86_64-unknown-linux-gnu`. The ELF check rejects obvious architecture mismatches;
 it does not establish glibc compatibility, build provenance or native deployment.
@@ -28,15 +28,17 @@ Use trusted builds: version/help generation executes the supplied binaries.
 
 The output directory receives exactly these assets (other existing files remain):
 
-- `voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz`
-- `voyage-v1.0.1-x86_64-unknown-linux-gnu.tar.gz.sha256`
+- `voyage-v1.0.2-x86_64-unknown-linux-gnu.tar.gz`
+- `voyage-v1.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256`
 - `voyage-installer-x86_64-unknown-linux-gnu.gz`
 - `voyage-installer-x86_64-unknown-linux-gnu.gz.sha256`
 
 Checksums use standard `sha256sum` format with the asset basename. The full tarball
-has one `voyage-v1.0.1-x86_64-unknown-linux-gnu/` root, four `bin/` executables and
-`release.json` schema version 1: `version`, `target` and `binaries` keyed by the
-four executable names, each containing `sha256`. This matches the consumers in
+has one `voyage-v1.0.2-x86_64-unknown-linux-gnu/` root, four `bin/` executables and
+`release.json` schema version 1: `version`, `target`, `binaries` keyed by the
+four executable names, and `assets` keyed by browser worker paths, each containing
+`sha256`. The browser worker is stored under `share/voyage/browser` and retained
+by installer upgrades. This matches the consumers in
 [`install.sh`](../install.sh) and the [installer](../installer/README.md).
 The standalone gzip decompresses directly to the same installer bytes, not a tar
 archive. It still needs the full release for installation.
@@ -53,13 +55,13 @@ are not echoed. These controls are not an OS sandbox against malicious binaries.
 Every entry must exist; missing files, traversal, duplicate entries and symlinked
 files/ancestors fail packaging. It includes the configuration example, runtime
 prompt, agent instructions, selected maintained guides and
-[release notes](../docs/releases-v1.0.1.md). It never recursively copies the
+[release notes](../docs/releases-v1.0.2.md). It never recursively copies the
 checkout, follows documentation links to copy more files, or includes arbitrary
 local notes, credentials, build outputs or source files.
 
 For Markdown inline links/images and reference definitions, links to included
 files remain relative. Links to unshipped repository files become absolute
-`https://github.com/o-psi/voyage/blob/v1.0.1/...` links (using the selected version),
+`https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.2/...` links (using the selected version),
 retaining fragments; external URLs and local anchors stay unchanged. This keeps
 relative file links valid in the archive without copying unrelated files. It does
 not certify external URL availability or heading anchors, and the matching tag

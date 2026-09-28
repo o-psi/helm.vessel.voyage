@@ -1,0 +1,89 @@
+# v1.0.2 — Linux x86-64
+
+This Linux binary release contains `helm`, `vessel`, `voyage`, and
+`voyage-installer`, all version 1.0.2. The full archive also contains the Voyage-owned
+browser worker under `share/voyage/browser`. Helm is the terminal client, Vessel supervises
+independent voyage processes, and disconnecting Helm does not cancel a voyage.
+Helm Web is published separately and is not part of these binary assets.
+
+## What changed since v1.0.1
+
+- A Voyage-owned browser on the Vessel host can be viewed and controlled from
+  Helm Web and the shared viewer launched by Helm TUI. Browser worker assets
+  and their hashes are included in the full archive. Browser qualification is
+  still tracked in [#333](https://github.com/o-psi/helm.vessel.voyage/issues/333).
+- Public nightly downloads and development installer upgrades are available
+  without GitHub login. Stable `latest` continues to select this release.
+- The runtime preserves image-bearing follow-ups across active-run boundaries.
+  End-to-end device confirmation remains tracked in
+  [#354](https://github.com/o-psi/helm.vessel.voyage/issues/354).
+- See [current behavior](current-state.md) for the full supported surface.
+
+## Install
+
+For the current source bootstrap and its `install --start` default, follow the
+[quick start](getting-started.md#1-install-on-linux). Set `VOYAGE_VERSION=v1.0.2`
+to pin this release: `VOYAGE_VERSION=v1.0.2 sh install.sh`. The current bootstrap
+requires curl, Python 3.11+, glibc 2.39+ and a reachable systemd user manager.
+These bootstrap defaults do not change the bundled Rust installer's no-argument
+wizard used in the manual procedure below.
+
+Use the assets on the [v1.0.2 release page](https://github.com/o-psi/helm.vessel.voyage/releases/tag/v1.0.2).
+Download the full `voyage-v1.0.2-x86_64-unknown-linux-gnu.tar.gz` archive and its
+`.sha256` file into the same directory. Before extracting:
+
+```sh
+sha256sum -c voyage-v1.0.2-x86_64-unknown-linux-gnu.tar.gz.sha256
+tar -xzf voyage-v1.0.2-x86_64-unknown-linux-gnu.tar.gz
+cd voyage-v1.0.2-x86_64-unknown-linux-gnu
+./bin/helm --version
+./bin/voyage-installer --bin-dir "$PWD/bin"
+```
+
+The installer opens a review/apply/cancel wizard. It installs a versioned release
+and provisions a systemd user service. Run as your ordinary user, **not sudo**.
+The explicit CLI alternative is `./bin/voyage-installer install --bin-dir
+"$PWD/bin" --no-start`; use `--start` only when ready to enable/start the service.
+Never replace an existing running deployment without reviewing its upgrade plan.
+Add `$HOME/.local/bin` to PATH yourself; shell startup files are not modified.
+
+The standalone `voyage-installer-x86_64-unknown-linux-gnu.gz` contains only the
+installer, not the three runtime binaries. It downloads the latest stable full
+release when no local `--bin-dir` is supplied. The source bootstrap supports
+`VOYAGE_VERSION=v1.0.2` for a pinned release. See the
+[installer guide](../installer/README.md) and [first task](getting-started.md).
+
+## Scope and limitations
+
+- Linux x86-64 GNU/glibc only; the native build requires **glibc 2.39 or newer**,
+  with libgcc_s and the GNU ELF loader. Verification ran on glibc 2.44. No ARM64, musl/Alpine, macOS or Windows binary
+  support is claimed. Actual published binary libc requirements are recorded in
+  the GitHub release verification notes; source builds can use a different libc
+  baseline.
+- Managed installation needs a running systemd user manager, Python 3.11+,
+  download utilities and ordinary-user private storage. Direct archive commands
+  can be used without installing a service.
+- Provider accounts and budget are separate. No model credits or credentials are
+  included. ChatGPT subscription integration remains experimental; release
+  verification does not certify paid-provider access.
+- Checksums detect changed bytes but are not independent publisher signatures.
+  No production signing trust root or reproducible-build certification is claimed.
+- Offline Linux checks are not reboot/logout persistence, native-platform or
+  production public-proxy certification. Application policy is not an OS sandbox.
+- Existing conversations/configuration are not release assets. Back them up
+  privately before upgrades; never publish them with diagnostic reports.
+
+The GitHub release notes and [release issue #362](https://github.com/o-psi/helm.vessel.voyage/issues/362)
+record the exact measured source, checks, coverage and remaining platform
+limitations. Historical checks are not evidence for a different build.
+
+## Maintainer install check
+
+`python3 packaging/verify_linux_install.py --release-dir /absolute/extracted-release`
+runs the actual release installer and installed commands in private Bubblewrap
+user/mount/PID namespaces. Its fail-closed fixture replaces `/usr/bin/systemctl`
+only inside that namespace. It verifies dry-run, real file installation, repeated
+upgrade, binary hashes/version and generated unit content, not service activation.
+After publication, add `--hosted` to check public HTTPS pinned/default bootstrap
+and the installed standalone installer's latest-release acquisition. This needs
+Bubblewrap, network/DNS and CA certificates; it supplies no host credentials.
