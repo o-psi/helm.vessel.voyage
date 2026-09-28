@@ -23,6 +23,9 @@ Also run the workspace coverage workflow in `AGENTS.md` after final Rust/test
 edits, and commit `coverage/latest.json`. Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
 [release guide](releases-v1.0.2.md#maintainer-install-check).
+Its `--hosted` mode simulates the bootstrap's systemd user-manager reachability
+check inside Bubblewrap before testing anonymous pinned and latest downloads;
+it does not establish real user-manager or service activation.
 Use `python3 voyage/tests/two_voyages.py --bin-dir target/release` for the
 current concurrent file-work check. The legacy `tests/concurrent_voyages.py`
 fixture below calls a retired endpoint and is not a current release gate. Missing/deleted historical

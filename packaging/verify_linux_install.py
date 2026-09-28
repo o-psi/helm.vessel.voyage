@@ -12,8 +12,14 @@ import subprocess
 SYSTEMCTL = r'''#!/bin/sh
 set -eu
 printf '%s\n' "$*" >> /h/systemctl.calls
-[ "$1" = --user ] && [ "$2" = --no-pager ] || exit 90
-shift 2
+[ "$1" = --user ] || exit 90
+shift
+# The public bootstrap checks manager reachability before downloading.
+if [ "$1" = show-environment ]; then
+  exit 0
+fi
+[ "$1" = --no-pager ] || exit 90
+shift
 case "$*" in
  daemon-reload) ;;
  'show --value --property UnitPath') echo /h/c/systemd/user ;;
