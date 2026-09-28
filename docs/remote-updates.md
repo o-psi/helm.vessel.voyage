@@ -94,7 +94,7 @@ cargo test -p voyage-installer -p vessel --locked remote_update -j 8
 cargo test -p voyage-installer --locked -j 8
 python3 installer/src/test_source_acquire.py -v
 npm run test:react --prefix web
-node --test web/tests/php.test.mjs
+cd /path/to/webhelm && node --test tests/php.test.mjs
 ```
 
 These offline checks cover authority refusal, exact approval/replay, expired or

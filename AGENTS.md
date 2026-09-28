@@ -28,12 +28,11 @@ into current runtime instructions. Issue #333 establishes the browser target: Vo
 
 ## Web console implementation
 
-React/TypeScript in `web/resources/react` is the production Helm Web console at
-`/`; `/react` is a compatibility redirect. Shared transport/browser helpers remain
-in `web/resources/js`. The retired console is in `archive/helm-web-flux`, outside
+React/TypeScript in the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository (`resources/react`) is the production Helm Web console at
+`/`; `/react` is a compatibility redirect. Shared transport/browser helpers remain in that repository’s `resources/js`. The retired console is in `archive/helm-web-flux`, outside
 routes, builds and active tests. Do not implement console work in that archive.
 Laravel retains OAuth, tenant isolation and public/login pages; those shared pages
-may still use Flux. See [Helm Web](docs/helm-web.md) and [deployment](web/README.md).
+may still use Flux. See [Helm Web](docs/helm-web.md) and the [Web deployment README](https://github.com/o-psi/webhelm/blob/main/README.md).
 
 ## End-to-end delivery ownership
 

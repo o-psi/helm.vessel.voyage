@@ -4,7 +4,7 @@ Work with an AI agent from your browser or terminal. Ask about a project, edit
 files, and return to the same conversation later. Closing Helm does not cancel
 work already running on a Vessel.
 
-**Helm Web** is the browser interface. **Helm** is the terminal interface. Both
+**Helm Web** is the browser interface ([private source repository](https://github.com/o-psi/webhelm); access required). **Helm** is the terminal interface. Both
 connect to a **Vessel** on a machine you control; each **Voyage** runs there as an
 independent process. Your provider credentials stay on that executing machine.
 

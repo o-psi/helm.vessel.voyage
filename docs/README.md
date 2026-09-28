@@ -60,7 +60,7 @@ features are not presented as usable commands.
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |
 | [Local Git](local-git.md) | GitHub and this workspace's Git wrapper |
 
-The component entrypoints are [Helm Web](../web/README.md),
+The component entrypoints are [Helm Web](https://github.com/o-psi/webhelm/blob/main/README.md),
 [Helm terminal](../helm/README.md), [Vessel](../vessel/README.md),
 [Voyage runtime](../voyage/README.md), and [installer](../installer/README.md).
 [Evaluation status](../eval/README.md) records the absence of the previous

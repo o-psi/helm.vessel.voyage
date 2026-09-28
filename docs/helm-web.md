@@ -11,7 +11,7 @@ The old Livewire/Flux console is archived in
 [`archive/helm-web-flux`](../archive/helm-web-flux/README.md). It has no application
 route or Vite entry. Shared public and sign-in pages retain Flux; that does not
 make them a second console. Implement all new console behavior in
-`web/resources/react`, with shared protocol/browser helpers in `web/resources/js`.
+the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository’s `resources/react`, with shared protocol/browser helpers in its `resources/js`.
 
 ## Routes and interaction
 
@@ -182,7 +182,7 @@ Vessel secrets must not be logged. Never enable debug output publicly.
 
 Install the locked dependencies and build assets. PHP needs cURL, OpenSSL, DNS support,
 a matching CLI executable and permission to launch the bounded DNS-only PHP child
-(5-second DNS deadline; HTTPS has a separate 5-second deadline/3-second connect timeout). Flux Pro requires Composer authentication for `composer.fluxui.dev`, following the [official installation instructions](https://fluxui.dev/docs/installation). Keep credentials in ignored, owner-private `web/auth.json` or deployment `COMPOSER_AUTH`; never commit license keys. The shared login and public pages still require the licensed package; the React console does not load Flux. Install it before serving those Blade components:
+(5-second DNS deadline; HTTPS has a separate 5-second deadline/3-second connect timeout). Flux Pro requires Composer authentication for `composer.fluxui.dev`, following the [official installation instructions](https://fluxui.dev/docs/installation). Keep credentials in ignored, owner-private `auth.json` in the Web checkout or deployment `COMPOSER_AUTH`; never commit license keys. The shared login and public pages still require the licensed package; the React console does not load Flux. Install it before serving those Blade components:
 
 ```sh
 cd web
@@ -226,10 +226,10 @@ pairings and encrypted connection credentials: existing users do not need to pai
 again. Set `APP_URL` to the exact public HTTPS Helm Web origin. That origin is
 bound into temporary credentials; a different site cannot use them.
 
-Deploy the [Nginx template](../web/deploy/nginx.conf), which no longer proxies
+Deploy the [Nginx template](https://github.com/o-psi/webhelm/blob/main/deploy/nginx.conf), which no longer proxies
 `/console/socket`. Stop/disable `helm-web-gateway` only after checking other users
 of that deployment and confirming upgraded clients work directly. The retained
-`web/gateway` code/service template is legacy migration/test material, not required
+`webhelm/gateway` code/service template is legacy migration/test material, not required
 by the new console. Retire its shared secret only when no legacy consumer needs it.
 Do not delete unrelated Vessel grants or provider credentials. Old pages should
 be reloaded after upgrade; no silent gateway fallback is provided.
@@ -241,7 +241,7 @@ requires matching old browser assets and gateway, not just PHP. Setting
 issued expire within their bounded lifetime, without cancelling voyages.
 
 On CT 106, the `vessel` execution user cannot directly write the `helm` website
-or private backups. The administrator-installed [scoped Helm Web update job](../web/README.md#scoped-update-from-a-helmweb-voyage)
+or private backups. The administrator-installed [scoped Helm Web update job](https://github.com/o-psi/webhelm/blob/main/README.md#scoped-update-from-a-helmweb-voyage)
 allows a voyage to request a fixed deployment of canonical `main` without general
 sudo membership or access to runtime secrets. Its receipt must report success for
 the exact commit; then verify the authenticated console in a browser. Vessel
@@ -249,7 +249,7 @@ binary updates remain a separate owner-reviewed operation.
 
 ## Verification and limits
 
-From `web/`: `npm run typecheck`, `npm test`, `npm run build`, then
+From the private `o-psi/webhelm` checkout: `npm run typecheck`, `npm test`, `npm run build`, then
 `node tests/browser-layout-browser.mjs`. The active suite includes shared transport,
 tenant/CSRF/authentication checks and React lifecycle/receipt/update tests. Archived
 Flux presentation fixtures are retained as history outside active test discovery.
@@ -258,6 +258,10 @@ Verify the authenticated production root, the `/react` redirect, existing voyage
 history, connection manager, settings and updater in the shared browser after
 publication. Native/provider checks retain their separate host/budget requirements.
 
-Deployment, backups and rollback are described in [the Web README](../web/README.md).
+Deployment, backups and rollback are described in [the Web README](https://github.com/o-psi/webhelm/blob/main/README.md).
 The former Flux presentation details are historical in the archive; they are not
 requirements for the production React console.
+
+## Source ownership
+
+Helm Web source and its CT updater now live in the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository, extracted from the former `web/` directory with its Git history. This public repository retains Vessel, Voyage, Helm TUI, protocol and documentation. Browser viewer/status/vendor snapshots in `webhelm/shared/` need synchronized updates when their public counterparts change. Private source access is required for CT 106 updater deployment; existing production remains on its last deployed source until credentials, updated updater and a verified rollout are arranged.
