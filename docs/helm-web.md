@@ -31,6 +31,9 @@ transcript (and for short transcripts), maintaining the reader’s scroll positi
 Successful admission is not execution completion. Unknown commands retain their
 exact receipt identities and are never automatically replayed.
 
+For a screen-by-screen control map, see the
+[Helm Web interaction inventory](audits/helm-web-interaction-inventory.md).
+
 New voyage settings choose Vessel, workspace and profile; **Create voyage** creates
 an independent voyage without inference. Sending a message starts a run. Profile
 management, account enrollment, reasoning/service choices, attachments, typed
