@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-09-28T18:32:46.265537+00:00",
-  "source_commit": "7108e55315ab605077f433210c1e5da3d91dca74",
+  "measured_at_utc": "2026-09-28T18:52:07.956769+00:00",
+  "source_commit": "f786737f270ce75a6e1b671a26cb085575c8ca81",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -14,8 +14,8 @@
   "totals": {
     "lines": {
       "count": 108088,
-      "covered": 83445,
-      "percent": 77.20098438309525
+      "covered": 83441,
+      "percent": 77.19728369476722
     },
     "functions": {
       "count": 10328,
@@ -24,13 +24,13 @@
     },
     "regions": {
       "count": 177580,
-      "covered": 131077,
-      "notcovered": 46503,
-      "percent": 73.81292938393963
+      "covered": 131073,
+      "notcovered": 46507,
+      "percent": 73.81067687802681
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run-final.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary-final.json",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run-postrelease.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary-postrelease.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,6 +40,6 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests with owner-only umask in an isolated clean release worktree. Raw profiles were cleared before the final independent measurement; all measured binaries belong to this checkout. LLVM warned that distribution Rust standard-library source was unavailable, while report generation completed."
+    "Full workspace default-feature Rust tests with owner-only umask in an isolated clean release worktree. Raw profiles were cleared before the independent post-release fixture measurement; all measured binaries belong to this checkout. LLVM warned that distribution Rust standard-library source was unavailable, while report generation completed."
   ]
 }
