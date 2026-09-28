@@ -362,6 +362,7 @@ pub(super) async fn dispatch_admitted(
             super::submission::submit(state, authorization, command).await
         }
         RuntimeCommand::Steer {
+            parts,
             coordination,
             command_id,
             expected_revision,
@@ -371,6 +372,7 @@ pub(super) async fn dispatch_admitted(
         } => {
             let _admission = state.admission.lock().await;
             let request = SteeringAdmission {
+                parts,
                 coordination,
                 receipt_id: command_id,
                 session_id: state.registration.session_id,
@@ -389,6 +391,19 @@ pub(super) async fn dispatch_admitted(
                     "command ID payload conflict"
                 );
                 return Ok(json!({"duplicate":true,"record":prior}));
+            }
+            if !request.parts.is_empty() {
+                crate::images::validate_parts(&request.parts)?;
+                let config = state.config.read().await.clone();
+                let known = state
+                    .controls
+                    .resolve_model(&config, &state.registration.workspace)
+                    .await;
+                crate::provider::validate_image_capability(
+                    &config.provider,
+                    &config.model,
+                    known.as_ref(),
+                )?;
             }
             ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
             let active = state.active.lock().await;

@@ -273,6 +273,8 @@ pub enum VoyageCommand {
         expires_at_ms: u64,
         run_id: Uuid,
         prompt: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        parts: Vec<crate::content::ContentPart>,
     },
     Rename {
         command_id: Uuid,

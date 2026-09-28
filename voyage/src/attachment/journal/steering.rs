@@ -27,6 +27,8 @@ pub struct SteeringAdmission {
     pub expected_revision: u64,
     pub expires_at_ms: i64,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<voyage_protocol::content::ContentPart>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +68,7 @@ impl SteeringRecord {
         let mut message = Message::new(Role::User, &self.request.text);
         // Queue delivery and canonical verification must construct identical text
         // and metadata, even when separated by an arbitrarily long provider call.
+        message.parts = self.request.parts.clone();
         message.coordination = self.request.coordination.clone();
         message.created_at = self.queued_at;
         message.steering = Some(SteeringReceipt {
@@ -111,9 +114,17 @@ fn validate(request: &SteeringAdmission) -> Result<()> {
         "nil steering identity"
     );
     ensure!(
-        !request.text.trim().is_empty() && request.text.len() <= crate::agent::MAX_STEERING_BYTES,
+        (!request.text.trim().is_empty() || !request.parts.is_empty())
+            && request.text.len() <= crate::agent::MAX_STEERING_BYTES,
         "invalid steering size"
     );
+    if !request.parts.is_empty() {
+        crate::images::validate_parts(&request.parts)?;
+        ensure!(
+            crate::images::text(&request.parts) == request.text,
+            "steering text/content mismatch"
+        );
+    }
     Ok(())
 }
 fn read(db: &Connection, id: Uuid) -> Result<SteeringRecord> {
@@ -203,6 +214,25 @@ pub(super) fn validate_existing_ids(db: &Connection) -> Result<()> {
     ensure!(!collision, "historical receipt collides with turn command");
     Ok(())
 }
+impl Journal {
+    pub(crate) fn resolve_steering_images(
+        &self,
+        request: &SteeringAdmission,
+    ) -> Result<std::collections::BTreeMap<Uuid, Vec<u8>>> {
+        let mut data = std::collections::BTreeMap::new();
+        if !request.parts.is_empty() {
+            validate(request)?;
+            let store = crate::images::Store::open(&self.directory, request.session_id)?;
+            for part in &request.parts {
+                if let voyage_protocol::content::ContentPart::Image { attachment } = part {
+                    data.insert(attachment.id, store.resolve(attachment)?);
+                }
+            }
+        }
+        Ok(data)
+    }
+}
+
 impl Journal {
     /// Caller must freshly authorize the actor for this run before each call.
     pub fn queue_steering(

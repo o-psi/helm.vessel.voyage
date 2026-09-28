@@ -273,9 +273,29 @@ pub(super) fn prepare(
             wire_bound(&command)?;
             Ok(command)
         }
-        VoyageCommand::Steer { .. } => anyhow::bail!(
-            "Image steering is unsupported. Wait for the active run to finish; full draft preserved"
-        ),
+        VoyageCommand::Steer {
+            coordination,
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            run_id,
+            ..
+        } => {
+            validate_set(images)?;
+            let parts = content(draft, images)?;
+            voyage_runtime::images::validate_parts(&parts)?;
+            let command = VoyageCommand::Steer {
+                coordination,
+                command_id,
+                expected_revision,
+                expires_at_ms,
+                run_id,
+                prompt: voyage_runtime::images::text(&parts),
+                parts,
+            };
+            wire_bound(&command)?;
+            Ok(command)
+        }
         other => Ok(other),
     }
 }
@@ -353,16 +373,16 @@ pub(super) fn insert_images(
 
 pub(super) fn is_image_submission(command: &VoyageCommand) -> bool {
     matches!(command, VoyageCommand::SubmitContent { .. })
+        || matches!(command, VoyageCommand::Steer { parts, .. } if !parts.is_empty())
 }
 
 /// Consume attachments only if the entire frozen draft still matches. Keeping
 /// unmatched recovery data is preferable to clearing a newer local draft.
 pub(super) fn pending_matches(pending: &state::Pending, view: &View) -> bool {
-    let Some(VoyageCommand::SubmitContent {
-        content: original, ..
-    }) = pending.original.as_deref()
-    else {
-        return false;
+    let original = match pending.original.as_deref() {
+        Some(VoyageCommand::SubmitContent { content, .. }) => content,
+        Some(VoyageCommand::Steer { parts, .. }) if !parts.is_empty() => parts,
+        _ => return false,
     };
     content(&view.draft, &view.images).is_ok_and(|current| current == *original)
 }
@@ -410,8 +430,10 @@ where
                 !images.is_empty(),
                 "Image submission has no local image data"
             );
-            let VoyageCommand::SubmitContent { content, .. } = &command else {
-                unreachable!()
+            let content = match &command {
+                VoyageCommand::SubmitContent { content, .. } => content,
+                VoyageCommand::Steer { parts, .. } => parts,
+                _ => unreachable!(),
             };
             let refs: Vec<_> = content
                 .iter()

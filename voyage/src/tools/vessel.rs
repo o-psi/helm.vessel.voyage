@@ -1103,6 +1103,7 @@ async fn perform(
                 session_id,
                 Some(incarnation),
                 VoyageCommand::Steer {
+                    parts: Vec::new(),
                     coordination,
                     command_id,
                     expected_revision,

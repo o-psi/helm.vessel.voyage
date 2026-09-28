@@ -115,6 +115,7 @@ async fn name_is(owner: &ManagedSessionOwner, expected: &str) {
 }
 fn steering(owner: &ManagedSessionOwner, run: &RunOwner, text: &str) -> SteeringAdmission {
     SteeringAdmission {
+        parts: Vec::new(),
         coordination: None,
         receipt_id: Uuid::new_v4(),
         session_id: owner.session_id(),

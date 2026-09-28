@@ -275,6 +275,7 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             run_id,
         },
         VoyageCommand::Steer {
+            parts,
             coordination,
             command_id,
             expected_revision,
@@ -282,6 +283,7 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             run_id,
             prompt,
         } => RuntimeCommand::Steer {
+            parts,
             coordination,
             command_id,
             expected_revision,

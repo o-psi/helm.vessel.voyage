@@ -93,11 +93,14 @@ impl ManagedSteeringHandle {
                 .ok_or_else(|| anyhow::anyhow!("steering authority unavailable"))?;
             authority.authorize(request.actor, request.session_id, request.run_id)?;
             let Store { journal, guard, .. } = &mut *store;
+            let image_data = journal.resolve_steering_images(&request)?;
             let mut outcome =
                 journal.queue_steering_with_clock(guard, &request, || clock.now_ms())?;
             if !outcome.duplicate {
                 after_queue();
-                if let Err(error) = sender.try_send_message(outcome.record.queued_message()) {
+                let mut message = outcome.record.queued_message();
+                message.image_data = image_data;
+                if let Err(error) = sender.try_send_message(message) {
                     let reason = match error {
                         crate::agent::SteeringError::Full(_) => SteeringRejection::QueueFull,
                         _ => SteeringRejection::Closed,

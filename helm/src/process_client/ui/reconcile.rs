@@ -99,6 +99,7 @@ mod tests {
                 run_id,
             },
             VoyageCommand::Steer {
+                parts: Vec::new(),
                 coordination: None,
                 command_id,
                 expected_revision: 7,

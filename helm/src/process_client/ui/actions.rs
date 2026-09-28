@@ -356,6 +356,7 @@ impl App {
             .filter(|run| run.active() && !snapshot.recovery_pending)
         {
             VoyageCommand::Steer {
+                parts: Vec::new(),
                 coordination: None,
                 command_id,
                 expected_revision,

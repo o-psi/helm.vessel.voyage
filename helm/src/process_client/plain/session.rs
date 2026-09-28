@@ -146,6 +146,7 @@ impl<'a> Connection<'a> {
         );
         let command = if active && steer {
             VoyageCommand::Steer {
+                parts: Vec::new(),
                 coordination: None,
                 command_id,
                 expected_revision,

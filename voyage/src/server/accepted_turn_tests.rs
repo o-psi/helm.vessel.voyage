@@ -98,7 +98,9 @@ impl ProviderFixture {
                 let reply = if headers.starts_with("GET /v1/models ") {
                     Reply {
                         status: 200,
-                        body: json!({"data":[{"id":"fixture"}]}).to_string(),
+                        body:
+                            json!({"data":[{"id":"fixture","input_modalities":["text","image"]}]})
+                                .to_string(),
                         gate: None,
                     }
                 } else {
@@ -611,6 +613,7 @@ async fn steering_is_delivered_at_next_safe_boundary_and_replayed_by_identity() 
     provider.wait_requests(1).await;
     let revision = state.owner.snapshot().await.unwrap().revision;
     let steering = RuntimeCommand::Steer {
+        parts: Vec::new(),
         coordination: None,
         command_id: Uuid::new_v4(),
         expected_revision: revision,
@@ -641,6 +644,71 @@ async fn steering_is_delivered_at_next_safe_boundary_and_replayed_by_identity() 
 }
 
 #[tokio::test]
+async fn image_steering_reaches_next_provider_request_in_same_run() {
+    use base64::Engine as _;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (_root, state, provider) = configured(vec![
+        Reply::tool("list_directory", json!({"path":"."})).held(gate.clone()),
+        Reply::text("Image received during run."),
+    ])
+    .await;
+    state.config.write().await.model = "gpt-4o".into();
+    let run = accepted(&state, submit("Inspect workspace.")).await;
+    provider.wait_requests(1).await;
+    let bytes = base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==").unwrap();
+    let attachment = state
+        .owner
+        .put_image(
+            state.actor.principal_id,
+            Uuid::new_v4(),
+            "pixel.png".into(),
+            bytes,
+            None,
+        )
+        .await
+        .unwrap();
+    let steering = RuntimeCommand::Steer {
+        parts: vec![voyage_protocol::content::ContentPart::Image { attachment }],
+        coordination: None,
+        command_id: Uuid::new_v4(),
+        expected_revision: state.owner.snapshot().await.unwrap().revision,
+        expires_at_ms: deadline(),
+        run_id: run,
+        prompt: String::new(),
+    };
+    let response = call(&state, steering.clone()).await;
+    assert!(response.error.is_none(), "{response:?}");
+    assert!(call(&state, steering.clone()).await.error.is_none());
+    let mut conflict = steering.clone();
+    if let RuntimeCommand::Steer { parts, .. } = &mut conflict {
+        if let voyage_protocol::content::ContentPart::Image { attachment } = &mut parts[0] {
+            attachment.id = Uuid::new_v4();
+        }
+    }
+    assert!(call(&state, conflict).await.error.is_some());
+    gate.notify_one();
+    let snapshot = finished(&state).await;
+    assert_eq!(snapshot["run"]["state"], "completed", "{snapshot}");
+    let requests = provider.requests.lock().await;
+    assert!(requests[1].to_string().contains("data:image/png;base64,"));
+    let saved = state.owner.snapshot().await.unwrap();
+    assert_eq!(
+        saved
+            .session
+            .messages
+            .iter()
+            .filter(|m| m.steering.is_some() && !m.parts.is_empty())
+            .count(),
+        1
+    );
+    assert!(
+        !serde_json::to_string(&saved.session.messages)
+            .unwrap()
+            .contains("data:image/png;base64,")
+    );
+}
+
+#[tokio::test]
 async fn stale_steering_is_definitely_refused_without_delivery() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let (_root, state, provider) =
@@ -650,6 +718,7 @@ async fn stale_steering_is_definitely_refused_without_delivery() {
     let response = call(
         &state,
         RuntimeCommand::Steer {
+            parts: Vec::new(),
             coordination: None,
             command_id: Uuid::new_v4(),
             expected_revision: u64::MAX,

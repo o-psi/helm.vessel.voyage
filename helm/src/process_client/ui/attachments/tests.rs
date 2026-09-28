@@ -192,6 +192,7 @@ fn paste_limits_and_active_image_steering_preserve_staged_data() {
     insert_images(&mut draft, &mut images, vec![image()], 0).unwrap();
     let before = draft.text.clone();
     let command = VoyageCommand::Steer {
+        parts: Vec::new(),
         coordination: None,
         command_id: Uuid::new_v4(),
         expected_revision: 1,
@@ -199,7 +200,9 @@ fn paste_limits_and_active_image_steering_preserve_staged_data() {
         run_id: Uuid::new_v4(),
         prompt: "text".into(),
     };
-    assert!(prepare(command, &draft, &images).is_err());
+    assert!(
+        matches!(prepare(command, &draft, &images).unwrap(), VoyageCommand::Steer { parts, .. } if !parts.is_empty())
+    );
     assert_eq!(before, draft.text);
 }
 

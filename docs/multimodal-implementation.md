@@ -160,8 +160,10 @@ Native OpenAI Chat Completions uses `text`/`image_url`; Responses and native Cha
 OAuth use `input_text`/`input_image`; Anthropic uses text and base64 image-source
 blocks. Exact selected-model capabilities are checked before admission and
 image-bearing dispatch, including retained history;
-unknown/explicitly text-only models fail closed. Image steering during an active
-run is refused with the draft intact.
+unknown/explicitly text-only models fail closed. Image steering carries ordered
+immutable attachment references bound to the exact active run and receipt. It is
+applied at the next safe model boundary; duplicates do not enqueue twice.
+Text-only steering wire payloads remain unchanged.
 
 Initial and streamed errors for image-bearing provider requests omit provider error
 text, including echoed base64. Configured secrets in text parts are redacted; secrets
