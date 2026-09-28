@@ -1,9 +1,7 @@
 {
-  "measured_at_utc": "2026-09-28T16:57:34.829318+00:00",
-  "source_commit": "d2ddc55ff2acfad25d62b8bd89bc2bc95c98d2d1",
-  "dirty": true,
-  "source_fingerprint_sha256": "c7fdb7a1d58dfa79285b4553691a5a2c6dd95f4171f9abb6a9ea020629e6146a",
-  "source_fingerprint_method": "SHA-256 over sorted tracked Rust/Cargo paths and embedded installer/src/source_acquire.py, each path + NUL + file bytes; missing files marked MISSING",
+  "measured_at_utc": "2026-09-28T18:26:48.208732+00:00",
+  "source_commit": "13172140ad7d1763a021e4fda23bb159de1f2ee7",
+  "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
@@ -16,8 +14,8 @@
   "totals": {
     "lines": {
       "count": 108089,
-      "covered": 83442,
-      "percent": 77.19749465718066
+      "covered": 83443,
+      "percent": 77.19841982070331
     },
     "functions": {
       "count": 10328,
@@ -26,9 +24,9 @@
     },
     "regions": {
       "count": 177584,
-      "covered": 131075,
-      "notcovered": 46509,
-      "percent": 73.810140553203
+      "covered": 131074,
+      "notcovered": 46510,
+      "percent": 73.80957743940895
     }
   },
   "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run.log 2>&1",
@@ -42,6 +40,6 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests with owner-only umask; isolated worktree target avoids mixed instrumented binaries. First attempt under default umask failed private-storage fixtures; final independent measurement cleared raw profiles and reused compiled artifacts."
+    "Full workspace default-feature Rust tests with owner-only umask in an isolated clean release worktree. Existing shared target objects were not used; all measured binaries were built for this checkout. LLVM warned that distribution Rust standard-library source was unavailable, while report generation completed."
   ]
 }
