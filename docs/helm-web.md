@@ -60,10 +60,12 @@ Expired ChatGPT accounts offer an explicit exact-binding sign-in refresh followe
 by catalogue reload; an uncertain refresh is not replayed, and a mismatched reply
 requires explicit reload before use. Account usage is loaded only on request.
 
-**Vessel updates** under Location uses the existing reviewed updater and saved operation
-journal. It checks capabilities before profile discovery, reviews an exact release,
-applies only on approval and verifies the running release after reconnect. A Vessel
-predating the updater still needs one administrator bootstrap. See
+**Vessel maintenance** is in Manage Vessels under the selected Vessel's details.
+It uses the existing reviewed updater and saved operation journal, checks the
+Vessel identity and capabilities, reviews an exact release, applies only on
+approval and verifies the running release after reconnect. New voyage setup
+directs users there when a Vessel lacks profile support. A Vessel predating the
+updater still needs one administrator bootstrap. See
 [remote updates](remote-updates.md).
 
 ## Ownership
