@@ -22,6 +22,15 @@ fn cleanup_evidence_fences_identity_reason_and_resource_existence() {
     save(&f, &original);
     assert!(clean_stop(&f.0, &r));
     assert!(suspended(&f.0, &r));
+    let mut bound = r.clone();
+    bound.peer_uids = Some(voyage_protocol::process::ProcessPeerUids {
+        supervisor: unsafe { libc::geteuid() },
+        runtime: unsafe { libc::geteuid() },
+    });
+    assert!(!clean_stop(&f.0, &bound));
+    assert!(!suspended(&f.0, &bound));
+    assert!(archived(&f.0, &bound).is_none());
+    assert!(deletion(&f.0, &bound).is_none());
     assert!(archived(&f.0, &r).is_none());
     assert!(deletion(&f.0, &r).is_none());
     for (field, value) in [
@@ -49,6 +58,34 @@ fn cleanup_evidence_fences_identity_reason_and_resource_existence() {
     r.state = ProcessState::Suspended;
     std::fs::remove_file(f.0.join("stopped.json")).unwrap();
     assert!(!suspended(&f.0, &r));
+}
+
+#[test]
+fn bound_recovery_refuses_child_writable_markers() {
+    let f = Fixture::new();
+    let r = f.registration();
+    save(&f, &evidence(&f, &r));
+    super::super::access::store::save(
+        &f.0.join("recovered.json"),
+        &serde_json::json!({
+            "session_id": r.session_id,
+            "incarnation": r.incarnation,
+            "restart_permitted": true,
+            "cleanup_disposition": "observed"
+        }),
+    )
+    .unwrap();
+    assert!(clean_stop(&f.0, &r));
+    assert!(super::super::recover_command::restart_permitted(&f.0, &r));
+    let mut bound = r.clone();
+    bound.peer_uids = Some(voyage_protocol::process::ProcessPeerUids {
+        supervisor: unsafe { libc::geteuid() },
+        runtime: unsafe { libc::geteuid() },
+    });
+    assert!(!clean_stop(&f.0, &bound));
+    assert!(!super::super::recover_command::restart_permitted(
+        &f.0, &bound
+    ));
 }
 
 #[test]

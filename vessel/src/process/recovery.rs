@@ -61,6 +61,10 @@ pub(super) fn deletion(
 }
 
 fn stopped(directory: &Path, registration: &ProcessRegistration) -> Result<Stopped> {
+    ensure!(
+        registration.peer_uids.is_none(),
+        "bound runtime stop metadata is not protected cleanup evidence"
+    );
     let file = OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -120,12 +124,20 @@ impl Supervisor {
         incarnation: Uuid,
     ) -> Result<serde_json::Value> {
         ensure!(!command_id.is_nil(), "command ID must be nonnil");
+        ensure!(
+            self.registration(session_id).await?.peer_uids.is_none(),
+            "bound restart requires protected process cleanup evidence"
+        );
         let directory = registry::directory(&self.directory, session_id);
         let startup = startup_gate(&directory).await?;
         let mut registrations = self.registrations.lock().await?;
         let registration = registrations
             .get(&session_id)
             .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
+        ensure!(
+            registration.peer_uids.is_none(),
+            "bound restart requires protected process cleanup evidence"
+        );
         let command = VesselCommand::Restart {
             command_id,
             session_id,

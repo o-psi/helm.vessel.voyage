@@ -504,15 +504,29 @@ pub(super) async fn observe(
         .executable
         .as_ref()
         .context("suspended observation binary missing")?;
-    let mut child = tokio::process::Command::new(binary)
+    let mut observer = tokio::process::Command::new(binary);
+    observer
         .arg("observe-suspended")
         .arg("--directory")
         .arg(directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()?;
+        .kill_on_drop(true);
+    if registration.peer_uids.is_some() {
+        #[cfg(target_os = "linux")]
+        {
+            let root = directory
+                .parent()
+                .and_then(Path::parent)
+                .context("invalid bound observer directory")?;
+            let identity = super::database::bound_observer_identity(root, registration).await?;
+            super::launch::configure_identity(observer.as_std_mut(), &identity)?;
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("bound observation is unsupported on this host");
+    }
+    let mut child = observer.spawn()?;
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let mut input = child.stdin.take().context("observer input unavailable")?;
         write_frame(

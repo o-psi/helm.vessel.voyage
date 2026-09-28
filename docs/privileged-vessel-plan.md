@@ -32,11 +32,22 @@ the expected UID when a binding is present. Bound processes are explicitly
 refused by the old same-user launcher. No transport offers an identity choice;
 these migrations alone do not grant administrator execution.
 
+A bound suspended-state observer now resolves its exact identity and continuing
+administrator grant from the protected catalogue, then configures the helper to
+run under that identity before reading runtime state. The bound path remains
+unreachable through a supported system installation; process cleanup observation,
+account helpers and control/runtime storage separation are still incomplete.
+Bound registrations also refuse legacy stopped/recovered markers and restart or
+recovery helpers as proof of cleanup. Those paths require protected process
+observation before administrator launches can be enabled.
+
 The next storage increment stages `voyage-storage::protected_linux::RootDirectory`:
 root-owned private control directories reached through checked non-writable
 ancestors, descriptor-relative reads, bounded regular/private/single-link records,
 atomic new-record publication and nonblocking locks. It is not yet wired into the
-supervisor or installer. Ordinary-UID checks and a separate disposable Ubuntu KVM
+installer; a root Vessel startup and catalogue open now use it to reject an
+unprotected control-root ancestry. Ordinary-UID checks and a separate disposable
+Ubuntu KVM
 root fixture verify this primitive, including actual ordinary-user refusal and
 changed-owner rejection. This is storage evidence, not privileged launch, account
 isolation, IPC, system-service or adoption evidence. See #346 for exact results.
@@ -45,9 +56,10 @@ A separate Linux launch primitive now resolves the saved account name, UID, GID,
 home and groups immediately before spawn, clears ambient capabilities and drops
 ordinary child privileges with `NoNewPrivs`. A disposable native Ubuntu KVM test
 observed all four UID/GID values, supplementary groups, zero permitted/effective/
-ambient capabilities and refused root regain. This helper is not connected to a
-Vessel launch. Protected control/runtime storage, process observation, account
-isolation, system service, owner approval, transition and client work remain
+ambient capabilities and refused root regain. Only the bound saved-state observer
+uses the identity helper so far; full Voyage launch is still disabled. Protected
+control/runtime storage, lifecycle observation, account isolation, system service,
+owner approval, transition and client work remain
 required before the capability can be enabled.
 
 The user authorized any available test host. HelmWeb is the selected first live

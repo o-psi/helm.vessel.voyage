@@ -144,20 +144,44 @@ async fn identity_binding_is_atomic_with_admission_and_requires_exact_identity()
             .unwrap(),
         Some(binding.clone())
     );
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        bound_observer_identity(&fixture.0, &registration)
+            .await
+            .unwrap(),
+        identity
+    );
     let mut changed_peer = registration.clone();
     changed_peer.peer_uids.as_mut().unwrap().runtime = uid.wrapping_add(1);
+    #[cfg(target_os = "linux")]
+    assert!(
+        bound_observer_identity(&fixture.0, &changed_peer)
+            .await
+            .is_err()
+    );
     assert!(save(&fixture.0, &changed_peer).await.is_err());
     let mut next = registration.clone();
     next.restart_from = Some(registration.incarnation);
     next.incarnation = Uuid::new_v4();
+    #[cfg(target_os = "linux")]
+    assert!(bound_observer_identity(&fixture.0, &next).await.is_err());
     assert!(save(&fixture.0, &next).await.is_err());
     let mut altered = identity.clone();
     altered.uid = uid.wrapping_add(1);
     assert!(store_identity(&fixture.0, &altered).await.is_err());
     let mut unbound = fixture.registration();
-    unbound.peer_uids = registration.peer_uids;
+    unbound.peer_uids = registration.peer_uids.clone();
     assert!(save(&fixture.0, &unbound).await.is_err());
     assert!(admit(&fixture.0, &unbound, bytes(&unbound)).await.is_err());
+    let mut superseded = identity;
+    superseded.identity.revision = NonZeroU64::new(2).unwrap();
+    store_identity(&fixture.0, &superseded).await.unwrap();
+    #[cfg(target_os = "linux")]
+    assert!(
+        bound_observer_identity(&fixture.0, &registration)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -281,6 +305,22 @@ async fn administrator_binding_requires_current_protected_voyage_grant() {
     )
     .await
     .unwrap();
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        bound_observer_identity(&fixture.0, &registration)
+            .await
+            .unwrap(),
+        identity
+    );
+    revoke_administrator_grant(&fixture.0, next.grant_id, Uuid::new_v4(), 3)
+        .await
+        .unwrap();
+    #[cfg(target_os = "linux")]
+    assert!(
+        bound_observer_identity(&fixture.0, &registration)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]

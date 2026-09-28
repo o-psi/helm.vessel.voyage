@@ -44,6 +44,12 @@ struct HttpState {
 }
 
 pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if unsafe { libc::geteuid() } == 0 {
+        // Root services require an explicitly provisioned control root. Never
+        // create authority under a user-writable ancestor on first start.
+        let _control = voyage_storage::protected_linux::RootDirectory::open(&directory)?;
+    }
     registry::private_directory(&directory)?;
     let _lock = registry::lock(&directory)?;
     super::identity::public(&directory)?;

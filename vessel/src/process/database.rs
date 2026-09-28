@@ -48,6 +48,12 @@ pub(super) fn open(root: &Path) -> Result<Connection> {
     open_file(root, FILE)
 }
 fn open_file(root: &Path, file: &str) -> Result<Connection> {
+    #[cfg(target_os = "linux")]
+    if unsafe { libc::geteuid() } == 0 {
+        // A root supervisor may not open SQLite below a user-controlled path.
+        // The legacy user service retains its existing private-directory check.
+        let _control = voyage_storage::protected_linux::RootDirectory::open(root)?;
+    }
     registry::private_directory(root)?;
     for name in [file.to_owned(), format!("{file}-journal")] {
         private_file(&root.join(name))?;
@@ -286,6 +292,76 @@ pub async fn execution_binding(root: &Path, session: Uuid) -> Result<Option<Exec
         saved
             .map(|value| Ok(serde_json::from_str(&value)?))
             .transpose()
+    })
+    .await
+}
+
+/// Resolve an observer's execution identity only from the protected catalogue.
+/// The runtime-visible registration is a projection, never an authority source.
+#[cfg(target_os = "linux")]
+pub async fn bound_observer_identity(
+    root: &Path,
+    registration: &ProcessRegistration,
+) -> Result<ConfiguredExecutionIdentity> {
+    let registration = registration.clone();
+    blocking(root, move |db| {
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [registration.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let binding: ExecutionBinding = serde_json::from_str(&saved)?;
+        ensure!(
+            binding.session_id == registration.session_id
+                && binding.incarnation == registration.incarnation
+                && registration.peer_uids.as_ref() == Some(&binding.peer_uids)
+                && binding.peer_uids.supervisor == unsafe { libc::geteuid() },
+            "observer execution binding changed"
+        );
+        let latest: u64 = db.query_row(
+            "SELECT max(revision) FROM execution_identities WHERE identity_id=?1",
+            [binding.identity.id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            latest == binding.identity.revision.get(),
+            "observer execution identity revision changed"
+        );
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![binding.identity.id.to_string(), binding.identity.revision.get()],
+            |row| row.get(0),
+        )?;
+        let identity: ConfiguredExecutionIdentity = serde_json::from_str(&saved)?;
+        ensure!(
+            identity.enabled
+                && identity.identity == binding.identity
+                && identity.account_context == binding.account_context
+                && identity.uid == binding.peer_uids.runtime
+                && binding.administrator_grant_id.is_some()
+                    == (identity.authority == AuthorityClass::Administrator),
+            "observer execution identity is unavailable"
+        );
+        if let Some(grant_id) = binding.administrator_grant_id {
+            let (saved, revoked): (String, Option<u64>) = db.query_row(
+                "SELECT g.record,r.revoked_at_ms FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.grant_id=?1",
+                [grant_id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            let mut grant: AdministratorGrant = serde_json::from_str(&saved)?;
+            grant.revoked_at_ms = revoked;
+            ensure!(
+                grant.check_current(&grant).is_ok()
+                    && grant.grant_id == grant_id
+                    && grant.session_id == binding.session_id
+                    && grant.identity == binding.identity
+                    && grant.account_context == binding.account_context
+                    && grant.host_identity_digest == binding.host_identity_digest
+                    && grant.policy_digest == binding.policy_digest,
+                "observer administrator authority is unavailable"
+            );
+        }
+        Ok(identity)
     })
     .await
 }

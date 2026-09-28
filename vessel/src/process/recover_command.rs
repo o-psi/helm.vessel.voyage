@@ -5,7 +5,7 @@ use std::{path::Path, process::Stdio, time::Duration};
 use voyage_protocol::process::*;
 
 pub(super) fn restart_permitted(directory: &Path, registration: &ProcessRegistration) -> bool {
-    if registration.state == ProcessState::Relinquished {
+    if registration.state == ProcessState::Relinquished || registration.peer_uids.is_some() {
         return false;
     }
     let Ok(marker) = store::load::<serde_json::Value>(&directory.join("recovered.json")) else {
@@ -34,6 +34,10 @@ impl Supervisor {
         ensure!(
             registration.incarnation == incarnation,
             "stale runtime incarnation"
+        );
+        ensure!(
+            registration.peer_uids.is_none(),
+            "bound recovery requires protected process cleanup evidence"
         );
         if restart_permitted(&directory, &registration) {
             return Ok(());
@@ -107,6 +111,10 @@ impl Supervisor {
             registration.incarnation == *incarnation
                 && registration.state != ProcessState::Relinquished,
             "stale or relinquished owner cannot recover"
+        );
+        ensure!(
+            registration.peer_uids.is_none(),
+            "bound recovery requires an identity-scoped helper and protected process evidence"
         );
         let directory = registry::directory(&self.directory, *session_id);
         ensure!(
