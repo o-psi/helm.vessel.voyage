@@ -31,6 +31,7 @@ pub(super) async fn fixture() -> (tempfile::TempDir, Arc<State>) {
         initialize: None,
         config_path: None,
         token: "fixture-token".into(),
+        peer_uids: None,
         workspace: root.path().to_owned(),
         state: ProcessState::Live,
         name: None,

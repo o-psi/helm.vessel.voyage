@@ -14,6 +14,9 @@ use std::{
     time::Duration,
 };
 use uuid::Uuid;
+use voyage_protocol::execution_identity::{
+    AdministratorGrant, AuthorityClass, ConfiguredExecutionIdentity, ExecutionBinding,
+};
 use voyage_protocol::process::{
     CatalogueMetadata, CatalogueSummary, ProcessInfo, ProcessRegistration,
 };
@@ -91,10 +94,42 @@ fn open_file(root: &Path, file: &str) -> Result<Connection> {
     let version: i64 = db.query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
         r.get(0)
     })?;
-    ensure!(version == 1, "unsupported supervisor database version");
+    if version == 1 {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch(include_str!("database_v2_migration.sql"))?;
+        tx.commit()?;
+        fs::File::open(root)?.sync_all()?;
+    } else {
+        ensure!(version == 2, "unsupported supervisor database version");
+    }
     Ok(db)
 }
-fn save_tx(tx: &Transaction<'_>, registration: &ProcessRegistration) -> Result<()> {
+fn save_tx(
+    tx: &Transaction<'_>,
+    registration: &ProcessRegistration,
+    new_binding: Option<&ExecutionBinding>,
+) -> Result<()> {
+    let bound: Option<String> = tx
+        .query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [registration.session_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let bound: Option<ExecutionBinding> = bound
+        .map(|record| serde_json::from_str(&record))
+        .transpose()?;
+    ensure!(
+        bound.as_ref().is_none_or(|binding| {
+            binding.incarnation == registration.incarnation
+                && registration.peer_uids.as_ref() == Some(&binding.peer_uids)
+        }),
+        "execution identity replacement requires a new protected binding"
+    );
+    ensure!(
+        bound.is_some() || new_binding.is_some() || registration.peer_uids.is_none(),
+        "cross-identity registration requires a protected binding"
+    );
     let previous: Option<String> = tx
         .query_row(
             "SELECT session_id FROM incarnations WHERE incarnation=?1",
@@ -184,9 +219,170 @@ pub async fn save(root: &Path, registration: &ProcessRegistration) -> Result<()>
     let r = registration.clone();
     blocking(root, move |db| {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        save_tx(&tx, &r)?;
+        save_tx(&tx, &r, None)?;
         tx.commit()?;
         Ok(())
+    })
+    .await
+}
+
+#[allow(dead_code)] // Wired to the system installer only when privileged launch is enabled.
+pub async fn store_identity(root: &Path, identity: &ConfiguredExecutionIdentity) -> Result<()> {
+    ensure!(
+        !identity.identity.id.is_nil()
+            && !identity.account_context.id.is_nil()
+            && !identity.label.is_empty()
+            && identity.label.len() <= 128
+            && !identity.label.chars().any(char::is_control)
+            && !identity.user_name.is_empty()
+            && identity.user_name.len() <= 64
+            && identity
+                .user_name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            && identity.home.is_absolute()
+            && !identity
+                .home
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+            && identity.supplementary_groups.len() <= 64
+            && matches!(
+                (identity.authority, identity.uid),
+                (AuthorityClass::Administrator, 0) | (AuthorityClass::Ordinary, 1..=u32::MAX)
+            ),
+        "invalid configured execution identity"
+    );
+    let identity = identity.clone();
+    blocking(root, move |db| {
+        let id = identity.identity.id.to_string();
+        let revision = identity.identity.revision.get();
+        let bytes = serde_json::to_string(&identity)?;
+        ensure!(bytes.len() <= 16384, "execution identity exceeds limit");
+        db.execute(
+            "INSERT OR IGNORE INTO execution_identities VALUES(?1,?2,?3)",
+            params![id, revision, bytes],
+        )?;
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![id, revision],
+            |row| row.get(0),
+        )?;
+        ensure!(saved == bytes, "execution identity revision conflict");
+        Ok(())
+    })
+    .await
+}
+
+#[allow(dead_code)] // Used by the privileged launch/recovery path after migration.
+pub async fn execution_binding(root: &Path, session: Uuid) -> Result<Option<ExecutionBinding>> {
+    blocking(root, move |db| {
+        let saved: Option<String> = db
+            .query_row(
+                "SELECT record FROM execution_bindings WHERE session_id=?1",
+                [session.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        saved
+            .map(|value| Ok(serde_json::from_str(&value)?))
+            .transpose()
+    })
+    .await
+}
+
+#[allow(dead_code)] // Reached through the owner-only administrator review path.
+pub async fn issue_administrator_grant(root: &Path, grant: &AdministratorGrant) -> Result<()> {
+    ensure!(
+        grant.revoked_at_ms.is_none() && grant.check_current(grant).is_ok(),
+        "invalid administrator grant"
+    );
+    let grant = grant.clone();
+    blocking(root, move |db| {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let configured: String = tx.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![grant.identity.id.to_string(), grant.identity.revision.get()],
+            |row| row.get(0),
+        )?;
+        let configured: ConfiguredExecutionIdentity = serde_json::from_str(&configured)?;
+        ensure!(
+            configured.enabled
+                && configured.authority == AuthorityClass::Administrator
+                && configured.account_context == grant.account_context,
+            "administrator grant identity is unavailable"
+        );
+        let active: i64 = tx.query_row(
+            "SELECT count(*) FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.session_id=?1 AND r.grant_id IS NULL",
+            [grant.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(active == 0, "voyage already has an active administrator grant");
+        let record = serde_json::to_string(&grant)?;
+        ensure!(record.len() <= 16384, "administrator grant exceeds limit");
+        tx.execute(
+            "INSERT INTO administrator_grants VALUES(?1,?2,?3)",
+            params![grant.grant_id.to_string(), grant.session_id.to_string(), record],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await
+}
+
+#[allow(dead_code)] // Reached through the owner-only revocation path.
+pub async fn revoke_administrator_grant(
+    root: &Path,
+    grant_id: Uuid,
+    command_id: Uuid,
+    revoked_at_ms: u64,
+) -> Result<()> {
+    ensure!(
+        !grant_id.is_nil() && !command_id.is_nil() && revoked_at_ms > 0,
+        "invalid administrator revocation"
+    );
+    blocking(root, move |db| {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let created: String = tx.query_row(
+            "SELECT record FROM administrator_grants WHERE grant_id=?1",
+            [grant_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let created: AdministratorGrant = serde_json::from_str(&created)?;
+        ensure!(
+            revoked_at_ms >= created.created_at_ms,
+            "revocation precedes grant"
+        );
+        tx.execute(
+            "INSERT OR IGNORE INTO administrator_revocations VALUES(?1,?2,?3)",
+            params![grant_id.to_string(), command_id.to_string(), revoked_at_ms],
+        )?;
+        let saved: (String, u64) = tx.query_row(
+            "SELECT command_id,revoked_at_ms FROM administrator_revocations WHERE grant_id=?1",
+            [grant_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        ensure!(
+            saved == (command_id.to_string(), revoked_at_ms),
+            "administrator revocation identity conflict"
+        );
+        tx.commit()?;
+        Ok(())
+    })
+    .await
+}
+
+#[allow(dead_code)] // Used at privileged launch and owner status after activation.
+pub async fn administrator_grant(root: &Path, grant_id: Uuid) -> Result<AdministratorGrant> {
+    blocking(root, move |db| {
+        let (saved, revoked): (String, Option<u64>) = db.query_row(
+            "SELECT g.record,r.revoked_at_ms FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.grant_id=?1",
+            [grant_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let mut grant: AdministratorGrant = serde_json::from_str(&saved)?;
+        ensure!(grant.grant_id == grant_id, "administrator grant identity mismatch");
+        grant.revoked_at_ms = revoked;
+        Ok(grant)
     })
     .await
 }
@@ -207,7 +403,29 @@ pub async fn command(
     .await
 }
 pub async fn admit(root: &Path, registration: &ProcessRegistration, bytes: Vec<u8>) -> Result<()> {
+    admit_with_binding(root, registration, bytes, None).await
+}
+
+pub async fn admit_with_binding(
+    root: &Path,
+    registration: &ProcessRegistration,
+    bytes: Vec<u8>,
+    binding: Option<&ExecutionBinding>,
+) -> Result<()> {
+    ensure!(
+        binding.is_none_or(|binding| {
+            binding.session_id == registration.session_id
+                && binding.incarnation == registration.incarnation
+                && registration.peer_uids.as_ref() == Some(&binding.peer_uids)
+        }),
+        "execution binding does not match admission"
+    );
+    ensure!(
+        binding.is_some() || registration.peer_uids.is_none(),
+        "cross-identity admission requires a protected binding"
+    );
     let r = registration.clone();
+    let binding = binding.cloned();
     blocking(root, move |db| {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         ensure!(
@@ -224,7 +442,67 @@ pub async fn admit(root: &Path, registration: &ProcessRegistration, bytes: Vec<u
             |row| row.get(0),
         )?;
         ensure!(!exists, "voyage already reserved");
-        save_tx(&tx, &r)?;
+        save_tx(&tx, &r, binding.as_ref())?;
+        if let Some(binding) = binding {
+            let identity: String = tx.query_row(
+                "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+                params![
+                    binding.identity.id.to_string(),
+                    binding.identity.revision.get()
+                ],
+                |row| row.get(0),
+            )?;
+            let identity: ConfiguredExecutionIdentity = serde_json::from_str(&identity)?;
+            ensure!(
+                identity.enabled
+                    && identity.identity == binding.identity
+                    && identity.account_context == binding.account_context
+                    && identity.uid == binding.peer_uids.runtime
+                    && binding.peer_uids.supervisor == unsafe { libc::geteuid() }
+                    && binding.administrator_grant_id.is_some()
+                        == (identity.authority == AuthorityClass::Administrator)
+                    && [&binding.host_identity_digest, &binding.policy_digest]
+                        .into_iter()
+                        .all(|value| {
+                            value.len() == 64
+                                && value.bytes().all(|byte| {
+                                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
+                                })
+                        }),
+                "execution binding fails protected identity or authority checks"
+            );
+            if let Some(grant_id) = binding.administrator_grant_id {
+                let (saved, revoked): (String, Option<u64>) = tx.query_row(
+                    "SELECT g.record,r.revoked_at_ms FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.grant_id=?1",
+                    [grant_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                let mut grant: AdministratorGrant = serde_json::from_str(&saved)?;
+                grant.revoked_at_ms = revoked;
+                ensure!(
+                    grant.check_current(&grant).is_ok()
+                        && grant.grant_id == grant_id
+                        && grant.session_id == binding.session_id
+                        && grant.identity == binding.identity
+                        && grant.account_context == binding.account_context
+                        && grant.host_identity_digest == binding.host_identity_digest
+                        && grant.policy_digest == binding.policy_digest,
+                    "administrator grant does not authorize this execution binding"
+                );
+            }
+            let record = serde_json::to_string(&binding)?;
+            ensure!(record.len() <= 16384, "execution binding exceeds limit");
+            tx.execute(
+                "INSERT INTO execution_bindings VALUES(?1,?2,?3,?4,?5)",
+                params![
+                    binding.session_id.to_string(),
+                    binding.incarnation.to_string(),
+                    binding.identity.id.to_string(),
+                    binding.identity.revision.get(),
+                    record
+                ],
+            )?;
+        }
         tx.execute(
             "INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'created',?2)",
             params![r.session_id.to_string(), now()],
@@ -277,7 +555,7 @@ pub async fn initialize(root: &Path) -> Result<HashMap<Uuid, ProcessRegistration
     registry::private_directory(&dir)?;
     let r=registry::load(&source)?;
     ensure!(dir==registry::directory(&path,r.session_id) && r.protocol==voyage_protocol::process::PROCESS_PROTOCOL,"invalid legacy registration identity");
-    save_tx(&tx,&r)?;
+    save_tx(&tx,&r,None)?;
     let digest=Sha256::digest(fs::read(&source)?);
     tx.execute("INSERT INTO legacy_imports VALUES(?1,?2)",params![format!("sessions/{}/registration.json",r.session_id),digest.as_slice()])?;
    }

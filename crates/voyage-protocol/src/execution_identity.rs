@@ -1,6 +1,7 @@
 //! Staged contracts for privileged supervision. These records do not grant OS or
 //! connection authority. No transport advertises support until its complete launch,
 //! storage, approval and recovery boundary is implemented.
+use crate::process::ProcessPeerUids;
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU64, path::PathBuf};
 use uuid::Uuid;
@@ -49,6 +50,38 @@ pub struct IdentitySummary {
     pub account_context: AccountContextRef,
     pub available: bool,
     pub unavailable_reason: Option<ExecutionFailure>,
+}
+
+/// Supervisor-controlled host configuration. Client requests refer only to
+/// `identity`; they never supply these operating-system details.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfiguredExecutionIdentity {
+    pub identity: IdentityRef,
+    pub label: String,
+    pub user_name: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub supplementary_groups: Vec<u32>,
+    pub home: PathBuf,
+    pub account_context: AccountContextRef,
+    pub authority: AuthorityClass,
+    pub enabled: bool,
+}
+
+/// Authoritative incarnation binding in the supervisor catalogue. The runtime
+/// receives only the fields needed for its own launch and peer checks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionBinding {
+    pub session_id: Uuid,
+    pub incarnation: Uuid,
+    pub identity: IdentityRef,
+    pub account_context: AccountContextRef,
+    pub peer_uids: ProcessPeerUids,
+    pub administrator_grant_id: Option<Uuid>,
+    pub host_identity_digest: String,
+    pub policy_digest: String,
 }
 
 /// Missing capability on an old peer means unknown service identity, not ordinary
@@ -178,6 +211,52 @@ pub struct ExecutionReceipt {
     pub review_id: Uuid,
     pub review_digest: String,
     pub outcome: ExecutionOutcome,
+}
+
+/// A continuing administrator choice for exactly one voyage. This is authority
+/// only when loaded from protected supervisor storage after authenticating the
+/// owner who created it. Runtime and client copies are informational.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdministratorGrant {
+    pub schema: u32,
+    pub grant_id: Uuid,
+    pub vessel_id: Uuid,
+    pub session_id: Uuid,
+    pub administrative_owner_id: Uuid,
+    pub authority_revision: NonZeroU64,
+    pub identity: IdentityRef,
+    pub account_context: AccountContextRef,
+    pub host_identity_digest: String,
+    pub policy_digest: String,
+    pub created_at_ms: u64,
+    pub revoked_at_ms: Option<u64>,
+}
+
+impl AdministratorGrant {
+    /// Recheck before every privileged launch. The caller must obtain `self`
+    /// from protected state and independently authenticate the saved owner.
+    pub fn check_current(&self, current: &Self) -> Result<(), ExecutionFailure> {
+        if self.schema != EXECUTION_SCHEMA
+            || self.grant_id.is_nil()
+            || self.vessel_id.is_nil()
+            || self.session_id.is_nil()
+            || self.administrative_owner_id.is_nil()
+            || !digest(&self.host_identity_digest)
+            || !digest(&self.policy_digest)
+            || self.created_at_ms == 0
+            || self.revoked_at_ms.is_some_and(|at| at < self.created_at_ms)
+        {
+            return Err(ExecutionFailure::InvalidReview);
+        }
+        if self.revoked_at_ms.is_some() {
+            return Err(ExecutionFailure::OwnerRequired);
+        }
+        if self != current {
+            return Err(ExecutionFailure::StaleReview);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

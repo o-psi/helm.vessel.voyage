@@ -25,8 +25,12 @@ independent filesystem preflight prerequisite is implemented in
 `voyage/src/policy/root_access.rs` and integrated into grant preparation,
 publication and dispatch. It uses the runtime's effective identity, checks a
 pinned directory without writing and reports OS denial/read-only mounts.
-Catalogue migrations, privileged storage/IPC, launch, installer, administrator
-authorization, transitions, client parity and adoption remain outstanding.
+The catalogue now has a versioned identity/binding/grant migration and rejects
+admission without an exact, current protected identity and administrator grant.
+Legacy registrations remain unbound. Runtime and supervisor socket peers check
+the expected UID when a binding is present. Bound processes are explicitly
+refused by the old same-user launcher. No transport offers an identity choice;
+these migrations alone do not grant administrator execution.
 
 The next storage increment stages `voyage-storage::protected_linux::RootDirectory`:
 root-owned private control directories reached through checked non-writable
@@ -36,6 +40,15 @@ supervisor or installer. Ordinary-UID checks and a separate disposable Ubuntu KV
 root fixture verify this primitive, including actual ordinary-user refusal and
 changed-owner rejection. This is storage evidence, not privileged launch, account
 isolation, IPC, system-service or adoption evidence. See #346 for exact results.
+
+A separate Linux launch primitive now resolves the saved account name, UID, GID,
+home and groups immediately before spawn, clears ambient capabilities and drops
+ordinary child privileges with `NoNewPrivs`. A disposable native Ubuntu KVM test
+observed all four UID/GID values, supplementary groups, zero permitted/effective/
+ambient capabilities and refused root regain. This helper is not connected to a
+Vessel launch. Protected control/runtime storage, process observation, account
+isolation, system service, owner approval, transition and client work remain
+required before the capability can be enabled.
 
 The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
@@ -96,9 +109,9 @@ Primary code entry points:
   `runtime_policy.rs`, `tools/roots.rs`, `accounts.rs`, `accounts/`, `subagent/`.
 - Contracts: `crates/voyage-protocol/src/process/`, account/decision contracts and
   `crates/voyage-storage/src/` migrations and ownership boundaries.
-- Clients: `helm/src/process_client/`, `web/resources/react/Settings.tsx`,
-  `web/resources/js/vessel-update.js`, Web decision rendering, gateway schemas,
-  Flux Blade components, and the alternate React client's supported contracts.
+- Clients: `helm/src/process_client/` here and the production React console,
+  decision rendering and gateway schemas in the separate `o-psi/webhelm`
+  repository. The archived Flux console is not an implementation target.
 
 Audit every launch path: fresh start, configured/account/settings start, resume,
 automatic suspension recovery, branch, transfer/import, managed execution,
@@ -145,15 +158,18 @@ changes that cannot be verified must block the affected launch.
 ### Authorization lifetime
 
 Persist the desired execution identity as session metadata. Treat authorization
-to start an administrator process separately. Default proposal: explicit owner
-approval for each administrator run; a process replacement requires fresh review
-before privileged execution resumes. Old approval receipts establish what happened,
-not permission to launch another privileged incarnation. Ordinary automatic
-resume retains its configured identity and still rechecks current host policy.
+to run with administrator authority separately. The owner may explicitly grant
+administrator execution to one voyage until revoked. Bind that durable grant to
+the exact host, voyage, execution identity/revision, owner and policy ceiling;
+store it in protected supervisor state. Every process replacement revalidates the
+grant, account context, host identity and policy before launching. A changed fact
+pauses the voyage for a new review. Revocation fences future launches and active
+work through observed cancellation and cleanup. A grant for one voyage never
+authorizes another voyage or a transferred/branched copy. Receipts establish what
+happened, while the separate protected grant establishes continuing authorization.
 
 No silent fallback from an unavailable identity to root, the supervisor user, or
-another user. Retain the voyage and explain the required action. Durable standing
-administrator policies are separate future scope unless explicitly requested.
+another user. Retain the voyage and explain the required action.
 
 ### Trust boundary
 
@@ -325,8 +341,7 @@ profiles and read-only/approval/unrestricted tool policy. List only configured
 identities authorized for the connection. Show a persistent administrator indicator
 based on observed runtime identity; distinguish desired identity from running one.
 
-Web uses existing Flux field/select, modal, callout and button components; no
-bespoke controls without a documented reason. TUI offers equivalent setup,
+Web uses the production React console in `o-psi/webhelm`. TUI offers equivalent setup,
 review, cancellation, receipt recovery and status. On older Vessels, identify the
 identity as legacy/current service user when known, otherwise unknown. Never
 assume ordinary execution merely because the capability is absent.
@@ -398,7 +413,7 @@ new capability disabled until its prerequisite gates pass.
 | P3 | Launch with identity setup/drop, attestation and lifecycle coverage | P2 | Real child evidence for UID/GID/groups/caps/FDs and exact recovery |
 | P4 | System installer, protected layout, gateway separation and scope-aware updater | P1–P3 | Fresh install/upgrade/failure/rollback/reboot tested in isolated Linux fixtures |
 | P5 | Owner-only admin review, run authorization, filesystem preflight and identity transition | P1–P4 | Cancellation, revocation, stale/duplicate approvals and cleanup failures verified |
-| P6 | Flux Web and TUI parity; supported alternate client/gateway contracts | P1, P5 | Same operation scope/status shown; stale/offline/legacy flows safe |
+| P6 | React Web and TUI parity; supported gateway contracts | P1, P5 | Same operation scope/status shown; stale/offline/legacy flows safe |
 | P7 | Transactional legacy adoption and downgrade/uninstall handling | P2–P6 | IDs/history/accounts preserved; rollback proven; no double owner |
 | P8 | Full verification, publication, hosted artifact and opt-in live activation | P1–P7 | All acceptance criteria below met with durable evidence |
 
@@ -422,7 +437,7 @@ of retired broad suites or hosted test/coverage jobs.
 | Accounts | Existing bindings remain stable; per-identity enrollment/refresh/model discovery; missing admin account preflight; no credential leakage or copying |
 | Filesystem | Policy vs OS denial; ACLs, unwritable descendant, read-only mount, replaced directory, unsupported isolation; no false grant or silent permission edit |
 | Installer/update | Root-owned paths; user-writable ancestor refusal; scope confusion; changed unit/release review; downloader failure; readiness failure; rollback and browser assets |
-| Clients | Real TUI journey and shared-browser Flux journey; retained draft; admin indicator from observed identity; disconnect during approval/transition/update; exact receipt recovery |
+| Clients | Real TUI journey and shared-browser React journey; retained draft; admin indicator from observed identity; disconnect during approval/transition/update; exact receipt recovery |
 | Host diversity | Disposable Linux VM with native root, unprivileged user, multiple users; namespace/container limits as a separate case; unsupported host refuses clearly |
 
 Root/system-service tests run only in explicitly designated disposable fixtures,
@@ -475,6 +490,7 @@ previously deferred access remains deferred. A final operational guide must cove
 installation, administrative owner enrollment/revocation, identity management,
 account setup, transition recovery, update/rollback and uninstall.
 
-Implementation uses fresh administrator review per run/process replacement and
-separate authorized account contexts, following the plan's defaults. These are
-explicit product choices, not assumptions about any host.
+Implementation uses a revocable administrator grant for one voyage and separate
+authorized account contexts. These are explicit product choices, not assumptions
+about any host. The grant is checked on every process replacement; changed facts
+require renewed owner review.

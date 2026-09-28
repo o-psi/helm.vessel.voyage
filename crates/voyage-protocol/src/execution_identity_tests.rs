@@ -57,6 +57,47 @@ fn approval_for(review: &ExecutionReview) -> ReviewApproval {
 }
 
 #[test]
+fn administrator_grant_is_one_voyage_and_revocable_across_process_replacements() {
+    let facts = review().facts;
+    let mut grant = AdministratorGrant {
+        schema: EXECUTION_SCHEMA,
+        grant_id: Uuid::new_v4(),
+        vessel_id: facts.vessel_id,
+        session_id: facts.session_id,
+        administrative_owner_id: facts.administrative_owner_id,
+        authority_revision: facts.authority_revision,
+        identity: facts.identity,
+        account_context: facts.account_context,
+        host_identity_digest: facts.host_identity_digest,
+        policy_digest: facts.policy_digest,
+        created_at_ms: 100,
+        revoked_at_ms: None,
+    };
+    assert_eq!(grant.check_current(&grant), Ok(()));
+    for (field, replacement) in [
+        ("vessel_id", json!(Uuid::new_v4())),
+        ("session_id", json!(Uuid::new_v4())),
+        ("administrative_owner_id", json!(Uuid::new_v4())),
+        ("authority_revision", json!(2)),
+        ("host_identity_digest", json!("c".repeat(64))),
+        ("policy_digest", json!("d".repeat(64))),
+    ] {
+        let mut changed = serde_json::to_value(&grant).unwrap();
+        changed[field] = replacement;
+        let changed = serde_json::from_value(changed).unwrap();
+        assert_eq!(
+            grant.check_current(&changed),
+            Err(ExecutionFailure::StaleReview)
+        );
+    }
+    grant.revoked_at_ms = Some(101);
+    assert_eq!(
+        grant.check_current(&grant),
+        Err(ExecutionFailure::OwnerRequired)
+    );
+}
+
+#[test]
 fn execution_reviews_bind_every_authority_and_launch_fact() {
     let review = review();
     let approval = approval_for(&review);

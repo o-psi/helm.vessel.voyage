@@ -26,6 +26,7 @@ impl Fixture {
             initialize: None,
             config_path: None,
             token: "offline-fixture-not-a-credential".into(),
+            peer_uids: None,
             workspace: self.0.clone(),
             state: ProcessState::Suspended,
             name: Some("Offline voyage".into()),

@@ -151,6 +151,7 @@ impl Supervisor {
             initialize,
             config_path,
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+            peer_uids: None,
             workspace,
             state: ProcessState::Starting,
             name: None,

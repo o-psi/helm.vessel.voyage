@@ -1,5 +1,20 @@
 use super::*;
+use voyage_protocol::process::ProcessPeerUids;
 use voyage_protocol::process::RuntimeCommand;
+
+#[tokio::test]
+async fn runtime_rejects_a_binding_for_another_execution_user() {
+    let (_root, state) = crate::server::tests::fixture().await;
+    let mut registration = state.registration.clone();
+    let uid = unsafe { libc::geteuid() };
+    registration.peer_uids = Some(ProcessPeerUids {
+        supervisor: 0,
+        runtime: uid.wrapping_add(1),
+    });
+    assert!(expected_supervisor_uid(&registration).is_err());
+    registration.peer_uids.as_mut().unwrap().runtime = uid;
+    assert_eq!(expected_supervisor_uid(&registration).unwrap(), 0);
+}
 
 fn request(state: &State, command: RuntimeCommand) -> RuntimeRequest {
     RuntimeRequest {

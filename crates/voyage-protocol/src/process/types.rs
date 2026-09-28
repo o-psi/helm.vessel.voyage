@@ -394,6 +394,16 @@ pub enum ProcessState {
     Relinquished,
 }
 
+/// Expected Unix peers for a process incarnation. The supervisor's protected
+/// catalogue is authoritative; the runtime copy only limits who may connect to
+/// its socket. Legacy user installations omit this and retain same-UID IPC.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessPeerUids {
+    pub supervisor: u32,
+    pub runtime: u32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProcessRegistration {
     #[serde(default)]
@@ -409,6 +419,8 @@ pub struct ProcessRegistration {
     #[serde(default)]
     pub config_path: Option<PathBuf>,
     pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_uids: Option<ProcessPeerUids>,
     pub workspace: PathBuf,
     pub state: ProcessState,
     /// Last bounded canonical name observed from this owner. This is catalogue

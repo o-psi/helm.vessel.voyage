@@ -66,6 +66,16 @@ not establish a working privileged Vessel or installer. The Linux fixture used f
 [#346](https://github.com/o-psi/helm.vessel.voyage/issues/346) is a disposable KVM VM;
 matching development loader/libraries were used for its copied test executable.
 
+The staged cross-identity launcher has a separate ignored native-root test in
+that same kind of disposable fixture, with `voyageordinary` present:
+
+```sh
+VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 cargo test -p vessel --locked --lib -- --ignored --exact process::launch::tests::native_root_launch_drops_to_ordinary_user_without_regain
+```
+
+It observes actual UID/GID/group/capability state and failed root regain in a
+child process. It does not start a Voyage or establish system-service readiness.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

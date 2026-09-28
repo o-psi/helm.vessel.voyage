@@ -20,6 +20,20 @@ impl std::fmt::Display for NotConnected {
 }
 impl std::error::Error for NotConnected {}
 
+fn expected_runtime_uid(registration: &ProcessRegistration) -> Result<u32> {
+    let supervisor_uid = unsafe { libc::geteuid() };
+    match &registration.peer_uids {
+        Some(peers) => {
+            ensure!(
+                peers.supervisor == supervisor_uid,
+                "supervisor execution uid does not match the protected binding"
+            );
+            Ok(peers.runtime)
+        }
+        None => Ok(supervisor_uid),
+    }
+}
+
 pub async fn forward(
     directory: &Path,
     registration: &ProcessRegistration,
@@ -33,6 +47,7 @@ pub(super) async fn forward_authorized(
     command: RuntimeCommand,
     authorization: Option<GrantBinding>,
 ) -> Result<RuntimeResponse> {
+    let expected_uid = expected_runtime_uid(registration)?;
     if super::recovery::suspended(directory, registration) && command.observes_suspended() {
         return super::suspension::observe(directory, registration, command, authorization).await;
     }
@@ -41,7 +56,7 @@ pub(super) async fn forward_authorized(
             .await
             .map_err(|error| anyhow::Error::from(error).context(NotConnected))?;
         ensure!(
-            stream.peer_cred()?.uid() == unsafe { libc::geteuid() },
+            stream.peer_cred()?.uid() == expected_uid,
             "runtime peer uid mismatch"
         );
         write_frame(

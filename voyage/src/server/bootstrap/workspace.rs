@@ -218,6 +218,7 @@ mod tests {
             initialize: None,
             config_path: None,
             token: "fixture".into(),
+            peer_uids: None,
             workspace,
             state: voyage_protocol::process::ProcessState::Starting,
             name: None,

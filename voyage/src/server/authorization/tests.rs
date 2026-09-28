@@ -132,6 +132,7 @@ fn admission_enforces_operation_rights_supervised_path_and_workspace() {
         initialize: None,
         config_path: None,
         token: "fixture".into(),
+        peer_uids: None,
         workspace: root.path().to_owned(),
         state: ProcessState::Live,
         name: None,

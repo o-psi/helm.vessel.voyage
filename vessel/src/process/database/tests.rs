@@ -1,4 +1,10 @@
 use super::*;
+use std::num::NonZeroU64;
+use voyage_protocol::execution_identity::{
+    AccountContextRef, AdministratorGrant, AuthorityClass, ConfiguredExecutionIdentity,
+    EXECUTION_SCHEMA, ExecutionBinding, IdentityRef,
+};
+use voyage_protocol::process::ProcessPeerUids;
 use voyage_protocol::process::{PROCESS_PROTOCOL, ProcessState, VesselCommand};
 struct Fixture(std::path::PathBuf);
 impl Fixture {
@@ -18,6 +24,7 @@ impl Fixture {
             initialize: None,
             config_path: None,
             token: "private-test-token".into(),
+            peer_uids: None,
             workspace: self.0.clone(),
             state: ProcessState::Starting,
             name: Some("Durable name".into()),
@@ -37,6 +44,243 @@ fn bytes(r: &ProcessRegistration) -> Vec<u8> {
         workspace: r.workspace.clone(),
     })
     .unwrap()
+}
+
+#[tokio::test]
+async fn v1_catalogue_migrates_without_reinterpreting_legacy_voyages() {
+    let fixture = Fixture::new();
+    initialize(&fixture.0).await.unwrap();
+    let registration = fixture.registration();
+    admit(&fixture.0, &registration, bytes(&registration))
+        .await
+        .unwrap();
+    let database = open(&fixture.0).unwrap();
+    database
+        .execute_batch(
+            "DROP TABLE execution_bindings; DROP TABLE execution_identities; \
+             DROP TABLE administrator_revocations; DROP TABLE administrator_grants; \
+             UPDATE schema_version SET version=1 WHERE id=1;",
+        )
+        .unwrap();
+    drop(database);
+    let restored = initialize(&fixture.0).await.unwrap();
+    assert_eq!(
+        restored[&registration.session_id].incarnation,
+        registration.incarnation
+    );
+    assert!(
+        execution_binding(&fixture.0, registration.session_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        open(&fixture.0)
+            .unwrap()
+            .query_row("SELECT version FROM schema_version WHERE id=1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn identity_binding_is_atomic_with_admission_and_requires_exact_identity() {
+    let fixture = Fixture::new();
+    initialize(&fixture.0).await.unwrap();
+    let supervisor_uid = unsafe { libc::geteuid() };
+    let uid = if supervisor_uid == 0 {
+        1000
+    } else {
+        supervisor_uid
+    };
+    let identity = ConfiguredExecutionIdentity {
+        identity: IdentityRef {
+            id: Uuid::new_v4(),
+            revision: NonZeroU64::new(1).unwrap(),
+        },
+        label: "Ordinary fixture".into(),
+        user_name: "fixture".into(),
+        uid,
+        gid: unsafe { libc::getegid() },
+        supplementary_groups: vec![],
+        home: fixture.0.clone(),
+        account_context: AccountContextRef {
+            id: Uuid::new_v4(),
+            revision: NonZeroU64::new(1).unwrap(),
+        },
+        authority: AuthorityClass::Ordinary,
+        enabled: true,
+    };
+    store_identity(&fixture.0, &identity).await.unwrap();
+    let mut registration = fixture.registration();
+    let peers = ProcessPeerUids {
+        supervisor: supervisor_uid,
+        runtime: uid,
+    };
+    registration.peer_uids = Some(peers.clone());
+    let binding = ExecutionBinding {
+        session_id: registration.session_id,
+        incarnation: registration.incarnation,
+        identity: identity.identity.clone(),
+        account_context: identity.account_context.clone(),
+        peer_uids: peers,
+        administrator_grant_id: None,
+        host_identity_digest: "a".repeat(64),
+        policy_digest: "b".repeat(64),
+    };
+    admit_with_binding(
+        &fixture.0,
+        &registration,
+        bytes(&registration),
+        Some(&binding),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        execution_binding(&fixture.0, registration.session_id)
+            .await
+            .unwrap(),
+        Some(binding.clone())
+    );
+    let mut changed_peer = registration.clone();
+    changed_peer.peer_uids.as_mut().unwrap().runtime = uid.wrapping_add(1);
+    assert!(save(&fixture.0, &changed_peer).await.is_err());
+    let mut next = registration.clone();
+    next.restart_from = Some(registration.incarnation);
+    next.incarnation = Uuid::new_v4();
+    assert!(save(&fixture.0, &next).await.is_err());
+    let mut altered = identity.clone();
+    altered.uid = uid.wrapping_add(1);
+    assert!(store_identity(&fixture.0, &altered).await.is_err());
+    let mut unbound = fixture.registration();
+    unbound.peer_uids = registration.peer_uids;
+    assert!(save(&fixture.0, &unbound).await.is_err());
+    assert!(admit(&fixture.0, &unbound, bytes(&unbound)).await.is_err());
+}
+
+#[tokio::test]
+async fn administrator_binding_requires_current_protected_voyage_grant() {
+    let fixture = Fixture::new();
+    initialize(&fixture.0).await.unwrap();
+    let identity = ConfiguredExecutionIdentity {
+        identity: IdentityRef {
+            id: Uuid::new_v4(),
+            revision: NonZeroU64::new(1).unwrap(),
+        },
+        label: "Administrator fixture".into(),
+        user_name: "root".into(),
+        uid: 0,
+        gid: 0,
+        supplementary_groups: vec![],
+        home: fixture.0.clone(),
+        account_context: AccountContextRef {
+            id: Uuid::new_v4(),
+            revision: NonZeroU64::new(1).unwrap(),
+        },
+        authority: AuthorityClass::Administrator,
+        enabled: true,
+    };
+    store_identity(&fixture.0, &identity).await.unwrap();
+    let mut registration = fixture.registration();
+    registration.peer_uids = Some(ProcessPeerUids {
+        supervisor: unsafe { libc::geteuid() },
+        runtime: 0,
+    });
+    let grant = AdministratorGrant {
+        schema: EXECUTION_SCHEMA,
+        grant_id: Uuid::new_v4(),
+        vessel_id: Uuid::new_v4(),
+        session_id: registration.session_id,
+        administrative_owner_id: Uuid::new_v4(),
+        authority_revision: NonZeroU64::new(1).unwrap(),
+        identity: identity.identity.clone(),
+        account_context: identity.account_context.clone(),
+        host_identity_digest: "a".repeat(64),
+        policy_digest: "b".repeat(64),
+        created_at_ms: 1,
+        revoked_at_ms: None,
+    };
+    let binding = ExecutionBinding {
+        session_id: registration.session_id,
+        incarnation: registration.incarnation,
+        identity: identity.identity.clone(),
+        account_context: identity.account_context.clone(),
+        peer_uids: registration.peer_uids.clone().unwrap(),
+        administrator_grant_id: Some(grant.grant_id),
+        host_identity_digest: grant.host_identity_digest.clone(),
+        policy_digest: grant.policy_digest.clone(),
+    };
+    assert!(
+        admit_with_binding(
+            &fixture.0,
+            &registration,
+            bytes(&registration),
+            Some(&binding)
+        )
+        .await
+        .is_err()
+    );
+    issue_administrator_grant(&fixture.0, &grant).await.unwrap();
+    let mut forged = binding.clone();
+    forged.policy_digest = "c".repeat(64);
+    assert!(
+        admit_with_binding(
+            &fixture.0,
+            &registration,
+            bytes(&registration),
+            Some(&forged)
+        )
+        .await
+        .is_err()
+    );
+    let revocation = Uuid::new_v4();
+    revoke_administrator_grant(&fixture.0, grant.grant_id, revocation, 2)
+        .await
+        .unwrap();
+    revoke_administrator_grant(&fixture.0, grant.grant_id, revocation, 2)
+        .await
+        .unwrap();
+    assert!(
+        revoke_administrator_grant(&fixture.0, grant.grant_id, Uuid::new_v4(), 2)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        administrator_grant(&fixture.0, grant.grant_id)
+            .await
+            .unwrap()
+            .revoked_at_ms,
+        Some(2)
+    );
+    assert!(
+        admit_with_binding(
+            &fixture.0,
+            &registration,
+            bytes(&registration),
+            Some(&binding)
+        )
+        .await
+        .is_err()
+    );
+    let next = AdministratorGrant {
+        grant_id: Uuid::new_v4(),
+        ..grant
+    };
+    issue_administrator_grant(&fixture.0, &next).await.unwrap();
+    let binding = ExecutionBinding {
+        administrator_grant_id: Some(next.grant_id),
+        ..binding
+    };
+    admit_with_binding(
+        &fixture.0,
+        &registration,
+        bytes(&registration),
+        Some(&binding),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

@@ -3,6 +3,36 @@ use super::*;
 use serde_json::json;
 use tokio::net::UnixListener;
 use uuid::Uuid;
+use voyage_protocol::process::ProcessPeerUids;
+
+#[tokio::test]
+async fn configured_runtime_uid_is_checked_against_the_actual_socket_peer() {
+    let f = Fixture::new();
+    let mut registration = f.registration();
+    registration.state = ProcessState::Live;
+    let uid = unsafe { libc::geteuid() };
+    registration.peer_uids = Some(ProcessPeerUids {
+        supervisor: uid,
+        runtime: uid,
+    });
+    let task = peer(&f.0, &registration, json!({}), "").await;
+    forward(&f.0, &registration, RuntimeCommand::Health)
+        .await
+        .unwrap();
+    task.await.unwrap();
+    std::fs::remove_file(f.0.join("runtime.sock")).unwrap();
+
+    registration.peer_uids.as_mut().unwrap().runtime = uid.wrapping_add(1);
+    let task = peer(&f.0, &registration, json!({}), "").await;
+    let error = forward(&f.0, &registration, RuntimeCommand::Health)
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("runtime peer uid mismatch"));
+    task.abort();
+
+    registration.peer_uids.as_mut().unwrap().supervisor = uid.wrapping_add(1);
+    assert!(expected_runtime_uid(&registration).is_err());
+}
 
 async fn peer(
     directory: &Path,

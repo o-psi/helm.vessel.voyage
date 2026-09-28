@@ -27,9 +27,24 @@ pub(super) fn registration(directory: &std::path::Path) -> Result<ProcessRegistr
         registration.protocol == PROCESS_PROTOCOL && registration.token.len() >= 32,
         "invalid runtime registration"
     );
+    expected_supervisor_uid(&registration)?;
     Ok(registration)
 }
+fn expected_supervisor_uid(registration: &ProcessRegistration) -> Result<u32> {
+    let runtime_uid = unsafe { libc::geteuid() };
+    match &registration.peer_uids {
+        Some(peers) => {
+            ensure!(
+                peers.runtime == runtime_uid,
+                "runtime execution uid does not match its launch binding"
+            );
+            Ok(peers.supervisor)
+        }
+        None => Ok(runtime_uid),
+    }
+}
 pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> {
+    let expected_uid = expected_supervisor_uid(&state.registration)?;
     let endpoint = directory.join("runtime.sock");
     // Only the exclusive execution owner may retire a previous endpoint.
     match std::fs::symlink_metadata(&endpoint) {
@@ -69,7 +84,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             Some(_)=suspensions.join_next()=>{},
             connection=listener.accept()=>{
                 let (socket,_)=connection?;
-                if socket.peer_cred()?.uid()!=unsafe{libc::geteuid()} {continue}
+                if socket.peer_cred()?.uid()!=expected_uid {continue}
                 let Ok(permit)=capacity.clone().try_acquire_owned() else {continue};
                 let state=state.clone();let directory=directory.clone();clients.spawn(async move{let _permit=permit;let _=tokio::time::timeout(std::time::Duration::from_secs(30),respond(socket,state,directory)).await;});
             }
@@ -92,7 +107,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             };
             socket.set_nonblocking(true)?;
             let socket = UnixStream::from_std(socket)?;
-            if socket.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+            if socket.peer_cred()?.uid() != expected_uid {
                 continue;
             }
             let state = state.clone();
