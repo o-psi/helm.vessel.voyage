@@ -79,6 +79,24 @@ launch_local() {
         launch "$selected_installer" "$@"
     fi
 }
+launch_downloaded() {
+    selected_installer=$1
+    selected_bin=$2
+    shift 2
+    if [ "$dev" -eq 1 ]; then
+        # The bootstrap has already pinned and verified the public nightly.
+        # Replace --dev with that exact archive instead of invoking any old
+        # installer's source-building implementation or downloading twice.
+        first=1
+        for argument in "$@"; do
+            if [ "$first" -eq 1 ]; then set --; first=0; fi
+            [ "$argument" = --dev ] || set -- "$@" "$argument"
+        done
+        launch "$selected_installer" --bin-dir "$selected_bin" "$@"
+    else
+        launch_local "$selected_installer" "$selected_bin" "$@"
+    fi
+}
 if [ -n "${VOYAGE_RELEASE_DIR:-}" ]; then
     [ "$dev" -eq 0 ] || fail "VOYAGE_RELEASE_DIR conflicts with --dev."
     case "$VOYAGE_RELEASE_DIR" in /*) release_dir=$VOYAGE_RELEASE_DIR ;; *) release_dir="$PWD/$VOYAGE_RELEASE_DIR" ;; esac
@@ -88,6 +106,7 @@ if [ -n "${VOYAGE_RELEASE_DIR:-}" ]; then
     exit 0
 fi
 if [ -n "${VOYAGE_INSTALLER_BIN:-}" ]; then
+    [ "$dev" -eq 0 ] || fail 'VOYAGE_INSTALLER_BIN conflicts with --dev; use the public nightly download.'
     case "$VOYAGE_INSTALLER_BIN" in /*) installer=$VOYAGE_INSTALLER_BIN ;; *) installer="$PWD/$VOYAGE_INSTALLER_BIN" ;; esac
     [ -f "$installer" ] && [ -x "$installer" ] || fail 'VOYAGE_INSTALLER_BIN must name an executable file.'
     launch_local "$installer" "$(dirname -- "$installer")" "$@"
@@ -134,6 +153,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 version=${VOYAGE_VERSION:-${VOYAGE_INSTALLER_VERSION:-latest}}
+if [ "$dev" -eq 1 ]; then
+    case "$version" in
+        latest) version=nightly ;;
+        nightly|*-nightly.*) : ;;
+        *) fail '--dev requires a public nightly; use VOYAGE_VERSION=nightly or omit the version selector.' ;;
+    esac
+fi
 source_commit=
 if [ "$version" = latest ]; then
     fetch 'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/latest' "$tmp/latest.json" 1048576 || fail 'no published release is available; set VOYAGE_RELEASE_DIR to an extracted full release or local build.'
@@ -244,5 +270,5 @@ for name in names:
     if release['binaries'][name].get('sha256') != actual:
         raise SystemExit(f'Release binary checksum mismatch: {name}')
 PY
-launch_local "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$tmp/${asset%.tar.gz}/bin" "$@"
+launch_downloaded "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$tmp/${asset%.tar.gz}/bin" "$@"
 next_steps

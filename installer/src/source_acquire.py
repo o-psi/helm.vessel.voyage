@@ -40,7 +40,7 @@ def run(argv, label, timeout=300, cwd=ROOT, capture=False, output_limit=64 * 102
         if path.stat().st_size > output_limit:
             raise Failure(f'{label} exceeded the diagnostic limit.')
         if process.returncode:
-            raise Failure(f'{label} failed (exit {process.returncode}). Check network access and required build utilities; installation was not changed.')
+            raise Failure(f'{label} failed (exit {process.returncode}). Check network access and required utilities; installation was not changed.')
     if capture:
         if path.stat().st_size > 65536:
             raise Failure(f'{label} returned oversized metadata.')
@@ -118,7 +118,7 @@ def latest(target):
             fetch('https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/latest', metadata,
                   'Resolve latest published release', 1048576)
     except Failure:
-        raise Failure('Latest published release unavailable. Check GitHub/network availability (private repositories require gh auth login); if no release is published, use upgrade --dev explicitly to build main, or --bin-dir for a local build. No fallback was installed.') from None
+        raise Failure('Latest published stable release unavailable. Check GitHub/network availability (private repositories require gh auth login); use upgrade --dev for a public nightly or --bin-dir for an explicit local release. No fallback was installed.') from None
     data = json.loads(metadata.read_text())
     tag = data.get('tag_name', '')
     if (not isinstance(tag, str) or len(tag) > 128
@@ -205,50 +205,6 @@ def nightly(target):
     return binaries, f'Nightly {version}; source {commit}; archive SHA-256 {match[1]}'
 
 
-def main_build(target):
-    # Explicit --dev trusts build code from canonical main, not local work or
-    # global Git configuration. This is not an OS sandbox for Cargo build scripts.
-    os.environ.update(GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
-                      GIT_TERMINAL_PROMPT='0', GIT_ASKPASS='/bin/false',
-                      GIT_ALLOW_PROTOCOL='https', CARGO_TERM_COLOR='never',
-                      CARGO_BUILD_JOBS='2', CARGO_NET_RETRY='2', CARGO_HTTP_TIMEOUT='60')
-    cargo_home = ROOT / 'cargo-home'
-    cargo_home.mkdir(mode=0o700)
-    os.environ['CARGO_HOME'] = str(cargo_home)
-    os.environ['RUSTUP_TOOLCHAIN'] = 'stable'
-    checkout = ROOT / 'checkout'
-    checkout.mkdir(mode=0o700)
-    git = ['git', '-c', 'credential.helper=', '-c', 'core.hooksPath=/dev/null',
-           '-c', 'http.followRedirects=false']
-    if AUTHENTICATED:
-        git += ['-c', 'credential.helper=!gh auth git-credential']
-    run(git + ['init', '--quiet', str(checkout)], 'Create private development checkout')
-    run(git + ['fetch', '--depth=1', 'https://github.com/o-psi/helm.vessel.voyage.git', 'refs/heads/main'],
-        'Fetch GitHub main', cwd=checkout)
-    commit = run(git + ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'],
-                 'Resolve main commit', cwd=checkout, capture=True)
-    if not re.fullmatch(r'[0-9a-f]{40}', commit):
-        raise Failure('Invalid main commit identity.')
-    run(git + ['checkout', '--detach', commit], 'Check out pinned main', cwd=checkout)
-    run(['cargo', 'build', '--workspace', '--release', '--locked', '--jobs', '2',
-         '--target', target, '--target-dir', str(ROOT / 'target')],
-        'Build pinned main (requires stable Rust, native build tools and registry access)',
-        cwd=checkout, timeout=3600)
-    built = ROOT / 'target' / target / 'release'
-    binaries = ROOT / 'development' / 'bin'
-    binaries.mkdir(parents=True, mode=0o700)
-    for name in BINARIES:
-        source = built / name
-        if not source.is_file() or source.is_symlink() or source.stat().st_size > 1073741824:
-            raise Failure(f'Development build is missing a valid {name}.')
-        shutil.copyfile(source, binaries / name)
-        (binaries / name).chmod(0o700)
-    manifest = dict(schema_version=1, version=f'dev-{commit}', target=target,
-                    binaries={name: dict(sha256=digest(binaries / name)) for name in BINARIES})
-    (binaries.parent / 'release.json').write_text(json.dumps(manifest))
-    return binaries, f'Development build from GitHub main, pinned commit {commit} ({target})'
-
-
 def execute():
     if sys.version_info < (3, 11):
         raise Failure('Automatic upgrades require Python 3.11 or newer.')
@@ -257,11 +213,11 @@ def execute():
         raise Failure('Automatic upgrades support Linux x86_64/aarch64 only.')
     global AUTHENTICATED
     os.environ['GH_PROMPT_DISABLED'] = '1'
-    AUTHENTICATED = MODE != 'nightly' and github_login()
+    AUTHENTICATED = MODE == 'latest' and github_login()
     target = f'{arch}-unknown-linux-gnu'
-    if MODE not in ('latest', 'main', 'nightly'):
+    if MODE not in ('latest', 'nightly'):
         raise Failure('Unsupported acquisition mode.')
-    binaries, description = {'latest': latest, 'main': main_build, 'nightly': nightly}[MODE](target)
+    binaries, description = {'latest': latest, 'nightly': nightly}[MODE](target)
     for name in BINARIES:
         if not (binaries / name).is_file():
             raise Failure(f'Release is missing {name}.')

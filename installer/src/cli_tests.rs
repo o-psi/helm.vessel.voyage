@@ -38,7 +38,7 @@ fn actions_defaults_and_source_labels() {
         parse(&["upgrade", "--dev"])
             .unwrap()
             .source_label()
-            .contains("GitHub main")
+            .contains("public nightly")
     );
     let local = parse(&["upgrade", "--bin-dir", ".", "--replace-existing", "--start"]).unwrap();
     assert_eq!(local.bin_dir, PathBuf::from("."));

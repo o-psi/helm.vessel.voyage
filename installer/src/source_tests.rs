@@ -15,11 +15,7 @@ for name in ['helm','vessel','voyage','voyage-installer']:
 fn preparation_reads_pinned_metadata_and_drop_cleans_only_staging() {
     let f = Fixture::new();
     set_acquire(SUCCESS);
-    for (source, name) in [
-        (Source::Latest, "latest"),
-        (Source::Main, "main"),
-        (Source::Nightly, "nightly"),
-    ] {
+    for (source, name) in [(Source::Latest, "latest"), (Source::Nightly, "nightly")] {
         let prepared = prepare(source, &AtomicBool::new(false)).unwrap();
         assert_eq!(prepared.description, format!("pinned {name}"));
         assert!(prepared.bin_dir.join("helm").is_file());
@@ -70,7 +66,7 @@ fn cancellation_terminates_owned_acquisition_group() {
         std::thread::sleep(std::time::Duration::from_millis(150));
         worker_flag.store(true, Ordering::Relaxed);
     });
-    let error = prepare(Source::Main, &flag).err().unwrap();
+    let error = prepare(Source::Nightly, &flag).err().unwrap();
     worker.join().unwrap();
     assert!(error.to_string().contains("cancelled"));
     assert_eq!(
@@ -118,6 +114,14 @@ fn prepared_upgrade_is_shared_and_reused_without_reacquisition() {
     drop(copy);
     assert!(!root.exists());
     assert!(f.root.exists());
+}
+#[test]
+fn development_upgrade_selects_published_nightly_acquisition() {
+    let _f = Fixture::new();
+    set_acquire(SUCCESS);
+    let mut options = crate::cli::Options::parse(&["upgrade".into(), "--dev".into()]).unwrap();
+    options.prepare(&AtomicBool::new(false)).unwrap();
+    assert_eq!(options.source_label(), "pinned nightly");
 }
 #[test]
 fn acquisition_error_details_are_sanitized_and_bounded() {

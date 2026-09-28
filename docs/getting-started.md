@@ -63,46 +63,19 @@ For a pinned release or manual archive verification, see the
 [v1.0.1 release installation](releases-v1.0.1.md) and
 [bootstrap details](../installer/README.md#download-a-published-version).
 
-### Build from source instead
-
-Install Git, a stable Rust toolchain (Cargo included), and your
-Linux distribution's native compiler/linker build prerequisites first; see
-[development](development.md). Building executes project/dependency build code as
-your user and needs network access for uncached dependencies.
-
-In your normal shell:
-
-```sh
-git clone https://github.com/o-psi/helm.vessel.voyage.git voyage
-cd voyage
-cargo build --workspace --release --locked
-./target/release/voyage-installer
-```
-
-The installer opens a review/apply/cancel wizard. Review the destination and service
-choices, then apply only what you intend. Do not use `sudo`. It installs `helm`,
-`vessel`, `voyage`, and `voyage-installer` together; provider login is separate.
-
-Add the installed commands to this shell's search path and inspect the installation:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-voyage-installer status
-helm --help
-```
-
-The installer does not edit shell startup files. Add that PATH entry using your
-shell's normal configuration if you want it in future terminals. If installation
+The installer does not edit shell startup files. Add the printed PATH entry using
+your shell's normal configuration if you want it in future terminals. If installation
 refuses an existing unmanaged command, read the [replacement procedure](../installer/README.md)
-instead of deleting it. A build/install failure is a blocker; do not continue with
-an older `helm` accidentally found on PATH.
+instead of deleting it. An install failure is a blocker; do not continue with an
+older `helm` accidentally found on PATH.
 
 Already have a trusted full archive? Use its sibling `bin/voyage-installer` and
 follow the [local-release procedure](../installer/README.md#install-from-a-local-release).
 Keep its binaries and guide directories together. A standalone installer does not
-contain the runtime programs. Upgrades require an actually available published
-release or an explicit source/local-build choice. Native macOS/Windows are outside
-this Linux installer walkthrough.
+contain the runtime programs. Upgrades require an available published stable or
+nightly release, or explicit local binaries. Building from source is covered in the
+[contributor guide](development.md). Native macOS/Windows are outside this Linux
+installer walkthrough.
 
 ## 2. Launch Helm
 

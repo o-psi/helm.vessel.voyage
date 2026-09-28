@@ -433,9 +433,9 @@ per-voyage resource controls still apply.
 Explicit Linux user-service installation is available. Native macOS/Windows process
 supervision is unsupported. The Linux installer wizard installs versioned releases
 and manages upgrades, rollback and the local user service. Upgrade resolves the
-latest published GitHub release by default; explicit `--dev` fetches and builds a
-pinned main commit, while `--bin-dir` selects local binaries. Preparation retains
-one verified artifact through review/apply and bounds network/build work and
+latest published stable GitHub release by default; explicit `--dev` downloads a
+verified public nightly prerelease, while `--bin-dir` selects local binaries. Preparation retains
+one verified artifact through review/apply and bounds network work and
 cancellation cleanup. Missing published releases never fall back to main. See
 [installation](../installer/README.md) for prerequisites, trust and restart limits.
 

@@ -111,7 +111,7 @@ impl Options {
         } else if self.local_source || self.action == Some(Action::Install) {
             format!("Local binaries: {}", self.bin_dir.display())
         } else if self.dev {
-            "GitHub main: pin and build a development commit (executes trusted build code)".into()
+            "Latest public nightly release (downloaded and verified)".into()
         } else {
             "Latest published GitHub release (no development fallback)".into()
         }
@@ -120,7 +120,7 @@ impl Options {
         self.validate()?;
         if self.action == Some(Action::Upgrade) && !self.local_source && self.prepared.is_none() {
             let source = if self.dev {
-                crate::source::Source::Main
+                crate::source::Source::Nightly
             } else {
                 crate::source::Source::Latest
             };
@@ -141,14 +141,13 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer status
 
 upgrade defaults to the latest published GitHub release, downloaded and verified.
---dev explicitly fetches GitHub main and builds its pinned commit with stable Rust.
+--dev selects the latest public nightly prerelease; no source build is performed.
 --bin-dir explicitly uses local binaries instead; it conflicts with --dev.
 install defaults to the installer executable's sibling binaries.
-Automatic upgrades require Linux, Python 3.11+ and curl; --dev also needs Git,
-stable Rust/Cargo, native build tools and network access to build dependencies.
-Private sources use your existing GitHub CLI login (gh auth login) on this machine.
-Development builds execute code from main as your account, not inside a sandbox.
---dry-run may download/build into private temporary staging to review the exact
+Automatic upgrades require Linux, Python 3.11+ and curl. Published binaries
+currently support Linux x86-64 with glibc 2.39+. Private stable releases use
+your existing GitHub CLI login (gh auth login) on this machine.
+--dry-run may download into private temporary staging to review the exact
 release; it does not change installation or services. Cancellation removes staging
 after subprocess cleanup; forced termination can leave staging for inspection.
 --replace-existing backs up unmanaged PATH binaries before replacing them.
@@ -156,7 +155,7 @@ after subprocess cleanup; forced termination can leave staging for inspection.
 service stopped; an already active service restarts for upgrades.
 Configuration, credentials, sessions and prior releases are preserved.
 Close and relaunch Helm after upgrading; existing voyages remain independent.
-No provider login is performed. Missing releases never silently fall back to main.
+No provider login is performed. Missing releases never trigger a source build.
 
 Service commands: install-user-service --bin-dir ABS [--start] [--dry-run],
 service-status, service-stop, service-uninstall

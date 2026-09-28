@@ -119,7 +119,7 @@ class PublicNightlyTests(unittest.TestCase):
             self.acquire()
         self.assertFalse((self.root / 'escape').exists())
 
-    def bootstrap(self):
+    def bootstrap(self, *args, version='nightly'):
         # Execute the complete standalone bootstrap with fixture curl/systemd/id;
         # Python/extraction/hashes/selection are real. No credentials or network.
         bin_dir = self.root / 'tools'
@@ -152,14 +152,28 @@ else:
         (self.root / 'download').mkdir(exist_ok=True)
         # Safe home under real HOME; the fixture overrides only mkdtemp destination.
         env = {k: v for k, v in os.environ.items() if not k.startswith(('VOYAGE_', 'GH_', 'GITHUB_'))}
-        env.update(PATH=f'{bin_dir}:' + os.environ['PATH'], VOYAGE_VERSION='nightly', ARGS_LOG=str(self.root / 'args'))
-        return subprocess.run(['sh', str(ROOT / 'install.sh'), 'install', '--no-start'], env=env,
+        env.update(PATH=f'{bin_dir}:' + os.environ['PATH'], VOYAGE_VERSION=version, ARGS_LOG=str(self.root / 'args'))
+        return subprocess.run(['sh', str(ROOT / 'install.sh'), *(args or ('install', '--no-start'))], env=env,
                               capture_output=True, text=True, timeout=15)
 
     def test_bootstrap_anonymous(self):
         result = self.bootstrap()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.root / 'args').read_text().splitlines()[-2:], ['install', '--no-start'])
+
+    def test_bootstrap_dev_uses_pinned_nightly_without_source_build(self):
+        result = self.bootstrap('upgrade', '--dev', '--start', version='latest')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = (self.root / 'args').read_text().splitlines()
+        self.assertEqual(args[-2:], ['upgrade', '--start'])
+        self.assertEqual(args[0], '--bin-dir')
+        self.assertNotIn('--dev', args)
+
+    def test_bootstrap_dev_refuses_stable_pin(self):
+        result = self.bootstrap('upgrade', '--dev', version='v1.0.1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('requires a public nightly', result.stderr)
+        self.assertFalse((self.root / 'args').exists())
 
     def test_bootstrap_source_mismatch(self):
         self.make_archive(source='b' * 40)

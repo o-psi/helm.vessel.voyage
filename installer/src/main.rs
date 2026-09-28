@@ -64,7 +64,7 @@ fn run() -> Result<bool> {
     if reviewed.is_none() {
         println!("Source: {}", options.source_label());
         println!(
-            "Preparing source for review; downloads/builds may take several minutes. Ctrl+C cancels."
+            "Preparing source for review; downloads may take several minutes. Ctrl+C cancels."
         );
         options.prepare(&cancellation.flag)?;
     }

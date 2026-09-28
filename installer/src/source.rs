@@ -5,7 +5,6 @@ use std::{path::PathBuf, sync::atomic::AtomicBool};
 #[derive(Clone, Copy)]
 pub enum Source {
     Latest,
-    Main,
     Nightly,
 }
 
@@ -174,7 +173,6 @@ mod linux {
             .args(["-I", "-c", acquire])
             .arg(match source {
                 Source::Latest => "latest",
-                Source::Main => "main",
                 Source::Nightly => "nightly",
             })
             .arg(&prepared.root)
@@ -186,11 +184,7 @@ mod linux {
         let mut child = command
             .spawn()
             .context("Automatic upgrades require Python 3.11+; could not start acquisition")?;
-        let deadline = Instant::now()
-            + Duration::from_secs(match source {
-                Source::Latest | Source::Nightly => 1000,
-                Source::Main => 4200,
-            });
+        let deadline = Instant::now() + Duration::from_secs(1000);
         let result = (|| -> Result<()> {
             loop {
                 ensure!(!cancelled.load(Ordering::Relaxed), "Upgrade cancelled");
@@ -201,7 +195,7 @@ mod linux {
                 );
                 if let Some(status) = child.try_wait()? {
                     if !status.success() {
-                        let detail = fs::read_to_string(prepared.root.join("error.txt")).unwrap_or_else(|_| "Acquisition stopped unexpectedly; check Python, curl, Git and Rust prerequisites.".into());
+                        let detail = fs::read_to_string(prepared.root.join("error.txt")).unwrap_or_else(|_| "Acquisition stopped unexpectedly; check Python, curl and network access.".into());
                         let detail: String = detail
                             .chars()
                             .filter(|c| !c.is_control())

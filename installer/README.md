@@ -8,17 +8,17 @@ configuration, credentials and voyage data are preserved.
 
 ## Install from a local release
 
-Build the workspace or extract a full release into an owned directory. Run its
-installer next to the other three binaries:
+Extract a full release into an owned directory. Run its installer next to the
+other three binaries:
 
 ```sh
 /absolute/release/bin/voyage-installer
 ```
 
-For a repository build, use `target/release/voyage-installer`. The installer detects
-its own sibling binaries. The standalone installer asset can download a published release with `upgrade`,
-or use an explicit full release directory with `--bin-dir`; it does not contain
-the runtime binaries.
+The installer detects its sibling binaries. The standalone installer asset downloads
+a published release with `upgrade`, or uses an explicit full release directory with
+`--bin-dir`; it does not contain the runtime binaries. Contributors using a local
+build can pass their build directory explicitly with `--bin-dir`.
 
 The same operations are available without a terminal:
 
@@ -80,38 +80,34 @@ voyage-installer rollback --start
 voyage-installer status
 ```
 
-`--dev` explicitly fetches GitHub `main` into a fresh private checkout, pins the
-fetched commit and builds the locked workspace with stable Rust (two build jobs).
-The review and installed manifest identify `dev-FULL_COMMIT`; unchanged Cargo
-version strings do not imply unchanged binaries. It never reuses your checkout or
-its potentially stale `target/release` directory. `--dev` conflicts with
-`--bin-dir` and is only supported for Upgrade. Explicit local installation keeps
-supporting trusted local builds without a release manifest. Reinstalling the same
-verified binary identity reports **Already current**, separately from service work.
+`--dev` selects the latest public nightly prerelease, pins its published source
+commit and downloads its full archive and checksum. It does not fetch source or
+run Cargo on the installation host. The review identifies the exact nightly version,
+source commit and archive hash. It conflicts with `--bin-dir` and is only supported
+for Upgrade. Explicit local installation still supports trusted local builds without
+a release manifest. Reinstalling the same verified binary identity reports
+**Already current**, separately from service work.
 
-Automatic upgrades require Linux x86-64/aarch64, Python 3.11+ and curl. Development
-builds additionally require Git, stable Rust/Cargo, native build tools and network
-access to dependencies. Private repositories/releases use an existing authenticated
-GitHub CLI (`gh auth login`) on this machine; credentials are never requested in
-installer input or embedded in command arguments. Public sources work without gh. Unattended Git credential prompts and ambient Git configuration are
-disabled except for the explicit GitHub CLI credential helper; development builds use a fresh Cargo home rather than local credentials
-or Cargo configuration. Build scripts execute code from main as your account:
-**this is not a sandbox**. Provider credentials are not supplied to acquisition
-subprocess environments. No provider login or model inference is performed.
+Automatic upgrades require Linux, Python 3.11+ and curl. Published stable and
+nightly downloads currently support Linux x86-64 with glibc 2.39+. Private stable
+releases use an existing authenticated GitHub CLI (`gh auth login`) on this machine;
+public nightly downloads need no login. Credentials are never requested in installer
+input or embedded in command arguments. Provider credentials are not supplied to
+acquisition subprocess environments. No provider login or model inference is performed.
 
-`--dry-run` downloads/builds into private temporary staging under
+`--dry-run` downloads into private temporary staging under
 `~/.cache/voyage/upgrades` to review an exact artifact, but does not publish binaries
-or change services. Network commands have five-minute bounds, compilation has a
-one-hour bound, logs are bounded to 64 MiB, and release download/extraction limits
+or change services. Network commands have five-minute bounds, the overall acquisition
+is bounded, logs are bounded to 64 MiB, and release download/extraction limits
 are 512 MiB/1 GiB. Ctrl+C/termination requests stop acquisition process groups
 before staging cleanup. Once publication begins, the bounded install/service
 transaction finishes instead of interrupting between journal updates. Forced termination or unconfirmed cleanup can retain
 staging; reported retained work must be stopped before removing its directory.
 
-The wizard defaults Upgrade to published releases; **d** toggles explicit
-main development builds when Upgrade is selected. An explicit `--bin-dir` fixes
+The wizard defaults Upgrade to stable published releases; **d** selects the public
+nightly prerelease when Upgrade is selected. An explicit `--bin-dir` fixes
 the local source. Preparation happens outside the display thread; review retains
-the exact prepared artifact through apply, without resolving latest/main again.
+the exact prepared artifact through apply, without resolving latest/nightly again.
 Esc/Ctrl+C during preparation cancels it and waits for subprocess cleanup.
 
 **Close and relaunch Helm after upgrading.** An installer cannot replace the code
@@ -178,10 +174,12 @@ private and cleaned up; installed releases remain independent of that directory.
 `VOYAGE_INSTALLER_BIN` can select a local installer with sibling runtime binaries.
 The bootstrap passes its pinned bundle explicitly with `--bin-dir`, so an upgrade
 does not resolve latest a second time. Explicit `--bin-dir` is honored;
-`VOYAGE_RELEASE_DIR` conflicts with `--dev`. `sh install.sh upgrade --dev` first
-needs a published installer supporting `--dev` (or an explicit
-`VOYAGE_INSTALLER_BIN`); it then builds main rather than installing that bundle.
-When no release is published, bootstrap a local installer from source first.
+`VOYAGE_RELEASE_DIR` and `VOYAGE_INSTALLER_BIN` conflict with `--dev`. For a
+development archive, use `sh install.sh upgrade --dev --start` or
+`VOYAGE_VERSION=nightly sh install.sh upgrade --start`. The bootstrap downloads a
+public prerelease and passes its verified binaries directly to the bundled installer.
+When no published release is available, provide an explicit trusted local release
+directory.
 Publication to GitHub main is not publication of a downloadable release.
 
 ## The local service
