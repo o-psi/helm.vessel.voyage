@@ -60,15 +60,14 @@ fn cgroup_available() -> Option<u64> {
         if let (Ok(max), Ok(current)) = (
             fs::read_to_string(path.join("memory.max")),
             fs::read_to_string(path.join("memory.current")),
-        ) {
-            if max.trim() != "max" {
-                let headroom = max
-                    .trim()
-                    .parse::<u64>()
-                    .ok()?
-                    .saturating_sub(current.trim().parse::<u64>().ok()?);
-                least = Some(least.map_or(headroom, |prior: u64| prior.min(headroom)));
-            }
+        ) && max.trim() != "max"
+        {
+            let headroom = max
+                .trim()
+                .parse::<u64>()
+                .ok()?
+                .saturating_sub(current.trim().parse::<u64>().ok()?);
+            least = Some(least.map_or(headroom, |prior: u64| prior.min(headroom)));
         }
         if path == root {
             return least;

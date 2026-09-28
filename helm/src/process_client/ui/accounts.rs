@@ -689,10 +689,9 @@ impl App {
                     && !d.busy
             })
             && self.accounts.initializing.insert(id)
+            && let Err(error) = self.open_initial_profiles()
         {
-            if let Err(error) = self.open_initial_profiles() {
-                self.status = safe(&error.to_string());
-            }
+            self.status = safe(&error.to_string());
         }
     }
     fn account_reply(&mut self, id: Uuid, result: Result<Reply>) -> Result<()> {

@@ -680,10 +680,10 @@ async fn image_steering_reaches_next_provider_request_in_same_run() {
     assert!(response.error.is_none(), "{response:?}");
     assert!(call(&state, steering.clone()).await.error.is_none());
     let mut conflict = steering.clone();
-    if let RuntimeCommand::Steer { parts, .. } = &mut conflict {
-        if let voyage_protocol::content::ContentPart::Image { attachment } = &mut parts[0] {
-            attachment.id = Uuid::new_v4();
-        }
+    if let RuntimeCommand::Steer { parts, .. } = &mut conflict
+        && let voyage_protocol::content::ContentPart::Image { attachment } = &mut parts[0]
+    {
+        attachment.id = Uuid::new_v4();
     }
     assert!(call(&state, conflict).await.error.is_some());
     gate.notify_one();

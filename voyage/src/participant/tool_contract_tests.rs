@@ -89,11 +89,13 @@ async fn offline_configuration_rejects_invalid_endpoints_before_network_or_monit
             5 => invalid.binding_revision = 0,
             _ => (),
         }
-        let mut config = crate::Config::default();
-        config.participants = match case {
-            6 => vec![endpoint.clone(), endpoint.clone()],
-            7 => vec![endpoint.clone(); 17],
-            _ => vec![invalid],
+        let config = crate::Config {
+            participants: match case {
+                6 => vec![endpoint.clone(), endpoint.clone()],
+                7 => vec![endpoint.clone(); 17],
+                _ => vec![invalid],
+            },
+            ..Default::default()
         };
         let result = ParticipantTool::configured(
             tool.parent.owner.clone(),

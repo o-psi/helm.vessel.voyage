@@ -11,15 +11,13 @@ use voyage_protocol::{
     vessel::VesselCommand,
 };
 
+type ProfileJobResult = Result<(Uuid, ProfileCatalogue, Vec<account_choices::Choice>)>;
+
 #[derive(Default)]
 pub(super) struct Controls {
     pub(super) panel: Option<Panel>,
     pub(super) editing: Option<(Uuid, String)>,
-    job: Option<
-        tokio::sync::oneshot::Receiver<
-            Result<(Uuid, ProfileCatalogue, Vec<account_choices::Choice>)>,
-        >,
-    >,
+    job: Option<tokio::sync::oneshot::Receiver<ProfileJobResult>>,
     labels: Vec<ExecutionProfile>,
     accounts: Vec<account_choices::Choice>,
     pending_save: Option<ExecutionProfile>,
@@ -186,10 +184,10 @@ impl App {
                 panel.catalogue = Some(catalogue);
                 if self.inference.profiles.automatic {
                     self.inference.profiles.automatic = false;
-                    if let Some(profile) = default {
-                        if let Err(e) = self.use_profile(destination, profile) {
-                            self.status = safe(&e.to_string());
-                        }
+                    if let Some(profile) = default
+                        && let Err(e) = self.use_profile(destination, profile)
+                    {
+                        self.status = safe(&e.to_string());
                     }
                 }
             }
@@ -528,10 +526,10 @@ impl App {
         } else {
             Ok(())
         };
-        if let Err(e) = result {
-            if let Some(panel) = self.inference.profiles.panel.as_mut() {
-                panel.notice = safe(&e.to_string());
-            }
+        if let Err(e) = result
+            && let Some(panel) = self.inference.profiles.panel.as_mut()
+        {
+            panel.notice = safe(&e.to_string());
         }
         Ok(true)
     }
