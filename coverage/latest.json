@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-09-29T08:21:17.400591+00:00",
-  "source_commit": "b9c5ba4ed0fe1a7613356be8dd0293600b74f8d5",
+  "measured_at_utc": "2026-09-29T08:37:05.497601+00:00",
+  "source_commit": "279c231e6cafec86dbca2a6f3b62b4c2dc8fb89e",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -14,23 +14,23 @@
   "totals": {
     "lines": {
       "count": 112558,
-      "covered": 87354,
-      "percent": 77.60798877023402
+      "covered": 87343,
+      "percent": 77.59821603084632
     },
     "functions": {
       "count": 10682,
-      "covered": 7955,
-      "percent": 74.47107283280285
+      "covered": 7954,
+      "percent": 74.46171129002059
     },
     "regions": {
       "count": 185059,
-      "covered": 137377,
-      "notcovered": 47682,
-      "percent": 74.23416315877638
+      "covered": 137360,
+      "notcovered": 47699,
+      "percent": 74.22497689925916
     }
   },
-  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-goals -j 8 > $WORKTREE_TARGET/coverage-report/v103-goals/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-goals/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
+  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-recovery -j 8 > $WORKTREE_TARGET/coverage-report/v103-recovery/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-recovery/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,8 +40,8 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests on clean source b9c5ba4ed0fe1a7613356be8dd0293600b74f8d5. WORKTREE_TARGET denotes the isolated checkout target directory. Coverage measured after all Goal Rust edits. No live provider or native macOS/Windows behavior is measured.",
-    "Preserved the initial report, raw profiles and HTML. Audited report object hashes against all 13 test binaries named in the successful run log and current helm/vessel/voyage production binaries. Re-exported with exactly those 16 distinct current objects: removed two historical instrumented Helm objects, seven noninstrumented paths and three duplicate aliases. Corrected totals equal initial totals; no source exclusions added. All 491 source entries belong to this checkout except one unavailable distribution Rust standard-library source. This applies the current-object audit required by #251.",
-    "Compared with clean source d65fd39: lines 87,354/112,558 vs 83,229/107,975 (+4,125 covered, +4,583 total, +0.5263 percentage points); functions 7,955/10,682 vs 7,606/10,263; regions 137,377/185,059 vs 130,807/177,352. This remains below the #353 release gate and does not close it."
+    "Full default-feature workspace coverage on clean source 279c231e6cafec86dbca2a6f3b62b4c2dc8fb89e, after reconnect/recovery/event/browser test-fixture corrections. No Rust source or Cargo input changed from b9c5ba4. WORKTREE_TARGET is the isolated checkout target directory. Python/browser journeys remain separate evidence.",
+    "Preserved the original report and prior merged profile. Re-exported with all 13 executed test binaries and three current production entry points; all 16 distinct hashes match the preceding audited artifact set. Removed historical/noninstrumented paths and duplicate aliases from the report object selection. Corrected and original totals match. All 491 source entries belong to this checkout except one unavailable distribution Rust standard-library source. No source exclusions added (#251).",
+    "Compared with b9c5ba4, the identical current Rust artifacts measured 11 fewer covered lines, one fewer function and 17 fewer regions, with unchanged denominators: lines -0.009773, functions -0.009362, regions -0.009186 percentage points. This is observed run-to-run execution variation, not a scope reduction. Coverage remains below #353 acceptance. No live-provider, system-service, or native macOS/Windows certification."
   ]
 }
