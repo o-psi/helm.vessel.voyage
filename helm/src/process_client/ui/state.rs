@@ -212,12 +212,10 @@ pub struct Pending {
 impl Pending {
     pub fn resolution(&self) -> voyage_protocol::vessel::VoyageCommand {
         use voyage_protocol::vessel::VoyageCommand;
-        if self.receipt_only
-            || (self.original.is_none()
-                && (self.draft.trim() == "/branch"
-                    || self.draft.trim_start().starts_with("/branch ")
-                    || self.draft.trim() == "/restore"))
-        {
+        // A legacy/lifecycle receipt without an exact original envelope may
+        // only be observed. Resolve without an original can reserve an unknown
+        // ID and requires greater authority than a read-only receipt lookup.
+        if self.receipt_only || self.original.is_none() {
             VoyageCommand::Receipt {
                 command_id: self.command_id,
             }

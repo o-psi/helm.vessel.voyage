@@ -747,8 +747,10 @@ existing receipt or durably closes an unadmitted command ID. A delayed copy of t
 ID cannot subsequently execute. `not_admitted` restores an editable draft; confirmed
 admission clears pending delivery. Transport failures and older owners without
 `resolve` leave the original pending, rather than treating a failed status check
-as a refused submission. Legacy payload-free pending commands can be resolved with
-local host authority; scoped clients need the original public request. After a
+as a refused submission. Legacy payload-free pending commands are looked up by receipt only; Helm
+never reserves an unknown command ID without its exact original envelope. Scoped
+clients need the original public request to resolve a missing receipt. Malformed
+saved identities or mismatched envelopes are preserved, not dispatched. After a
 supervisor upgrade, suspended or cleanly stopped resolution uses the updated
 one-shot runtime under the saved session fence, even if the retired executable
 predates `resolve`; it does not restart an agent or change the incarnation. Vessel

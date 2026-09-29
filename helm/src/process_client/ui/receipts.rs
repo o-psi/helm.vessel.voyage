@@ -72,6 +72,18 @@ impl CommandReceipt {
 fn decode(bytes: &[u8]) -> Result<Receipt> {
     let mut receipt: Receipt = serde_json::from_slice(bytes)
         .map_err(|_| anyhow::anyhow!("Invalid saved execution receipt; original file preserved"))?;
+    if let Some(pending) = receipt.pending.as_ref() {
+        ensure!(
+            !pending.command_id.is_nil() && !pending.incarnation.is_nil(),
+            "Invalid saved command identity; original file preserved"
+        );
+        if let Some(original) = pending.original.as_ref() {
+            ensure!(
+                original.mutation_id() == Some(pending.command_id),
+                "Saved command envelope does not match its identity; original file preserved"
+            );
+        }
+    }
     // Normalize legacy lifecycle semantics before discarding the old UI text.
     receipt.pending = receipt
         .pending
@@ -322,6 +334,35 @@ mod tests {
         assert_eq!(restored.account_host, pending.account_host);
         assert!(restored.draft.is_empty());
         assert!(!restored.preserve_draft);
+    }
+
+    #[test]
+    fn malformed_original_is_not_used_to_reserve_a_different_command() {
+        let mut pending = pending();
+        pending.original = Some(Box::new(VoyageCommand::Submit {
+            coordination: None,
+            command_id: Uuid::new_v4(),
+            expected_revision: 7,
+            expires_at_ms: 123456,
+            prompt: "not this identity".into(),
+        }));
+        let bytes = serde_json::to_vec(&serde_json::json!({"pending": pending})).unwrap();
+        assert!(decode(&bytes).is_err());
+        let mut pending = self::pending();
+        pending.command_id = Uuid::nil();
+        let bytes = serde_json::to_vec(&serde_json::json!({"pending": pending})).unwrap();
+        assert!(decode(&bytes).is_err());
+    }
+
+    #[test]
+    fn old_payload_free_pending_is_receipt_only_even_if_draft_is_not_a_command() {
+        let mut pending = pending();
+        pending.original = None;
+        pending.draft = "old unsent text".into();
+        assert!(matches!(
+            pending.resolution(),
+            VoyageCommand::Receipt { .. }
+        ));
     }
 
     #[test]
