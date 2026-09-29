@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T18:25:04.825570+00:00",
-  "source_commit": "107c189407db01815380bc288ea042993bbedfa6",
+  "measured_at_utc": "2026-09-29T18:50:39.925333+00:00",
+  "source_commit": "fa06aca091382d94c1b23e9b53ee957669e68c0b",
   "dirty": false,
   "platform": "Linux-7.2.4-arch1-2-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2022,
+    "passed": 2025,
     "failed": 0,
     "ignored": 6
   },
   "totals": {
     "lines": {
-      "count": 114385,
-      "covered": 88205,
-      "percent": 77.11238361673296
+      "count": 114712,
+      "covered": 88286,
+      "percent": 76.96317734849013
     },
     "functions": {
-      "count": 10824,
-      "covered": 8026,
-      "percent": 74.150036954915
+      "count": 10856,
+      "covered": 8034,
+      "percent": 74.00515843773029
     },
     "regions": {
-      "count": 188054,
-      "covered": 138668,
-      "notcovered": 49386,
-      "percent": 73.73839429100151
+      "count": 188584,
+      "covered": 138843,
+      "notcovered": 49741,
+      "percent": 73.62395537267213
     }
   },
-  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-composer -j 8 > $WORKTREE_TARGET/coverage-report/v103-composer/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-composer/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
+  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-system-assess -j 8 > $WORKTREE_TARGET/coverage-report/v103-system-assess/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-system-assess/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-privileged-vessel.profdata -summary-only with the standard ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,9 +40,9 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 107c189407db01815380bc288ea042993bbedfa6. All six packages and 500 prior source files retained; 13 executed test binaries plus three current production entry points had 16 distinct hashes.",
-    "Lines +26 covered / +46 total (-0.008284 percentage points); functions -0.018170 and regions -0.012344 points. New discovery branches remain in the denominator; no measured scope was narrowed.",
-    "The first attempt failed private-storage fixture permissions because the required umask was omitted. Its log is retained under target; the independent rerun used umask 077 and passed. The raw default export includes historical object files and duplicates totals; the published compact totals use only the current 16 objects. The existing unavailable distribution standard-library thread-local source remains in the report (#251).",
-    "2,022 workspace tests passed, zero failed, six ignored. Separate focused Rust/Clippy and synthetic supervised Vessel/Voyage discovery checks passed. No live provider, authenticated production conversation or native macOS/Windows claim."
+    "Full default-feature workspace measurement on clean source fa06aca091382d94c1b23e9b53ee957669e68c0b. All six packages and 499 prior checkout source files retained; the new installer system_preflight.rs is included. The 13 executed test binaries plus three current production entry points have 16 distinct hashes.",
+    "Lines +81 covered / +327 total (-0.149206 percentage points); functions -0.144879 and regions -0.114439 points. The read-only system-host assessment adds guarded and host-specific branches; no measured scope was narrowed. #353 remains open toward 100% reachable production lines.",
+    "An initial standalone installer test attempt without the documented umask failed five pre-existing private-storage fixtures. The independent umask 077 rerun passed 90/90. Full coverage passed 2,025 tests, zero failed, six ignored.",
+    "The raw default LLVM export mixed historical objects and duplicate totals; the published summary uses only the current 16 objects. One unavailable distribution standard-library thread-local source remains in the report (#251). No root service installation, production adoption, live provider or native macOS/Windows verification is claimed."
   ]
 }
