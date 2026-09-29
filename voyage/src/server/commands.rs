@@ -35,7 +35,18 @@ pub(super) async fn dispatch_admitted(
 
     match command {
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
-        RuntimeCommand::GoalReconcile { offset, limit } => {
+        RuntimeCommand::GoalReconcile {
+            offset,
+            limit,
+            fence_children,
+        } => {
+            ensure!(
+                !fence_children || authorization.grant.is_none() || authorization.owner_connection,
+                "fencing Goal children requires human owner authority"
+            );
+            if fence_children && let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
             ensure!(
                 (1..=128).contains(&limit),
                 "invalid Goal reconciliation page"
@@ -46,7 +57,14 @@ pub(super) async fn dispatch_admitted(
                 "Goal reconciliation requires idle runtime"
             );
             let config = state.config.read().await.clone();
-            crate::tools::reconcile_goal_allocations(&state.owner, &config, offset, limit).await
+            crate::tools::reconcile_goal_allocations(
+                &state.owner,
+                &config,
+                offset,
+                limit,
+                fence_children,
+            )
+            .await
         }
         command @ RuntimeCommand::GoalUpdate { .. } => {
             ensure!(

@@ -227,6 +227,7 @@ async fn observation_persists_terminal_result_before_stop_and_never_repolls() {
     let path = assignment_path(&f.0, id);
     let mut a: Assignment = store::load_bounded(&path, 2 * 1024 * 1024).unwrap();
     a.observation.cleanup_observed = false;
+    a.observation.admission_closed = false;
     a.cancellation_requested = false;
     a.observation.state = "accepted".into();
     store::save_bounded(&path, &a, 2 * 1024 * 1024).unwrap();
@@ -276,6 +277,7 @@ async fn active_cancellation_reuses_durable_command_and_revokes_child_before_rpc
     let path = assignment_path(&f.0, id);
     let mut a: Assignment = store::load_bounded(&path, 2 * 1024 * 1024).unwrap();
     a.observation.cleanup_observed = false;
+    a.observation.admission_closed = false;
     a.observation.state = "accepted".into();
     a.cancellation_requested = false;
     store::save_bounded(&path, &a, 2 * 1024 * 1024).unwrap();
@@ -365,6 +367,7 @@ async fn goal_participant_waits_for_exact_usage_before_freezing_terminal_snapsho
     let path = assignment_path(&f.0, id);
     let mut a: Assignment = store::load_bounded(&path, 2 * 1024 * 1024).unwrap();
     a.observation.cleanup_observed = false;
+    a.observation.admission_closed = false;
     a.cancellation_requested = false;
     a.observation.state = "accepted".into();
     store::save_bounded(&path, &a, 2 * 1024 * 1024).unwrap();
@@ -385,25 +388,36 @@ async fn goal_participant_waits_for_exact_usage_before_freezing_terminal_snapsho
         output_tokens: 3,
         elapsed_ms: 100,
         complete: true,
-        cleanup_observed: true,
+        cleanup_observed: false,
     };
     let returned = usage.clone();
     let server = tokio::spawn(async move {
-        for index in 0..3 {
+        for index in 0..6 {
             let (mut stream, _) =
                 tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
                     .await
                     .unwrap()
                     .unwrap();
             let request: RuntimeRequest = read_frame(&mut stream).await.unwrap();
-            if index < 2 {
-                assert!(matches!(request.command, RuntimeCommand::Snapshot));
-            } else {
-                assert!(matches!(request.command, RuntimeCommand::Stop));
+            match index {
+                2 => assert!(matches!(
+                    request.command,
+                    RuntimeCommand::GoalReconcile {
+                        fence_children: false,
+                        ..
+                    }
+                )),
+                5 => assert!(matches!(request.command, RuntimeCommand::Stop)),
+                _ => assert!(matches!(request.command, RuntimeCommand::Snapshot)),
             }
             let mut result = json!({"revision":3,"run":{"run_id":run,"state":"completed"},"pending_cleanup_run":null});
-            if index == 1 {
+            if matches!(index, 1 | 3 | 4) {
                 result["execution_usage"] = serde_json::to_value(&returned).unwrap();
+            }
+            if index == 4 {
+                let mut observed = returned.clone();
+                observed.cleanup_observed = true;
+                result["execution_usage_observed"] = serde_json::to_value(observed).unwrap();
             }
             write_frame(
                 &mut stream,
@@ -424,7 +438,17 @@ async fn goal_participant_waits_for_exact_usage_before_freezing_terminal_snapsho
     let pending = s.observe_assignment(&g, id, false).await.unwrap();
     assert_eq!(pending["cleanup_observed"], false);
     assert!(pending["result"].is_null());
+    let partial = s.observe_assignment(&g, id, false).await.unwrap();
+    assert_eq!(partial["cleanup_observed"], false);
+    assert!(partial["result"].is_null());
+    assert_eq!(partial["execution_usage"]["input_tokens"], 9);
+    let retained: Assignment = store::load_bounded(&path, 2 * 1024 * 1024).unwrap();
+    assert_eq!(retained.observation.execution_usage.as_ref(), Some(&usage));
     let completed = s.observe_assignment(&g, id, false).await.unwrap();
+    assert_eq!(
+        completed["execution_usage_observed"]["cleanup_observed"],
+        true
+    );
     assert_eq!(completed["cleanup_observed"], true);
     assert_eq!(
         completed["result"]["execution_usage"],
@@ -435,4 +459,26 @@ async fn goal_participant_waits_for_exact_usage_before_freezing_terminal_snapsho
         s.observe_assignment(&g, id, false).await.unwrap(),
         completed
     );
+}
+
+#[tokio::test]
+async fn goal_assignment_non_admission_fence_is_positive_exact_and_survives_retry() {
+    use voyage_protocol::execution_budget::ExecutionBudget;
+    let (_f, s, g, b) = setup().await;
+    let mut req = request(&b);
+    req.budget = Some(ExecutionBudget {
+        command_id: req.assignment_id,
+        session_id: req.assignment_id,
+        parent_session_id: req.parent_session_id,
+        parent_run_id: req.parent_run_id,
+        tokens: 100,
+        elapsed_ms: 30_000,
+        expires_at_ms: req.expires_at_ms,
+    });
+    let fenced = s.fence_assignment(&g, req.clone()).await.unwrap();
+    assert_eq!(fenced["admission_closed"], true);
+    assert_eq!(fenced["cleanup_observed"], true);
+    assert!(fenced["run_id"].is_null());
+    assert!(fenced.get("execution_usage").is_none());
+    assert_eq!(s.assign(&g, req).await.unwrap(), fenced);
 }

@@ -29,7 +29,7 @@ pub(crate) mod storage;
 use std::sync::Arc;
 
 // Version 17 preserves parent allocation reservations and exact child accounting.
-pub(crate) const SCHEMA_VERSION: i64 = 18;
+pub(crate) const SCHEMA_VERSION: i64 = 19;
 mod goals;
 pub(crate) use goals::{GoalAllocation, GoalAuthority, GoalMeasurement, GoalTurnReservation};
 pub(super) mod checkpoint_wait;
@@ -283,6 +283,7 @@ impl Journal {
                         | 15
                         | 16
                         | 17
+                        | 18
                         | SCHEMA_VERSION
                 ),
                 "unsupported attachment journal schema"
@@ -1834,7 +1835,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=17),
+            matches!(self.opened_schema, 8..=18),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self

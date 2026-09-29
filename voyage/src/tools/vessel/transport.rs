@@ -152,6 +152,7 @@ impl Transport {
             if matches!(r.command, VoyageCommand::MessageChunk { .. } | VoyageCommand::RunOutput { .. }));
         let mutation_id = match &command {
             VesselCommand::Start { command_id, .. }
+            | VesselCommand::StartSettings { command_id, .. }
             | VesselCommand::StartConfigured { command_id, .. }
             | VesselCommand::Restart { command_id, .. } => Some(*command_id),
             VesselCommand::Voyage(r) if !matches!(r.command, VoyageCommand::Receipt { .. }) => {

@@ -43,6 +43,9 @@ impl Fixture {
         })).unwrap();
         let assignment = Assignment {
             observation: AssignmentObservation {
+                execution_usage: None,
+                execution_usage_observed: None,
+                admission_closed: false,
                 assignment_id: id,
                 participant_vessel_id: Uuid::new_v4(),
                 parent_session_id: parent,

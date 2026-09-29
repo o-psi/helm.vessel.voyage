@@ -427,10 +427,20 @@ struct Allocations {
     parent: uuid::Uuid,
     run: uuid::Uuid,
     receipts: Mutex<Vec<ExecutionUsage>>,
+    closures: Mutex<Vec<uuid::Uuid>>,
     fail: bool,
 }
 #[async_trait]
 impl Observer for Allocations {
+    async fn close_allocation(
+        &self,
+        _target: uuid::Uuid,
+        id: uuid::Uuid,
+        _proof: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        self.closures.lock().unwrap().push(id);
+        Ok(())
+    }
     async fn record(&self, _: RequestObservation) -> anyhow::Result<()> {
         Ok(())
     }
@@ -456,6 +466,7 @@ fn allocation_observer(fail: bool) -> Arc<Allocations> {
         parent: uuid::Uuid::new_v4(),
         run: uuid::Uuid::new_v4(),
         receipts: Mutex::new(Vec::new()),
+        closures: Mutex::new(Vec::new()),
         fail,
     })
 }
@@ -586,4 +597,110 @@ async fn failed_or_unknown_goal_allocation_cannot_refund_an_allowance() {
         (5, 2)
     );
     assert!(meter.check_budget().is_err());
+}
+
+#[tokio::test]
+async fn goal_permanent_non_admission_counts_zero_once_without_fabricating_a_child_run() {
+    let observer = allocation_observer(false);
+    let meter = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observer.clone()));
+    let target = uuid::Uuid::new_v4();
+    let child = meter
+        .allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4())
+        .await
+        .unwrap();
+    assert!(!meter.measurement().complete);
+    assert!(
+        meter
+            .close_allocation(
+                target,
+                child.command_id,
+                serde_json::json!({"status":"unknown","command_id":child.command_id})
+            )
+            .await
+            .is_err()
+    );
+    let proof = serde_json::json!({"status":"not_admitted","command_id":child.command_id});
+    meter
+        .close_allocation(target, child.command_id, proof.clone())
+        .await
+        .unwrap();
+    meter
+        .close_allocation(target, child.command_id, proof)
+        .await
+        .unwrap();
+    assert_eq!(observer.closures.lock().unwrap().len(), 1);
+    assert!(observer.receipts.lock().unwrap().is_empty());
+    assert!(meter.measurement().complete);
+    assert_eq!(meter.measurement().input_tokens, 0);
+    assert!(
+        meter
+            .settle_allocation(target, child_usage(child, 1, 1))
+            .await
+            .is_err()
+    );
+    let next = meter
+        .allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4())
+        .await
+        .unwrap();
+    assert_eq!(next.tokens, 50);
+}
+#[derive(Debug)]
+struct HeldImport {
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+#[async_trait]
+impl Observer for HeldImport {
+    async fn record(&self, _: RequestObservation) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn allocate(&self, r: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
+        Ok(ExecutionBudget {
+            command_id: r.command_id,
+            session_id: r.session_id,
+            parent_session_id: uuid::Uuid::new_v4(),
+            parent_run_id: uuid::Uuid::new_v4(),
+            tokens: r.tokens,
+            elapsed_ms: r.elapsed_ms,
+            expires_at_ms: r.expires_at_ms,
+        })
+    }
+    async fn settle_allocation(&self, _: uuid::Uuid, _: ExecutionUsage) -> anyhow::Result<()> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn goal_terminal_measurement_waits_for_durable_import_and_in_memory_totals_together() {
+    let observer = Arc::new(HeldImport {
+        started: Default::default(),
+        release: Default::default(),
+    });
+    let meter = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observer.clone()));
+    let target = uuid::Uuid::new_v4();
+    let child = meter
+        .allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4())
+        .await
+        .unwrap();
+    let importer = meter.clone();
+    let import = tokio::spawn(async move {
+        importer
+            .settle_allocation(target, child_usage(child, 12, 3))
+            .await
+            .unwrap()
+    });
+    observer.started.notified().await;
+    let reader = meter.clone();
+    let final_read = tokio::spawn(async move {
+        let _guard = reader.settlement_guard().await;
+        reader.measurement()
+    });
+    tokio::task::yield_now().await;
+    assert!(!final_read.is_finished());
+    observer.release.notify_one();
+    import.await.unwrap();
+    let measured = final_read.await.unwrap();
+    assert!(measured.complete);
+    assert_eq!((measured.input_tokens, measured.output_tokens), (12, 3));
 }

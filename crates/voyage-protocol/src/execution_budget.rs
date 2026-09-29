@@ -44,6 +44,24 @@ pub struct ExecutionUsage {
     pub cleanup_observed: bool,
 }
 
+impl ExecutionUsage {
+    /// A supplemental lower bound preserves the immutable receipt's identity
+    /// and unknown-usage marker; known-complete token totals cannot change.
+    pub fn observes(&self, base: &Self) -> bool {
+        self.budget == base.budget
+            && self.session_id == base.session_id
+            && self.run_id == base.run_id
+            && self.elapsed_ms == base.elapsed_ms
+            && self.complete == base.complete
+            && self.input_tokens >= base.input_tokens
+            && self.output_tokens >= base.output_tokens
+            && (!base.cleanup_observed || self.cleanup_observed)
+            && (!base.complete
+                || self.input_tokens == base.input_tokens
+                    && self.output_tokens == base.output_tokens)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

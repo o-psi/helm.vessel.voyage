@@ -1894,3 +1894,196 @@ fn goal_late_observation_never_infers_local_cleanup_from_empty_tables() {
     assert!(j.goal_allocations(session.id, 0, 128).unwrap().is_empty());
     assert!(j.goal_allocations(session.id, 0, 129).is_err());
 }
+
+fn child_dispatch(
+    budget: &voyage_protocol::execution_budget::ExecutionBudget,
+) -> crate::provider::goal_meter::AllocationDispatch {
+    crate::provider::goal_meter::AllocationDispatch::Voyage {
+        command: Box::new(voyage_protocol::vessel::VoyageCommand::Submit {
+            budget: Some(budget.clone()),
+            coordination: None,
+            command_id: budget.command_id,
+            expected_revision: 0,
+            expires_at_ms: 10_000,
+            prompt: "bounded child".into(),
+        }),
+    }
+}
+#[test]
+fn goal_never_dispatched_allocation_closes_only_after_parent_terminal_without_fake_run() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a.clone());
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    assert!(
+        j.close_goal_allocation(&guard, request.destination, budget.command_id, None)
+            .is_err()
+    );
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture before dispatch"),
+        None,
+    )
+    .unwrap();
+    j.recover_goal_turn(&guard, 2000).unwrap();
+    assert!(
+        j.close_goal_allocation(&guard, request.destination, budget.command_id, None)
+            .unwrap()
+    );
+    assert!(
+        !j.close_goal_allocation(&guard, request.destination, budget.command_id, None)
+            .unwrap()
+    );
+    assert!(
+        j.dispatch_goal_child(&guard, run.command_id, inc, child_dispatch(&budget))
+            .is_err()
+    );
+    assert!(
+        j.reconcile_goal_allocation(
+            &guard,
+            request.destination,
+            allocation_usage(budget.clone(), 1, 1),
+            None,
+            2100
+        )
+        .is_err()
+    );
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            goal.usage.runs,
+            goal.usage.input_tokens,
+            goal.usage.output_tokens,
+            goal.usage.unmeasured_runs
+        ),
+        (1, 0, 0, 1)
+    );
+    assert!(!goal.continuation_authorized);
+    assert!(j.goal_allocations(session.id, 0, 16).unwrap()[0].closed);
+    let replace = command(&j, session.id, set(Some(goal.id), false));
+    j.update_goal(&guard, a, &replace, 2100).unwrap();
+}
+#[test]
+fn goal_dispatched_allocation_requires_exact_permanent_negative_receipt() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a);
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    let dispatch = child_dispatch(&budget);
+    j.dispatch_goal_child(&guard, run.command_id, inc, dispatch.clone())
+        .unwrap();
+    j.dispatch_goal_child(&guard, run.command_id, inc, dispatch)
+        .unwrap();
+    let mut changed = child_dispatch(&budget);
+    if let crate::provider::goal_meter::AllocationDispatch::Voyage { command } = &mut changed
+        && let voyage_protocol::vessel::VoyageCommand::Submit { prompt, .. } = command.as_mut()
+    {
+        *prompt = "changed".into();
+    }
+    assert!(
+        j.dispatch_goal_child(&guard, run.command_id, inc, changed)
+            .is_err()
+    );
+    assert!(
+        j.close_goal_allocation(&guard, request.destination, budget.command_id, None)
+            .is_err()
+    );
+    for status in ["unknown", "refused", "cancelled", "accepted"] {
+        assert!(
+            j.close_goal_allocation(
+                &guard,
+                request.destination,
+                budget.command_id,
+                Some(json!({"status":status,"command_id":budget.command_id}))
+            )
+            .is_err()
+        );
+    }
+    let proof = json!({"status":"not_admitted","command_id":budget.command_id});
+    assert!(
+        j.close_goal_allocation(
+            &guard,
+            Uuid::new_v4(),
+            budget.command_id,
+            Some(proof.clone())
+        )
+        .is_err()
+    );
+    assert!(
+        j.close_goal_allocation(
+            &guard,
+            request.destination,
+            budget.command_id,
+            Some(proof.clone())
+        )
+        .unwrap()
+    );
+    assert!(
+        !j.close_goal_allocation(&guard, request.destination, budget.command_id, Some(proof))
+            .unwrap()
+    );
+    assert!(
+        j.dispatch_goal_child(&guard, run.command_id, inc, child_dispatch(&budget))
+            .is_err()
+    );
+    assert!(
+        j.settle_goal_allocation(
+            &guard,
+            run.command_id,
+            inc,
+            request.destination,
+            allocation_usage(budget, 1, 0)
+        )
+        .is_err()
+    );
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (0, 0, true, true)
+    );
+    let next = j
+        .allocate_goal_child(&guard, run.command_id, inc, allocation_request(), 1100)
+        .unwrap();
+    assert_eq!(next.tokens, 50); // Proven non-admission, not a guessed zero for an unknown child.
+}
+#[test]
+fn legacy_goal_allocation_cannot_infer_non_dispatch_after_schema_upgrade() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a);
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("old fixture"),
+        None,
+    )
+    .unwrap();
+    j.recover_goal_turn(&guard, 2000).unwrap();
+    j.connection.execute_batch("ALTER TABLE process_goal_allocations DROP COLUMN dispatch_gated; ALTER TABLE process_goal_allocations DROP COLUMN dispatch; ALTER TABLE process_goal_allocations DROP COLUMN closure; UPDATE attachment_schema SET version=18 WHERE id=1;").unwrap();
+    j.opened_schema = 18;
+    assert!(!j.goal_allocations(session.id, 0, 16).unwrap()[0].gated);
+    assert!(
+        j.close_goal_allocation(&guard, request.destination, budget.command_id, None)
+            .is_err()
+    );
+    assert_eq!(j.opened_schema, SCHEMA_VERSION);
+    assert!(!j.goal_allocations(session.id, 0, 16).unwrap()[0].gated);
+    assert!(
+        j.close_goal_allocation(
+            &guard,
+            request.destination,
+            budget.command_id,
+            Some(json!({"status":"not_admitted","command_id":budget.command_id}))
+        )
+        .unwrap()
+    );
+}

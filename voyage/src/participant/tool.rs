@@ -199,6 +199,15 @@ impl ParticipantTool {
                 context.cancellation.clone(),
             );
         }
+        if let Some(meter) = &self.parent.meter {
+            meter
+                .prepare_dispatch(
+                    crate::provider::goal_meter::AllocationDispatch::Participant {
+                        request: Box::new(request.clone()),
+                    },
+                )
+                .await?;
+        }
         // The canonical parent obligation is durable before the participant can admit effects.
         let delivered = transport::request(
             &credential,
@@ -213,6 +222,9 @@ impl ParticipantTool {
             }
             Ok(response) if !response.outcome_unknown && recorded["duplicate"] != true => {
                 AssignmentObservation {
+                    execution_usage: None,
+                    execution_usage_observed: None,
+                    admission_closed: false,
                     assignment_id: request.assignment_id,
                     participant_vessel_id: endpoint.participant_vessel_id,
                     parent_session_id: request.parent_session_id,

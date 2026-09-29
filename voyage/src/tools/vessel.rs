@@ -1055,10 +1055,10 @@ async fn perform(
                     failed("created voyage revision unavailable; initial task not submitted")
                 })?;
             check(context)?;
-            let submitted = voyage(
+            let submitted = goal_budget::submit(
                 t,
                 session_id,
-                None,
+                launch,
                 VoyageCommand::Submit {
                     budget,
                     coordination,
@@ -1080,10 +1080,10 @@ async fn perform(
             prompt,
         } => {
             text(&prompt, 64 * 1024)?;
-            voyage(
+            goal_budget::submit(
                 t,
                 session_id,
-                None,
+                launch,
                 VoyageCommand::Submit {
                     budget,
                     coordination,

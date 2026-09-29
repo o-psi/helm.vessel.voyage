@@ -4,7 +4,7 @@ use super::*;
 use crate::provider::goal_meter::{AllocationRequest, RequestObservation};
 use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
 
-fn current(
+pub(super) fn current(
     db: &Connection,
     session: Uuid,
     command: Uuid,
@@ -30,7 +30,7 @@ impl Journal {
     ) -> Result<ExecutionBudget> {
         self.check_guard(guard, guard.session_id)?;
         ensure!(
-            self.opened_schema >= 17
+            self.opened_schema >= 19
                 && now >= 0
                 && !request.command_id.is_nil()
                 && !request.destination.is_nil()
@@ -85,13 +85,13 @@ impl Journal {
         let (input, output, _, _) = super::metering::retained_usage(&tx, command)?;
         let mut retained = 0u64;
         let mut count = 0usize;
-        for row in tx.prepare("SELECT a.budget,a.receipt FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) WHERE q.command_id=?1")?.query_map([command.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?)))? {
-            let (budget,receipt)=row?;count+=1;
+        for row in tx.prepare("SELECT a.budget,a.receipt,a.closure FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) WHERE q.command_id=?1")?.query_map([command.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?)))? {
+            let (budget,receipt,closure)=row?;count+=1;
             let budget:ExecutionBudget=serde_json::from_str(&budget)?;
             if let Some(receipt)=receipt {
                 let receipt:ExecutionUsage=serde_json::from_str(&receipt)?;
                 ensure!(receipt.complete && receipt.cleanup_observed,"Goal child usage or cleanup is unresolved");
-            } else {retained=retained.checked_add(budget.tokens).context("Goal allocation total overflow")?;}
+            } else if closure.is_none() {retained=retained.checked_add(budget.tokens).context("Goal allocation total overflow")?;}
         }
         ensure!(count < 128, "Goal child allocation limit reached");
         let used = input
@@ -142,7 +142,7 @@ impl Journal {
             ],
         )?;
         tx.execute(
-            "INSERT INTO process_goal_allocations(request_id,destination,budget,receipt) VALUES(?1,?2,?3,NULL)",
+            "INSERT INTO process_goal_allocations(request_id,destination,budget,receipt,dispatch_gated) VALUES(?1,?2,?3,NULL,1)",
             params![
                 request.command_id.to_string(),
                 request.destination.to_string(),
@@ -169,6 +169,10 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if self.opened_schema >= 19 {
+            let closed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_allocations WHERE request_id=?1 AND closure IS NOT NULL)",[usage.budget.command_id.to_string()],|r|r.get(0))?;
+            ensure!(!closed, "Goal allocation already has non-admission proof");
+        }
         let row:Option<(String,String,Option<String>)>=tx.query_row("SELECT a.destination,a.budget,a.receipt FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) WHERE a.request_id=?1 AND q.command_id=?2",params![usage.budget.command_id.to_string(),command.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
         let (target, budget, prior) = row.context("unknown Goal child allocation")?;
         let budget: ExecutionBudget = serde_json::from_str(&budget)?;

@@ -99,6 +99,10 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             Some(ProcessRight::History)
         }
         RuntimeCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
+        RuntimeCommand::GoalReconcile {
+            fence_children: true,
+            ..
+        } => None,
         RuntimeCommand::GoalReconcile { .. }
         | RuntimeCommand::GoalRead
         | RuntimeCommand::Snapshot
@@ -218,6 +222,10 @@ pub fn owner_connection_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
             Some(ProcessRight::Execute)
         }
+        RuntimeCommand::GoalReconcile {
+            fence_children: true,
+            ..
+        } => Some(ProcessRight::Cancel),
         RuntimeCommand::GoalUpdate { .. }
         | RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }

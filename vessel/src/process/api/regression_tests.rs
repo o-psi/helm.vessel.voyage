@@ -297,6 +297,7 @@ fn delegated_goal_budget_survives_public_private_mapping_without_extra_authority
 #[test]
 fn goal_reconciliation_is_bounded_history_observation_without_execution_authority() {
     let command = VoyageCommand::GoalReconcile {
+        fence_children: false,
         offset: 64,
         limit: 16,
     };
@@ -308,5 +309,27 @@ fn goal_reconciliation_is_bounded_history_observation_without_execution_authorit
         Some(ProcessRight::History)
     );
     assert!(private.mutation_id().is_none());
+    assert_eq!(serde_json::to_value(private).unwrap(), public);
+}
+
+#[test]
+fn goal_child_fencing_is_separate_owner_cancel_authority() {
+    let command = VoyageCommand::GoalReconcile {
+        offset: 0,
+        limit: 16,
+        fence_children: true,
+    };
+    assert_eq!(required_right(&command), None);
+    assert_eq!(owner_connection_right(&command), Some(ProcessRight::Cancel));
+    let public = serde_json::to_value(&command).unwrap();
+    let private = runtime(command).unwrap();
+    assert_eq!(
+        voyage_protocol::process::required_process_right(&private),
+        None
+    );
+    assert_eq!(
+        voyage_protocol::process::owner_connection_right(&private),
+        Some(ProcessRight::Cancel)
+    );
     assert_eq!(serde_json::to_value(private).unwrap(), public);
 }

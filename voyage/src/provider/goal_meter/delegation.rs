@@ -12,15 +12,59 @@ pub(crate) struct AllocationRequest {
     pub elapsed_ms: u64,
     pub expires_at_ms: u64,
 }
+/// Exact private dispatch data, persisted before the remote execution request.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum AllocationDispatch {
+    Voyage {
+        command: Box<voyage_protocol::vessel::VoyageCommand>,
+    },
+    Participant {
+        request: Box<voyage_protocol::process::AssignmentRequest>,
+    },
+}
+impl AllocationDispatch {
+    pub(crate) fn budget(&self) -> Option<&ExecutionBudget> {
+        match self {
+            Self::Voyage { command } => match command.as_ref() {
+                voyage_protocol::vessel::VoyageCommand::Submit { budget, .. } => budget.as_ref(),
+                _ => None,
+            },
+            Self::Participant { request } => request.budget.as_ref(),
+        }
+    }
+    pub(crate) fn valid_for(&self, budget: &ExecutionBudget) -> bool {
+        self.budget() == Some(budget)
+            && match self {
+                Self::Voyage { command } => {
+                    matches!(command.as_ref(),voyage_protocol::vessel::VoyageCommand::Submit{command_id,..} if *command_id==budget.command_id)
+                }
+                Self::Participant { request } => {
+                    request.assignment_id == budget.command_id
+                        && request.assignment_id == budget.session_id
+                        && request.parent_session_id == budget.parent_session_id
+                        && request.parent_run_id == budget.parent_run_id
+                }
+            }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct Allocation {
     pub destination: Uuid,
     pub budget: ExecutionBudget,
     pub receipt: Option<ExecutionUsage>,
     pub observer_started: bool,
+    pub closed: bool,
 }
 
 impl GoalMeter {
+    /// Serialize the final measurement and its journal commit with asynchronous
+    /// child imports, including cancellation that skips waiting for children.
+    pub(crate) async fn settlement_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.delegation_lock.lock().await
+    }
+
     pub(crate) async fn allocate(
         &self,
         command_id: Uuid,
@@ -114,9 +158,88 @@ impl GoalMeter {
                 budget: budget.clone(),
                 receipt: None,
                 observer_started: false,
+                closed: false,
             },
         );
         Ok(budget)
+    }
+
+    pub(crate) async fn close_allocation(
+        &self,
+        destination: Uuid,
+        id: Uuid,
+        proof: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            proof["status"] == "not_admitted" && proof["command_id"] == id.to_string(),
+            "invalid Goal non-admission proof"
+        );
+        let _serial = self.delegation_lock.lock().await;
+        let tokens = {
+            let t = self
+                .totals
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Goal usage unavailable"))?;
+            let saved = t
+                .allocations
+                .get(&id)
+                .context("unknown Goal non-admission")?;
+            ensure!(
+                saved.destination == destination && saved.receipt.is_none(),
+                "Goal non-admission conflicts with child usage"
+            );
+            if saved.closed {
+                return Ok(());
+            }
+            saved.budget.tokens
+        };
+        self.observer
+            .as_ref()
+            .context("Goal non-admission requires durable accounting")?
+            .close_allocation(destination, id, proof)
+            .await?;
+        let mut t = self
+            .totals
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Goal usage unavailable"))?;
+        t.reserved = t
+            .reserved
+            .checked_sub(tokens)
+            .context("Goal reservation mismatch")?;
+        t.allocations
+            .get_mut(&id)
+            .context("Goal allocation disappeared")?
+            .closed = true;
+        self.allocation_changed.notify_waiters();
+        Ok(())
+    }
+
+    pub(crate) async fn prepare_dispatch(
+        &self,
+        dispatch: AllocationDispatch,
+    ) -> anyhow::Result<()> {
+        let _serial = self.delegation_lock.lock().await;
+        self.check_budget()?;
+        let budget = dispatch.budget().context("unbounded Goal dispatch")?;
+        {
+            let t = self
+                .totals
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Goal usage unavailable"))?;
+            let saved = t
+                .allocations
+                .get(&budget.command_id)
+                .context("unknown Goal allocation")?;
+            ensure!(
+                !saved.closed && saved.receipt.is_none() && dispatch.valid_for(&saved.budget),
+                "Goal dispatch identity mismatch or already settled"
+            );
+        }
+        self.observer
+            .as_ref()
+            .context("Goal dispatch requires durable accounting")?
+            .dispatch(dispatch)
+            .await
     }
 
     pub(crate) async fn settle_allocation(
@@ -135,7 +258,8 @@ impl GoalMeter {
                 .get(&usage.budget.command_id)
                 .context("unknown Goal allocation")?;
             ensure!(
-                saved.destination == destination
+                !saved.closed
+                    && saved.destination == destination
                     && saved.budget == usage.budget
                     && usage.session_id == saved.budget.session_id
                     && !usage.run_id.is_nil(),

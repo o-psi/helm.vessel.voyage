@@ -8,14 +8,9 @@ use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
 pub(crate) struct GoalAllocation {
     pub destination: Uuid,
     pub budget: ExecutionBudget,
-}
-
-fn same_identity(a: &ExecutionUsage, b: &ExecutionUsage) -> bool {
-    a.budget == b.budget
-        && a.session_id == b.session_id
-        && a.run_id == b.run_id
-        && a.elapsed_ms == b.elapsed_ms
-        && a.complete == b.complete
+    pub dispatch: Option<crate::provider::goal_meter::AllocationDispatch>,
+    pub gated: bool,
+    pub closed: bool,
 }
 
 impl Journal {
@@ -33,16 +28,30 @@ impl Journal {
         if self.opened_schema < 17 {
             return Ok(Vec::new());
         }
-        let mut query=self.connection.prepare("SELECT a.destination,a.budget FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1 AND r.active=0 ORDER BY a.rowid LIMIT ?2 OFFSET ?3")?;
-        query
+        let query = if self.opened_schema >= 19 {
+            "SELECT a.destination,a.budget,a.dispatch,a.dispatch_gated,a.closure IS NOT NULL FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1 AND r.active=0 ORDER BY a.rowid LIMIT ?2 OFFSET ?3"
+        } else {
+            "SELECT a.destination,a.budget,NULL,0,0 FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1 AND r.active=0 ORDER BY a.rowid LIMIT ?2 OFFSET ?3"
+        };
+        self.connection
+            .prepare(query)?
             .query_map(params![session.to_string(), limit, offset], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, bool>(3)?,
+                    r.get::<_, bool>(4)?,
+                ))
             })?
             .map(|row| {
-                let (target, budget) = row?;
+                let (target, budget, dispatch, gated, closed) = row?;
                 Ok(GoalAllocation {
                     destination: Uuid::parse_str(&target)?,
                     budget: serde_json::from_str(&budget)?,
+                    dispatch: dispatch.map(|v| serde_json::from_str(&v)).transpose()?,
+                    gated,
+                    closed,
                 })
             })
             .collect()
@@ -92,18 +101,16 @@ impl Journal {
         );
         let observed = observed.unwrap_or_else(|| receipt.clone());
         ensure!(
-            same_identity(&receipt, &observed)
-                && observed.input_tokens >= receipt.input_tokens
-                && observed.output_tokens >= receipt.output_tokens
-                && (!receipt.cleanup_observed || observed.cleanup_observed)
-                && (!receipt.complete
-                    || observed.input_tokens == receipt.input_tokens
-                        && observed.output_tokens == receipt.output_tokens),
+            observed.observes(&receipt),
             "invalid observed usage extension"
         );
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if self.opened_schema >= 19 {
+            let closed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_allocations WHERE request_id=?1 AND closure IS NOT NULL)",[receipt.budget.command_id.to_string()],|r|r.get(0))?;
+            ensure!(!closed, "Goal allocation already has non-admission proof");
+        }
         let row:Option<(String,String,Option<String>,bool,String,String)>=tx.query_row("SELECT a.destination,a.budget,a.receipt,a.cleanup_observed,q.command_id,q.observation FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE a.request_id=?1 AND r.session_id=?2 AND r.id=?3 AND r.active=0",params![receipt.budget.command_id.to_string(),guard.session_id.to_string(),receipt.budget.parent_run_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
         let (target, budget, prior, clean, command, observation) =
             row.context("late observation has no terminal parent allocation")?;

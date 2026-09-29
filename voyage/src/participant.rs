@@ -49,50 +49,69 @@ impl Parent {
         Ok(credential)
     }
     async fn record_observation(&self, observation: AssignmentObservation) -> Result<()> {
-        if let Some(meter) = &self.meter
-            && let Some(value) = observation
-                .result
-                .as_ref()
-                .and_then(|result| result.get("execution_usage"))
-                .filter(|value| !value.is_null())
-        {
-            let usage: voyage_protocol::execution_budget::ExecutionUsage =
-                serde_json::from_value(value.clone())?;
+        let base = observation.execution_usage.clone().or(observation
+            .result
+            .as_ref()
+            .and_then(|r| r.get("execution_usage"))
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()?);
+        if let Some(usage) = base {
             ensure!(
                 usage.budget.command_id == observation.assignment_id
                     && usage.session_id == observation.child_session_id
                     && Some(usage.run_id) == observation.run_id,
                 "participant usage observation identity mismatch"
             );
-            meter
-                .settle_allocation(observation.participant_vessel_id, usage)
-                .await?;
-        }
-        if self.meter.is_none()
-            && let Some(value) = observation
-                .result
-                .as_ref()
-                .and_then(|r| r.get("execution_usage"))
-                .filter(|v| !v.is_null())
-        {
-            let receipt: voyage_protocol::execution_budget::ExecutionUsage =
-                serde_json::from_value(value.clone())?;
-            ensure!(
-                receipt.budget.command_id == observation.assignment_id
-                    && receipt.session_id == observation.child_session_id
-                    && Some(receipt.run_id) == observation.run_id,
-                "participant late usage attribution mismatch"
-            );
-            let observed = observation
+            let observed = observation.execution_usage_observed.clone().or(observation
                 .result
                 .as_ref()
                 .and_then(|r| r.get("execution_usage_observed"))
                 .filter(|v| !v.is_null())
                 .map(|v| serde_json::from_value(v.clone()))
-                .transpose()?;
-            self.owner
-                .reconcile_goal_allocation(observation.participant_vessel_id, receipt, observed)
-                .await?;
+                .transpose()?);
+            if let Some(meter) = &self.meter {
+                meter
+                    .settle_allocation(observation.participant_vessel_id, usage)
+                    .await?;
+            } else {
+                self.owner
+                    .reconcile_goal_allocation(observation.participant_vessel_id, usage, observed)
+                    .await?;
+            }
+        }
+        if observation.admission_closed {
+            ensure!(
+                observation.run_id.is_none()
+                    && observation.cleanup_observed
+                    && observation.state == "cancelled",
+                "invalid participant non-admission proof"
+            );
+            let original = self
+                .owner
+                .assignment_request(observation.parent_run_id, observation.assignment_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("unknown fenced assignment"))?;
+            if original.budget.is_some() {
+                let proof = serde_json::json!({"status":"not_admitted","command_id":observation.assignment_id});
+                if let Some(meter) = &self.meter {
+                    meter
+                        .close_allocation(
+                            observation.participant_vessel_id,
+                            observation.assignment_id,
+                            proof,
+                        )
+                        .await?;
+                } else {
+                    self.owner
+                        .close_goal_allocation(
+                            observation.participant_vessel_id,
+                            observation.assignment_id,
+                            Some(proof),
+                        )
+                        .await?;
+                }
+            }
         }
         self.owner.update_assignment(observation).await?;
         Ok(())

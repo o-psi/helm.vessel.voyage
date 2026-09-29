@@ -123,6 +123,9 @@ impl Supervisor {
                 child_grant_id,
                 start_command_id: Uuid::new_v4(),
                 observation: AssignmentObservation {
+                    execution_usage: None,
+                    execution_usage_observed: None,
+                    admission_closed: false,
                     assignment_id: request.assignment_id,
                     participant_vessel_id: identity::public(&self.directory)?.vessel_id,
                     parent_session_id: request.parent_session_id,

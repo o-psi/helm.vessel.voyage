@@ -13,6 +13,15 @@ struct Accounting {
 }
 #[async_trait]
 impl Observer for Accounting {
+    async fn dispatch(
+        &self,
+        dispatch: crate::provider::goal_meter::AllocationDispatch,
+    ) -> anyhow::Result<()> {
+        let budget = dispatch.budget().unwrap();
+        assert!(dispatch.valid_for(budget));
+        assert!(self.allocated.lock().unwrap().contains(budget));
+        Ok(())
+    }
     async fn record(&self, _: RequestObservation) -> anyhow::Result<()> {
         Ok(())
     }
@@ -110,6 +119,12 @@ async fn peer(supports_budget: bool, history: bool, accounting: Arc<Accounting>)
                     );
                     budgets.insert(budget.command_id, budget);
                     json!({"command_id":wire["command_id"],"run_id":child_run,"status":"accepted"})
+                }
+                "resolve" => {
+                    assert_eq!(wire["original"]["op"], "submit");
+                    assert_eq!(wire["original"]["command_id"], wire["command_id"]);
+                    assert!(wire["original"]["budget"].is_object());
+                    json!({"status":"not_admitted","command_id":wire["command_id"]})
                 }
                 "receipt" => {
                     let command: Uuid = serde_json::from_value(wire["command_id"].clone()).unwrap();
@@ -298,10 +313,6 @@ async fn goal_child_submission_requires_history_before_allocating_or_dispatching
 
 #[tokio::test]
 async fn goal_reconciliation_reopens_owner_and_reads_exact_receipt_without_replay() {
-    use crate::attachment::{
-        journal::{Journal, RunState, TurnAdmission},
-        runtime::ManagedSessionOwner,
-    };
     let accounting = accounting();
     let peer = peer(true, true, accounting.clone()).await;
     let caps = peer
@@ -311,6 +322,71 @@ async fn goal_reconciliation_reopens_owner_and_reads_exact_receipt_without_repla
         .unwrap();
     let target: Uuid = serde_json::from_value(caps["vessel_id"].clone()).unwrap();
     let root = tempfile::tempdir().unwrap();
+    let (owner, child, command_id) = retained_parent(&root, target).await;
+    let mut config = crate::Config::default();
+    config.vessel.local_directory = Some(peer.root.path().to_path_buf());
+    let original = owner.process_receipt(command_id).await.unwrap().unwrap();
+    let pending = reconcile_goal_allocations(&owner, &config, 0, 16, false)
+        .await
+        .unwrap();
+    assert_eq!(pending["allocations"][0]["observed"], false);
+    let usage = ExecutionUsage {
+        budget: child.clone(),
+        session_id: child.session_id,
+        run_id: Uuid::new_v4(),
+        input_tokens: 9,
+        output_tokens: 3,
+        elapsed_ms: 100,
+        complete: true,
+        cleanup_observed: true,
+    };
+    let mut wrong = usage.clone();
+    wrong.session_id = Uuid::new_v4();
+    *accounting.late.lock().unwrap() = Some(wrong);
+    let pending = reconcile_goal_allocations(&owner, &config, 0, 16, false)
+        .await
+        .unwrap();
+    assert_eq!(pending["allocations"][0]["observed"], false);
+    *accounting.late.lock().unwrap() = Some(usage);
+    let observed = reconcile_goal_allocations(&owner, &config, 0, 16, false)
+        .await
+        .unwrap();
+    assert_eq!(observed["allocations"][0]["usage_updated"], true);
+    assert_eq!(observed["effects_replayed"], false);
+    assert_eq!(observed["continuation_restored"], false);
+    let replay = reconcile_goal_allocations(&owner, &config, 0, 16, false)
+        .await
+        .unwrap();
+    assert_eq!(replay["allocations"][0]["observed"], true);
+    assert_eq!(replay["allocations"][0]["usage_updated"], false);
+    let receipt = owner.process_receipt(command_id).await.unwrap().unwrap();
+    assert_eq!(receipt["execution_usage"], original["execution_usage"]);
+    assert_eq!(receipt["execution_usage_observed"]["input_tokens"], 9);
+    assert_eq!(receipt["execution_usage_observed"]["output_tokens"], 3);
+    assert_eq!(receipt["execution_usage_observed"]["complete"], false);
+    assert!(
+        peer.commands
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|c| c["op"] == "capabilities" || c["op"] == "receipt")
+    );
+    assert!(
+        reconcile_goal_allocations(&owner, &config, 0, 129, false)
+            .await
+            .is_err()
+    );
+}
+
+async fn retained_parent(
+    root: &tempfile::TempDir,
+    target: Uuid,
+) -> (
+    crate::attachment::runtime::ManagedSessionOwner,
+    ExecutionBudget,
+    Uuid,
+) {
+    use crate::attachment::journal::{Journal, RunState, TurnAdmission};
     let directory = root.path().join("journal");
     let mut j = Journal::open(directory.clone()).unwrap();
     let session =
@@ -366,6 +442,22 @@ async fn goal_reconciliation_reopens_owner_and_reads_exact_receipt_without_repla
             1000,
         )
         .unwrap();
+    j.dispatch_goal_child(
+        &guard,
+        run.command_id,
+        inc,
+        crate::provider::goal_meter::AllocationDispatch::Voyage {
+            command: Box::new(VoyageCommand::Submit {
+                budget: Some(child.clone()),
+                coordination: None,
+                command_id: child.command_id,
+                expected_revision: 0,
+                expires_at_ms: 2000,
+                prompt: "fixture child".into(),
+            }),
+        },
+    )
+    .unwrap();
     j.finish(
         &guard,
         run.id,
@@ -378,68 +470,43 @@ async fn goal_reconciliation_reopens_owner_and_reads_exact_receipt_without_repla
         .unwrap();
     drop(guard);
     drop(j);
-    let owner = ManagedSessionOwner::open(directory, session.id)
+    let owner = crate::attachment::runtime::ManagedSessionOwner::open(directory, session.id)
         .await
         .unwrap();
+    (owner, child, run.command_id)
+}
+#[tokio::test]
+async fn goal_fencing_sends_exact_resolve_and_never_resubmits_missing_child_work() {
+    let accounting = accounting();
+    let peer = peer(true, true, accounting).await;
+    let caps = peer
+        .transport
+        .exchange(VesselCommand::Capabilities)
+        .await
+        .unwrap();
+    let target = serde_json::from_value(caps["vessel_id"].clone()).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (owner, child, _) = retained_parent(&root, target).await;
     let mut config = crate::Config::default();
     config.vessel.local_directory = Some(peer.root.path().to_path_buf());
-    let original = owner
-        .process_receipt(run.command_id)
-        .await
-        .unwrap()
-        .unwrap();
-    let pending = reconcile_goal_allocations(&owner, &config, 0, 16)
+    let result = reconcile_goal_allocations(&owner, &config, 0, 16, true)
         .await
         .unwrap();
-    assert_eq!(pending["allocations"][0]["observed"], false);
-    let usage = ExecutionUsage {
-        budget: child.clone(),
-        session_id: child.session_id,
-        run_id: Uuid::new_v4(),
-        input_tokens: 9,
-        output_tokens: 3,
-        elapsed_ms: 100,
-        complete: true,
-        cleanup_observed: true,
-    };
-    let mut wrong = usage.clone();
-    wrong.session_id = Uuid::new_v4();
-    *accounting.late.lock().unwrap() = Some(wrong);
-    let pending = reconcile_goal_allocations(&owner, &config, 0, 16)
+    assert_eq!(result["allocations"][0]["observed"], true);
+    let repeat = reconcile_goal_allocations(&owner, &config, 0, 16, false)
         .await
         .unwrap();
-    assert_eq!(pending["allocations"][0]["observed"], false);
-    *accounting.late.lock().unwrap() = Some(usage);
-    let observed = reconcile_goal_allocations(&owner, &config, 0, 16)
-        .await
-        .unwrap();
-    assert_eq!(observed["allocations"][0]["usage_updated"], true);
-    assert_eq!(observed["effects_replayed"], false);
-    assert_eq!(observed["continuation_restored"], false);
-    let replay = reconcile_goal_allocations(&owner, &config, 0, 16)
-        .await
-        .unwrap();
-    assert_eq!(replay["allocations"][0]["observed"], true);
-    assert_eq!(replay["allocations"][0]["usage_updated"], false);
-    let receipt = owner
-        .process_receipt(run.command_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(receipt["execution_usage"], original["execution_usage"]);
-    assert_eq!(receipt["execution_usage_observed"]["input_tokens"], 9);
-    assert_eq!(receipt["execution_usage_observed"]["output_tokens"], 3);
-    assert_eq!(receipt["execution_usage_observed"]["complete"], false);
+    assert_eq!(repeat["allocations"][0]["non_admission"], true);
+    let calls = peer.commands.lock().unwrap();
     assert!(
-        peer.commands
-            .lock()
-            .unwrap()
+        calls
             .iter()
-            .all(|c| c["op"] == "capabilities" || c["op"] == "receipt")
+            .all(|c| c["op"] == "capabilities" || c["op"] == "resolve")
     );
-    assert!(
-        reconcile_goal_allocations(&owner, &config, 0, 129)
-            .await
-            .is_err()
+    let resolves: Vec<_> = calls.iter().filter(|c| c["op"] == "resolve").collect();
+    assert_eq!(resolves.len(), 1);
+    assert_eq!(
+        resolves[0]["original"]["budget"],
+        serde_json::to_value(child).unwrap()
     );
 }

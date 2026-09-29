@@ -10,9 +10,15 @@ use voyage_protocol::{
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
         VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
-        VoyageCommand::GoalReconcile { offset, limit } => {
-            RuntimeCommand::GoalReconcile { offset, limit }
-        }
+        VoyageCommand::GoalReconcile {
+            offset,
+            limit,
+            fence_children,
+        } => RuntimeCommand::GoalReconcile {
+            offset,
+            limit,
+            fence_children,
+        },
         VoyageCommand::GoalUpdate {
             command_id,
             expected_revision,
@@ -642,6 +648,10 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
             Some(ProcessRight::History)
         }
         VoyageCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
+        VoyageCommand::GoalReconcile {
+            fence_children: true,
+            ..
+        } => None,
         VoyageCommand::GoalReconcile { .. }
         | VoyageCommand::GoalRead
         | VoyageCommand::Snapshot
@@ -723,6 +733,10 @@ pub fn owner_connection_right(command: &VoyageCommand) -> Option<ProcessRight> {
         VoyageCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
             Some(ProcessRight::Execute)
         }
+        VoyageCommand::GoalReconcile {
+            fence_children: true,
+            ..
+        } => Some(ProcessRight::Cancel),
         VoyageCommand::GoalUpdate { .. }
         | VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }

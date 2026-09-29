@@ -76,6 +76,16 @@ pub(super) async fn prepare(
                 ),
             )
             .await;
+            if let Ok(Ok(result)) = &result
+                && result["status"] == "not_admitted"
+                && result["command_id"] == command_id.to_string()
+                && meter
+                    .close_allocation(destination, command_id, result.clone())
+                    .await
+                    .is_ok()
+            {
+                return;
+            }
             if let Ok(Ok(result)) = result
                 && let Some(value) = result
                     .get("execution_usage")
@@ -111,6 +121,7 @@ pub(crate) async fn reconcile_goal_allocations(
     config: &crate::Config,
     offset: u64,
     limit: u32,
+    fence_children: bool,
 ) -> anyhow::Result<Value> {
     let allocations = owner.goal_allocations(offset, limit).await?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
@@ -145,6 +156,19 @@ pub(crate) async fn reconcile_goal_allocations(
     }
     let mut results = Vec::new();
     for allocation in &allocations {
+        if allocation.closed {
+            results.push(json!({"command_id":allocation.budget.command_id,"observed":true,"non_admission":true,"usage_updated":false}));
+            continue;
+        }
+        if allocation.gated
+            && allocation.dispatch.is_none()
+            && let Ok(changed) = owner
+                .close_goal_allocation(allocation.destination, allocation.budget.command_id, None)
+                .await
+        {
+            results.push(json!({"command_id":allocation.budget.command_id,"observed":true,"non_admission":true,"usage_updated":changed}));
+            continue;
+        }
         let mut changed = Some(false);
         let mut observed = false;
         for (target, route) in matched
@@ -154,39 +178,59 @@ pub(crate) async fn reconcile_goal_allocations(
             if tokio::time::Instant::now() >= deadline {
                 break;
             }
+            let command = match (&allocation.dispatch, fence_children) {
+                (
+                    Some(crate::provider::goal_meter::AllocationDispatch::Voyage { command }),
+                    true,
+                ) => VoyageCommand::Resolve {
+                    command_id: allocation.budget.command_id,
+                    original: Some(command.clone()),
+                },
+                _ => VoyageCommand::Receipt {
+                    command_id: allocation.budget.command_id,
+                },
+            };
             if let Ok(Ok(result)) = tokio::time::timeout_at(
                 deadline,
-                voyage(
-                    route,
-                    allocation.budget.session_id,
-                    None,
-                    VoyageCommand::Receipt {
-                        command_id: allocation.budget.command_id,
-                    },
-                ),
+                voyage(route, allocation.budget.session_id, None, command),
             )
             .await
-                && let Ok(usage) =
-                    serde_json::from_value::<ExecutionUsage>(result["execution_usage"].clone())
-                && usage.budget == allocation.budget
             {
-                let supplemental = match result
-                    .get("execution_usage_observed")
-                    .filter(|v| !v.is_null())
+                if result["status"] == "not_admitted"
+                    && result["command_id"] == allocation.budget.command_id.to_string()
                 {
-                    Some(value) => match serde_json::from_value(value.clone()) {
-                        Ok(value) => Some(value),
-                        Err(_) => continue,
-                    },
-                    None => None,
-                };
-                if let Ok(updated) = owner
-                    .reconcile_goal_allocation(*target, usage, supplemental)
-                    .await
+                    if let Ok(updated) = owner
+                        .close_goal_allocation(*target, allocation.budget.command_id, Some(result))
+                        .await
+                    {
+                        observed = true;
+                        changed = Some(updated);
+                        break;
+                    }
+                    continue;
+                }
+                if let Ok(usage) =
+                    serde_json::from_value::<ExecutionUsage>(result["execution_usage"].clone())
+                    && usage.budget == allocation.budget
                 {
-                    observed = true;
-                    changed = Some(updated);
-                    break;
+                    let supplemental = match result
+                        .get("execution_usage_observed")
+                        .filter(|v| !v.is_null())
+                    {
+                        Some(value) => match serde_json::from_value(value.clone()) {
+                            Ok(value) => Some(value),
+                            Err(_) => continue,
+                        },
+                        None => None,
+                    };
+                    if let Ok(updated) = owner
+                        .reconcile_goal_allocation(*target, usage, supplemental)
+                        .await
+                    {
+                        observed = true;
+                        changed = Some(updated);
+                        break;
+                    }
                 }
             }
         }
@@ -208,13 +252,15 @@ pub(crate) async fn reconcile_goal_allocations(
                         allocation.budget.parent_run_id,
                         allocation.budget.command_id,
                         &endpoint.name,
-                        false,
+                        fence_children,
                         config,
                     ),
                 )
                 .await
                 {
-                    observed = result["result"]["execution_usage"].is_object();
+                    observed = result["execution_usage"].is_object()
+                        || result["result"]["execution_usage"].is_object()
+                        || result["admission_closed"] == true;
                     if observed {
                         changed = None; // Existing assignment API does not return an import delta.
                         break;
@@ -227,4 +273,21 @@ pub(crate) async fn reconcile_goal_allocations(
     Ok(
         json!({"allocations":results,"next_offset":(allocations.len()==limit as usize).then_some(offset.saturating_add(u64::from(limit))),"effects_replayed":false,"continuation_restored":false}),
     )
+}
+
+pub(super) async fn submit(
+    t: &transport::Transport,
+    session: Uuid,
+    launch: Option<&crate::Config>,
+    command: VoyageCommand,
+) -> Result<Value, ToolError> {
+    if let Some(meter) = launch.and_then(|c| c.goal_meter.as_ref()) {
+        meter
+            .prepare_dispatch(crate::provider::goal_meter::AllocationDispatch::Voyage {
+                command: Box::new(command.clone()),
+            })
+            .await
+            .map_err(|_| failed("Goal child dispatch could not be durably recorded"))?;
+    }
+    voyage(t, session, None, command).await
 }

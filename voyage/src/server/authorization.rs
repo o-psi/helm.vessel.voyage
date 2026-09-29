@@ -116,6 +116,24 @@ pub(super) fn authorize_parts(
         })
         .ok_or_else(|| anyhow::anyhow!("operation unavailable to scoped clients"))?;
     ensure!(grant.rights.contains(&right), "session permission denied");
+    if matches!(
+        request.command,
+        voyage_protocol::process::RuntimeCommand::GoalReconcile {
+            fence_children: true,
+            ..
+        }
+    ) {
+        ensure!(
+            [
+                ProcessRight::History,
+                ProcessRight::Execute,
+                ProcessRight::Cancel
+            ]
+            .iter()
+            .all(|right| grant.rights.contains(right)),
+            "Goal fencing requires History, Execute and Cancel rights"
+        );
+    }
     let browser_history = request.command.requires_browser_history();
     ensure!(
         !browser_history || grant.rights.contains(&ProcessRight::History),

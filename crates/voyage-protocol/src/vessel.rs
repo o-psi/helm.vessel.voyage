@@ -109,6 +109,8 @@ pub enum VoyageCommand {
     GoalReconcile {
         offset: u64,
         limit: u32,
+        #[serde(default)]
+        fence_children: bool,
     },
     GoalUpdate {
         command_id: Uuid,

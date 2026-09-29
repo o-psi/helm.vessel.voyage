@@ -45,6 +45,13 @@ pub struct AssignmentRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssignmentObservation {
+    /// Positive receiver fence: this assignment never admitted a run.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub admission_closed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_usage: Option<crate::execution_budget::ExecutionUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_usage_observed: Option<crate::execution_budget::ExecutionUsage>,
     pub assignment_id: Uuid,
     pub participant_vessel_id: Uuid,
     pub parent_session_id: Uuid,
@@ -87,4 +94,8 @@ pub struct ParticipantPolicy {
     pub timeout_secs: u64,
     pub max_output_bytes: usize,
     pub max_subagents: usize,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

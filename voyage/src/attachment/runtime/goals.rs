@@ -17,6 +17,33 @@ impl std::fmt::Debug for UsageObserver {
 }
 #[async_trait]
 impl Observer for UsageObserver {
+    async fn close_allocation(
+        &self,
+        destination: Uuid,
+        id: Uuid,
+        proof: Value,
+    ) -> anyhow::Result<()> {
+        self.owner
+            .close_goal_allocation(destination, id, Some(proof))
+            .await
+            .map(|_| ())
+    }
+    async fn dispatch(
+        &self,
+        dispatch: crate::provider::goal_meter::AllocationDispatch,
+    ) -> anyhow::Result<()> {
+        let shared = self.owner.store.clone();
+        let command = self.command;
+        let incarnation = self.incarnation;
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.dispatch_goal_child(guard, command, incarnation, dispatch)
+        })
+        .await?
+    }
     async fn allocate(&self, request: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
         let shared = self.owner.store.clone();
         let command = self.command;
@@ -220,6 +247,25 @@ impl ManagedSessionOwner {
                 observed,
                 SystemClock.now_ms()?,
             )
+        })
+        .await?
+    }
+}
+
+impl ManagedSessionOwner {
+    pub(crate) async fn close_goal_allocation(
+        &self,
+        destination: Uuid,
+        id: Uuid,
+        negative: Option<Value>,
+    ) -> anyhow::Result<bool> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.close_goal_allocation(guard, destination, id, negative)
         })
         .await?
     }

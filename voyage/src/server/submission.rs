@@ -337,6 +337,10 @@ pub(super) async fn submit(
             match result {
                 Ok(mut result) => {
                     result.cleanup_observed |= cleanup_observed;
+                    let _accounting = match config.goal_meter.as_ref() {
+                        Some(meter) => Some(meter.settlement_guard().await),
+                        None => None,
+                    };
                     let measurement = config.goal_meter.as_ref().map(|meter| {
                         let measured = meter.measurement();
                         crate::attachment::journal::GoalMeasurement {

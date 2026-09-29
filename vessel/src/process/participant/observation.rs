@@ -66,7 +66,7 @@ impl Supervisor {
             }
         };
         let directory = registry::directory(&self.directory, registration.session_id);
-        let snapshot = match self
+        let mut snapshot = match self
             .forward_current(&directory, &registration, RuntimeCommand::Snapshot, None)
             .await
         {
@@ -77,12 +77,81 @@ impl Supervisor {
                 return Ok(serde_json::to_value(assignment.observation)?);
             }
         };
+        // A terminal child's own bounded reconciliation can observe descendants;
+        // it cannot resume the Goal or redispatch their work.
+        if assignment.request.budget.is_some()
+            && matches!(
+                snapshot["run"]["state"].as_str(),
+                Some("completed" | "cancelled" | "incomplete" | "failed" | "interrupted")
+            )
+            && snapshot["execution_usage"].is_object()
+            && snapshot["execution_usage"]["cleanup_observed"] != true
+            && snapshot["execution_usage_observed"]["cleanup_observed"] != true
+        {
+            let _ = self
+                .forward_current(
+                    &directory,
+                    &registration,
+                    RuntimeCommand::GoalReconcile {
+                        offset: 0,
+                        limit: 128,
+                        fence_children: false,
+                    },
+                    None,
+                )
+                .await;
+            if let Ok(response) = self
+                .forward_current(&directory, &registration, RuntimeCommand::Snapshot, None)
+                .await
+                && response.error.is_none()
+            {
+                snapshot = response.result;
+            }
+        }
         if let Some(run_id) = snapshot["run"]["run_id"]
             .as_str()
             .and_then(|id| Uuid::parse_str(id).ok())
         {
             assignment.observation.run_id = Some(run_id);
             let state = snapshot["run"]["state"].as_str().unwrap_or("unknown");
+            if let Some(budget) = &assignment.request.budget
+                && let Some(value) = snapshot.get("execution_usage").filter(|v| !v.is_null())
+            {
+                let base: voyage_protocol::execution_budget::ExecutionUsage =
+                    serde_json::from_value(value.clone())?;
+                ensure!(
+                    base.budget == *budget
+                        && base.session_id == registration.session_id
+                        && base.run_id == run_id,
+                    "participant usage receipt attribution mismatch"
+                );
+                ensure!(
+                    assignment
+                        .observation
+                        .execution_usage
+                        .as_ref()
+                        .is_none_or(|prior| prior == &base),
+                    "participant usage receipt changed"
+                );
+                let observed = snapshot
+                    .get("execution_usage_observed")
+                    .filter(|v| !v.is_null())
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()?
+                    .unwrap_or_else(|| base.clone());
+                ensure!(
+                    observed.observes(&base)
+                        && assignment
+                            .observation
+                            .execution_usage_observed
+                            .as_ref()
+                            .is_none_or(|prior| observed.observes(prior)),
+                    "participant observed usage regressed"
+                );
+                assignment.observation.execution_usage = Some(base);
+                assignment.observation.execution_usage_observed = Some(observed);
+            }
+
             if cancel && matches!(state, "accepted" | "running") {
                 let command = assignment
                     .cancel
@@ -105,7 +174,11 @@ impl Supervisor {
                     "completed" | "cancelled" | "incomplete" | "failed" | "interrupted"
                 ) && snapshot["pending_cleanup_run"].is_null()
                     && (assignment.request.budget.is_none()
-                        || !snapshot["execution_usage"].is_null())
+                        || assignment
+                            .observation
+                            .execution_usage_observed
+                            .as_ref()
+                            .is_some_and(|usage| usage.cleanup_observed))
                 {
                     assignment.observation.cleanup_observed = true;
                     if assignment.observation.result.is_none() {
@@ -118,7 +191,9 @@ impl Supervisor {
                         .await;
                 }
             }
-        } else {
+        } else if snapshot.get("run").is_some_and(serde_json::Value::is_null)
+            && snapshot["revision"].is_u64()
+        {
             let binding: ParticipantBinding = store::load(&binding_path(
                 &self.directory,
                 assignment.request.binding_id,
@@ -143,6 +218,8 @@ impl Supervisor {
                     .is_ok();
                     assignment.observation.state = "cancelled".into();
                     assignment.observation.cleanup_observed = stopped;
+                    assignment.observation.admission_closed =
+                        stopped && assignment.request.budget.is_some();
                 }
             }
         }

@@ -46,7 +46,7 @@ IDs, ordered revisions and terminal records prevent reset, reordering, decreasin
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
 restart retains known child counts and marks open requests uncertain. The meter
 distinguishes explicit zero from missing counters and retains partial counts on
-cancellation. Schema 18 fences writers that cannot preserve these observations, child allocations, delegated-run receipts and late accounting.
+cancellation. Schema 19 fences writers that cannot preserve these observations, child allocations, delegated-run receipts late accounting and dispatch/non-admission records.
 
 The meter refuses subsequent requests after uncertainty or observed token/time
 limits. It also adds a deny-only check to the existing execution authority, so
@@ -104,7 +104,10 @@ failure/restart as unresolved records and known lower bounds.
 
 History-authorized `goal_reconcile` reads a bounded page of retained allocations
 (`offset`, `limit` in 1..128) from an idle owner and uses current trusted Vessel or
-participant routes. A pass has a 15-second network deadline. It authenticates the
+participant routes. The optional `fence_children` action is separate: it requires
+human owner authority with History, Execute and Cancel rights. It resolves an exact
+retained Submit without executing it; participant fencing may cancel an admitted
+assignment through its existing cancellation boundary. A pass has a 15-second network deadline. It authenticates the
 destination and exact child budget/command before importing a receipt. The response
 reports observed/pending entries and the next page. Missing routes, revoked History
 rights and unavailable peers retain pending obligations. It never submits child work,
@@ -122,9 +125,26 @@ or an operator attestation is insufficient.
 The originating Goal receives the delta; a replacement Goal is never charged for
 old work. Unknown-run markers and stopped/paused status remain unchanged. If usage
 was interrupted, explicit replacement is still required to authorize a new budget.
-The ledger and transport recovery tests do not establish end-to-end recovery for
-all delegation outcomes: durable non-admission reconciliation and nested participant
-cleanup/result recovery still need completion before #378 acceptance.
+Each new allocation has a durable dispatch gate. The exact child Submit or participant
+assignment is retained before execution dispatch. A terminal parent can close a gated
+allocation that never reached dispatch; legacy allocations without this gate remain
+unknown. A dispatched allocation needs a permanent, authenticated non-admission
+receipt. These records are distinct from a fabricated zero-token child run. They
+close the command identity, preserve the parent's admitted-run charge, and cannot be
+replaced by an admitted child receipt. Known non-admission releases unused token
+capacity while the parent is live; a late proof does not reset an already retained
+unknown-run marker or restore authority.
+
+Participant observations carry immutable child usage and a separate monotonic lower
+bound before the final result is available. A terminal child may run bounded,
+read-only reconciliation of its own descendants. Its process is stopped only after
+positive local and subordinate cleanup evidence, with the final result saved first.
+Counters survive incomplete cleanup. Both the original result and original usage
+remain immutable. Final parent measurement and settlement share a serialization
+lock with asynchronous allocation imports, including cancellation paths.
+
+These ledger and scripted transport checks still require separate-process restart,
+cancellation and nested delegation journeys before #378 acceptance.
 
 Requested output is capped to the remaining unreserved allowance; input/billing
 totals are known only after dispatch, so this is not a strict billing ceiling.

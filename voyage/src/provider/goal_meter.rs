@@ -3,7 +3,7 @@
 use super::*;
 use futures_util::StreamExt;
 mod delegation;
-pub(crate) use delegation::AllocationRequest;
+pub(crate) use delegation::{AllocationDispatch, AllocationRequest};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
@@ -56,6 +56,17 @@ pub(crate) trait Observer: Send + Sync + std::fmt::Debug {
     async fn record(&self, observation: RequestObservation) -> anyhow::Result<()>;
     async fn allocate(&self, _request: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
         anyhow::bail!("durable Goal allocation is unavailable")
+    }
+    async fn close_allocation(
+        &self,
+        _destination: uuid::Uuid,
+        _id: uuid::Uuid,
+        _proof: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("durable Goal non-admission accounting is unavailable")
+    }
+    async fn dispatch(&self, _dispatch: AllocationDispatch) -> anyhow::Result<()> {
+        anyhow::bail!("durable Goal dispatch is unavailable")
     }
     async fn settle_allocation(
         &self,

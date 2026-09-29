@@ -104,6 +104,31 @@ impl Journal {
                 && observation.child_session_id == observation.assignment_id,
             "assignment observation attribution mismatch"
         );
+        ensure!(
+            !observation.admission_closed
+                || observation.run_id.is_none()
+                    && observation.cleanup_observed
+                    && observation.state == "cancelled",
+            "invalid assignment non-admission proof"
+        );
+        if let Some(usage) = &observation.execution_usage {
+            ensure!(
+                usage.budget.command_id == observation.assignment_id
+                    && usage.session_id == observation.child_session_id
+                    && Some(usage.run_id) == observation.run_id
+                    && !usage.run_id.is_nil(),
+                "assignment usage attribution mismatch"
+            );
+        }
+        if let Some(observed) = &observation.execution_usage_observed {
+            ensure!(
+                observation
+                    .execution_usage
+                    .as_ref()
+                    .is_some_and(|base| observed.observes(base)),
+                "invalid assignment observed usage"
+            );
+        }
         let terminal = matches!(
             observation.state.as_str(),
             "completed" | "cancelled" | "failed" | "interrupted" | "incomplete" | "rejected"
@@ -130,6 +155,27 @@ impl Journal {
                         .run_id
                         .is_none_or(|id| Some(id) == observation.run_id),
                 "assignment child identity changed"
+            );
+            ensure!(
+                previous
+                    .execution_usage
+                    .as_ref()
+                    .is_none_or(|prior| observation.execution_usage.as_ref() == Some(prior)),
+                "assignment usage receipt changed"
+            );
+            ensure!(
+                previous
+                    .execution_usage_observed
+                    .as_ref()
+                    .is_none_or(|prior| observation
+                        .execution_usage_observed
+                        .as_ref()
+                        .is_some_and(|next| next.observes(prior))),
+                "assignment observed usage regressed"
+            );
+            ensure!(
+                !previous.admission_closed || observation.admission_closed,
+                "assignment admission fence cannot regress"
             );
             ensure!(
                 !clean || observation.cleanup_observed,
@@ -282,6 +328,9 @@ mod tests {
             .record_assignment(&guard, admission.principal_id, participant, &request)
             .unwrap();
         let mut observation = AssignmentObservation {
+            execution_usage: None,
+            execution_usage_observed: None,
+            admission_closed: false,
             assignment_id: id,
             participant_vessel_id: participant,
             parent_session_id: session.id,

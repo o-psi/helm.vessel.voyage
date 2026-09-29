@@ -49,6 +49,9 @@ impl Supervisor {
             "assignment retention capacity exhausted"
         );
         let observation = AssignmentObservation {
+            execution_usage: None,
+            execution_usage_observed: None,
+            admission_closed: request.budget.is_some(),
             assignment_id: request.assignment_id,
             participant_vessel_id: identity::public(&self.directory)?.vessel_id,
             parent_session_id: request.parent_session_id,
