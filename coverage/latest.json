@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T21:32:43.588929+00:00",
-  "source_commit": "4497c20ab524b80b23863a90c955acd5c6549815",
+  "measured_at_utc": "2026-09-29T22:09:42.367440+00:00",
+  "source_commit": "7b72f40bd25c5783ca78e8422f689f45404b42c1",
   "dirty": false,
   "platform": "Linux-7.2.4-arch1-2-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2034,
+    "passed": 2036,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 116082,
-      "covered": 89011,
-      "percent": 76.67941627470236
+      "count": 116653,
+      "covered": 89154,
+      "percent": 76.42666712386308
     },
     "functions": {
-      "count": 10974,
-      "covered": 8093,
-      "percent": 73.74703845452889
+      "count": 11003,
+      "covered": 8100,
+      "percent": 73.6162864673271
     },
     "regions": {
-      "count": 190828,
-      "covered": 140022,
-      "notcovered": 50806,
-      "percent": 73.3760244827803
+      "count": 191926,
+      "covered": 140268,
+      "notcovered": 51658,
+      "percent": 73.08441795275262
     }
   },
-  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-system-key/html -j 8 > $WORKTREE_TARGET/coverage-report/v103-system-key/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-system-key/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-privileged-vessel.profdata -summary-only with standard ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
+  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-system-install/html -j 8 > $WORKTREE_TARGET/coverage-report/v103-system-install/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-system-install/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-privileged-vessel.profdata -summary-only with standard ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,9 +40,9 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 4497c20ab524b80b23863a90c955acd5c6549815. All 503 previously measured workspace source files were retained. Thirteen executed test binaries plus three current production entry points had 16 distinct hashes.",
-    "Lines +34 covered / +45 total (-0.000436 percentage points). Gateway key startup validation and unit dependency are measured; #353 remains open toward reachable production coverage.",
-    "Full workspace tests passed with zero failures. Separate disposable Ubuntu KVM checks passed the ignored systemd unit syntax test with a fixture provisioner and manual root/ordinary gateway activation from the prior hosted archive. The latter predates this startup guard; the guard still requires exact-source hosted/native verification.",
-    "The raw default LLVM export mixed historical objects; the published summary uses only the current 16 objects. One unavailable distribution standard-library thread-local source remains in the report (#251). No system installer, live-provider or native macOS/Windows behavior is claimed."
+    "Full default-feature workspace measurement on clean source 7b72f40bd25c5783ca78e8422f689f45404b42c1. All 503 previously measured workspace source files were retained; 504 current workspace files plus the known standard-library source. Thirteen executed test binaries plus three current production entry points had 16 distinct hashes.",
+    "Lines +143 covered / +571 total (-0.252749 percentage points). Fresh system installer root/service transaction paths add uncovered ordinary-user coverage; separate native checks do not count as coverage. No denominator exclusions were added. #353 remains open with 27,499 uncovered lines.",
+    "Full workspace tests passed: 2,036 passed, zero failed, eight ignored. Separate disposable Ubuntu KVM fixtures exercised active installation, reboot with retained authorization, activation failure cleanup and final-source inactive installation. Active/failure fixtures used the development installer against the prior hosted runtime; exact new hosted-source verification remains required.",
+    "The raw default LLVM export mixed historical objects; this summary uses only the current 16 objects. One unavailable distribution standard-library thread-local source remains in the report (#251). No live-provider or native macOS/Windows behavior is claimed."
   ]
 }
