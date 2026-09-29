@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T03:50:44.874638+00:00",
-  "source_commit": "402c357bb9812b77316d476fa1c4fb06b73d26a7",
+  "measured_at_utc": "2026-09-29T04:09:45.922837+00:00",
+  "source_commit": "d65fd39f054a2fcdd4dd174e1704f6fa2539ad22",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1904,
+    "passed": 1905,
     "failed": 0,
-    "ignored": 3
+    "ignored": 4
   },
   "totals": {
     "lines": {
-      "count": 107951,
-      "covered": 83236,
-      "percent": 77.10535335476281
+      "count": 107975,
+      "covered": 83229,
+      "percent": 77.08173188238018
     },
     "functions": {
-      "count": 10262,
-      "covered": 7610,
-      "percent": 74.15708438900798
+      "count": 10263,
+      "covered": 7606,
+      "percent": 74.110883757186
     },
     "regions": {
-      "count": 177336,
-      "covered": 130835,
-      "notcovered": 46501,
-      "percent": 73.77802589434745
+      "count": 177352,
+      "covered": 130807,
+      "notcovered": 46545,
+      "percent": 73.75558211917543
     }
   },
-  "command": "umask 077; USER=psi LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $SHARED_TARGET/coverage-report/issue368-clean -j 8 > $SHARED_TARGET/coverage-report/issue368-clean/run.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov report --json --summary-only --output-path $SHARED_TARGET/coverage-report/issue368-clean/summary.json -v",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2 cargo clean --profile dev -p helm -p vessel -p voyage -p voyage-installer -p voyage-protocol -p voyage-storage; cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-event-compat-integrated -j 4 > $WORKTREE_TARGET/coverage-report/v103-event-compat-integrated/run.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-event-compat-integrated/summary.json -v",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,8 +40,8 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean final source 402c357 after scoped cargo clean --profile dev of six workspace members and raw profile clearing; dependencies and previous report evidence retained. Full workspace default-feature tests passed: 1,904/0/3. 13 executed test binaries and three production entry-point binaries represented by 19 paths (16 unique hardlinked objects); 471 source entries belong to current checkout except unavailable distribution Rust standard-library source.",
-    "Initial shared-target report was invalid (49,818/101,906 lines; current Helm/Vessel files zero) due to stale workspace binary artifacts; raw evidence retained under target/coverage-report/issue368. Rebuilt all six current workspace members in dev profile, then independently remeasured and validated source identity. No package/source exclusions narrowed.",
-    "Compared with prior clean e441cef: lines 83,236/107,951 vs 83,163/107,882 (+73 covered, +69 total, +0.0184 percentage points); functions 7,610/10,262 vs 7,596/10,250; regions 130,835/177,336 vs 130,690/177,172."
+    "Full workspace default-feature Rust tests on clean integrated source d65fd39 after old-runtime public-v2 compatibility and #368 subscription-churn changes. WORKTREE_TARGET denotes this isolated checkout target directory.",
+    "Before measurement, a scoped dev-profile clean of six workspace packages removed historical workspace objects while preserving dependencies; raw profiles were cleared and verified empty. The report includes 13 executed test binaries and three production entry-point binaries (19 listed paths, 16 distinct content objects). All 471 source entries are from this checkout except one unavailable distribution Rust standard-library source.",
+    "Compared with preceding clean source 402c357: lines 83,229/107,975 vs 83,236/107,951 (-7 covered, +24 total, -0.0236 percentage points); functions 7,606/10,263 vs 7,610/10,262; regions 130,807/177,352 vs 130,835/177,336. No exclusions were added. The earlier 75.8319% f96b1cb record came from a different artifact set and is superseded by this current-object measurement; this does not close #353."
   ]
 }
