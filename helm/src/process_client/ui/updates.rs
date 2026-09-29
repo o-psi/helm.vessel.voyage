@@ -23,6 +23,7 @@ impl App {
             | Update::Completion { target, .. }
             | Update::Terminals { target, .. }
             | Update::Control { target, .. }
+            | Update::Event { target, .. }
             | Update::Snapshot { target, .. }
             | Update::Command { target, .. } => Some(target.route),
             Update::InboxAttention { route, .. }
@@ -293,6 +294,19 @@ impl App {
                         .copied()
                         .or_else(|| targets.first().copied());
                 }
+            }
+            Update::Event {
+                target,
+                incarnation,
+                event,
+                applied,
+            } => {
+                let success = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|view| view.process.incarnation == incarnation)
+                    .is_some_and(|view| super::live_reducer::apply(view, &event));
+                let _ = applied.send(success);
             }
             Update::Snapshot {
                 target,

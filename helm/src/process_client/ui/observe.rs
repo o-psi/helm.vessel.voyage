@@ -74,6 +74,12 @@ pub enum Update {
         route: Route,
         processes: Vec<ProcessInfo>,
     },
+    Event {
+        target: Target,
+        incarnation: uuid::Uuid,
+        event: serde_json::Value,
+        applied: tokio::sync::oneshot::Sender<bool>,
+    },
     Snapshot {
         target: Target,
         incarnation: uuid::Uuid,
@@ -176,7 +182,7 @@ pub fn spawn(
                             let key = (process.session_id, process.incarnation);
                             if cursors
                                 .get(&key)
-                                .is_some_and(|cursor| *cursor != summary.observation_cursor)
+                                .is_some_and(|cursor| *cursor > summary.observation_cursor)
                             {
                                 cursors.remove(&key);
                             }
@@ -261,7 +267,7 @@ pub fn spawn(
                                 session_id: process.session_id,
                                 incarnation: process.incarnation,
                                 after: *after,
-                                projection: None,
+                                projection: Some("public-v2".into()),
                             })
                         })
                         .collect::<Vec<_>>();
@@ -291,14 +297,15 @@ pub fn spawn(
                     }
                     match client.events(subscriptions).await {
                         Ok(mut events) => {
-                            let refresh_catalogue = tokio::time::sleep(Duration::from_secs(5));
+                            let mut ended_unexpectedly = false;
+                            let refresh_catalogue = tokio::time::sleep(Duration::from_secs(30));
                             tokio::pin!(refresh_catalogue);
                             loop {
                                 tokio::select! {
                                     _ = &mut refresh_catalogue => break,
                                     _ = selected.changed() => break,
                                     event = events.next() => {
-                                        let Some(event) = event else { break; };
+                                        let Some(event) = event else { ended_unexpectedly = true; break; };
                                         match event {
                                             Ok(event) => {
                                                 if processes.iter().any(|process| process.session_id == event.session_id && process.incarnation != event.incarnation) {
@@ -315,16 +322,42 @@ pub fn spawn(
                                                 if let Some(process) = processes.iter().find(|process| {
                                                     process.session_id == event.session_id
                                                         && process.incarnation == event.incarnation
-                                                }) && let Some(cursor) = refresh(
-                                                        &client,
-                                                        route,
-                                                        process,
-                                                        &sender,
-                                                    ).await {
-                                                    cursors.insert(
-                                                        (process.session_id, process.incarnation),
-                                                        cursor,
-                                                    );
+                                                }) {
+                                                    let key = (process.session_id, process.incarnation);
+                                                    // Older peers send v1 invalidations. Never interpret
+                                                    // an unnegotiated result as a typed mutation.
+                                                    let page = &event.result;
+                                                    let v2 = page.get("projection").and_then(serde_json::Value::as_str) == Some("public-v2");
+                                                    if v2 {
+                                                        if page.get("replay_gap").and_then(serde_json::Value::as_bool) == Some(true) {
+                                                            if let Some(cursor) = refresh(&client, route, process, &sender).await {
+                                                                cursors.insert(key, cursor);
+                                                            } else { cursors.remove(&key); }
+                                                            break;
+                                                        }
+                                                        let Some(entries) = page.get("events").and_then(serde_json::Value::as_array) else {
+                                                            cursors.remove(&key);
+                                                            break;
+                                                        };
+                                                        let mut failed = false;
+                                                        for entry in entries {
+                                                            let Some(cursor) = entry.get("cursor").and_then(serde_json::Value::as_u64) else { failed = true; break };
+                                                            if cursor <= cursors.get(&key).copied().unwrap_or(0) { continue }
+                                                            if entry.get("session_id").and_then(serde_json::Value::as_str) != Some(process.session_id.to_string().as_str()) {
+                                                                failed = true; break;
+                                                            }
+                                                            let (applied, received) = tokio::sync::oneshot::channel();
+                                                            if sender.send(Update::Event { target: Target { route, session: process.session_id }, incarnation: process.incarnation, event: entry.clone(), applied }).await.is_err() { return }
+                                                            if received.await != Ok(true) { failed = true; break; }
+                                                            cursors.insert(key, cursor);
+                                                        }
+                                                        if failed {
+                                                            cursors.remove(&key);
+                                                            break;
+                                                        }
+                                                    } else if let Some(cursor) = refresh(&client, route, process, &sender).await {
+                                                        cursors.insert(key, cursor);
+                                                    } else { cursors.remove(&key); }
                                                 }
                                             }
                                             Err(error) => {
@@ -337,6 +370,9 @@ pub fn spawn(
                                         }
                                     }
                                 }
+                            }
+                            if ended_unexpectedly {
+                                cursors.clear();
                             }
                         }
                         Err(error) => {
@@ -353,11 +389,7 @@ pub fn spawn(
                             tokio::time::sleep(Duration::from_millis(750)).await;
                         }
                     }
-                    // A stream can end while its owner is suspending, after
-                    // the final journal update but before we receive it.
-                    // Re-establish snapshots before subscribing again,
-                    // including owners that are no longer live.
-                    cursors.clear();
+                    // Keep successfully applied cursors across planned catalogue probes.
                 }
                 Err(error) => {
                     let _ = sender
@@ -377,7 +409,7 @@ pub fn spawn(
     })
 }
 
-async fn refresh(
+pub(super) async fn refresh(
     client: &Client,
     route: Route,
     process: &ProcessInfo,

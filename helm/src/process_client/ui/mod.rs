@@ -20,6 +20,7 @@ mod inspection_bridge;
 mod interactions;
 mod layout_guard;
 mod lifecycle;
+mod live_reducer;
 mod operator;
 mod operator_bridge;
 mod paste;
