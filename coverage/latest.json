@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T19:14:25.165100+00:00",
-  "source_commit": "2e18ac61fafe8526690ee703d4c955ac3d8d8b62",
+  "measured_at_utc": "2026-09-29T19:48:09.050777+00:00",
+  "source_commit": "5cef245b9d96115e2e3603ced00e7981fbba1d08",
   "dirty": false,
   "platform": "Linux-7.2.4-arch1-2-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2027,
+    "passed": 2030,
     "failed": 0,
     "ignored": 6
   },
   "totals": {
     "lines": {
-      "count": 114846,
-      "covered": 88408,
-      "percent": 76.97960747435697
+      "count": 115248,
+      "covered": 88615,
+      "percent": 76.89070526169651
     },
     "functions": {
-      "count": 10874,
-      "covered": 8049,
-      "percent": 74.02059959536508
+      "count": 10920,
+      "covered": 8068,
+      "percent": 73.88278388278388
     },
     "regions": {
-      "count": 188866,
-      "covered": 139089,
-      "notcovered": 49777,
-      "percent": 73.6442768947296
+      "count": 189417,
+      "covered": 139364,
+      "notcovered": 50053,
+      "percent": 73.57523347957152
     }
   },
-  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-gateway-ipc/html -j 8 > $WORKTREE_TARGET/coverage-report/v103-gateway-ipc/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-gateway-ipc/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-privileged-vessel.profdata -summary-only with the standard ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
+  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-gateway-route/html -j 8 > $WORKTREE_TARGET/coverage-report/v103-gateway-route/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-gateway-route/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-privileged-vessel.profdata -summary-only with the standard ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,9 +40,9 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 2e18ac61fafe8526690ee703d4c955ac3d8d8b62. All 500 previously measured workspace source files retained; new vessel/src/process/gateway_ipc.rs included. The 13 executed test binaries plus three current production entry points have 16 distinct hashes.",
-    "Lines +122 covered / +134 total (+0.016430 percentage points). This staged kernel-peer/framing boundary is not wired to a system gateway; #344/#380 remain open. #353 remains open toward reachable production coverage.",
-    "The first coverage command failed before tests because distribution LLVM tool paths were not set. Corrected full coverage passed 2,027 tests, zero failed, six ignored. No failed test was relabeled.",
-    "The raw default LLVM export mixed historical objects and duplicate totals; the published summary uses only the current 16 objects. One unavailable distribution standard-library thread-local source remains in the report (#251). No root gateway service, system installation, production adoption, live provider or other-platform verification is claimed."
+    "Full default-feature workspace measurement on clean source 5cef245b9d96115e2e3603ced00e7981fbba1d08. All 501 previously measured workspace source files were retained; 13 executed test binaries plus three current production entry points had 16 distinct hashes.",
+    "Lines +207 covered / +402 total (-0.088902 percentage points). The new staged system gateway route adds command, pairing, events and browser-pipe paths whose full installer and runtime integration remains open in #380; #353 remains open toward reachable production coverage.",
+    "Full workspace tests passed with zero failures. A separate disposable Ubuntu KVM fixture exercised native root/ordinary gateway routing, pairing, WebSocket, peer refusal and failure/restart behavior, but is outside this coverage count.",
+    "The raw default LLVM export mixed historical objects and duplicate totals; the published summary uses only the current 16 objects. One unavailable distribution standard-library thread-local source remains in the report (#251). No system installer, bound initial launch, production adoption, live provider or other-platform verification is claimed."
   ]
 }
