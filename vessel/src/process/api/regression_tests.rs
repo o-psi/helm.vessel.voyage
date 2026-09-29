@@ -33,7 +33,7 @@ fn translation_preserves_payloads_and_authority_across_command_families() {
     ] {
         cases.push(json!({"op":"terminal","run_id":id,"terminal_id":id,"operation":operation}));
     }
-    for section in ["host_resources", "tools", "policy", "models"] {
+    for section in ["host_resources", "tools", "policy", "skills", "models"] {
         cases.push(json!({"op":"controls","run_id":id,"section":section}));
     }
     for (name, fields) in [
@@ -270,6 +270,13 @@ fn goal_command_mapping_preserves_exact_owner_mutation_and_read_rights() {
     assert_eq!(
         serde_json::to_value(runtime(changes.clone()).unwrap()).unwrap(),
         serde_json::to_value(changes).unwrap()
+    );
+    assert_eq!(
+        required_right(&VoyageCommand::Controls {
+            run_id: None,
+            section: "skills".into(),
+        }),
+        Some(ProcessRight::WorkspaceRead)
     );
 }
 

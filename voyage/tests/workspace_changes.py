@@ -34,8 +34,19 @@ def main():
             "commit", "-qm", "base")
         fixture.start()
         assert "workspace_changes" in fixture.request({"op": "capabilities"})["features"]
+        assert "skills_catalog" in fixture.request({"op": "capabilities"})["features"]
         session = fixture.session()
         fixture.suspended(session)
+        skill_dir = fixture.workspace / ".agents" / "skills" / "fixture"
+        skill_dir.mkdir(parents=True)
+        skill_file = skill_dir / "SKILL.md"
+        skill_file.write_text("---\nname: fixture\ndescription: A fixture skill\n---\nPRIVATE SKILL BODY\n")
+        tools = fixture.command(session, {"op": "controls", "run_id": None, "section": "tools"})
+        assert any(item["name"] == "read_file" for item in tools["value"]["inventory"]), tools
+        catalog = fixture.command(session, {"op": "controls", "run_id": None, "section": "skills"})
+        assert catalog["value"]["can_read"] and catalog["value"]["skills"][0]["name"] == "fixture", catalog
+        assert catalog["value"]["skills"][0]["path"] == str(skill_file)
+        assert "PRIVATE SKILL BODY" not in str(catalog), "skill body leaked into catalogue"
         before = fixture.command(session, {"op": "snapshot"})
         identity = fixture.request({"op": "inspect", "session_id": session})
         requests = len(fixture.provider.bodies)
@@ -59,11 +70,17 @@ def main():
             history = gateway.grant(session, ["observe", "history"])
             denied = gateway.call(history, session, {"op": "workspace_changes", "scope": "status"})
             assert denied.get("error"), "History grant read executing workspace"
+            denied_skills = gateway.call(history, session, {"op": "controls", "run_id": None,
+                                                           "section": "skills"})
+            assert denied_skills.get("error"), "History grant discovered executing-host skill paths"
             reader = gateway.grant(session, ["observe", "workspace_read"])
             allowed = gateway.call(reader, session, {"op": "workspace_changes", "scope": "status"})
             assert allowed.get("error") is None and "?? new.txt\0" in allowed["result"]["text"], allowed
             refused = gateway.call(reader, session, {"op": "history", "offset": 0, "limit": 1})
             assert refused.get("error"), "Workspace read grant acquired conversation history"
+            listed = gateway.call(reader, session, {"op": "controls", "run_id": None,
+                                                    "section": "skills"})
+            assert listed.get("error") is None and listed["result"]["value"]["skills"][0]["name"] == "fixture", listed
         finally:
             gateway.close()
         after = fixture.command(session, {"op": "snapshot"})
@@ -76,6 +93,7 @@ def main():
             "status_paths": 2, "diff_bytes": len(diff["text"].encode()),
             "conversation_unchanged": True, "provider_requests": 0,
             "history_grant_denied": True, "workspace_read_grant_admitted": True,
+            "skill_metadata_only": True,
         })
         print("workspace changes process journey PASS", flush=True)
     finally:

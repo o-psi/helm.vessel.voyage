@@ -2,6 +2,7 @@
 //! persisted as conversation messages. Loading uses the ordinary read_file tool.
 use crate::policy::Policy;
 use serde::Serialize;
+use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
     fs,
@@ -82,6 +83,24 @@ pub(crate) fn guidance(policy: &Policy, can_read: bool) -> String {
         return String::new();
     }
     discover(policy, dirs::home_dir().as_deref()).guidance()
+}
+
+/// Read-only next-run discovery for Helm. The agent still resolves and reads a
+/// selected skill under its current policy; this catalogue is never authority.
+pub(crate) fn public_catalog(policy: &Policy, can_read: bool) -> anyhow::Result<Value> {
+    policy.check_current()?;
+    if !can_read {
+        return Ok(json!({"skills":[],"can_read":false,"discovery_incomplete":false}));
+    }
+    let catalog = discover(policy, dirs::home_dir().as_deref());
+    policy.check_current()?;
+    Ok(json!({
+        "skills": catalog.skills,
+        "can_read": true,
+        // Diagnostics can contain local host paths. The browser needs only to
+        // know that it must not present a partial catalogue as exhaustive.
+        "discovery_incomplete": !catalog.diagnostics.is_empty(),
+    }))
 }
 
 fn discover(policy: &Policy, home: Option<&Path>) -> Catalog {

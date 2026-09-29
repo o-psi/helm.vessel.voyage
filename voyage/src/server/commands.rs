@@ -287,6 +287,7 @@ pub(super) async fn dispatch_admitted(
                 "notification_events",
                 "snapshot",
                 "workspace_changes",
+                "skills_catalog",
                 "read_artifact",
                 "history",
                 "provider_attempts",

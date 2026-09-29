@@ -230,6 +230,7 @@ async fn inspect(
             "incarnation":registration.incarnation,"suspended":true,
             "capabilities":["notification_events","provider_attempts","snapshot","history","message_chunk","run_output","submit",
                 "workspace_changes",
+                "skills_catalog",
                 "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_account_inference","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",

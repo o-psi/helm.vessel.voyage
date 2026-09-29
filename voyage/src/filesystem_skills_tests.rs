@@ -25,6 +25,32 @@ fn defaults_missing_and_no_loader_are_empty() {
 }
 
 #[test]
+fn public_discovery_exposes_only_loadable_metadata_and_marks_partial_scans() {
+    let root = tempfile::tempdir().unwrap();
+    let source = skill(root.path(), "example", "example");
+    let policy = policy(root.path());
+    let unavailable = public_catalog(&policy, false).unwrap();
+    assert_eq!(unavailable["skills"], serde_json::json!([]));
+    assert_eq!(unavailable["can_read"], false);
+    let available = public_catalog(&policy, true).unwrap();
+    assert_eq!(available["skills"][0]["name"], "example");
+    assert_eq!(
+        available["skills"][0]["path"],
+        source.to_string_lossy().as_ref()
+    );
+    assert!(!available.to_string().contains("PRIVATE BODY MARKER"));
+    std::fs::write(&source, "invalid frontmatter").unwrap();
+    let changed = public_catalog(&policy, true).unwrap();
+    assert_eq!(changed["skills"], serde_json::json!([]));
+    assert_eq!(changed["discovery_incomplete"], true);
+    assert!(
+        !changed
+            .to_string()
+            .contains(source.to_string_lossy().as_ref())
+    );
+}
+
+#[test]
 fn metadata_only_deterministic_deduplicated_and_refreshed() {
     let root = tempfile::tempdir().unwrap();
     let path = skill(root.path(), "z", "z");

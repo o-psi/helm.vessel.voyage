@@ -60,6 +60,14 @@ suspended. The panel stops observation when hidden or disconnected, displays
 truncation and errors, and never interprets an unavailable read as a clean tree.
 Existing explicit Inspect still admits one operator run and remains separate.
 
+When `skills_catalog` and WorkspaceRead authority are available, the composer can
+list executing-host filesystem skill metadata from the current Voyage's read policy. This bounded
+observation never loads a skill body for Helm or starts a run. During an active
+run it describes the next-run catalogue, not the agent's already captured tools.
+The selected skill path is prompt context, rechecked by the Voyage's `read_file`
+tool when the agent uses it. The tool catalogue is likewise only discovery;
+presence does not grant execution or promise a tool call.
+
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default
 and delete; the fixed header keeps Create profile (+) available even in empty or

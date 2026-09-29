@@ -139,6 +139,15 @@ impl LiveControls {
         config: &crate::Config,
         workspace: &std::path::Path,
     ) -> Result<Value> {
+        if section == "skills" {
+            // The composer prepares a future prompt. Its skill catalogue must
+            // use next-run policy, not an active agent's captured configuration.
+            let mut result = idle::inspect(self, section, config, workspace).await?;
+            if self.active.read().await.is_some() {
+                result["execution"] = json!("next_run");
+            }
+            return Ok(result);
+        }
         // Native discovery must use next-turn config, not an active agent whose
         // provider/account was captured at admission.
         let context = crate::provider::inference_context(config).await;

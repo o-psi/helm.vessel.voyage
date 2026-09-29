@@ -13,6 +13,21 @@ pub(super) async fn inspect(
     let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
     let value = match section {
         "tools" => builtin_preflight(resolved.config(), resolved.policy())?,
+        "skills" => {
+            let tools = builtin_preflight(resolved.config(), resolved.policy())?;
+            let can_read = tools["inventory"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["name"] == "read_file"));
+            let policy = resolved.policy().clone();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                tokio::task::spawn_blocking(move || {
+                    crate::filesystem_skills::public_catalog(&policy, can_read)
+                }),
+            )
+            .await
+            .context("skill discovery timed out")???
+        }
         "policy" => serde_json::to_value(resolved.policy().effective())?,
         "models" => {
             let reservation =

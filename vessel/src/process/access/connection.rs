@@ -41,7 +41,7 @@ impl Supervisor {
                 "workspaces": self.connection_workspaces(&grant).await?,
                 "running_release": crate::process::updates::running_release(),
                 "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory),
-                "features": ["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","goals","start_settings"]
+                "features": ["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","skills_catalog","goals","start_settings"]
             })),
             command @ (VesselCommand::UpdatePrepare { .. }
             | VesselCommand::UpdateStatus { .. }

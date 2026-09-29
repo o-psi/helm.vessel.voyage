@@ -191,6 +191,12 @@ checks the panel's file navigation on desktop/mobile and confirms that opening i
 does not dispatch `operator_tool`. This is local synthetic evidence, not an
 authenticated production-console or external Git repository claim.
 
+The same offline process check now exercises suspended `controls` discovery:
+advertised tool metadata and policy-checked filesystem skill names/descriptions,
+with a scoped WorkspaceRead grant and no skill-body disclosure. A composer menu must
+be tested against an old capability response, a stale connection and a partial
+catalogue, and selecting metadata must not submit a run automatically.
+
 The offline [conversation and file-editing check](test-conversation-files.md)
 verifies a normal task through Vessel-supervised voyage processes: read and patch
 a file, save the reply, then continue with retained context and read the edited
