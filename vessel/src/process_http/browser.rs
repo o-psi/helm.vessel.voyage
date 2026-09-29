@@ -238,6 +238,7 @@ fn allowed(command: &VesselCommand) -> bool {
         | VesselCommand::UpdateApply { .. }
         | VesselCommand::UpdateDiscard { .. }
         | VesselCommand::Catalogue
+        | VesselCommand::CatalogueChanges { .. }
         | VesselCommand::Inspect { .. }
         | VesselCommand::Branch { .. }
         | VesselCommand::Restart { .. }

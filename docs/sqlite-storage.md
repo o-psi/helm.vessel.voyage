@@ -74,6 +74,26 @@ An exact ID with changed bytes conflicts. Connection-operation principal binding
 remain enforced by the existing access layer; moving bytes into SQLite does not
 merge human connections, process grants or participant authority.
 
+## Catalogue change reads
+
+The public `catalogue_changes` operation is capability-gated. `after: null` returns
+a checkpoint (`replay_gap: true`, no entries); hydrate the authorized catalogue
+**after** capturing it, then request changes after that cursor. Requests allow
+1–128 journal rows and 0–10,000 ms waits. Replies carry `cursor`, `latest_cursor`,
+`has_more`, `replay_gap` and `entries`. A page coalesces repeated session IDs to
+current `ProcessInfo` projections read in the same SQLite transaction as its cursor.
+Thus metadata is current at read time; it is not immutable historical event payload.
+The cursor advances through filtered/participant entries too, so scoped clients
+cannot stall behind invisible rows. History summaries require history rights.
+
+A cursor before retention or beyond the current journal returns a new checkpoint
+with an explicit gap and no entries. Hydrate again, then resume after the returned
+cursor. Retention is 4,096 invalidations. Registration, owner, summary and observed
+process-state transitions append invalidations; unchanged observations do not.
+The read never launches a Voyage. Long polls release SQLite between checks, and
+scoped handlers recheck current authority before returning their result. Client
+connection replacement must discard replies from the obsolete connection.
+
 ## Per-voyage conversation schema
 
 The existing [journal implementation](../voyage/src/attachment/journal.rs) owns

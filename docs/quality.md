@@ -171,7 +171,8 @@ is implied by the offline failure regression.
 `python3 voyage/tests/live_events_integration.py --bin-dir target/debug` uses an
 explicit synthetic named account and real supervised processes. It checks bounded
 public-v2 pagination, duplicate reads, session isolation, public-v1 compatibility,
-unsupported-projection refusal, retained replay after Vessel restart, and append-only
+unsupported-projection refusal, catalogue checkpoint/pagination/bounds and owner
+changes across restart, retained replay after Vessel restart, and append-only
 history across a fresh Voyage incarnation. Delayed one-event pages verify replay
 continuity; they do not simulate browser-socket backpressure or full client rendering.
 

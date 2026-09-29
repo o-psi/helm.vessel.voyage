@@ -165,6 +165,13 @@ fn save_tx(
                         == Some(current))),
         "stale incarnation publication"
     );
+    let old_record: Option<String> = tx
+        .query_row(
+            "SELECT registration FROM voyages WHERE session_id=?1",
+            [registration.session_id.to_string()],
+            |row| row.get(0),
+        )
+        .optional()?;
     let bytes = serde_json::to_string(registration)?;
     ensure!(bytes.len() < 16384, "registration exceeds limit");
     let id = registration.session_id.to_string();
@@ -176,8 +183,24 @@ fn save_tx(
     tx.execute("INSERT INTO voyages VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(session_id) DO UPDATE SET incarnation=excluded.incarnation,workspace=excluded.workspace,state=excluded.state,name=excluded.name,registration=excluded.registration,updated_at_ms=excluded.updated_at_ms",params![id,inc,registration.workspace.as_os_str().as_encoded_bytes(),state,registration.name,bytes,now()])?;
     tx.execute("INSERT INTO incarnations VALUES(?1,?2,?3,?4,?5) ON CONFLICT(incarnation) DO UPDATE SET registration=excluded.registration",params![inc,id,registration.command_id.to_string(),bytes,now()])?;
     tx.execute("INSERT INTO catalogue(session_id,incarnation) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET incarnation=excluded.incarnation,fingerprint=CASE WHEN incarnation!=excluded.incarnation THEN NULL ELSE fingerprint END,error_code=CASE WHEN incarnation!=excluded.incarnation THEN 'owner_changed' ELSE error_code END,next_attempt_ms=0",params![id,inc])?;
-    if current.as_deref().is_some_and(|previous| previous != inc) {
-        tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'owner_changed',?2)",params![id,now()])?;
+    if old_record
+        .as_ref()
+        .is_none_or(|previous| previous != &bytes)
+    {
+        tx.execute(
+            "INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,?2,?3)",
+            params![
+                id,
+                if current.is_none() {
+                    "created"
+                } else if current.as_deref() == Some(&inc) {
+                    "registration"
+                } else {
+                    "owner_changed"
+                },
+                now()
+            ],
+        )?;
     }
     Ok(())
 }
@@ -582,10 +605,6 @@ pub async fn admit_with_binding(
                 ],
             )?;
         }
-        tx.execute(
-            "INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'created',?2)",
-            params![r.session_id.to_string(), now()],
-        )?;
         tx.commit()?;
         Ok(())
     })
@@ -663,20 +682,93 @@ pub async fn initialize(root: &Path) -> Result<HashMap<Uuid, ProcessRegistration
 }
 
 pub async fn catalogue(root: &Path) -> Result<Vec<ProcessInfo>> {
-    blocking(root,move|db|{
-  let mut stmt=db.prepare("SELECT v.registration,c.summary,c.observed_at_ms,c.error_code,c.process_info FROM voyages v LEFT JOIN catalogue c USING(session_id) ORDER BY v.session_id")?;
-  let rows=stmt.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<i64>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?)))?;
-  let mut infos=Vec::new();
-  for row in rows {let (reg,summary,observed,error,info)=row?;let r:ProcessRegistration=serde_json::from_str(&reg)?;
-   if matches!(r.initialize,Some(voyage_protocol::process::RuntimeInitialization::Participant{..})) {continue}
-   let mut i=info.and_then(|s|serde_json::from_str::<ProcessInfo>(&s).ok()).filter(|i|i.incarnation==r.incarnation).unwrap_or_else(||ProcessInfo::from(&r));
-   if i.state==voyage_protocol::process::ProcessState::Live && observed.is_none_or(|at|now().saturating_sub(at)>5000){i.state=voyage_protocol::process::ProcessState::Unavailable;}
-   let summary:Option<CatalogueSummary>=summary.map(|s|serde_json::from_str(&s)).transpose()?;
-   if let Some(s)=&summary {i.name=s.name.clone().or(i.name);}
-   i.catalogue=Some(Box::new(CatalogueMetadata{summary,observed_at_ms:observed.and_then(|v|v.try_into().ok()),stale:error.is_some() || observed.is_none(),error_code:error}));
-   infos.push(i);
-  }Ok(infos)
- }).await
+    blocking(root, |db| catalogue_in(db, None)).await
+}
+
+fn catalogue_in(db: &Connection, session: Option<Uuid>) -> Result<Vec<ProcessInfo>> {
+    let mut stmt=db.prepare("SELECT v.registration,c.summary,c.observed_at_ms,c.error_code,c.process_info FROM voyages v LEFT JOIN catalogue c USING(session_id) WHERE (?1 IS NULL OR v.session_id=?1) ORDER BY v.session_id")?;
+    let rows = stmt.query_map([session.map(|id| id.to_string())], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    let mut infos = Vec::new();
+    for row in rows {
+        let (reg, summary, observed, error, info) = row?;
+        let r: ProcessRegistration = serde_json::from_str(&reg)?;
+        if matches!(
+            r.initialize,
+            Some(voyage_protocol::process::RuntimeInitialization::Participant { .. })
+        ) {
+            continue;
+        }
+        let mut i = info
+            .and_then(|s| serde_json::from_str::<ProcessInfo>(&s).ok())
+            .filter(|i| i.incarnation == r.incarnation)
+            .unwrap_or_else(|| ProcessInfo::from(&r));
+        if i.state == voyage_protocol::process::ProcessState::Live
+            && observed.is_none_or(|at| now().saturating_sub(at) > 5000)
+        {
+            i.state = voyage_protocol::process::ProcessState::Unavailable;
+        }
+        let summary: Option<CatalogueSummary> =
+            summary.map(|s| serde_json::from_str(&s)).transpose()?;
+        if let Some(s) = &summary {
+            i.name = s.name.clone().or(i.name);
+        }
+        i.catalogue = Some(Box::new(CatalogueMetadata {
+            summary,
+            observed_at_ms: observed.and_then(|v| v.try_into().ok()),
+            stale: error.is_some() || observed.is_none(),
+            error_code: error,
+        }));
+        infos.push(i);
+    }
+    Ok(infos)
+}
+
+/// Cursor and projections share one read transaction. The event journal is a
+/// bounded invalidation log: repeated IDs coalesce to their current projection.
+pub async fn catalogue_changes(
+    root: &Path,
+    after: Option<u64>,
+    limit: u16,
+) -> Result<voyage_protocol::vessel::CatalogueChanges> {
+    ensure!(
+        (1..=128).contains(&limit),
+        "catalogue page limit must be 1..128"
+    );
+    ensure!(
+        after.is_none_or(|value| value <= i64::MAX as u64),
+        "invalid catalogue cursor"
+    );
+    blocking(root, move |db| {
+        let tx = db.transaction()?;
+        let (earliest, latest): (Option<u64>, u64) = tx.query_row(
+            "SELECT min(sequence),coalesce(max(sequence),0) FROM catalogue_events", [],
+            |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let gap = after.is_none_or(|cursor| cursor > latest || earliest.is_some_and(|first| cursor.saturating_add(1) < first));
+        let mut page = voyage_protocol::vessel::CatalogueChanges {
+            cursor: after.unwrap_or(latest), latest_cursor: latest,
+            has_more: false, replay_gap: gap, entries: Vec::new(),
+        };
+        if gap { page.cursor = latest; return Ok(page); }
+        let changes = tx.prepare("SELECT sequence,session_id FROM catalogue_events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?
+            .query_map(params![after.unwrap_or(0),limit], |row| Ok((row.get::<_,u64>(0)?,row.get::<_,String>(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut seen = std::collections::HashSet::new();
+        for (cursor, session) in changes {
+            page.cursor = cursor;
+            let session = Uuid::parse_str(&session)?;
+            if seen.insert(session) { page.entries.extend(catalogue_in(&tx, Some(session))?); }
+        }
+        page.has_more = page.cursor < latest;
+        Ok(page)
+    }).await
 }
 
 pub async fn refresh(root: &Path, registration: &ProcessRegistration) -> Result<()> {
@@ -703,13 +795,19 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
   let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;
   let current:String=tx.query_row("SELECT incarnation FROM voyages WHERE session_id=?1",[r.session_id.to_string()],|row|row.get(0))?;
   if current!=r.incarnation.to_string(){return Ok(())}
-  let mut changed = false;
-  let success = summary.is_ok();
+  let (old_info, old_error):(Option<String>,Option<String>)=tx.query_row("SELECT process_info,error_code FROM catalogue WHERE session_id=?1",[r.session_id.to_string()],|row|Ok((row.get(0)?,row.get(1)?)))?;
+  // Journal metadata refresh is not a failed liveness observation. Preserve a
+  // current live projection while its socket exists; the separate bounded
+  // inspect publishes an actual unavailable/suspended/stopped transition.
+  if info.state==voyage_protocol::process::ProcessState::Unavailable && dir.join("runtime.sock").exists()
+   && let Some(previous)=old_info.as_deref().and_then(|value|serde_json::from_str::<ProcessInfo>(value).ok())
+   && previous.incarnation==r.incarnation && previous.state==voyage_protocol::process::ProcessState::Live {info=previous;}
+  let mut changed = old_info.as_deref()!=Some(serde_json::to_string(&info)?.as_str()) || old_error.as_deref()!=if summary.is_ok(){None}else{Some("journal_unavailable")};
   match summary {
    Ok(summary)=>{
     let previous:Option<String>=tx.query_row("SELECT summary FROM catalogue WHERE session_id=?1",[r.session_id.to_string()],|row|row.get(0))?;
     let summary_json=serde_json::to_string(&summary)?;
-    changed=previous.as_ref()!=Some(&summary_json);
+    changed|=previous.as_ref()!=Some(&summary_json);
     if let Some(previous)=previous {
         let previous:CatalogueSummary=serde_json::from_str(&previous)?;
         if (summary.revision,summary.observation_cursor)<(previous.revision,previous.observation_cursor) {return Ok(())}
@@ -717,7 +815,7 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
     tx.execute("UPDATE catalogue SET summary=?2,observed_at_ms=?3,fingerprint=?4,process_info=?5,error_code=NULL,failures=0,next_attempt_ms=0 WHERE session_id=?1",params![r.session_id.to_string(),summary_json,now(),fingerprint,serde_json::to_string(&info)?])?;},
    Err(_)=>{tx.execute("UPDATE catalogue SET process_info=?2,error_code='journal_unavailable',failures=min(failures+1,6),next_attempt_ms=?3+min(60000,1000*(1<<min(failures,6))) WHERE session_id=?1",params![r.session_id.to_string(),serde_json::to_string(&info)?,now()])?;}
   }
-  if success && changed {
+  if changed {
     tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'metadata',?2)",params![r.session_id.to_string(),now()])?;
   }
   tx.commit()?;Ok(())

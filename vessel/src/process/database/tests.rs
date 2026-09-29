@@ -609,3 +609,139 @@ async fn restart_invalidates_once_and_ignores_stale_process_publication() {
         next.incarnation
     );
 }
+
+#[tokio::test]
+async fn catalogue_pages_checkpoint_coalesce_and_resume_after_reopening() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let checkpoint = catalogue_changes(&f.0, None, 1).await.unwrap();
+    assert!(checkpoint.replay_gap);
+    assert_eq!(checkpoint.cursor, 0);
+    let mut first = f.registration();
+    admit(&f.0, &first, bytes(&first)).await.unwrap();
+    let second = f.registration();
+    admit(&f.0, &second, bytes(&second)).await.unwrap();
+    first.name = Some("Renamed after hydration".into());
+    save(&f.0, &first).await.unwrap();
+
+    let page = catalogue_changes(&f.0, Some(0), 1).await.unwrap();
+    assert_eq!(page.cursor, 1);
+    assert!(page.has_more);
+    assert_eq!(page.entries.len(), 1);
+    assert_eq!(page.entries[0].name, first.name);
+    let rest = catalogue_changes(&f.0, Some(page.cursor), 128)
+        .await
+        .unwrap();
+    assert_eq!(rest.cursor, 3);
+    assert!(!rest.has_more);
+    assert_eq!(
+        rest.entries
+            .iter()
+            .map(|entry| entry.session_id)
+            .collect::<Vec<_>>(),
+        vec![second.session_id, first.session_id]
+    );
+    let all = catalogue_changes(&f.0, Some(0), 128).await.unwrap();
+    assert_eq!(all.entries.len(), 2);
+    assert_eq!(
+        serde_json::to_value(&all).unwrap(),
+        serde_json::to_value(catalogue_changes(&f.0, Some(0), 128).await.unwrap()).unwrap()
+    );
+    initialize(&f.0).await.unwrap();
+    let resumed = catalogue_changes(&f.0, Some(rest.cursor), 128)
+        .await
+        .unwrap();
+    assert_eq!(resumed.cursor, rest.cursor);
+    assert!(!resumed.replay_gap);
+    assert!(resumed.entries.is_empty());
+    let future = catalogue_changes(&f.0, Some(999), 128).await.unwrap();
+    assert!(future.replay_gap);
+    assert_eq!(future.cursor, rest.cursor);
+    for limit in [0, 129, u16::MAX] {
+        assert!(catalogue_changes(&f.0, Some(0), limit).await.is_err());
+    }
+    assert!(catalogue_changes(&f.0, Some(u64::MAX), 1).await.is_err());
+}
+
+#[tokio::test]
+async fn catalogue_retention_gap_and_failed_refresh_have_public_recovery() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let r = f.registration();
+    admit(&f.0, &r, bytes(&r)).await.unwrap();
+    let initial = catalogue_changes(&f.0, None, 128).await.unwrap().cursor;
+    refresh_now(&f.0, &r).await.unwrap();
+    let failed = catalogue_changes(&f.0, Some(initial), 128).await.unwrap();
+    assert_eq!(failed.entries.len(), 1);
+    assert_eq!(
+        failed.entries[0]
+            .catalogue
+            .as_ref()
+            .unwrap()
+            .error_code
+            .as_deref(),
+        Some("journal_unavailable")
+    );
+    let mut info = ProcessInfo::from(&r);
+    info.state = ProcessState::Live;
+    observe_process(&f.0, &r, &info).await.unwrap();
+    let live = catalogue_changes(&f.0, Some(failed.cursor), 128)
+        .await
+        .unwrap();
+    assert_eq!(live.entries[0].state, ProcessState::Live);
+    info.state = ProcessState::Unavailable;
+    observe_process(&f.0, &r, &info).await.unwrap();
+    let unavailable = catalogue_changes(&f.0, Some(live.cursor), 128)
+        .await
+        .unwrap();
+    assert_eq!(unavailable.entries[0].state, ProcessState::Unavailable);
+
+    let mut db = open(&f.0).unwrap();
+    let tx = db.transaction().unwrap();
+    for _ in 0..4100 {
+        tx.execute(
+            "INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'metadata',0)",
+            [r.session_id.to_string()],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    drop(db);
+    let gap = catalogue_changes(&f.0, Some(initial), 128).await.unwrap();
+    assert!(gap.replay_gap);
+    assert!(gap.entries.is_empty());
+    assert_eq!(gap.cursor, gap.latest_cursor);
+    let tail = catalogue_changes(&f.0, Some(gap.cursor - 4096), 128)
+        .await
+        .unwrap();
+    assert!(!tail.replay_gap);
+    assert!(tail.has_more);
+    assert_eq!(tail.entries.len(), 1);
+}
+
+#[tokio::test]
+async fn catalogue_metadata_refresh_does_not_invent_a_live_owner_failure() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let r = f.registration();
+    admit(&f.0, &r, bytes(&r)).await.unwrap();
+    let directory = registry::directory(&f.0, r.session_id);
+    registry::private_directory(&directory).unwrap();
+    let socket = std::os::unix::net::UnixListener::bind(directory.join("runtime.sock")).unwrap();
+    let mut info = ProcessInfo::from(&r);
+    info.state = ProcessState::Live;
+    observe_process(&f.0, &r, &info).await.unwrap();
+    let checkpoint = catalogue_changes(&f.0, None, 128).await.unwrap().cursor;
+    refresh_now(&f.0, &r).await.unwrap();
+    let metadata = catalogue_changes(&f.0, Some(checkpoint), 128)
+        .await
+        .unwrap();
+    assert_eq!(metadata.entries[0].state, ProcessState::Live);
+    info.state = ProcessState::Unavailable;
+    observe_process(&f.0, &r, &info).await.unwrap();
+    let unavailable = catalogue_changes(&f.0, Some(metadata.cursor), 128)
+        .await
+        .unwrap();
+    assert_eq!(unavailable.entries[0].state, ProcessState::Unavailable);
+    drop(socket);
+}

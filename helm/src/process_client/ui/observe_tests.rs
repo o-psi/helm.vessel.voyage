@@ -146,3 +146,94 @@ fn catalogue_probe_ignores_refresh_time_but_detects_owner_and_process_transition
     original.catalogue.as_mut().unwrap().stale = true;
     assert!(catalogue_changed(&[original], &[]));
 }
+
+#[tokio::test]
+async fn catalogue_watcher_checkpoints_before_hydration_and_recovers_gaps() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let stage = Arc::new(AtomicUsize::new(0));
+    let server_stage = stage.clone();
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let mut server = Server::new(move |command| {
+        let stage = server_stage.load(Ordering::SeqCst);
+        let entry = |name| json!({"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"suspended","name":name});
+        Ok(match command {
+            VesselCommand::Capabilities => json!({"features":["catalogue_changes"]}),
+            VesselCommand::Catalogue => json!([entry(if stage < 2 {"Initial"} else {"Recovered"})]),
+            VesselCommand::CatalogueChanges { after:None,.. } => json!({"cursor":10,"latest_cursor":10,"has_more":false,"replay_gap":true,"entries":[]}),
+            VesselCommand::CatalogueChanges { after:Some(after),.. } => {
+                let (cursor,gap,entries) = if stage == 1 && *after < 11 {(11,false,vec![entry("Renamed")])}
+                    else if stage == 2 && *after < 20 {(20,true,vec![])} else {(*after,false,vec![])};
+                json!({"cursor":cursor,"latest_cursor":cursor,"has_more":false,"replay_gap":gap,"entries":entries})
+            }
+            _ => panic!("unexpected catalogue observer command"),
+        })
+    }).await;
+    let (observer, mut updates) = catalogue_watch::spawn(server.client.clone());
+    tokio::time::timeout(Duration::from_secs(3), updates.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updates
+            .borrow_and_update()
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()[0]
+            .name
+            .as_deref(),
+        Some("Initial")
+    );
+    assert!(matches!(
+        server.requests.recv().await,
+        Some(VesselCommand::Capabilities)
+    ));
+    assert!(matches!(
+        server.requests.recv().await,
+        Some(VesselCommand::CatalogueChanges { after: None, .. })
+    ));
+    assert!(matches!(
+        server.requests.recv().await,
+        Some(VesselCommand::Catalogue)
+    ));
+    stage.store(1, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), updates.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updates
+            .borrow_and_update()
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()[0]
+            .name
+            .as_deref(),
+        Some("Renamed")
+    );
+    stage.store(2, Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), updates.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updates
+            .borrow_and_update()
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()[0]
+            .name
+            .as_deref(),
+        Some("Recovered")
+    );
+    drop(observer);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), updates.changed())
+            .await
+            .unwrap()
+            .is_err()
+    );
+}

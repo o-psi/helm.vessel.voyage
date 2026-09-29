@@ -316,6 +316,36 @@ async fn workspace_catalogue_filters_unapproved_sessions_and_rechecks_revocation
     let entries = catalogue.as_array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0]["session_id"], r.session_id.to_string());
+    let page = s
+        .connected(
+            g.grant_id,
+            TOKEN,
+            VesselCommand::CatalogueChanges {
+                after: Some(0),
+                limit: 128,
+                wait_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(page["entries"][0]["session_id"], r.session_id.to_string());
+    assert!(page["entries"][0]["catalogue"]["summary"].is_null());
+    assert_eq!(page["cursor"], page["latest_cursor"]);
+    assert!(
+        s.connected(
+            g.grant_id,
+            TOKEN,
+            VesselCommand::CatalogueChanges {
+                after: None,
+                limit: 1,
+                wait_ms: 10_001
+            }
+        )
+        .await
+        .is_err()
+    );
+
     assert!(
         s.connected(
             g.grant_id,
@@ -613,4 +643,89 @@ async fn remote_updates_are_not_workspace_or_session_execution_rights() {
                 .contains("account-owner authority")
         );
     }
+}
+
+#[tokio::test]
+async fn catalogue_long_poll_rechecks_revocation_before_returning() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut g = f.connection();
+    g.token_hash = store::hash(TOKEN);
+    g.rights = vec![ProcessRight::Catalogue];
+    f.save_connection(&g);
+    let checkpoint = s
+        .connected(
+            g.grant_id,
+            TOKEN,
+            VesselCommand::CatalogueChanges {
+                after: None,
+                limit: 1,
+                wait_ms: 0,
+            },
+        )
+        .await
+        .unwrap();
+    let read = s.connected(
+        g.grant_id,
+        TOKEN,
+        VesselCommand::CatalogueChanges {
+            after: checkpoint["cursor"].as_u64(),
+            limit: 1,
+            wait_ms: 100,
+        },
+    );
+    let revoke = async {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        g.revoked = true;
+        f.save_connection(&g);
+    };
+    let (result, ()) = tokio::join!(read, revoke);
+    assert!(result.unwrap_err().to_string().contains("revoked"));
+}
+
+#[tokio::test]
+async fn session_catalogue_changes_filter_peers_and_redact_real_history_projection() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut grant = f.session();
+    grant.token_hash = store::hash(TOKEN);
+    grant.rights = vec![ProcessRight::Observe];
+    let mut own = f.registration();
+    own.session_id = grant.session_id;
+    database::save(&f.0, &own).await.unwrap();
+    let other = f.registration();
+    database::save(&f.0, &other).await.unwrap();
+    let summary = json!({"session_id":own.session_id,"revision":3,"observation_cursor":8,
+        "name":"Retained","model":"private-model","created_at":null,"last_turn_end":null,
+        "total_messages":2,"run_id":null,"run_state":null,"archived":false,"deleted":false,"pending_cleanup_run":null});
+    rusqlite::Connection::open(f.0.join("catalogue.sqlite3"))
+        .unwrap()
+        .execute(
+            "UPDATE catalogue SET summary=?1 WHERE session_id=?2",
+            rusqlite::params![summary.to_string(), own.session_id.to_string()],
+        )
+        .unwrap();
+    f.save_session(&grant);
+    let command = VesselCommand::CatalogueChanges {
+        after: Some(0),
+        limit: 128,
+        wait_ms: 0,
+    };
+    let redacted = s.handle(scoped(&grant, command.clone())).await.unwrap();
+    assert_eq!(redacted["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        redacted["entries"][0]["session_id"],
+        own.session_id.to_string()
+    );
+    assert!(redacted["entries"][0]["catalogue"]["summary"].is_null());
+    grant.rights.push(ProcessRight::History);
+    f.save_session(&grant);
+    let history = s.handle(scoped(&grant, command.clone())).await.unwrap();
+    assert_eq!(
+        history["entries"][0]["catalogue"]["summary"]["model"],
+        "private-model"
+    );
+    grant.rights.clear();
+    f.save_session(&grant);
+    assert!(s.handle(scoped(&grant, command)).await.is_err());
 }

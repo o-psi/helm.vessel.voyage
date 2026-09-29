@@ -597,17 +597,37 @@ def web(fixture):
             pty_helpers.stop_pty(pty, wait_for)
             pty = None
             (fixture.root / "goal-web-other-client-done").write_text("done")
+            wait_for(lambda: (fixture.root / "goal-web-stream-ready").exists(), timeout=40)
+            assert fixture.command(sid, {"op": "goal_read"})["goal"] is None
+            assert not fixture.provider.bodies, "paused client controls dispatched inference"
+            pty = launch([str(fixture.binaries / "helm"), "connect", "--directory", str(fixture.directory), "--no-start"],
+                         fixture.env, fixture.workspace, fixture.root / "stream-web-tui.pty", 120, 36)
+            wait_for(lambda: "fixture-model" in screen(pty))
+            command = fixture.submit(sid, "goal-case-budget shared live event qualification")
+            fixture.command(sid, command)
+            finished = fixture.finished(sid)
+            assert finished["run"]["state"] == "completed", finished["run"]
+            wait_for(lambda: "One bounded step finished." in screen(pty))
+            (fixture.root / "goal-web-stream-done").write_text("done")
             assert client.wait(timeout=45) == 0, "Web journey failed; inspect private fixture web.log"
+            assert len(fixture.provider.bodies) == 1, "observation replayed inference"
+            pty_helpers.stop_pty(pty, wait_for)
+            pty = None
         assert fixture.command(sid, {"op": "goal_read"})["goal"] is None
-        assert not fixture.provider.bodies, "paused client controls dispatched inference"
         fixture.record("goal-real-web-tui-canonical-controls", json.loads((fixture.root / "goal-web-result.json").read_text()))
     finally:
         if pty:
             pty_helpers.stop_pty(pty, wait_for)
-        if client and client.poll() is None:
-            client.terminate()
-            client.wait(timeout=10)
-        gateway.close()
+        try:
+            if client and client.poll() is None:
+                client.terminate()
+                try:
+                    client.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    client.kill()
+                    client.wait(timeout=5)
+        finally:
+            gateway.close()
 
 
 def main():

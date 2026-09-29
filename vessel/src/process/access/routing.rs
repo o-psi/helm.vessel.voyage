@@ -77,7 +77,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["sqlite_catalogue","notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","goals"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["sqlite_catalogue","catalogue_changes","notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","goals"]}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
@@ -101,11 +101,23 @@ impl Supervisor {
                 )
                 .await
             }
-            VesselCommand::Catalogue => {
+            command @ (VesselCommand::Catalogue | VesselCommand::CatalogueChanges { .. }) => {
                 has(ProcessRight::Observe)?;
-                let mut entries: Vec<_> = self
-                    .catalogue()
-                    .await?
+                let mut page = if let VesselCommand::CatalogueChanges {
+                    after,
+                    limit,
+                    wait_ms,
+                } = command
+                {
+                    Some(self.catalogue_changes(after, limit, wait_ms).await?)
+                } else {
+                    None
+                };
+                let source = match page.as_mut() {
+                    Some(page) => std::mem::take(&mut page.entries),
+                    None => self.catalogue().await?,
+                };
+                let mut entries: Vec<_> = source
                     .into_iter()
                     .filter(|p| p.session_id == grant.session_id)
                     .collect();
@@ -125,7 +137,12 @@ impl Supervisor {
                         && latest.session_id == grant.session_id,
                     "session authority changed"
                 );
-                Ok(serde_json::to_value(entries)?)
+                if let Some(mut page) = page {
+                    page.entries = entries;
+                    Ok(serde_json::to_value(page)?)
+                } else {
+                    Ok(serde_json::to_value(entries)?)
+                }
             }
             VesselCommand::Inspect { session_id } => {
                 has(ProcessRight::Observe)?;

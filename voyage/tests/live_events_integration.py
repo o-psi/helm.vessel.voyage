@@ -79,9 +79,39 @@ def collect(fixture, session, projection="public-v2"):
     raise AssertionError("event pagination did not terminate")
 
 
+def catalogue_page(fixture, after, limit=128):
+    return fixture.request({"op":"catalogue_changes", "after":after, "limit":limit, "wait_ms":0})
+
+
+def catalogue_since(fixture, after):
+    entries = {}
+    for _ in range(128):
+        result = catalogue_page(fixture, after, 2)
+        assert not result["replay_gap"], result
+        assert after <= result["cursor"] <= result["latest_cursor"], result
+        assert len(result["entries"]) <= 2
+        for entry in result["entries"]:
+            entries[entry["session_id"]] = entry
+        previous, after = after, result["cursor"]
+        if not result["has_more"]:
+            return entries, after
+        assert after > previous
+    raise AssertionError("catalogue pagination did not terminate")
+
+
 def run(fixture):
+    assert "catalogue_changes" in fixture.request({"op":"capabilities"})["features"]
+    checkpoint = catalogue_page(fixture, None)
+    assert checkpoint["replay_gap"] and not checkpoint["entries"]
     first = fixture.session()
     second = fixture.session()
+    created, catalogue_cursor = catalogue_since(fixture, checkpoint["cursor"])
+    assert set(created) == {first, second}, created
+    future = catalogue_page(fixture, catalogue_cursor + 100000)
+    assert future["replay_gap"] and future["cursor"] < catalogue_cursor + 100000
+    for limit in (0, 129):
+        refused = fixture.request({"op":"catalogue_changes", "after":0, "limit":limit, "wait_ms":0}, allow_error=True)
+        assert refused["error"] is not None
     marker = "fixture-public-live-" + uuid.uuid4().hex
     # Receipt admission must be exact; event observation must not submit commands.
     command = fixture.submit(first, "public live event " + marker)
@@ -166,6 +196,15 @@ def run(fixture):
     assert slow_events == all_events[len(retained):]
     assert slow_cursor == next_cursor
     assert len(fixture.provider.bodies) == requests_before + 1
+    # The catalogue feed follows durable owner transitions independently of the
+    # transcript cursor and continues across the same supervisor restart.
+    changed, catalogue_end = catalogue_since(fixture, catalogue_cursor)
+    assert first in changed and changed[first]["incarnation"] == new_owner["incarnation"], changed
+    assert catalogue_end > catalogue_cursor
+    assert len(fixture.provider.bodies) == requests_before + 1
+    fixture.record("catalogue-feed-create-restart-owner", {
+        "cursor":catalogue_end, "previous_cursor":catalogue_cursor,
+        "sessions":sorted(created), "new_owner":new_owner["incarnation"]})
     fixture.record("public-v2-fresh-owner-delayed-page-replay", {
         "previous_cursor": retained_cursor, "cursor": slow_cursor,
         "additional_events": len(slow_events), "fresh_incarnation": True})

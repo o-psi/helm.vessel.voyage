@@ -8,7 +8,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{Semaphore, mpsc};
-use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
+#[cfg(test)]
+use voyage_protocol::vessel::VesselCommand;
+use voyage_protocol::vessel::{ProcessInfo, VesselEventSubscription, VoyageCommand};
+
+#[path = "catalogue_watch.rs"]
+mod catalogue_watch;
 
 pub enum Update {
     GoalOwner {
@@ -118,6 +123,7 @@ pub fn spawn(
     mut selected: tokio::sync::watch::Receiver<Option<Target>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let (_catalogue_observer, mut catalogue_updates) = catalogue_watch::spawn(client.clone());
         let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
         let mut retry_after = HashMap::<(uuid::Uuid, uuid::Uuid), (u32, Instant)>::new();
         let mut hydrated_selection = None;
@@ -126,16 +132,16 @@ pub fn spawn(
         let mut inbox_count = 0u64;
         let mut inbox_probe = Instant::now() - Duration::from_secs(15);
         loop {
-            // A read-only probe has a short UI budget; its timeout says nothing
-            // about runtime liveness or the outcome of any in-flight command.
-            let result = tokio::time::timeout(
-                Duration::from_secs(3),
-                client.request(VesselCommand::Catalogue),
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("Vessel connection check timed out"))
-            .and_then(|result| result)
-            .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
+            let current = catalogue_updates.borrow_and_update().clone();
+            let result = match current {
+                Some(result) => result,
+                None => {
+                    if catalogue_updates.changed().await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
             match result {
                 Ok(processes) => {
                     route_failures = 0;
@@ -297,37 +303,36 @@ pub fn spawn(
                     if subscriptions.is_empty() {
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(2)) => {},
-                            _ = selected.changed() => {},
+                            changed = selected.changed() => { if changed.is_err() { return; } },
+                            changed = catalogue_updates.changed() => { if changed.is_err() { return; } },
                         }
                         continue;
                     }
                     match client.events(subscriptions).await {
                         Ok(mut events) => {
                             let mut ended_unexpectedly = false;
-                            // A timer checks metadata without retiring a healthy subscription.
-                            // A changed roster re-enters the snapshot path; metadata alone
-                            // updates the sidebar without resubscribing.
-                            let mut catalogue_check = tokio::time::interval(Duration::from_secs(5));
-                            catalogue_check
-                                .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                            catalogue_check.tick().await;
+                            // Metadata arrives independently; transcript reads never
+                            // wait for a catalogue request or a catalogue timer.
                             loop {
                                 tokio::select! {
-                                    _ = catalogue_check.tick() => {
-                                        match client.request(VesselCommand::Catalogue).await
-                                            .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?)) {
-                                            Ok(current) => {
+                                    changed = catalogue_updates.changed() => {
+                                        if changed.is_err() { return; }
+                                        let current = catalogue_updates.borrow_and_update().clone();
+                                        match current {
+                                            Some(Ok(current)) => {
                                                 if catalogue_changed(&catalogue_baseline, &current) {
-                                                    let retire = catalogue_roster_changed(&catalogue_baseline, &current);
+                                                    let relevant = |entries: &[ProcessInfo]| entries.iter().filter(|process| process.catalogue.is_none() || selected_target == Some(Target {route, session:process.session_id})).cloned().collect::<Vec<_>>();
+                                                    let retire = catalogue_roster_changed(&relevant(&catalogue_baseline), &relevant(&current));
                                                     if sender.send(Update::Catalogue { route, processes: current.clone() }).await.is_err() { return; }
                                                     catalogue_baseline = current;
                                                     if retire { break; }
                                                 }
                                             }
-                                            Err(_) => { ended_unexpectedly = true; break; }
+                                            Some(Err(error)) if sender.send(Update::RouteError { route, error: crate::process_client::safe(&error) }).await.is_err() => { return; }
+                                            _ => {}
                                         }
                                     },
-                                    _ = selected.changed() => break,
+                                    changed = selected.changed() => { if changed.is_err() { return; } break; },
                                     event = events.next() => {
                                         let Some(event) = event else { ended_unexpectedly = true; break; };
                                         match event {

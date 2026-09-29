@@ -577,8 +577,19 @@ confirmed creation receipts in its private embedded `catalogue.sqlite3`. Catalog
 requests read persisted summaries; a bounded producer refreshes them through
 read-only journal projections without launching suspended observers. Helm uses
 these summaries for background listings and fetches full details for the selected
-voyage. Failed refreshes retain details with explicit staleness. See the source
-[SQLite storage guide](https://github.com/o-psi/voyage/blob/main/docs/sqlite-storage.md)
+voyage. Failed refreshes retain details with explicit staleness.
+The capability-gated `catalogue_changes` read follows a retained log of 4,096
+catalogue invalidations, returning at most 128 coalesced current voyage projections
+per page. Clients take a cursor checkpoint before initial catalogue hydration and
+rehydrate on an explicit retention/future-cursor gap. These are current metadata
+projections, not immutable transcript events. Long polls wait at most ten seconds;
+workspace/session rights and history redaction apply, with authority rechecked
+before replies. Helm TUI observes this feed in a separate task so catalogue reads
+do not hold transcript delivery. Unrelated voyage changes do not retire the
+selected voyage's stream. Helm Web fences catalogue reads to the current socket
+and uses the feed when advertised; older peers retain bounded periodic catalogue
+reads. This preserves the v1.0.3 compatibility period before #374's event-only cutover. See the source
+[SQLite storage guide](sqlite-storage.md)
 for the schema, private migration and separate authority boundaries.
 
 Canonical SQLite history, command bindings, streamed checkpoints, decisions,

@@ -17,6 +17,9 @@ fn redact_catalogue_reply(reply: &mut Value) {
     if let Some(process) = reply.get_mut("process") {
         redact_catalogue_reply(process);
     }
+    if let Some(entries) = reply.get_mut("entries") {
+        redact_catalogue_reply(entries);
+    }
     if let Some(entries) = reply.as_array_mut() {
         for entry in entries {
             redact_catalogue_reply(entry);

@@ -41,7 +41,7 @@ impl Supervisor {
                 "workspaces": self.connection_workspaces(&grant).await?,
                 "running_release": crate::process::updates::running_release(),
                 "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory),
-                "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","goals","start_settings"]
+                "features": ["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","goals","start_settings"]
             })),
             command @ (VesselCommand::UpdatePrepare { .. }
             | VesselCommand::UpdateStatus { .. }
@@ -76,10 +76,24 @@ impl Supervisor {
                 )
                 .await
             }
-            VesselCommand::Catalogue => {
+            command @ (VesselCommand::Catalogue | VesselCommand::CatalogueChanges { .. }) => {
                 has(ProcessRight::Catalogue)?;
+                let mut page = if let VesselCommand::CatalogueChanges {
+                    after,
+                    limit,
+                    wait_ms,
+                } = command
+                {
+                    Some(self.catalogue_changes(after, limit, wait_ms).await?)
+                } else {
+                    None
+                };
+                let source = match page.as_mut() {
+                    Some(page) => std::mem::take(&mut page.entries),
+                    None => self.catalogue().await?,
+                };
                 let mut entries = Vec::new();
-                for entry in self.catalogue().await? {
+                for entry in source {
                     if (grant.full_access
                         || grant.workspaces.iter().any(|w| w.path == entry.workspace))
                         && self
@@ -98,7 +112,12 @@ impl Supervisor {
                     }
                 }
                 store::current_connection(&self.directory, &grant)?;
-                Ok(serde_json::to_value(entries)?)
+                if let Some(mut page) = page {
+                    page.entries = entries;
+                    Ok(serde_json::to_value(page)?)
+                } else {
+                    Ok(serde_json::to_value(entries)?)
+                }
             }
             VesselCommand::ResolveStart {
                 command_id,

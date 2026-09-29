@@ -16,6 +16,19 @@ pub const PAIR_PATH: &str = "/v1/vessel/pair";
 pub const PAIR_CAPABILITIES_PATH: &str = "/v1/vessel/pair/capabilities";
 pub const EVENTS_PATH: &str = "/v1/vessel/events";
 
+/// Bounded catalogue invalidations with current, coalesced public projections.
+/// Entries are latest state, not immutable historical transcript events. A null
+/// starting cursor or a retention gap requires catalogue hydration from cursor.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogueChanges {
+    pub cursor: u64,
+    pub latest_cursor: u64,
+    pub has_more: bool,
+    pub replay_gap: bool,
+    pub entries: Vec<ProcessInfo>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VesselEventSubscription {
@@ -555,6 +568,11 @@ pub enum VesselCommand {
         operation_id: Uuid,
     },
     Catalogue,
+    CatalogueChanges {
+        after: Option<u64>,
+        limit: u16,
+        wait_ms: u32,
+    },
     /// Safe host catalogue; scope is checked before reading account metadata.
     Accounts {
         workspace: PathBuf,

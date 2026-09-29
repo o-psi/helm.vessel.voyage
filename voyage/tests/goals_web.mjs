@@ -92,8 +92,17 @@ try {
     await dialog.getByRole('checkbox').check();
     await dialog.getByRole('button',{name:'Clear goal',exact:true}).click();
     await page.getByRole('button',{name:'Set goal',exact:true}).waitFor();
+    await writeFile(`${config.evidence}/goal-web-stream-ready`,'ready');
+    await waitForFile(`${config.evidence}/goal-web-stream-done`);
+    await page.getByText('One bounded step finished.',{exact:true}).waitFor();
+    const liveEvents=frames.flatMap(frame=>frame.received?.event?.result?.events||[]);
+    assert.ok(liveEvents.some(event=>event.kind==='message_finalized'),'Web received committed transcript events during catalogue observation');
+    const catalogueRequests=frames.flatMap(frame=>frame.sent?.request?.command?[frame.sent.request.command]:[]);
+    assert.equal(catalogueRequests.filter(command=>command.op==='catalogue').length,2,'one hydration per page load');
+    assert.ok(catalogueRequests.filter(command=>command.op==='catalogue_changes'&&command.after===null).length>=2,'each socket checkpoints before hydration');
+    assert.ok(catalogueRequests.some(command=>command.op==='catalogue_changes'&&command.after!==null&&command.wait_ms===8000),'real bounded catalogue long poll');
     assert.deepEqual(errors,[]);
-    await writeFile(`${config.evidence}/goal-web-result.json`,JSON.stringify({chromium:browser.version(),asset:entry.file,realProtocol:true,realVoyage:true,fixtureTls:true,checks:['create-paused','untrusted-text','concurrent-TUI-stale-review','reconnect-canonical-limits','confirmed-clear'],errors},null,2));
+    await writeFile(`${config.evidence}/goal-web-result.json`,JSON.stringify({chromium:browser.version(),asset:entry.file,realProtocol:true,realVoyage:true,fixtureTls:true,checks:['create-paused','untrusted-text','concurrent-TUI-stale-review','reconnect-canonical-limits','confirmed-clear','catalogue-checkpoint-and-independent-long-poll','simultaneous-TUI-Web-canonical-reply'],errors},null,2));
 }catch(error){
     if(page){await page.screenshot({path:`${config.evidence}/goal-web-failure.png`});await writeFile(`${config.evidence}/goal-web-failure.txt`,await page.locator('body').innerText());}
     throw error;
