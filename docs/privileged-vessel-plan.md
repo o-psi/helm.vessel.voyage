@@ -274,7 +274,9 @@ changing a service. Its `ready_to_install` value remains false while the gateway
 scope-aware update/rollback and full adoption checks are unavailable. It is a
 preflight input, not the supported system installer or an activation gate. The
 staged unit template pins immutable binaries and separates the root supervisor
-from the ordinary gateway; publication and activation are still unavailable.
+from the ordinary gateway. A staged system release stager verifies root ownership,
+manifest hashes and ordinary read/execute access to pinned binaries and browser
+assets. Publication, activation, scope-aware rollback and adoption remain unavailable.
 
 Introduce an explicit installation-scope abstraction consumed by every layout,
 service, status, update, rollback and uninstall operation. Proposed CLI shape:

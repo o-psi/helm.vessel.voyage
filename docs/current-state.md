@@ -476,7 +476,8 @@ The read-only `system-assess --execution-user USER --gateway-user USER` command 
 distinct execution/gateway account prerequisites; it never enables a privileged service. A hidden Linux
 root/ordinary gateway route handles public commands, events, pairing and browser
 sockets in isolated fixtures. A staged two-unit template pins immutable binaries
-but is not published or activated. System-scope installation, initial bound Voyage
+and a staged root-owned release stager retains ordinary-readable browser assets;
+neither is published or activated through the CLI. System-scope installation, initial bound Voyage
 creation through a public route and supported activation remain unavailable.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,

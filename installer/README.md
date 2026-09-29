@@ -199,6 +199,10 @@ and adoption procedure are still being implemented under
 ordinary user installer with sudo to approximate one. The staged system unit
 contract pins immutable binaries and separates a root supervisor from an ordinary
 gateway, but the installer does not yet publish or activate those units.
+The system release stager is also staged behind this boundary: it requires
+root-owned `/opt/voyage/releases` paths, verifies the exact manifest and hashes,
+and makes the pinned binaries and browser worker readable by ordinary execution
+identities. It is not wired to the installer CLI, service activation or rollback.
 
 ### User service
 

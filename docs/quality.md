@@ -529,6 +529,10 @@ in the designated disposable native Linux fixture.
 The ignored `system_service::tests::native_systemd_accepts_pinned_root_and_ordinary_gateway_units`
 test requires that fixture, an explicit `VOYAGE_DISPOSABLE_ROOT_FIXTURE=1`, and
 `systemd-analyze verify`; it checks unit syntax, not activation or rollback.
+The ignored `install::release::system_tests::root_staged_release_is_readable_by_an_ordinary_runtime_and_retains_browser_assets`
+test requires the same disposable root fixture. It creates and removes a fresh
+`/opt/voyage` in that fixture and verifies ordinary execution/read access and
+tamper refusal. It does not install or start services.
 
 ## Host-browser packaging (#333)
 
