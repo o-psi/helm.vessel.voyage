@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T10:17:24.919045+00:00",
-  "source_commit": "0bf7c91382ac4ce612ec7f58227dd049b2b55f03",
+  "measured_at_utc": "2026-09-29T10:56:54.422587+00:00",
+  "source_commit": "43d83ed9a5c93ab746242e59b49df200c53ef3be",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2016,
+    "passed": 2019,
     "failed": 0,
-    "ignored": 5
+    "ignored": 6
   },
   "totals": {
     "lines": {
-      "count": 113018,
-      "covered": 87681,
-      "percent": 77.5814472031004
+      "count": 113501,
+      "covered": 87762,
+      "percent": 77.32266676064528
     },
     "functions": {
-      "count": 10729,
-      "covered": 7995,
-      "percent": 74.51766241028986
+      "count": 10767,
+      "covered": 8007,
+      "percent": 74.3661186960156
     },
     "regions": {
-      "count": 185869,
-      "covered": 137892,
-      "notcovered": 47977,
-      "percent": 74.18773437205773
+      "count": 186718,
+      "covered": 138044,
+      "notcovered": 48674,
+      "percent": 73.9318116089504
     }
   },
-  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-bound-catalogue -j 8 > $WORKTREE_TARGET/coverage-report/v103-bound-catalogue/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-bound-catalogue/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
+  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-protected-guardian -j 8 > $WORKTREE_TARGET/coverage-report/v103-protected-guardian/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-protected-guardian/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,10 +40,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 0bf7c91382ac4ce612ec7f58227dd049b2b55f03. All 13 workspace target source-root timestamps from cargo metadata were refreshed without changing bytes before raw-profile cleaning. All six workspace packages rebuilt with uniform instrumentation; dependency caches and prior evidence preserved. WORKTREE_TARGET is the release checkout target directory.",
-    "Explicit current-object export includes all 13 executed test binaries and three current production entry points, with 16 distinct hashes. All preceding source files remain; 494 reported files include the two new production modules and the existing unavailable distribution standard-library source. Current-object and default export totals match exactly; no source exclusions added (#251).",
-    "Lines +90 covered / +201 total (-0.058447 percentage points); functions -0.010816 and regions -0.068608 percentage points. Native-root helper/layout branches are retained in the denominator and the separate native fixture does not contribute to default workspace coverage. No scope was narrowed.",
-    "HTML reports the existing unavailable distribution Rust standard-library thread-local source. This was retained in the report; the test/report command completed with exit 0.",
-    "2,016 Rust tests passed, zero failed, five ignored. The new explicitly guarded disposable Ubuntu KVM integration passed separately twice, including the final source test binary: actual UID/GID 1000, cleared groups/environment/capabilities, NoNewPrivs, protected control-file denial, real Voyage catalogue reader, wrong/oversized/stalled output refusal, executable and runtime-path attacks, stale summary retention and identity revision invalidation. The VM shutdown and QEMU exit 0 were observed. No live provider, production service, macOS/Windows, full privileged launch or system-installer claim."
+    "Full default-feature workspace measurement on clean source 43d83ed9a5c93ab746242e59b49df200c53ef3be. All13 Cargo target source-root timestamps were refreshed without changing bytes before clearing only raw profiles. All six workspace packages rebuilt with uniform instrumentation; dependency caches and previous evidence retained. WORKTREE_TARGET is the release checkout target directory.",
+    "Current-object export retains all13 executed workspace test binaries and three current production entry points, with16 distinct hashes. All prior sources remain;498 reported files include four new production modules and the existing unavailable distribution standard-library source. Default export scanned45 objects including29 historical/additional artifacts and duplicated931 lines. Raw reports are preserved; published totals use the explicit current16-object set, with no new source exclusions (#251).",
+    "Lines +81 covered / +483 total (-0.258780 percentage points); functions -0.151544 and regions -0.255923 percentage points. Native-only protected guardian branches remain in the denominator. Separate native execution is not added to default workspace coverage. No scope was narrowed.",
+    "HTML generation reports the existing unavailable distribution Rust standard-library thread-local source; it is retained in the measurement. All test/report commands completed with exit0. Corrected HTML uses the same current16-object inventory; raw default HTML is preserved separately.",
+    "2,019 Rust tests passed, zero failed, six ignored. Separate disposable native Ubuntu KVM test passed with final binaries: real ordinary Voyage Health/Stop, kernel UID/GID/groups and zero effective/permitted/inheritable/ambient capabilities despite seeded guardian inheritance, NoNewPrivs, protected-control denial, forged projection/marker refusal, wrong pipe/identity and stale/duplicate admission refusal, detached descendant reaping and guardian-death uncertainty. No fixture processes remained; VM shutdown and QEMU exit0 observed. Ordinary conversation/file-edit/follow-up/cleanup passed separately. No live-provider, production service, macOS/Windows, supported system-install or full privileged-feature acceptance claim."
   ]
 }
