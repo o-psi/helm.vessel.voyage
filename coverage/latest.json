@@ -1,21 +1,21 @@
 {
-  "measured_at_utc": "2026-09-29T09:09:33.667062+00:00",
-  "source_commit": "10a1fa39a53ffed33765c1999ec2c5357cca4216",
+  "measured_at_utc": "2026-09-29T09:29:44.136370+00:00",
+  "source_commit": "80f3bd6dd200ffe97b181884d9c4396d7960f690",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2013,
+    "passed": 2014,
     "failed": 0,
     "ignored": 4
   },
   "totals": {
     "lines": {
-      "count": 112819,
-      "covered": 87581,
-      "percent": 77.62965457945913
+      "count": 112817,
+      "covered": 87596,
+      "percent": 77.64432665289806
     },
     "functions": {
       "count": 10710,
@@ -23,14 +23,14 @@
       "percent": 74.52847805788983
     },
     "regions": {
-      "count": 185504,
-      "covered": 137731,
-      "notcovered": 47773,
-      "percent": 74.2469165085389
+      "count": 185502,
+      "covered": 137754,
+      "notcovered": 47748,
+      "percent": 74.2601157938998
     }
   },
-  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-catalogue -j 8 > $WORKTREE_TARGET/coverage-report/v103-catalogue/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-catalogue/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
+  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-recovery-read -j 8 > $WORKTREE_TARGET/coverage-report/v103-recovery-read/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-recovery-read/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,9 +40,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 10a1fa39a53ffed33765c1999ec2c5357cca4216. All 13 workspace target source-root timestamps from cargo metadata were refreshed without changing source bytes before raw-profile cleaning and the exact coverage command, forcing uniformly instrumented workspace builds while preserving dependency caches. Git content remained clean. WORKTREE_TARGET is the release checkout target directory.",
-    "The first measurement passed all tests but reused pre-existing ordinary Helm/Vessel test artifacts and omitted 173 source files. Rebuilding only those libraries restored source inventory but missed cross-crate coverage through ordinary workspace dependency artifacts. Both reports were rejected and retained privately. The final run rebuilt all six workspace packages. One intervening setup attempt was stopped on a target-count assertion and is not counted as passing.",
-    "Explicit current-object export includes all 13 executed test binaries and three current production entry points, with 16 distinct hashes. All 491 prior source entries plus the new catalogue watcher are present; the sole outside-checkout entry is the unavailable distribution Rust standard-library source. Historical/noninstrumented/duplicate object aliases are omitted; no source exclusions added (#251).",
-    "Compared with the preceding committed record, lines increased 0.031439 percentage points: +238 covered / +261 total lines. Functions +28 covered / +28 total; regions +371 covered / +445 total. Coverage remains below #353 acceptance. Separate real-process and Chromium/TUI journeys do not count in this Rust measurement; no native macOS/Windows or live-provider certification."
+    "Full default-feature workspace measurement on clean source 80f3bd6dd200ffe97b181884d9c4396d7960f690. All 13 workspace target source-root timestamps from cargo metadata were refreshed without changing bytes before raw-profile cleaning and the exact coverage command. All six workspace packages were rebuilt with uniform instrumentation; dependency caches and earlier reports were preserved. WORKTREE_TARGET is the release checkout target directory.",
+    "Explicit current-object export includes all 13 executed test binaries and three current production entry points, with 16 distinct hashes. All 492 preceding source files are present. Current-object and default export totals match exactly; no source exclusions added (#251).",
+    "Compared with the previous clean 10a1fa3 measurement: lines +15 covered / -2 total (+0.014672 percentage points), functions unchanged, regions +23 covered / -2 total. The denominator change is the saved-read recovery branch simplification, not exclusion. Runtime path variability remains in the measured execution counts.",
+    "HTML reports the existing unavailable distribution Rust standard-library thread-local source. This was retained in the default report and is not a test failure.",
+    "2,014 Rust tests passed, zero failed, four ignored. Real 80-turn event-retention/history and simultaneous TUI/Chromium disconnect-recovery journeys passed separately with synthetic providers and observed cleanup; they do not contribute to this Rust coverage measurement. No paid-provider or native macOS/Windows claim."
   ]
 }
