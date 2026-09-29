@@ -114,6 +114,16 @@ impl Journal {
         Ok(())
     }
 
+    /// A turn admission receipt carries no prompt or private request data.
+    pub(super) fn append_public_run_command(tx: &Transaction<'_>, run: &RunRecord) -> Result<()> {
+        if !Self::observations_initialized(tx)? {
+            return Ok(());
+        }
+        tx.execute("INSERT INTO process_observations(session_id,kind,revision,run_id,entity_id,payload) VALUES(?1,'command_receipt',(SELECT revision FROM sessions WHERE id=?1),?2,?3,?4)",
+            params![run.session_id.to_string(),run.id.to_string(),run.command_id.to_string(),serde_json::to_string(&json!({"command_id":run.command_id,"status":"accepted","run_id":run.id}))?])?;
+        Ok(())
+    }
+
     /// Command requests and receipts can contain private input. Only emit the
     /// scoped identity and a small, fixed-vocabulary status; never copy either JSON.
     pub(super) fn append_public_command(

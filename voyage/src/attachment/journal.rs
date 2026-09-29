@@ -742,6 +742,7 @@ impl Journal {
             "INSERT INTO commands VALUES(?1,?2,?3)",
             params![request.command_id.to_string(), digest, run.id.to_string()],
         )?;
+        Journal::append_public_run_command(&tx, &run)?;
         append_event(&tx, &run, EventKind::Accepted)?;
         commit(tx, &self.commit_fence)?;
         Ok(Admission {
