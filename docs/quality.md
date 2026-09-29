@@ -518,13 +518,17 @@ path checks:
 
 ```sh
 cargo test -p voyage-installer --locked system_preflight -j 8
-voyage-installer system-assess --execution-user USER
+cargo test -p voyage-installer --locked system_service -j 8
+voyage-installer system-assess --execution-user USER --gateway-user USER
 ```
 
 The second command observes the selected host but does not establish a supported
 system installation, native root authority, workspace access, service startup or
 gateway readiness. Run it as an ordinary user first; any root inspection belongs
 in the designated disposable native Linux fixture.
+The ignored `system_service::tests::native_systemd_accepts_pinned_root_and_ordinary_gateway_units`
+test requires that fixture, an explicit `VOYAGE_DISPOSABLE_ROOT_FIXTURE=1`, and
+`systemd-analyze verify`; it checks unit syntax, not activation or rollback.
 
 ## Host-browser packaging (#333)
 

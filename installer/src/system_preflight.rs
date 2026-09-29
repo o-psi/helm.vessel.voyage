@@ -23,6 +23,7 @@ struct Assessment {
     schema_version: u32,
     scope: &'static str,
     execution_user: String,
+    gateway_user: String,
     checks: Vec<Check>,
     blockers: Vec<String>,
     existing_user_installation: bool,
@@ -38,29 +39,48 @@ struct Account {
 }
 
 pub(super) fn run(args: &[String]) -> Result<()> {
-    let name = parse(args)?;
-    let assessment = assess(name)?;
+    let names = parse(args)?;
+    let assessment = assess(names.execution_user, names.gateway_user)?;
     println!("{}", serde_json::to_string_pretty(&assessment)?);
     Ok(())
 }
 
-fn parse(args: &[String]) -> Result<&str> {
-    let [flag, name] = args else {
+struct AccountNames<'a> {
+    execution_user: &'a str,
+    gateway_user: &'a str,
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.as_bytes()[0].is_ascii_alphabetic()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+}
+
+fn parse(args: &[String]) -> Result<AccountNames<'_>> {
+    let [execution_flag, execution_user, gateway_flag, gateway_user] = args else {
         bail!(
-            "system-assess requires --execution-user USER; no login or SUDO_USER identity is inferred"
+            "system-assess requires --execution-user USER --gateway-user USER; no login or SUDO_USER identity is inferred"
         )
     };
-    ensure!(flag == "--execution-user", "expected --execution-user USER");
     ensure!(
-        !name.is_empty()
-            && name.len() <= 64
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-            && name.as_bytes()[0].is_ascii_alphabetic(),
-        "execution user must be an explicit local account name"
+        execution_flag == "--execution-user" && gateway_flag == "--gateway-user",
+        "expected --execution-user USER --gateway-user USER"
     );
-    Ok(name)
+    ensure!(
+        valid_name(execution_user) && valid_name(gateway_user),
+        "execution and gateway users must be explicit local account names"
+    );
+    ensure!(
+        execution_user != gateway_user,
+        "gateway and execution users must differ"
+    );
+    Ok(AccountNames {
+        execution_user,
+        gateway_user,
+    })
 }
 
 fn account(name: &str) -> Result<Account> {
@@ -78,18 +98,18 @@ fn account(name: &str) -> Result<Account> {
         )
     };
     ensure!(status == 0, "account lookup failed: errno {status}");
-    ensure!(!result.is_null(), "execution account does not exist");
+    ensure!(!result.is_null(), "ordinary account does not exist");
     ensure!(
         entry.pw_uid != 0 && entry.pw_gid != 0,
-        "execution account must be ordinary"
+        "account must be ordinary"
     );
-    ensure!(!entry.pw_dir.is_null(), "execution account has no home");
+    ensure!(!entry.pw_dir.is_null(), "account has no home");
     let home = unsafe { CStr::from_ptr(entry.pw_dir) };
     ensure!(
         home.to_bytes().len() <= 4096,
-        "execution home path is too long"
+        "account home path is too long"
     );
-    let home = PathBuf::from(home.to_str().context("execution home is not UTF-8")?);
+    let home = PathBuf::from(home.to_str().context("account home is not UTF-8")?);
     ensure!(
         home.is_absolute()
             && !home.components().any(|component| {
@@ -98,7 +118,7 @@ fn account(name: &str) -> Result<Account> {
                     std::path::Component::ParentDir | std::path::Component::CurDir
                 )
             }),
-        "execution account home must be an absolute normalized path"
+        "account home must be an absolute normalized path"
     );
     let mut groups = vec![0 as libc::gid_t; 256];
     let mut count = groups.len() as libc::c_int;
@@ -199,14 +219,14 @@ fn mount_writable(path: &Path) -> Result<bool> {
     Ok(info.f_flag & libc::ST_RDONLY == 0)
 }
 
-fn service_state() -> Result<String> {
+fn service_state(unit: &str) -> Result<String> {
     let output = crate::service::command::run(
         Path::new("/usr/bin/systemctl"),
         &[
             "--system",
             "--no-pager",
             "show",
-            "voyage-vessel.service",
+            unit,
             "--property=LoadState,ActiveState,UnitFileState,FragmentPath,DropInPaths,MainPID",
         ],
         None,
@@ -245,10 +265,11 @@ fn record(
     });
 }
 
-fn assess(name: &str) -> Result<Assessment> {
+fn assess(execution_user: &str, gateway_user: &str) -> Result<Assessment> {
     let mut checks = Vec::new();
     let mut blockers = Vec::new();
-    let account = account(name);
+    let execution_account = account(execution_user);
+    let gateway_account = account(gateway_user);
     record(
         &mut checks,
         &mut blockers,
@@ -295,23 +316,39 @@ fn assess(name: &str) -> Result<Assessment> {
         })(),
         |_| true,
     );
-    let service = if Path::new("/run/systemd/system").is_dir() {
-        service_state()
+    let root_service = if Path::new("/run/systemd/system").is_dir() {
+        service_state(super::system_service::ROOT_UNIT)
     } else {
         bail_result("/run/systemd/system is absent")
     };
-    let existing_system_service = service
+    let gateway_service = if Path::new("/run/systemd/system").is_dir() {
+        service_state(super::system_service::GATEWAY_UNIT)
+    } else {
+        bail_result("/run/systemd/system is absent")
+    };
+    let existing_system_service = root_service
         .as_ref()
-        .is_ok_and(|value| value.contains("LoadState=loaded"));
+        .is_ok_and(|value| value.contains("LoadState=loaded"))
+        || gateway_service
+            .as_ref()
+            .is_ok_and(|value| value.contains("LoadState=loaded"));
     record(
         &mut checks,
         &mut blockers,
-        "service manager",
-        "running systemd system manager",
-        service,
+        "root service manager",
+        "running systemd system manager with inspectable root unit",
+        root_service,
         |value| value.contains("LoadState=not-found") || value.contains("LoadState=loaded"),
     );
-    match &account {
+    record(
+        &mut checks,
+        &mut blockers,
+        "gateway service manager",
+        "running systemd system manager with inspectable gateway unit",
+        gateway_service,
+        |value| value.contains("LoadState=not-found") || value.contains("LoadState=loaded"),
+    );
+    match &execution_account {
         Ok(account) => {
             record(
                 &mut checks,
@@ -345,14 +382,58 @@ fn assess(name: &str) -> Result<Assessment> {
             |_| false,
         ),
     }
+    match &gateway_account {
+        Ok(account) => {
+            record(
+                &mut checks,
+                &mut blockers,
+                "gateway account",
+                "explicit ordinary UID/GID and resolved groups, distinct from execution",
+                Ok(format!(
+                    "uid={} gid={} groups={:?} home={}",
+                    account.uid,
+                    account.gid,
+                    account.groups,
+                    account.home.display()
+                )),
+                |_| {
+                    execution_account
+                        .as_ref()
+                        .is_ok_and(|execution| execution.uid != account.uid)
+                },
+            );
+            record(
+                &mut checks,
+                &mut blockers,
+                "gateway home",
+                "existing ordinary directory; gateway state must be separate from supervisor control",
+                checked_home(&account.home),
+                |value| value == "present",
+            );
+        }
+        Err(error) => record(
+            &mut checks,
+            &mut blockers,
+            "gateway account",
+            "explicit ordinary UID/GID and resolved groups, distinct from execution",
+            Err(anyhow::anyhow!("{error:#}")),
+            |_| false,
+        ),
+    }
     for (name, path, directory) in [
         ("release root", "/opt/voyage", true),
         ("configuration root", "/etc/voyage", true),
         ("control root", "/var/lib/voyage", true),
+        ("gateway state parent", "/var/lib/voyage-gateway", true),
         ("runtime endpoint root", "/run/voyage", true),
         (
-            "system unit",
+            "root system unit",
             "/etc/systemd/system/voyage-vessel.service",
+            false,
+        ),
+        (
+            "gateway system unit",
+            "/etc/systemd/system/voyage-gateway.service",
             false,
         ),
     ] {
@@ -368,21 +449,23 @@ fn assess(name: &str) -> Result<Assessment> {
             |_| true,
         );
     }
-    let existing_user_installation = account.as_ref().is_ok_and(|account| {
+    let existing_user_installation = execution_account.as_ref().is_ok_and(|account| {
         fs::symlink_metadata(account.home.join(".local/share/voyage/install")).is_ok()
     });
     let existing_system_installation = existing_system_service
         || fs::symlink_metadata("/opt/voyage/current").is_ok()
-        || fs::symlink_metadata("/var/lib/voyage/vessel").is_ok();
+        || fs::symlink_metadata("/var/lib/voyage/vessel").is_ok()
+        || fs::symlink_metadata("/var/lib/voyage-gateway").is_ok();
     if existing_system_installation || existing_user_installation {
         blockers.push("existing installation requires a separate exact state, process, endpoint and rollback inventory before adoption".into());
     }
-    blockers.push("privileged supervisor gateway and scope-aware update/rollback are not implemented; system installation remains disabled".into());
+    blockers.push("system unit publication, scope-aware update/rollback and native install qualification are incomplete; system installation remains disabled".into());
     blockers.push("execution home/workspace access, isolation and live voyages need an actual identity and service review before mutation".into());
     Ok(Assessment {
         schema_version: 1,
         scope: "system",
-        execution_user: name.into(),
+        execution_user: execution_user.into(),
+        gateway_user: gateway_user.into(),
         checks,
         blockers,
         existing_user_installation,
@@ -413,11 +496,33 @@ mod tests {
     fn explicit_account_is_required() {
         assert!(parse(&[]).is_err());
         assert!(parse(&["--execution-user".into(), "root".into(), "extra".into()]).is_err());
-        assert!(parse(&["--execution-user".into(), "../root".into()]).is_err());
-        assert_eq!(
-            parse(&["--execution-user".into(), "voyageordinary".into()]).unwrap(),
-            "voyageordinary"
+        assert!(
+            parse(&[
+                "--execution-user".into(),
+                "../root".into(),
+                "--gateway-user".into(),
+                "voyagegateway".into()
+            ])
+            .is_err()
         );
+        assert!(
+            parse(&[
+                "--execution-user".into(),
+                "voyageordinary".into(),
+                "--gateway-user".into(),
+                "voyageordinary".into()
+            ])
+            .is_err()
+        );
+        let args = [
+            "--execution-user".into(),
+            "voyageordinary".into(),
+            "--gateway-user".into(),
+            "voyagegateway".into(),
+        ];
+        let names = parse(&args).unwrap();
+        assert_eq!(names.execution_user, "voyageordinary");
+        assert_eq!(names.gateway_user, "voyagegateway");
     }
 
     #[test]

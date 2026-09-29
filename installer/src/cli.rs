@@ -139,7 +139,7 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer upgrade [--dev | --bin-dir DIRECTORY] [--replace-existing] [--start | --no-start] [--dry-run]
   voyage-installer rollback [--start | --no-start] [--dry-run]
   voyage-installer status
-  voyage-installer system-assess --execution-user USER
+  voyage-installer system-assess --execution-user USER --gateway-user USER
 
 upgrade defaults to the latest published GitHub release, downloaded and verified.
 --dev selects the latest public nightly prerelease; no source build is performed.

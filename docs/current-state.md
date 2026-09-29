@@ -472,10 +472,11 @@ verified public nightly prerelease, while `--bin-dir` selects local binaries. Pr
 one verified artifact through review/apply and bounds network work and
 cancellation cleanup. Missing published releases never fall back to main. See
 [installation](../installer/README.md) for prerequisites, trust and restart limits.
-The read-only `system-assess --execution-user USER` command reports host and
-account prerequisites; it never enables a privileged service. A hidden Linux
+The read-only `system-assess --execution-user USER --gateway-user USER` command reports host and
+distinct execution/gateway account prerequisites; it never enables a privileged service. A hidden Linux
 root/ordinary gateway route handles public commands, events, pairing and browser
-sockets in isolated fixtures. System-scope installation, initial bound Voyage
+sockets in isolated fixtures. A staged two-unit template pins immutable binaries
+but is not published or activated. System-scope installation, initial bound Voyage
 creation through a public route and supported activation remain unavailable.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,

@@ -7,6 +7,8 @@ mod service;
 mod source;
 #[cfg(target_os = "linux")]
 mod system_preflight;
+#[cfg(target_os = "linux")]
+mod system_service;
 mod ui;
 
 use anyhow::{Context, Result};
