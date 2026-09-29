@@ -656,3 +656,60 @@ Inject unit publication/readiness failure and interruption, observe retained jou
 and bounded refusal without replay. Service-removal uninstall must observe managed
 PIDs zero and disabled/absent exact units while retaining state, releases, provisioner
 and independent voyages. Root-local command tests do not qualify remote system updates.
+
+#### Concrete system lifecycle fixture sequence
+
+Use separate clean disposable native guests for active, inactive and interruption
+cases. Never convert a developer or production install for these checks. Unpack
+both checksum-verified full archives into root-owned `/root/release-old` and
+`/root/release-new`, with the new SemVer strictly greater and both manifest targets
+matching. Prepare the external key provisioner as above. Invoke the **new installer**
+against the old runtime for initial staging, so the baseline has the protected
+default execution contract (older fresh-install binaries did not provision it):
+
+```sh
+/root/release-new/bin/voyage-installer install --scope system \
+  --bin-dir /root/release-old/bin --execution-user voyageordinary \
+  --gateway-user voyageother --gateway-origin https://helm.example.test \
+  --credential-key /run/voyage-secrets/connections.key \
+  --credential-unit voyage-key-provision.service --no-start
+/root/release-new/bin/voyage-installer upgrade --scope system \
+  --bin-dir /root/release-new/bin --dry-run
+/root/release-new/bin/voyage-installer upgrade --scope system \
+  --bin-dir /root/release-new/bin
+/root/release-new/bin/voyage-installer status --scope system
+/root/release-new/bin/voyage-installer rollback --scope system
+/root/release-new/bin/voyage-installer status --scope system
+/root/release-new/bin/voyage-installer uninstall --scope system
+/root/release-new/bin/voyage-installer status --scope system
+```
+
+For the inactive sequence, assert both managed MainPIDs remain zero and unit-file
+states remain disabled; the upgraded units pin the new manifest release ID;
+rollback pins the old ID. Snapshot protected default identity UUIDs, execution
+account, external provisioner digest and retained control/runtime files before
+upgrade, then assert their exact retention after rollback/removal. Removal must
+leave both reviewed unit files absent and no managed PIDs, while retaining releases,
+private state and provisioner/key. A subsequent fresh install over retained state
+must refuse adoption rather than overwriting it.
+
+On a separate active guest replace `--no-start` with `--start`; establish pairing
+and exact retained authorization first. Upgrade must report the new root/gateway
+process executables with root/ordinary UIDs and public readiness. Verify pairing,
+public routing and retained identity again, including after an actual guest reboot.
+An explicit rollback must fail before publication, with unchanged current units,
+release and lifecycle record: candidate startup may have opened persistent state.
+A live independent Voyage fixture must retain the same incarnation and process
+start identity across supervisor upgrade/removal; a PID alone is insufficient.
+Do not claim that managed MainPID zero proves independent descendant cleanup.
+
+For interruption, launch upgrade under a bounded fixture controller, watch the
+atomic lifecycle journal and kill only its installer process after an observed
+nonterminal phase. Save the observed phase and subsequent exact journal. If the
+operation already completed before interruption, the injection did not establish
+the gate. A new upgrade/rollback/uninstall attempt must refuse the retained
+nonterminal operation without replay, unit changes or a second candidate start.
+A fault after the durable startup-attempt flag must retain that flag and refuse
+old-binary rollback. Do not manually erase the journal to resume an uncertain effect.
+Record exact source/archives, commands, exit statuses, managed PIDs and journal
+phases; these are additional native evidence, separate from Rust line coverage.

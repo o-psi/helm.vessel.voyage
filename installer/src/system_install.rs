@@ -666,6 +666,84 @@ fn kernel_uuid() -> Result<String> {
     );
     Ok(value.into())
 }
+fn uuid_shape(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+}
+fn validate_default_execution(record: &Record, value: &serde_json::Value) -> Result<()> {
+    let fields = [
+        "identity",
+        "label",
+        "user_name",
+        "uid",
+        "gid",
+        "supplementary_groups",
+        "home",
+        "account_context",
+        "authority",
+        "enabled",
+    ];
+    let object = value
+        .as_object()
+        .context("default execution must be an object")?;
+    ensure!(
+        object.len() == fields.len() && fields.iter().all(|field| object.contains_key(*field)),
+        "default execution fields differ from the supported contract"
+    );
+    for field in ["identity", "account_context"] {
+        let reference = value[field]
+            .as_object()
+            .context("identity reference must be an object")?;
+        ensure!(
+            reference.len() == 2
+                && value[field]["revision"] == 1
+                && value[field]["id"].as_str().is_some_and(uuid_shape),
+            "default identity reference is invalid"
+        );
+    }
+    let groups: Vec<u32> = record
+        .execution_groups
+        .iter()
+        .copied()
+        .filter(|gid| *gid != record.execution_gid)
+        .collect();
+    ensure!(
+        record.execution_uid != 0
+            && record.execution_gid != 0
+            && !groups.contains(&0)
+            && value["identity"]["id"] != value["account_context"]["id"]
+            && value["label"] == record.execution_user
+            && value["user_name"] == record.execution_user
+            && value["uid"] == record.execution_uid
+            && value["gid"] == record.execution_gid
+            && value["supplementary_groups"] == serde_json::to_value(groups)?
+            && value["home"] == serde_json::to_value(&record.execution_home)?
+            && value["authority"] == "ordinary"
+            && value["enabled"] == true,
+        "protected default execution differs from the pinned ordinary account"
+    );
+    Ok(())
+}
+fn verify_default_execution(record: &Record) -> Result<()> {
+    let path = Path::new(CONTROL).join("default-execution.json");
+    service::files::check_path(&path, 0)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    ensure!(
+        metadata.is_file()
+            && metadata.uid() == 0
+            && metadata.nlink() == 1
+            && metadata.mode() & 0o7777 == 0o600,
+        "default execution record must be root-private"
+    );
+    let value = serde_json::from_slice(&files::read(&path, 16384)?)?;
+    validate_default_execution(record, &value)
+}
 fn default_execution(record: &Record) -> Result<serde_json::Value> {
     ensure!(
         record.execution_uid != 0
@@ -763,6 +841,7 @@ fn status() -> Result<()> {
         serde_json::to_vec(&record)? == serde_json::to_vec(&config)?,
         "system configuration and transaction differ"
     );
+    verify_default_execution(&record)?;
     let release = Path::new(RELEASE_ROOT)
         .join("releases")
         .join(&record.release);
