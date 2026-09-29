@@ -2,7 +2,7 @@ use super::*;
 #[test]
 fn operator_auth_and_bearer_are_exact_and_secret_safe() {
     let mut state = AppState {
-        process_directory: None,
+        process_route: None,
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
         browser_credentials: Default::default(),
         operator_token_hash: Some(token_hash("fixture-token")),
@@ -24,7 +24,7 @@ fn operator_auth_and_bearer_are_exact_and_secret_safe() {
 #[tokio::test]
 async fn health_metrics_and_readiness_are_observations_not_execution() {
     let state = AppState {
-        process_directory: None,
+        process_route: None,
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
         browser_credentials: Default::default(),
         operator_token_hash: None,

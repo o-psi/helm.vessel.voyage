@@ -1,7 +1,7 @@
 use super::*;
 fn backend() -> SocketBackend {
     SocketBackend {
-        directory: "/not-a-supervisor".into(),
+        route: ProcessRoute::Local("/not-a-supervisor".into()),
         expected_vessel_id: Some(Uuid::new_v4()),
         grant_id: Uuid::new_v4(),
         token: "f".repeat(64),

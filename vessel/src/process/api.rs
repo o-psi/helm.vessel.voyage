@@ -537,9 +537,13 @@ impl Supervisor {
                     "browser start incarnation mismatch"
                 );
             }
+            // Record a live root-owned socket before dispatch even for scoped
+            // grants. The grant router has already checked session and rights;
+            // a later gateway EOF must retire any effect whose reply was lost.
+            let socket_owner =
+                super::service::admit_local_browser(request.session_id, incarnation)?;
             ensure!(
-                authorization.is_some()
-                    || super::service::admit_local_browser(request.session_id, incarnation)?,
+                authorization.is_some() || socket_owner,
                 "host browser requires authenticated principal"
             );
         }

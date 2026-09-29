@@ -61,14 +61,21 @@ a pass.
 ## Privileged control storage fixtures
 
 The staged system-gateway transport has ordinary-UID tests for bounded frames,
-partial/malformed input and both kernel peer-credential checks:
+partial/malformed input and both kernel peer-credential checks. The route tests
+cover grant construction, private-envelope refusal, pairing preflight, browser
+socket grant binding and recorded disconnect provenance:
 
 ```sh
 cargo test -p vessel --locked gateway_ipc -j 8
+cargo test -p vessel --locked gateway_route -j 8
 ```
 
-These tests do not run a root supervisor or unprivileged network gateway and do
-not establish a working system installation; see [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380).
+These tests do not run a root supervisor or unprivileged network gateway. A
+separate disposable Ubuntu VM test is required for actual peer identities,
+public routing and failure/restart behavior; the exact fixture commands and
+results belong in [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380).
+Even that route test does not establish a working system installer or bound
+Voyage launch.
 
 The staged Linux control and runtime-directory primitives have focused
 ordinary-UID checks. The runtime fixture verifies a trusted execute-only parent,

@@ -1,14 +1,51 @@
-//! Bounded, peer-authenticated local transport for a future system gateway.
-//! This module does not enable a system installation or expose supervisor state.
+//! Bounded, peer-authenticated local transport for the system Vessel gateway.
+//! Only typed public operations cross this pipe; supervisor secrets stay root-owned.
 use anyhow::{Context, Result, ensure};
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{os::linux::net::SocketAddrExt, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     time::timeout,
 };
+use uuid::Uuid;
 use voyage_protocol::vessel::MAX_VESSEL_BODY;
+use voyage_protocol::vessel::{VesselCommand, VesselResponse};
+
+/// A principal's existing grant, forwarded without a supervisor loopback token.
+/// Deliberately no Debug: this contains a live secret.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantAuth {
+    pub expected_vessel_id: Option<Uuid>,
+    pub grant_id: Uuid,
+    pub token: String,
+}
+
+/// The root side constructs private envelopes after peer authentication. The
+/// gateway cannot submit one in this wire schema or choose an OS identity.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GatewayRequest {
+    Command {
+        auth: GrantAuth,
+        command: VesselCommand,
+    },
+    PairPreflight,
+    PairRedeem {
+        expected_vessel_id: Option<Uuid>,
+        request: super::pairing::PairRequest,
+    },
+    /// One long-lived pipe per external browser controller. The root allocates
+    /// its own socket identity and retires it on EOF.
+    SocketOpen {
+        auth: GrantAuth,
+    },
+    SocketCommand {
+        auth: GrantAuth,
+        command: VesselCommand,
+    },
+}
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const MAX_NAME: usize = 80;
@@ -29,7 +66,7 @@ fn address(name: &str) -> Result<tokio::net::unix::SocketAddr> {
 
 /// An abstract socket has no writable filesystem pathname to race or unlink.
 /// The root service must bind; an occupied name is a hard startup failure.
-pub(super) fn bind_root(name: &str, gateway_uid: u32) -> Result<UnixListener> {
+pub fn bind_root(name: &str, gateway_uid: u32) -> Result<UnixListener> {
     ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
     ensure!(
         gateway_uid != 0,
@@ -39,20 +76,16 @@ pub(super) fn bind_root(name: &str, gateway_uid: u32) -> Result<UnixListener> {
 }
 
 /// The kernel credential is checked before a byte of request data is read.
-pub(super) async fn accept_gateway(
+pub async fn accept_gateway(
     listener: &UnixListener,
     gateway_uid: u32,
-) -> Result<UnixStream> {
+) -> Result<Option<UnixStream>> {
     let (stream, _) = listener.accept().await?;
-    ensure!(
-        stream.peer_cred()?.uid() == gateway_uid,
-        "system gateway peer identity refused"
-    );
-    Ok(stream)
+    Ok((stream.peer_cred()?.uid() == gateway_uid).then_some(stream))
 }
 
 /// The gateway verifies the root peer before sending grants or invitation codes.
-pub(super) async fn connect_root(name: &str) -> Result<UnixStream> {
+pub async fn connect_root(name: &str) -> Result<UnixStream> {
     connect_peer(name, 0).await
 }
 
@@ -68,7 +101,7 @@ async fn connect_peer(name: &str, expected_uid: u32) -> Result<UnixStream> {
 /// Length-prefix each JSON message. Refuse oversized or partial frames without
 /// decoding their content. Callers keep one connection for a browser socket so
 /// EOF can retire its exact controller state in the supervisor.
-pub(super) async fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<()> {
+pub async fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<()> {
     let bytes = serde_json::to_vec(value)?;
     ensure!(
         !bytes.is_empty() && bytes.len() <= MAX_VESSEL_BODY,
@@ -85,9 +118,26 @@ pub(super) async fn write_frame<T: Serialize>(stream: &mut UnixStream, value: &T
     Ok(())
 }
 
-pub(super) async fn read_frame<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<Option<T>> {
+pub async fn read_frame<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<Option<T>> {
+    read_frame_inner(stream, true).await
+}
+
+/// After SocketOpen, idle is allowed; once a frame starts, its remaining bytes
+/// must arrive within the same bounded deadline as other frames.
+pub async fn read_frame_idle<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<Option<T>> {
+    read_frame_inner(stream, false).await
+}
+
+async fn read_frame_inner<T: DeserializeOwned>(
+    stream: &mut UnixStream,
+    first_deadline: bool,
+) -> Result<Option<T>> {
     let mut length = [0u8; 4];
-    let first = timeout(DEADLINE, stream.read(&mut length[..1])).await??;
+    let first = if first_deadline {
+        timeout(DEADLINE, stream.read(&mut length[..1])).await??
+    } else {
+        stream.read(&mut length[..1]).await?
+    };
     if first == 0 {
         return Ok(None);
     }
@@ -100,6 +150,32 @@ pub(super) async fn read_frame<T: DeserializeOwned>(stream: &mut UnixStream) -> 
     let mut bytes = vec![0u8; size];
     timeout(DEADLINE, stream.read_exact(&mut bytes)).await??;
     Ok(Some(serde_json::from_slice(&bytes)?))
+}
+
+/// One-shot command and pairing calls keep their own connection. A failed read
+/// after sending a mutation leaves the outcome unknown to the caller.
+pub async fn exchange(name: &str, request: &GatewayRequest) -> Result<VesselResponse> {
+    let mut stream = connect_root(name).await?;
+    write_frame(&mut stream, request).await?;
+    read_frame(&mut stream)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("system supervisor reply unavailable"))
+}
+
+/// Browser controllers retain this stream for their whole external socket life.
+pub async fn open_socket(name: &str, auth: GrantAuth) -> Result<(UnixStream, Uuid)> {
+    let mut stream = connect_root(name).await?;
+    write_frame(&mut stream, &GatewayRequest::SocketOpen { auth }).await?;
+    let response: VesselResponse = read_frame(&mut stream)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("system supervisor socket reply unavailable"))?;
+    ensure!(
+        response.error.is_none() && !response.outcome_unknown,
+        "system supervisor socket refused"
+    );
+    let socket_id: Uuid = serde_json::from_value(response.result["socket_id"].clone())?;
+    ensure!(!socket_id.is_nil(), "invalid supervisor socket identity");
+    Ok((stream, socket_id))
 }
 
 #[cfg(test)]
@@ -121,7 +197,7 @@ mod tests {
         let listener = UnixListener::bind_addr(&address(&name).unwrap()).unwrap();
         let current = unsafe { libc::geteuid() };
         let mut client = connect_peer(&name, current).await.unwrap();
-        let mut server = accept_gateway(&listener, current).await.unwrap();
+        let mut server = accept_gateway(&listener, current).await.unwrap().unwrap();
         let message = Message {
             id: Uuid::new_v4(),
             text: "private input stays within the authenticated pipe".into(),
@@ -141,7 +217,8 @@ mod tests {
         assert!(
             accept_gateway(&listener, current.wrapping_add(1))
                 .await
-                .is_err()
+                .unwrap()
+                .is_none()
         );
     }
 

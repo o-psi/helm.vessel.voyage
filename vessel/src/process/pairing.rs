@@ -44,7 +44,7 @@ impl std::fmt::Display for PairRefusal {
 impl std::error::Error for PairRefusal {}
 
 // Intentionally no Debug: this is a private input, never a VesselCommand.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PairRequest {
     pub protocol: u32,

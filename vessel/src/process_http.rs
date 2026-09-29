@@ -10,6 +10,114 @@ use voyage_protocol::vessel::{
 static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(64);
 static EVENT_CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(64);
 
+impl ProcessRoute {
+    async fn exchange(
+        &self,
+        auth: vessel::process::gateway_ipc::GrantAuth,
+        command: VesselCommand,
+    ) -> anyhow::Result<VesselResponse> {
+        match self {
+            Self::Local(directory) => {
+                vessel::process::exchange(
+                    directory,
+                    &VesselRequest {
+                        protocol: VESSEL_API_VERSION,
+                        command: VesselCommand::Granted {
+                            expected_vessel_id: auth.expected_vessel_id,
+                            grant_id: auth.grant_id,
+                            token: auth.token,
+                            command: Box::new(command),
+                        },
+                    },
+                )
+                .await
+            }
+            #[cfg(target_os = "linux")]
+            Self::System(name) => {
+                vessel::process::gateway_ipc::exchange(
+                    name,
+                    &vessel::process::gateway_ipc::GatewayRequest::Command { auth, command },
+                )
+                .await
+            }
+        }
+    }
+
+    async fn pair_preflight(&self) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Local(directory) => vessel::process::pairing::preflight(directory),
+            #[cfg(target_os = "linux")]
+            Self::System(name) => {
+                let response = vessel::process::gateway_ipc::exchange(
+                    name,
+                    &vessel::process::gateway_ipc::GatewayRequest::PairPreflight,
+                )
+                .await?;
+                anyhow::ensure!(
+                    response.error.is_none() && !response.outcome_unknown,
+                    "system pairing preflight unavailable"
+                );
+                Ok(response.result)
+            }
+        }
+    }
+
+    async fn pair_redeem(
+        &self,
+        origin: &str,
+        expected_vessel_id: Option<Uuid>,
+        request: vessel::process::pairing::PairRequest,
+    ) -> VesselResponse {
+        match self {
+            Self::Local(directory) => {
+                match vessel::process::pairing::redeem(
+                    directory,
+                    origin,
+                    expected_vessel_id,
+                    request,
+                ) {
+                    Ok(credential) => VesselResponse {
+                        protocol: VESSEL_API_VERSION,
+                        result: serde_json::to_value(credential).unwrap_or(serde_json::Value::Null),
+                        error: None,
+                        outcome_unknown: false,
+                    },
+                    Err(error) => {
+                        let refusal = error.downcast_ref::<vessel::process::pairing::PairRefusal>();
+                        VesselResponse {
+                            protocol: VESSEL_API_VERSION,
+                            result: serde_json::Value::Null,
+                            error: Some(refusal.map_or_else(
+                                || {
+                                    "pairing unavailable; retry only the identical pairing request"
+                                        .into()
+                                },
+                                ToString::to_string,
+                            )),
+                            outcome_unknown: refusal.is_none(),
+                        }
+                    }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            Self::System(name) => vessel::process::gateway_ipc::exchange(
+                name,
+                &vessel::process::gateway_ipc::GatewayRequest::PairRedeem {
+                    expected_vessel_id,
+                    request,
+                },
+            )
+            .await
+            .unwrap_or_else(|_| VesselResponse {
+                protocol: VESSEL_API_VERSION,
+                result: serde_json::Value::Null,
+                error: Some("pairing unavailable; retry only the identical pairing request".into()),
+                outcome_unknown: true,
+            }),
+        }
+    }
+}
+
 pub(super) async fn boundary(
     State(state): State<AppState>,
     request: Request<Body>,
@@ -49,7 +157,7 @@ pub(super) async fn events(
     headers: HeaderMap,
     Json(request): Json<VesselEventRequest>,
 ) -> Response {
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if request.protocol != VESSEL_API_VERSION
@@ -94,15 +202,13 @@ pub(super) async fn events(
         let _permit = permit;
         loop {
           for subscription in &mut subscriptions {
-            let response = vessel::process::exchange(
-                &directory,
-                &VesselRequest {
-                    protocol: VESSEL_API_VERSION,
-                    command: VesselCommand::Granted {
-                        expected_vessel_id,
-                        grant_id,
-                        token: token.clone(),
-                        command: Box::new(VesselCommand::Voyage(VoyageRequest {
+            let response = route.exchange(
+                vessel::process::gateway_ipc::GrantAuth {
+                    expected_vessel_id,
+                    grant_id,
+                    token: token.clone(),
+                },
+                VesselCommand::Voyage(VoyageRequest {
                             session_id: subscription.session_id,
                             incarnation: None,
                             command: VoyageCommand::Events {
@@ -113,9 +219,7 @@ pub(super) async fn events(
                                 wait_ms: 0,
                                 projection: subscription.projection.clone(),
                             },
-                        })),
-                    },
-                },
+                        }),
             )
             .await;
             let (result, error, outcome_unknown) = match response {
@@ -175,7 +279,7 @@ pub(super) async fn command(
     headers: HeaderMap,
     Json(request): Json<VesselRequest>,
 ) -> Response {
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if private_envelope(&request.command) {
@@ -206,20 +310,16 @@ pub(super) async fn command(
     else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    #[cfg(target_os = "linux")]
-    let response = match vessel::process::exchange(
-        &directory,
-        &VesselRequest {
-            protocol: VESSEL_API_VERSION,
-            command: VesselCommand::Granted {
+    let response = match route
+        .exchange(
+            vessel::process::gateway_ipc::GrantAuth {
                 expected_vessel_id,
                 grant_id,
                 token: token.to_owned(),
-                command: Box::new(request.command),
             },
-        },
-    )
-    .await
+            request.command,
+        )
+        .await
     {
         Ok(response) => response,
         Err(_) => VesselResponse {
@@ -228,16 +328,6 @@ pub(super) async fn command(
             error: Some("Vessel routing unavailable; command outcome unknown".into()),
             outcome_unknown: true,
         },
-    };
-    #[cfg(not(target_os = "linux"))]
-    let response = {
-        let _ = (directory, token, grant_id);
-        VesselResponse {
-            protocol: VESSEL_API_VERSION,
-            result: serde_json::Value::Null,
-            error: Some("process gateway unsupported on this platform".into()),
-            outcome_unknown: false,
-        }
     };
     Json(response).into_response()
 }
@@ -261,10 +351,10 @@ fn expected_vessel(headers: &HeaderMap) -> Result<Option<Uuid>, StatusCode> {
 
 /// Public discovery exposes identity and protocol, never workspaces or secrets.
 pub(super) async fn pair_capabilities(State(state): State<AppState>) -> Response {
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    match vessel::process::pairing::preflight(&directory) {
+    match route.pair_preflight().await {
         Ok(value) => Json(value).into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
@@ -275,7 +365,7 @@ pub(super) async fn pair(
     headers: HeaderMap,
     Json(request): Json<vessel::process::pairing::PairRequest>,
 ) -> Response {
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let Some(origin) = state.public_origin else {
@@ -285,29 +375,11 @@ pub(super) async fn pair(
         Ok(id) => id,
         Err(response) => return response.into_response(),
     };
-    let response =
-        match vessel::process::pairing::redeem(&directory, &origin, expected_vessel_id, request) {
-            Ok(credential) => VesselResponse {
-                protocol: VESSEL_API_VERSION,
-                result: serde_json::to_value(credential).unwrap_or(serde_json::Value::Null),
-                error: None,
-                outcome_unknown: false,
-            },
-            // Publication may have durably consumed the invitation. Retain the exact
-            // request identity rather than minting a replacement after a lost reply.
-            Err(error) => {
-                let refusal = error.downcast_ref::<vessel::process::pairing::PairRefusal>();
-                VesselResponse {
-                    protocol: VESSEL_API_VERSION,
-                    result: serde_json::Value::Null,
-                    error: Some(refusal.map_or_else(
-                        || "pairing unavailable; retry only the identical pairing request".into(),
-                        ToString::to_string,
-                    )),
-                    outcome_unknown: refusal.is_none(),
-                }
-            }
-        };
+    // Publication may have consumed the invitation. A lost reply must retain
+    // the exact request identity rather than minting a replacement.
+    let response = route
+        .pair_redeem(&origin, expected_vessel_id, request)
+        .await;
     Json(response).into_response()
 }
 
@@ -316,7 +388,7 @@ pub(super) async fn pair(
 /// and revision; any change closes the connection rather than broadening it.
 #[derive(Clone)]
 struct SocketBackend {
-    directory: std::path::PathBuf,
+    route: ProcessRoute,
     expected_vessel_id: Option<Uuid>,
     grant_id: Uuid,
     token: String,
@@ -332,7 +404,7 @@ impl SocketBackend {
     async fn exchange_socket(
         &self,
         command: VesselCommand,
-        socket: Option<voyage_protocol::host_browser::HostBrowserSocket>,
+        socket: Option<(Uuid, std::sync::Arc<BrowserSocketState>)>,
     ) -> VesselResponse {
         if private_envelope(&command) {
             return VesselResponse {
@@ -342,28 +414,70 @@ impl SocketBackend {
                 outcome_unknown: false,
             };
         }
-        let command = VesselCommand::Granted {
+        let auth = vessel::process::gateway_ipc::GrantAuth {
             expected_vessel_id: self.expected_vessel_id,
             grant_id: self.grant_id,
             token: self.token.clone(),
-            command: Box::new(command),
         };
-        let command = match socket {
-            Some(socket) => VesselCommand::Socket {
-                socket,
-                command: Box::new(command),
-            },
-            None => command,
+        let result = match &self.route {
+            ProcessRoute::Local(directory) => {
+                let command = VesselCommand::Granted {
+                    expected_vessel_id: auth.expected_vessel_id,
+                    grant_id: auth.grant_id,
+                    token: auth.token,
+                    command: Box::new(command),
+                };
+                let command = match socket {
+                    Some((socket_id, _)) => VesselCommand::Socket {
+                        socket: voyage_protocol::host_browser::HostBrowserSocket { socket_id },
+                        command: Box::new(command),
+                    },
+                    None => command,
+                };
+                vessel::process::exchange(
+                    directory,
+                    &VesselRequest {
+                        protocol: VESSEL_API_VERSION,
+                        command,
+                    },
+                )
+                .await
+            }
+            #[cfg(target_os = "linux")]
+            ProcessRoute::System(name) => {
+                if let Some((_, state)) = socket {
+                    let mut channel = state.system.lock().await;
+                    if state.closed.load(std::sync::atomic::Ordering::SeqCst) {
+                        return browser_refusal();
+                    }
+                    if channel.is_none() {
+                        match vessel::process::gateway_ipc::open_socket(name, auth.clone()).await {
+                            Ok(opened) => *channel = Some(opened),
+                            Err(error) => return routing_failure(error),
+                        }
+                    }
+                    let (stream, _) = channel.as_mut().expect("opened socket");
+                    let request = vessel::process::gateway_ipc::GatewayRequest::SocketCommand {
+                        auth,
+                        command,
+                    };
+                    let response = async {
+                        vessel::process::gateway_ipc::write_frame(stream, &request).await?;
+                        vessel::process::gateway_ipc::read_frame(stream)
+                            .await?
+                            .ok_or_else(|| anyhow::anyhow!("supervisor socket closed"))
+                    }
+                    .await;
+                    if response.is_err() {
+                        *channel = None;
+                    }
+                    response
+                } else {
+                    self.route.exchange(auth, command).await
+                }
+            }
         };
-        vessel::process::exchange(
-            &self.directory,
-            &VesselRequest {
-                protocol: VESSEL_API_VERSION,
-                command,
-            },
-        )
-        .await
-        .unwrap_or_else(|_| VesselResponse {
+        result.unwrap_or_else(|_| VesselResponse {
             protocol: VESSEL_API_VERSION,
             result: serde_json::Value::Null,
             error: Some("Vessel routing unavailable; command outcome unknown".into()),
@@ -403,8 +517,19 @@ impl vessel::duplex::Backend for SocketBackend {
         state
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        let directory = self.directory.clone();
+        let route = self.route.clone();
         tokio::spawn(async move {
+            #[cfg(target_os = "linux")]
+            if matches!(route, ProcessRoute::System(_)) {
+                // Dropping the persistent authenticated pipe is the root-side
+                // controller disconnect signal, even if the gateway dies.
+                let mut channel = state.system.lock().await;
+                *channel = None;
+                return;
+            }
+            let ProcessRoute::Local(directory) = route else {
+                return;
+            };
             // Snapshot targets without waiting for in-flight effects. Runtime tombstones
             // refuse a late command even if this notification reaches it first.
             let sessions = state.sessions.lock().await.clone();
@@ -477,10 +602,7 @@ impl vessel::duplex::Backend for SocketBackend {
             }
             drop(sessions);
             backend
-                .exchange_socket(
-                    request.command,
-                    Some(voyage_protocol::host_browser::HostBrowserSocket { socket_id }),
-                )
+                .exchange_socket(request.command, Some((socket_id, state)))
                 .await
         })
     }
@@ -518,7 +640,7 @@ pub(super) async fn socket(
 ) -> Response {
     use vessel::duplex::Backend;
 
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if !vessel::duplex::supports(&headers)
@@ -554,7 +676,7 @@ pub(super) async fn socket(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let mut backend = SocketBackend {
-        directory,
+        route,
         expected_vessel_id,
         grant_id,
         token: token.into(),
@@ -613,6 +735,17 @@ fn socket_capacity() -> std::sync::Arc<tokio::sync::Semaphore> {
 struct BrowserSocketState {
     closed: std::sync::atomic::AtomicBool,
     sessions: tokio::sync::Mutex<std::collections::HashSet<(Uuid, Uuid)>>,
+    #[cfg(target_os = "linux")]
+    system: tokio::sync::Mutex<Option<(tokio::net::UnixStream, Uuid)>>,
+}
+
+fn routing_failure(_error: anyhow::Error) -> VesselResponse {
+    VesselResponse {
+        protocol: VESSEL_API_VERSION,
+        result: serde_json::Value::Null,
+        error: Some("Vessel routing unavailable; command outcome unknown".into()),
+        outcome_unknown: true,
+    }
 }
 fn private_envelope(command: &VesselCommand) -> bool {
     matches!(

@@ -1,7 +1,7 @@
 use super::*;
 pub(super) fn state(directory: Option<PathBuf>) -> AppState {
     AppState {
-        process_directory: directory,
+        process_route: directory.map(ProcessRoute::Local),
         database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
         browser_credentials: Default::default(),
         operator_token_hash: None,

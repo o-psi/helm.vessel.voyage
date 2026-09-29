@@ -96,7 +96,7 @@ pub(crate) async fn mint(
     headers: HeaderMap,
     Json(request): Json<MintRequest>,
 ) -> Response {
-    let Some(directory) = state.process_directory else {
+    let Some(route) = state.process_route else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if !canonical_origin(&request.origin) {
@@ -128,7 +128,7 @@ pub(crate) async fn mint(
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let mut backend = SocketBackend {
-        directory,
+        route,
         expected_vessel_id: Some(expected_vessel_id),
         grant_id,
         token: token.into(),

@@ -1,4 +1,4 @@
-use super::{registry, routing};
+use super::{gateway_ipc, pairing, registry, routing};
 use anyhow::{Result, ensure};
 use axum::{
     Json, Router,
@@ -34,6 +34,14 @@ pub(super) struct Supervisor {
     pub(super) registrations: super::database::Registrations,
 }
 
+/// Provisioned only for a root supervisor and a separately configured gateway
+/// OS account. The public origin is pinned on the root side for pairing.
+pub struct GatewayConfig {
+    pub name: String,
+    pub gateway_uid: u32,
+    pub origin: String,
+}
+
 #[derive(Clone)]
 struct HttpState {
     supervisor: Arc<Supervisor>,
@@ -44,6 +52,14 @@ struct HttpState {
 }
 
 pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
+    serve_configured(directory, binary, None).await
+}
+
+pub async fn serve_configured(
+    directory: PathBuf,
+    binary: PathBuf,
+    gateway: Option<GatewayConfig>,
+) -> Result<()> {
     #[cfg(target_os = "linux")]
     if unsafe { libc::geteuid() } == 0 {
         // Root services require an explicitly provisioned control root. Never
@@ -77,6 +93,16 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
     });
+    let gateway_listener = gateway
+        .as_ref()
+        .map(|config| -> Result<_> {
+            ensure!(
+                crate::origin::validate_origin(&config.origin, true)? == config.origin,
+                "system gateway origin must be canonical"
+            );
+            gateway_ipc::bind_root(&config.name, config.gateway_uid)
+        })
+        .transpose()?;
     supervisor.resume_enrollments().await?;
     let notification_delivery = supervisor.start_notification_delivery();
     let catalogue_refresh = supervisor.start_catalogue_refresh();
@@ -90,6 +116,9 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
             token: token.clone(),
         },
     )?;
+    let gateway_task = gateway.zip(gateway_listener).map(|(config, listener)| {
+        tokio::spawn(serve_gateway(listener, config, supervisor.clone()))
+    });
     let state = HttpState {
         supervisor,
         token_hash: Sha256::digest(token.as_bytes()).into(),
@@ -110,9 +139,27 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
             local_boundary,
         ))
         .with_state(state);
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    let served: Result<()> = if let Some(mut task) = gateway_task {
+        let outcome = tokio::select! {
+            result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
+                result.map_err(Into::into)
+            },
+            result = &mut task => {
+                match result {
+                    Ok(Ok(())) => Err(anyhow::anyhow!("system gateway listener stopped unexpectedly")),
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(error.into()),
+                }
+            }
+        };
+        task.abort();
+        outcome
+    } else {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .map_err(Into::into)
+    };
     notification_delivery.abort();
     catalogue_refresh.abort();
     let _ = notification_delivery.await;
@@ -122,8 +169,245 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         std::fs::remove_file(access)?;
         std::fs::File::open(&directory)?.sync_all()?;
     }
-    Ok(())
+    served
 }
+
+async fn serve_gateway(
+    listener: tokio::net::UnixListener,
+    config: GatewayConfig,
+    supervisor: Arc<Supervisor>,
+) -> Result<()> {
+    // Reserve room for one-shot commands while persistent browser controllers
+    // hold their own bounded pipe for the lifetime of an external WebSocket.
+    let capacity = Arc::new(Semaphore::new(128));
+    loop {
+        let Some(stream) = gateway_ipc::accept_gateway(&listener, config.gateway_uid).await? else {
+            continue;
+        };
+        let Ok(permit) = capacity.clone().try_acquire_owned() else {
+            // Closing the authenticated pipe is an explicit capacity refusal.
+            drop(stream);
+            continue;
+        };
+        let supervisor = supervisor.clone();
+        let origin = config.origin.clone();
+        tokio::spawn(async move {
+            let _permit = permit;
+            // Frame contents and pairing secrets never enter service logs.
+            let _ = serve_gateway_connection(stream, supervisor, origin).await;
+        });
+    }
+}
+
+async fn serve_gateway_connection(
+    mut stream: tokio::net::UnixStream,
+    supervisor: Arc<Supervisor>,
+    origin: String,
+) -> Result<()> {
+    use gateway_ipc::GatewayRequest;
+    let request: GatewayRequest = gateway_ipc::read_frame(&mut stream)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("gateway request unavailable"))?;
+    let response = match request {
+        GatewayRequest::Command { auth, command } => {
+            gateway_command(&supervisor, auth, command, None).await
+        }
+        GatewayRequest::PairPreflight => {
+            super::api::response(pairing::preflight(&supervisor.directory))
+        }
+        GatewayRequest::PairRedeem {
+            expected_vessel_id,
+            request,
+        } => {
+            let directory = supervisor.directory.clone();
+            match tokio::task::spawn_blocking(move || {
+                pairing::redeem(&directory, &origin, expected_vessel_id, request)
+            })
+            .await
+            {
+                Ok(Ok(credential)) => {
+                    super::api::response(serde_json::to_value(credential).map_err(Into::into))
+                }
+                Ok(Err(error)) => {
+                    let refusal = error.downcast_ref::<pairing::PairRefusal>();
+                    VesselResponse {
+                        protocol: VESSEL_API_VERSION,
+                        result: Value::Null,
+                        error: Some(refusal.map_or_else(
+                            || {
+                                "pairing unavailable; retry only the identical pairing request"
+                                    .into()
+                            },
+                            ToString::to_string,
+                        )),
+                        outcome_unknown: refusal.is_none(),
+                    }
+                }
+                Err(_) => gateway_uncertain(),
+            }
+        }
+        GatewayRequest::SocketOpen { auth } => {
+            let checked =
+                gateway_command(&supervisor, auth.clone(), VesselCommand::Capabilities, None).await;
+            if checked.error.is_some() || checked.outcome_unknown {
+                gateway_ipc::write_frame(&mut stream, &checked).await?;
+                return Ok(());
+            }
+            let Ok(permit) = BROWSER_PIPE_CAPACITY.try_acquire() else {
+                gateway_ipc::write_frame(
+                    &mut stream,
+                    &gateway_refusal("browser pipe capacity exhausted"),
+                )
+                .await?;
+                return Ok(());
+            };
+            return serve_gateway_socket(stream, supervisor, auth, permit).await;
+        }
+        GatewayRequest::SocketCommand { .. } => gateway_refusal("browser socket not opened"),
+    };
+    gateway_ipc::write_frame(&mut stream, &response).await
+}
+
+fn gateway_refusal(message: &str) -> VesselResponse {
+    VesselResponse {
+        protocol: VESSEL_API_VERSION,
+        result: Value::Null,
+        error: Some(message.into()),
+        outcome_unknown: false,
+    }
+}
+
+fn gateway_uncertain() -> VesselResponse {
+    VesselResponse {
+        protocol: VESSEL_API_VERSION,
+        result: Value::Null,
+        error: Some("system supervisor routing unavailable; outcome unknown".into()),
+        outcome_unknown: true,
+    }
+}
+
+async fn gateway_command(
+    supervisor: &Arc<Supervisor>,
+    auth: gateway_ipc::GrantAuth,
+    command: VesselCommand,
+    socket: Option<(
+        voyage_protocol::host_browser::HostBrowserSocket,
+        LocalBrowserState,
+    )>,
+) -> VesselResponse {
+    let result = async {
+        ensure!(
+            !auth.grant_id.is_nil()
+                && auth.token.len() == 64
+                && auth.token.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && auth.expected_vessel_id.is_none_or(|id| !id.is_nil()),
+            "invalid gateway grant"
+        );
+        ensure!(!private_envelope(&command), "private envelope refused");
+        let browser = matches!(
+            &command,
+            VesselCommand::Voyage(VoyageRequest {
+                command: VoyageCommand::HostBrowser { .. },
+                ..
+            })
+        );
+        ensure!(
+            browser == socket.is_some(),
+            "browser socket boundary refused"
+        );
+        let command = VesselCommand::Granted {
+            expected_vessel_id: auth.expected_vessel_id,
+            grant_id: auth.grant_id,
+            token: auth.token,
+            command: Box::new(command),
+        };
+        if let Some((socket, owner)) = socket {
+            LOCAL_BROWSER_OWNER
+                .scope(
+                    owner,
+                    HOST_BROWSER_SOCKET.scope(socket, supervisor.handle(command)),
+                )
+                .await
+        } else {
+            supervisor.handle(command).await
+        }
+    };
+    let outcome = tokio::time::timeout(Duration::from_secs(25), result)
+        .await
+        .unwrap_or_else(|_| {
+            Err(anyhow::anyhow!("supervisor request deadline exceeded")
+                .context(routing::OutcomeUnknown))
+        });
+    super::api::response(outcome)
+}
+
+async fn serve_gateway_socket(
+    mut stream: tokio::net::UnixStream,
+    supervisor: Arc<Supervisor>,
+    opened_auth: gateway_ipc::GrantAuth,
+    _permit: tokio::sync::SemaphorePermit<'static>,
+) -> Result<()> {
+    let socket = voyage_protocol::host_browser::HostBrowserSocket {
+        socket_id: Uuid::new_v4(),
+    };
+    let owner: LocalBrowserState = Arc::default();
+    let opened = VesselResponse {
+        protocol: VESSEL_API_VERSION,
+        result: json!({"socket_id":socket.socket_id}),
+        error: None,
+        outcome_unknown: false,
+    };
+    gateway_ipc::write_frame(&mut stream, &opened).await?;
+    let result = async {
+        loop {
+            let Some(request) =
+                gateway_ipc::read_frame_idle::<gateway_ipc::GatewayRequest>(&mut stream).await?
+            else {
+                break;
+            };
+            let gateway_ipc::GatewayRequest::SocketCommand { auth, command } = request else {
+                let refusal = gateway_refusal("invalid browser socket operation");
+                gateway_ipc::write_frame(&mut stream, &refusal).await?;
+                break;
+            };
+            if auth != opened_auth {
+                let refusal = gateway_refusal("browser socket grant changed");
+                gateway_ipc::write_frame(&mut stream, &refusal).await?;
+                break;
+            }
+            let response =
+                gateway_command(&supervisor, auth, command, Some((socket, owner.clone()))).await;
+            gateway_ipc::write_frame(&mut stream, &response).await?;
+        }
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+    let sessions = match owner.lock() {
+        Ok(mut state) => {
+            state.closed = true;
+            state.sessions.clone()
+        }
+        Err(_) => std::collections::HashSet::new(),
+    };
+    // EOF, malformed frames and gateway death all retire the exact root-owned
+    // browser socket. Runtime cleanup remains an observed, separate obligation.
+    tokio::spawn(async move {
+        for (session_id, incarnation) in sessions {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(20),
+                supervisor.handle(VesselCommand::HostBrowserDisconnected {
+                    session_id,
+                    incarnation,
+                    socket,
+                }),
+            )
+            .await;
+        }
+    });
+    result
+}
+
+static BROWSER_PIPE_CAPACITY: Semaphore = Semaphore::const_new(64);
 
 /// Local account authority is authenticated by local_boundary before upgrade.
 #[derive(Default)]
@@ -698,6 +982,9 @@ impl Supervisor {
     }
 }
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "gateway_route_tests.rs"]
+mod gateway_route_tests;
 #[cfg(test)]
 #[path = "subscriptions_final_tests.rs"]
 mod subscriptions_final_tests;

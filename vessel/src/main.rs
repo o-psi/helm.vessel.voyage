@@ -33,10 +33,22 @@ struct Cli {
     #[arg(long, default_value = "vessel.db")]
     database: PathBuf,
     /// Expose the authenticated process gateway to a private local supervisor.
-    #[arg(long, requires = "public_origin")]
+    #[arg(
+        long,
+        requires = "public_origin",
+        conflicts_with = "system_gateway_socket"
+    )]
     process_directory: Option<PathBuf>,
+    /// Authenticated abstract Unix route to a separately privileged supervisor.
+    #[cfg(target_os = "linux")]
+    #[arg(
+        long,
+        hide = true,
+        requires = "public_origin",
+        conflicts_with = "process_directory"
+    )]
+    system_gateway_socket: Option<String>,
     /// Canonical HTTPS origin served by a TLS proxy on this host.
-    #[arg(long, requires = "process_directory")]
     public_origin: Option<String>,
     /// Allow HTTP only for literal loopback development origins.
     #[arg(long, requires = "public_origin")]
@@ -99,6 +111,18 @@ enum Command {
         directory: PathBuf,
         #[arg(long)]
         voyage_binary: Option<PathBuf>,
+        /// Root-owned abstract Unix endpoint for the separate public gateway.
+        #[cfg(target_os = "linux")]
+        #[arg(long, hide = true, requires_all = ["gateway_uid", "gateway_origin"])]
+        gateway_socket: Option<String>,
+        /// Exact unprivileged gateway account UID permitted on the local pipe.
+        #[cfg(target_os = "linux")]
+        #[arg(long, hide = true, requires_all = ["gateway_socket", "gateway_origin"])]
+        gateway_uid: Option<u32>,
+        /// Canonical public origin pinned by root for invitation redemption.
+        #[cfg(target_os = "linux")]
+        #[arg(long, hide = true, requires_all = ["gateway_socket", "gateway_uid"])]
+        gateway_origin: Option<String>,
         /// Deprecated compatibility option; voyage count is no longer capped.
         #[arg(long, hide = true)]
         capacity: Option<usize>,
@@ -120,11 +144,18 @@ enum LogFormat {
 
 #[derive(Clone)]
 struct AppState {
-    process_directory: Option<PathBuf>,
+    process_route: Option<ProcessRoute>,
     database: Arc<Mutex<Connection>>,
     operator_token_hash: Option<String>,
     public_origin: Option<String>,
     browser_credentials: process_http::browser::Credentials,
+}
+
+#[derive(Clone)]
+enum ProcessRoute {
+    Local(PathBuf),
+    #[cfg(target_os = "linux")]
+    System(String),
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -181,6 +212,12 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::LocalServe {
             directory,
             voyage_binary,
+            #[cfg(target_os = "linux")]
+            gateway_socket,
+            #[cfg(target_os = "linux")]
+            gateway_uid,
+            #[cfg(target_os = "linux")]
+            gateway_origin,
             capacity: _,
         }) => {
             #[cfg(target_os = "linux")]
@@ -188,7 +225,16 @@ async fn run(cli: Cli) -> Result<()> {
                 let binary = voyage_binary
                     .clone()
                     .unwrap_or(std::env::current_exe()?.with_file_name("voyage"));
-                return vessel::process::serve(directory.clone(), binary).await;
+                let gateway = gateway_socket
+                    .as_ref()
+                    .zip(*gateway_uid)
+                    .zip(gateway_origin.as_ref())
+                    .map(|((name, uid), origin)| vessel::process::GatewayConfig {
+                        name: name.clone(),
+                        gateway_uid: uid,
+                        origin: origin.clone(),
+                    });
+                return vessel::process::serve_configured(directory.clone(), binary, gateway).await;
             }
             #[cfg(not(target_os = "linux"))]
             anyhow::bail!(
@@ -220,6 +266,14 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::RevokeConnection(args)) => return vessel::process::pair_cli::revoke(args),
         _ => {}
     }
+    let process_route = cli.process_directory.clone().map(ProcessRoute::Local);
+    #[cfg(target_os = "linux")]
+    let process_route =
+        process_route.or_else(|| cli.system_gateway_socket.clone().map(ProcessRoute::System));
+    anyhow::ensure!(
+        process_route.is_some() == cli.public_origin.is_some(),
+        "public origin and process route must be configured together"
+    );
     let public_origin = if let Some(origin) = &cli.public_origin {
         let address: std::net::SocketAddr = cli.bind.parse().map_err(|_| {
             anyhow::anyhow!("process gateway requires a literal loopback bind address")
@@ -237,12 +291,13 @@ async fn run(cli: Cli) -> Result<()> {
     };
     let database = open_database(&cli.database)?;
     let state = AppState {
-        process_directory: cli.process_directory.clone(),
+        process_route,
         database: Arc::new(Mutex::new(database)),
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
         public_origin,
         browser_credentials: Default::default(),
     };
+    let process_gateway = state.process_route.is_some();
     let app = Router::new()
         .route(
             voyage_protocol::vessel::PAIR_PATH,
@@ -317,7 +372,7 @@ async fn run(cli: Cli) -> Result<()> {
         .with_state(state);
     let app = app.layer(middleware::from_fn(http_boundary::boundary));
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
-    tracing::info!(address = %cli.bind, process_gateway = cli.process_directory.is_some(), "Vessel ready");
+    tracing::info!(address = %cli.bind, process_gateway, "Vessel ready");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -366,7 +421,7 @@ async fn readiness(State(state): State<AppState>) -> ApiResult<HealthResponse> {
 async fn metrics(State(state): State<AppState>) -> String {
     format!(
         "# HELP voyage_connectivity_enabled Whether the scoped process gateway is configured.\n# TYPE voyage_connectivity_enabled gauge\nvoyage_connectivity_enabled {}\n",
-        u8::from(state.process_directory.is_some())
+        u8::from(state.process_route.is_some())
     )
 }
 
@@ -377,7 +432,7 @@ async fn diagnostics(
     operator_auth(&state, &headers)?;
     Ok(Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "process_gateway": if state.process_directory.is_some() { "configured" } else { "unavailable" },
+        "process_gateway": if state.process_route.is_some() { "configured" } else { "unavailable" },
     })))
 }
 
@@ -480,7 +535,7 @@ async fn operator_dashboard(
     headers: HeaderMap,
 ) -> UiResult<Html<String>> {
     operator_auth(&state, &headers)?;
-    let status = if state.process_directory.is_some() {
+    let status = if state.process_route.is_some() {
         "The scoped process gateway is configured. Voyage execution and approvals remain on the executing machine."
     } else {
         "The scoped process gateway is unavailable until a process directory and public origin are configured."
