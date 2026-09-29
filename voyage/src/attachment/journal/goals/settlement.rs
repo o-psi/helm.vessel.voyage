@@ -60,16 +60,25 @@ impl Journal {
             goal.id.to_string() == goal_id,
             "goal settlement identity mismatch"
         );
-        let measured = measurement.as_ref().is_some_and(|m| m.complete);
-        let observed = measurement.unwrap_or(GoalMeasurement {
-            input_tokens: run.usage.input_tokens,
-            output_tokens: run.usage.output_tokens,
+        let (retained_input, retained_output, retained_complete, metered) =
+            super::metering::retained_usage(&tx, run.command_id)?;
+        let measured =
+            measurement.as_ref().is_some_and(|m| m.complete) && (!metered || retained_complete);
+        let mut observed = measurement.unwrap_or(GoalMeasurement {
+            input_tokens: run.usage.input_tokens.max(retained_input),
+            output_tokens: run.usage.output_tokens.max(retained_output),
             elapsed_ms: u64::try_from(now.saturating_sub(started).max(0))?,
             complete: false,
         });
+        // Include admission/setup/cleanup time outside the provider meter too.
+        observed.elapsed_ms = observed
+            .elapsed_ms
+            .max(u64::try_from(now.saturating_sub(started).max(0))?);
         ensure!(
             observed.input_tokens >= run.usage.input_tokens
-                && observed.output_tokens >= run.usage.output_tokens,
+                && observed.output_tokens >= run.usage.output_tokens
+                && observed.input_tokens >= retained_input
+                && observed.output_tokens >= retained_output,
             "aggregate goal usage is below canonical run usage"
         );
         goal.usage.input_tokens = goal
@@ -121,11 +130,31 @@ impl Journal {
                 GoalStopReason::UnresolvedEffects,
             ))
         } else if run.state == RunState::Cancelled {
-            Some((GoalStatus::NeedsAttention, GoalStopReason::Cancelled))
+            if goal
+                .usage
+                .input_tokens
+                .saturating_add(goal.usage.output_tokens)
+                >= goal.limits.tokens
+            {
+                Some((GoalStatus::Limited, GoalStopReason::TokenLimit))
+            } else if goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
+                Some((GoalStatus::Limited, GoalStopReason::TimeLimit))
+            } else {
+                Some((GoalStatus::NeedsAttention, GoalStopReason::Cancelled))
+            }
         } else if run.state == RunState::Interrupted {
             Some((GoalStatus::NeedsAttention, GoalStopReason::Interrupted))
         } else if decisions > 0 {
             Some((GoalStatus::NeedsAttention, GoalStopReason::ApprovalRequired))
+        } else if goal
+            .usage
+            .input_tokens
+            .saturating_add(goal.usage.output_tokens)
+            >= goal.limits.tokens
+        {
+            Some((GoalStatus::Limited, GoalStopReason::TokenLimit))
+        } else if goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
+            Some((GoalStatus::Limited, GoalStopReason::TimeLimit))
         } else if run.state != RunState::Completed {
             Some((GoalStatus::NeedsAttention, GoalStopReason::ProviderFailure))
         } else if !measured {

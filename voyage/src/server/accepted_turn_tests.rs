@@ -257,6 +257,180 @@ async fn accepted_stream_persists_user_assistant_usage_and_terminal_checkpoint()
 }
 
 #[tokio::test]
+async fn reserved_goal_turn_uses_native_usage_and_settles_without_claiming_goal_completion() {
+    use voyage_protocol::goals::*;
+    for remote_enabled in [false, true] {
+        let (_root,state,provider)=configured(vec![Reply::chunks(vec![
+        json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"One step finished"},"finish_reason":"stop"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}}),
+    ])]).await;
+        state.config.write().await.vessel.enabled = remote_enabled;
+        let response = call(
+            &state,
+            RuntimeCommand::GoalUpdate {
+                command_id: Uuid::new_v4(),
+                expected_revision: 0,
+                expires_at_ms: deadline(),
+                action: GoalAction::Set {
+                    objective: "Complete and verify a larger task".into(),
+                    limits: GoalLimits::default(),
+                    replace_goal_id: None,
+                    continue_automatically: true,
+                },
+            },
+        )
+        .await;
+        assert!(response.error.is_none(), "{response:?}");
+        assert!(provider.requests.lock().await.is_empty());
+        let goal = state.owner.goal().await.unwrap();
+        let reserved = state
+            .owner
+            .reserve_goal_turn(
+                goal.revision,
+                state.registration.incarnation,
+                "Continue the current goal".into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reserved.authority.principal_id, state.actor.principal_id);
+        let run = accepted(&state, reserved.command).await;
+        let snapshot = finished(&state).await;
+        assert_eq!(snapshot["run"]["run_id"], run.to_string());
+        assert_eq!(snapshot["run"]["state"], "completed");
+        let goal = state.owner.goal().await.unwrap().goal.unwrap();
+        assert_eq!(
+            goal.status,
+            if remote_enabled {
+                GoalStatus::NeedsAttention
+            } else {
+                GoalStatus::Active
+            },
+            "{goal:?}"
+        );
+        assert_eq!(
+            goal.stop_reason,
+            remote_enabled.then_some(GoalStopReason::UsageUnknown)
+        );
+        assert_eq!(
+            (
+                goal.usage.runs,
+                goal.usage.input_tokens,
+                goal.usage.output_tokens,
+                goal.usage.unmeasured_runs
+            ),
+            (1, 20, 4, u32::from(remote_enabled))
+        );
+        assert_eq!(goal.usage.no_progress_runs, 1);
+        assert_eq!(provider.requests.lock().await.len(), 1);
+    }
+}
+
+async fn bounded_goal_command(
+    state: &Arc<State>,
+    limits: voyage_protocol::goals::GoalLimits,
+) -> RuntimeCommand {
+    use voyage_protocol::goals::GoalAction;
+    state.config.write().await.vessel.enabled = false;
+    let response = call(
+        state,
+        RuntimeCommand::GoalUpdate {
+            command_id: Uuid::new_v4(),
+            expected_revision: 0,
+            expires_at_ms: deadline(),
+            action: GoalAction::Set {
+                objective: "Bounded offline fixture".into(),
+                limits,
+                replace_goal_id: None,
+                continue_automatically: true,
+            },
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{response:?}");
+    state
+        .owner
+        .reserve_goal_turn(
+            state.owner.goal().await.unwrap().revision,
+            state.registration.incarnation,
+            "Continue within the finite Goal budget".into(),
+        )
+        .await
+        .unwrap()
+        .command
+}
+
+#[tokio::test]
+async fn goal_token_limit_blocks_native_tool_effects_after_the_last_response() {
+    use voyage_protocol::goals::*;
+    let mut reply = Reply::tool(
+        "write_file",
+        json!({"path":"goal-must-not-exist.txt","content":"forbidden after budget"}),
+    );
+    reply.body=reply.body.replace("data: [DONE]",&format!("data: {}\n\ndata: [DONE]",json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})));
+    let (_root, state, provider) = configured(vec![reply]).await;
+    state.config.write().await.access = Some(crate::config::AccessMode::Unrestricted);
+    let command = bounded_goal_command(
+        &state,
+        GoalLimits {
+            tokens: 24,
+            ..GoalLimits::default()
+        },
+    )
+    .await;
+    accepted(&state, command).await;
+    finished(&state).await;
+    let goal = state.owner.goal().await.unwrap().goal.unwrap();
+    assert_eq!(goal.status, GoalStatus::Limited, "{goal:?}");
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::TokenLimit));
+    assert_eq!(goal.usage.input_tokens + goal.usage.output_tokens, 24);
+    assert!(
+        !state
+            .registration
+            .workspace
+            .join("goal-must-not-exist.txt")
+            .exists()
+    );
+    let requests = provider.requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["function"]["name"] == "write_file")
+    );
+}
+
+#[tokio::test]
+async fn goal_deadline_cancels_native_inference_and_observes_cleanup() {
+    use voyage_protocol::goals::*;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (_root, state, provider) = configured(vec![
+        Reply::text("Must not be awaited indefinitely").held(gate),
+    ])
+    .await;
+    let command = bounded_goal_command(
+        &state,
+        GoalLimits {
+            elapsed_ms: 5000,
+            ..GoalLimits::default()
+        },
+    )
+    .await;
+    accepted(&state, command).await;
+    provider.wait_requests(1).await;
+    let snapshot = finished(&state).await;
+    assert_eq!(snapshot["run"]["state"], "cancelled");
+    assert!(snapshot["pending_cleanup_run"].is_null());
+    let goal = state.owner.goal().await.unwrap().goal.unwrap();
+    assert_eq!(goal.status, GoalStatus::Limited, "{goal:?}");
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::TimeLimit));
+    assert!(!goal.continuation_authorized);
+    assert_eq!(goal.usage.unmeasured_runs, 1);
+    assert_eq!(provider.requests.lock().await.len(), 1);
+}
+
+#[tokio::test]
 async fn active_duplicate_returns_original_run_without_second_request() {
     let gate = Arc::new(tokio::sync::Notify::new());
     let (_root, state, provider) =

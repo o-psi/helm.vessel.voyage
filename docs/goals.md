@@ -39,17 +39,31 @@ retains the known lower bound, increments `unmeasured_runs`, stops continuation
 and prevents Resume from disguising an unknown cost as fresh budget. An explicit
 replacement creates a new Goal. A successful run does not complete the Goal.
 
-The staged local provider meter shares one process-local counter across cloned
-child configurations. It observes native cumulative usage, distinguishes an
-explicit zero from missing counters, retains partial counts on cancellation,
-and refuses subsequent requests after uncertainty or observed token/time limits.
-It caps requested output to the remaining allowance; input/billing totals are
+Newly admitted Goal turns install a local provider meter shared across cloned
+child configurations. A private journal observer records each request before
+dispatch and persists cumulative usage before forwarding it to the agent. Request
+IDs, ordered revisions and terminal records prevent reset, reordering, decreasing
+counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
+restart retains known child counts and marks open requests uncertain. The meter
+distinguishes explicit zero from missing counters and retains partial counts on
+cancellation. Schema 15 fences writers that cannot preserve these observations.
+
+The meter refuses subsequent requests after uncertainty or observed token/time
+limits. It also adds a deny-only check to the existing execution authority, so
+tools and local children cannot continue after the budget ends or ignore an
+upstream revocation. A time limit requests cancellation and awaits the same
+execution through cleanup. Goal settlement releases the active steering callback
+and observes cleanup under the admission lock before allowing a new turn.
+Elapsed settlement includes admission, setup and cleanup time.
+
+Requested output is capped to the remaining allowance; input/billing totals are
 known only after dispatch, so this is not a strict billing ceiling. The meter is
-not serializable authority. It still needs runtime installation, durable request
-observations and remote subordinate accounting before automatic continuation
-can use its measurements. The terminal execution hook currently uses incomplete
-aggregate accounting, which stops a reserved Goal turn rather than allowing
-an unmeasured follow-up.
+not serializable authority. Remote subordinate budget/accounting is still
+unfinished: currently, enabling Vessel tool routes or participant endpoints
+makes the aggregate incomplete even if all local requests reported usage. The
+native execution checks exercise this distinction explicitly. Remove this staged
+limitation by completing remote accounting before enabling automatic continuation
+or claiming feature acceptance.
 
 Empty turns and previously seen successful tool-result batches increase the
 consecutive no-progress counter. Novel batches reset it. This is a bounded

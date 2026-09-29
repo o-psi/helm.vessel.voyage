@@ -20,6 +20,22 @@ pub struct GoalMeter {
     token_allowance: u64,
     time_allowance: Duration,
     started: Instant,
+    observer: Option<Arc<dyn Observer>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RequestObservation {
+    pub request_id: uuid::Uuid,
+    pub revision: u64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub complete: bool,
+}
+
+#[async_trait]
+pub(crate) trait Observer: Send + Sync + std::fmt::Debug {
+    async fn record(&self, observation: RequestObservation) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -31,12 +47,65 @@ pub(crate) struct Measurement {
 }
 
 impl GoalMeter {
+    /// Request cancellation at the time limit, then await the same execution
+    /// future through cleanup. Never drop work merely because its budget ended.
+    pub(crate) async fn finish_with_deadline<T>(
+        &self,
+        work: impl std::future::Future<Output = T>,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> T {
+        tokio::pin!(work);
+        tokio::select! {
+            result=&mut work=>result,
+            _=tokio::time::sleep(self.remaining_time())=>{cancel.cancel();work.await}
+        }
+    }
+
+    pub(crate) fn remaining_time(&self) -> Duration {
+        self.time_allowance.saturating_sub(self.started.elapsed())
+    }
+
+    pub(crate) fn check_budget(&self) -> anyhow::Result<()> {
+        let t = self
+            .totals
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Goal usage is unavailable"))?;
+        anyhow::ensure!(!t.uncertain, "Goal usage is incomplete");
+        anyhow::ensure!(
+            t.input
+                .checked_add(t.output)
+                .is_some_and(|used| used < self.token_allowance),
+            "Goal token limit reached"
+        );
+        anyhow::ensure!(!self.remaining_time().is_zero(), "Goal time limit reached");
+        Ok(())
+    }
+
+    pub(crate) fn execution_authority(
+        self: &Arc<Self>,
+        upstream: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    ) -> Arc<dyn crate::policy::ExecutionAuthority> {
+        Arc::new(BudgetAuthority {
+            meter: self.clone(),
+            upstream,
+        })
+    }
+    #[cfg(test)]
     pub(crate) fn new(token_allowance: u64, time_allowance: Duration) -> Arc<Self> {
+        Self::with_observer(token_allowance, time_allowance, None)
+    }
+
+    pub(crate) fn with_observer(
+        token_allowance: u64,
+        time_allowance: Duration,
+        observer: Option<Arc<dyn Observer>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             totals: Mutex::new(Totals::default()),
             token_allowance,
             time_allowance,
             started: Instant::now(),
+            observer,
         })
     }
 
@@ -77,7 +146,23 @@ impl GoalMeter {
             input: None,
             output: None,
             finished: false,
+            request_id: uuid::Uuid::new_v4(),
+            revision: 0,
         })
+    }
+}
+
+#[derive(Debug)]
+struct BudgetAuthority {
+    meter: Arc<GoalMeter>,
+    upstream: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+}
+impl crate::policy::ExecutionAuthority for BudgetAuthority {
+    fn check(&self) -> anyhow::Result<()> {
+        if let Some(upstream) = &self.upstream {
+            upstream.check()?;
+        }
+        self.meter.check_budget()
     }
 }
 
@@ -95,9 +180,33 @@ struct Attempt {
     input: Option<u64>,
     output: Option<u64>,
     finished: bool,
+    request_id: uuid::Uuid,
+    revision: u64,
 }
 
 impl Attempt {
+    async fn persist(&mut self, complete: bool) -> Result<(), ProviderError> {
+        if let Some(observer) = &self.meter.observer {
+            let observed = RequestObservation {
+                request_id: self.request_id,
+                revision: self.revision,
+                input_tokens: self.input,
+                output_tokens: self.output,
+                complete,
+            };
+            if observer.record(observed).await.is_err() {
+                self.fail();
+                return Err(ProviderError::Code {
+                    source: Box::new(ProviderError::Request(
+                        "Goal usage checkpoint failed; further requests are stopped".into(),
+                    )),
+                    code: "goal_usage_checkpoint_failed",
+                });
+            }
+        }
+        self.revision = self.revision.checked_add(1).ok_or_else(refused)?;
+        Ok(())
+    }
     fn fail(&mut self) {
         if !self.finished
             && let Ok(mut t) = self.meter.totals.lock()
@@ -134,7 +243,7 @@ impl Attempt {
         Ok(())
     }
 
-    fn finish(&mut self, response: &ModelResponse) -> Result<(), ProviderError> {
+    async fn finish(&mut self, response: &ModelResponse) -> Result<(), ProviderError> {
         let consistent = self.input == Some(response.usage.input_tokens)
             && self.output == Some(response.usage.output_tokens);
         if !consistent {
@@ -147,6 +256,7 @@ impl Attempt {
                 output_tokens: Some(output),
             })?;
         }
+        self.persist(consistent).await?;
         let mut t = self.meter.totals.lock().map_err(|_| refused())?;
         t.uncertain |= !consistent;
         t.in_flight = t.in_flight.checked_sub(1).ok_or_else(refused)?;
@@ -190,15 +300,19 @@ impl Provider for MeteredProvider {
         // Keep the guard outside the lazy stream body: dropping the returned
         // stream without polling still marks the dispatched request uncertain.
         let mut attempt = self.meter.begin(&mut request)?;
+        attempt.persist(false).await?;
         let mut source = self.inner.stream(request).await?;
         Ok(Box::pin(async_stream::try_stream! {
             while let Some(event) = source.next().await {
                 if event.is_err() { attempt.fail(); }
                 let event = event?;
                 match &event {
-                    ProviderStreamEvent::UsageReported(usage) => attempt.observe(*usage)?,
+                    ProviderStreamEvent::UsageReported(usage) => {
+                        attempt.observe(*usage)?;
+                        attempt.persist(false).await?;
+                    }
                     ProviderStreamEvent::Completed(response) => {
-                        attempt.finish(response)?;
+                        attempt.finish(response).await?;
                         yield event;
                         return;
                     }

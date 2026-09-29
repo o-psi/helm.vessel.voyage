@@ -204,6 +204,15 @@ pub(super) async fn submit(
         Admission::New(run) => run,
     };
     let workflow_result: Result<()> = async {
+        config.goal_meter = state
+            .owner
+            .begin_goal_meter(command_id, state.registration.incarnation)
+            .await?;
+        if let Some(meter) = &config.goal_meter {
+            authorization.authority =
+                Some(meter.execution_authority(authorization.authority.clone()));
+            config.provider_authority = authorization.authority.clone();
+        }
         let known = state
             .controls
             .resolve_model(&config, &state.registration.workspace)
@@ -225,9 +234,11 @@ pub(super) async fn submit(
     }
     .await;
     if let Err(error) = workflow_result {
-        run.fail_before_execution()
+        let failed = run
+            .fail_before_execution()
             .await
             .map_err(|_| anyhow::anyhow!("workflow failure finalization uncertain"))?;
+        state.owner.settle_goal_run(failed.id, None, true).await?;
         return Err(error);
     }
     run.register_local_cleanup().await?;
@@ -270,36 +281,67 @@ pub(super) async fn submit(
     });
     let state = state.clone();
     tokio::spawn(async move {
-        let result = crate::execution::execute_admitted_with_controls(
+        let execution = crate::execution::execute_admitted_with_controls(
             &state.owner,
             &mut run,
             &config,
             saved.session.workspace,
             Arc::new(Events),
-            cancel,
+            cancel.clone(),
             std::future::pending(),
             authorization.authority,
             Some(approver),
             state.cleanup.clone(),
             Some(state.controls.clone()),
             operator,
-        )
-        .await;
-        match result {
-            Ok(result) => {
-                if let Err(error) = state
-                    .owner
-                    .settle_goal_run(result.actual.id, None, result.cleanup_observed)
-                    .await
-                {
-                    tracing::error!("goal terminal accounting remains unresolved: {error}");
-                }
-                tracing::info!(state=?result.actual.state, cleanup_observed=result.cleanup_observed, construction_failed=result.construction_failed,"voyage run finalized")
+        );
+        let result = if let Some(meter) = &config.goal_meter {
+            meter.finish_with_deadline(execution, cancel).await
+        } else {
+            execution.await
+        };
+        {
+            // The active steering handle retains a run callback. Release it and the
+            // RunOwner before observing final cleanup, while keeping new admission
+            // out of the terminal-accounting boundary.
+            let _admission = state.admission.lock().await;
+            drop(run);
+            if let Some(active) = state.active.lock().await.as_mut() {
+                active.steering.take();
             }
-            Err(error) => tracing::error!("voyage execution failed: {}", error),
+            let cleanup_observed = state
+                .cleanup
+                .wait(std::time::Duration::from_secs(2), 1)
+                .await;
+            match result {
+                Ok(mut result) => {
+                    result.cleanup_observed |= cleanup_observed;
+                    let measurement = config.goal_meter.as_ref().map(|meter| {
+                        let measured = meter.measurement();
+                        crate::attachment::journal::GoalMeasurement {
+                            input_tokens: measured.input_tokens,
+                            output_tokens: measured.output_tokens,
+                            elapsed_ms: measured.elapsed_ms,
+                            // Remote usage transport is still staged. A configured
+                            // remote route must not be certified by a local meter.
+                            complete: measured.complete
+                                && !config.vessel.enabled
+                                && config.participants.is_empty(),
+                        }
+                    });
+                    if let Err(error) = state
+                        .owner
+                        .settle_goal_run(result.actual.id, measurement, result.cleanup_observed)
+                        .await
+                    {
+                        tracing::error!("goal terminal accounting remains unresolved: {error}");
+                    }
+                    tracing::info!(state=?result.actual.state, cleanup_observed=result.cleanup_observed, construction_failed=result.construction_failed,"voyage run finalized")
+                }
+                Err(error) => tracing::error!("voyage execution failed: {}", error),
+            }
+            *state.active.lock().await = None;
         }
-        drop(run);
-        *state.active.lock().await = None;
         if let Err(error) = super::suspension::suspend(&state).await {
             tracing::warn!("voyage suspension blocked: {error}");
         }

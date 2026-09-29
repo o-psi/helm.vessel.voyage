@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider::goal_meter::RequestObservation;
 
 fn fixture() -> (
     tempfile::TempDir,
@@ -458,19 +459,14 @@ fn interrupted_reservation_survives_reopen_without_replay_or_success() {
     );
 }
 
-fn finish_reserved(
-    j: &mut Journal,
-    guard: &ExecutionGuard,
-    now: i64,
-    tool: Option<&str>,
-    state: RunState,
-) -> RunRecord {
+fn start_reserved(j: &mut Journal, guard: &ExecutionGuard, now: i64) -> (RunRecord, Uuid) {
+    let incarnation = Uuid::new_v4();
     let revision = j.goal(guard.session_id).unwrap().revision;
     let reserved = j
         .reserve_goal_turn(
             guard,
             revision,
-            Uuid::new_v4(),
+            incarnation,
             "Continue the current goal".into(),
             now,
         )
@@ -505,6 +501,17 @@ fn finish_reserved(
         .unwrap()
         .run;
     j.mark_running(guard, run.id).unwrap();
+    (run, incarnation)
+}
+
+fn finish_reserved(
+    j: &mut Journal,
+    guard: &ExecutionGuard,
+    now: i64,
+    tool: Option<&str>,
+    state: RunState,
+) -> RunRecord {
+    let (run, _) = start_reserved(j, guard, now);
     let mut messages = j.load_session(guard.session_id).unwrap().session.messages;
     if let Some(result) = tool {
         let call = Uuid::new_v4().to_string();
@@ -540,6 +547,270 @@ fn measured() -> Option<GoalMeasurement> {
         elapsed_ms: 100,
         complete: true,
     })
+}
+
+fn usage_request(
+    j: &mut Journal,
+    guard: &ExecutionGuard,
+    command: Uuid,
+    incarnation: Uuid,
+    input: u64,
+    output: u64,
+    complete: bool,
+) -> RequestObservation {
+    let initial = RequestObservation {
+        request_id: Uuid::new_v4(),
+        revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    j.record_goal_request(guard, command, incarnation, initial.clone())
+        .unwrap();
+    let final_state = RequestObservation {
+        revision: 1,
+        input_tokens: Some(input),
+        output_tokens: Some(output),
+        complete,
+        ..initial
+    };
+    j.record_goal_request(guard, command, incarnation, final_state.clone())
+        .unwrap();
+    final_state
+}
+
+#[test]
+fn durable_request_meter_fences_duplicates_reordering_identity_and_regression() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let (run, incarnation) = start_reserved(&mut j, &guard, 1100);
+    assert!(
+        j.begin_goal_meter(&guard, run.command_id, Uuid::new_v4(), 1100)
+            .is_err()
+    );
+    assert_eq!(
+        j.begin_goal_meter(&guard, run.command_id, incarnation, 1110)
+            .unwrap(),
+        Some((200_000, 3_599_990))
+    );
+    assert!(
+        j.begin_goal_meter(&guard, run.command_id, incarnation, 1110)
+            .is_err()
+    );
+    let observed = usage_request(&mut j, &guard, run.command_id, incarnation, 30, 7, false);
+    j.record_goal_request(&guard, run.command_id, incarnation, observed.clone())
+        .unwrap();
+    for bad in [
+        RequestObservation {
+            revision: 0,
+            ..observed.clone()
+        },
+        RequestObservation {
+            revision: 3,
+            ..observed.clone()
+        },
+        RequestObservation {
+            revision: 2,
+            input_tokens: Some(29),
+            ..observed.clone()
+        },
+        RequestObservation {
+            revision: 2,
+            output_tokens: None,
+            ..observed.clone()
+        },
+    ] {
+        assert!(
+            j.record_goal_request(&guard, run.command_id, incarnation, bad)
+                .is_err()
+        );
+    }
+    assert!(
+        j.record_goal_request(&guard, run.command_id, Uuid::new_v4(), observed.clone())
+            .is_err()
+    );
+    let completed = RequestObservation {
+        revision: 2,
+        complete: true,
+        ..observed
+    };
+    j.record_goal_request(&guard, run.command_id, incarnation, completed.clone())
+        .unwrap();
+    assert!(
+        j.record_goal_request(
+            &guard,
+            run.command_id,
+            incarnation,
+            RequestObservation {
+                revision: 3,
+                input_tokens: Some(31),
+                ..completed
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (30, 7, true, true)
+    );
+}
+
+#[test]
+fn recovery_retains_durable_subordinate_usage_without_replaying_uncertain_requests() {
+    let (root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let (run, incarnation) = start_reserved(&mut j, &guard, 1100);
+    j.begin_goal_meter(&guard, run.command_id, incarnation, 1100)
+        .unwrap();
+    usage_request(&mut j, &guard, run.command_id, incarnation, 10, 5, true);
+    usage_request(&mut j, &guard, run.command_id, incarnation, 30, 7, false);
+    drop(guard);
+    drop(j);
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    let guard = j.acquire_execution(session.id).unwrap();
+    j.recover_interrupted(&guard).unwrap();
+    j.recover_goal_turn(&guard, 1200).unwrap();
+    let before = j.goal(session.id).unwrap();
+    let g = before.goal.as_ref().unwrap();
+    assert_eq!(
+        (
+            g.usage.input_tokens,
+            g.usage.output_tokens,
+            g.usage.unmeasured_runs
+        ),
+        (40, 12, 1)
+    );
+    assert_eq!(g.status, GoalStatus::NeedsAttention);
+    assert!(!g.continuation_authorized);
+    assert!(
+        j.begin_goal_meter(&guard, run.command_id, Uuid::new_v4(), 1200)
+            .is_err()
+    );
+    j.recover_goal_turn(&guard, 1300).unwrap();
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    assert_eq!(
+        j.connection
+            .query_row("SELECT count(*) FROM process_goal_requests", [], |r| r
+                .get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn open_durable_request_prevents_claiming_complete_aggregate_usage() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let (run, incarnation) = start_reserved(&mut j, &guard, 1100);
+    j.begin_goal_meter(&guard, run.command_id, incarnation, 1100)
+        .unwrap();
+    let open = usage_request(&mut j, &guard, run.command_id, incarnation, 20, 8, false);
+    j.finish(&guard, run.id, RunState::Completed, None, Some("fixture"))
+        .unwrap();
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(goal.usage.unmeasured_runs, 1);
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UsageUnknown));
+    assert!(
+        j.record_goal_request(
+            &guard,
+            run.command_id,
+            incarnation,
+            RequestObservation {
+                revision: 2,
+                complete: true,
+                ..open
+            }
+        )
+        .is_err()
+    );
+    let tx = j.connection.transaction().unwrap();
+    super::super::deletion::scrub(&tx, session.id).unwrap();
+    tx.commit().unwrap();
+    for table in [
+        "process_goal_requests",
+        "process_goal_meters",
+        "process_goal_turns",
+    ] {
+        assert_eq!(
+            j.connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get::<_, u64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
+fn schema_fourteen_upgrade_adds_request_accounting_and_preserves_goal() {
+    let (root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let before = j.goal(session.id).unwrap();
+    drop(guard);
+    drop(j);
+    let db = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+    db.execute_batch("DROP TABLE process_goal_requests; DROP TABLE process_goal_meters; UPDATE attachment_schema SET version=14;").unwrap();
+    drop(db);
+    let stale = Journal::open(root.path().join("journal")).unwrap();
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    j.upgrade_quiescent().unwrap();
+    assert!(stale.check_schema().is_err());
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    let guard = j.acquire_execution(session.id).unwrap();
+    let (run, incarnation) = start_reserved(&mut j, &guard, 1100);
+    j.begin_goal_meter(&guard, run.command_id, incarnation, 1100)
+        .unwrap();
+    usage_request(&mut j, &guard, run.command_id, incarnation, 1, 1, true);
+}
+
+#[test]
+fn execution_budget_stops_are_reported_as_limits_instead_of_provider_failure() {
+    for (limits, state, now, reason) in [
+        (
+            GoalLimits {
+                tokens: 28,
+                ..GoalLimits::default()
+            },
+            RunState::Failed,
+            1200,
+            GoalStopReason::TokenLimit,
+        ),
+        (
+            GoalLimits {
+                elapsed_ms: 1000,
+                ..GoalLimits::default()
+            },
+            RunState::Cancelled,
+            2100,
+            GoalStopReason::TimeLimit,
+        ),
+    ] {
+        let (_root, mut j, session, guard, a) = fixture();
+        let c = command(
+            &j,
+            session.id,
+            GoalAction::Set {
+                objective: "bounded work".into(),
+                limits,
+                replace_goal_id: None,
+                continue_automatically: true,
+            },
+        );
+        j.update_goal(&guard, a, &c, 1000).unwrap();
+        let run = finish_reserved(&mut j, &guard, 1100, None, state);
+        j.settle_goal_run(&guard, run.id, measured(), true, now)
+            .unwrap();
+        let goal = j.goal(session.id).unwrap().goal.unwrap();
+        assert_eq!(goal.status, GoalStatus::Limited);
+        assert_eq!(goal.stop_reason, Some(reason));
+        assert!(!goal.continuation_authorized);
+    }
 }
 
 #[test]

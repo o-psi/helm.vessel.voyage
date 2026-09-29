@@ -10,9 +10,13 @@ use voyage_protocol::{
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS process_goals(session_id TEXT PRIMARY KEY REFERENCES sessions(id),revision INTEGER NOT NULL CHECK(revision>=0),state TEXT,authority TEXT);
 CREATE TABLE IF NOT EXISTS process_goal_turns(command_id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),goal_id TEXT NOT NULL,incarnation TEXT NOT NULL,started_at_ms INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','settled','abandoned')),request TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_goal_turn ON process_goal_turns(session_id) WHERE state='reserved';
-CREATE TABLE IF NOT EXISTS process_goal_settlements(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),receipt TEXT NOT NULL,progress_digest TEXT);";
+CREATE TABLE IF NOT EXISTS process_goal_settlements(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),receipt TEXT NOT NULL,progress_digest TEXT);
+CREATE TABLE IF NOT EXISTS process_goal_meters(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),incarnation TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS process_goal_requests(request_id TEXT PRIMARY KEY,command_id TEXT NOT NULL REFERENCES process_goal_meters(command_id),observation TEXT NOT NULL);";
 
 mod continuation;
+pub(crate) use continuation::GoalTurnReservation;
+mod metering;
 mod settlement;
 pub(crate) use settlement::GoalMeasurement;
 

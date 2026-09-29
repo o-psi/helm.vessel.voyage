@@ -1,6 +1,23 @@
 use super::*;
 use crate::model::{Message, Role, Usage};
 
+#[derive(Debug, Default)]
+struct Observations {
+    values: Mutex<Vec<RequestObservation>>,
+    fail_revision: Option<u64>,
+}
+#[async_trait]
+impl Observer for Observations {
+    async fn record(&self, observation: RequestObservation) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.fail_revision != Some(observation.revision),
+            "fixture storage failure"
+        );
+        self.values.lock().unwrap().push(observation);
+        Ok(())
+    }
+}
+
 fn request() -> ModelRequest {
     ModelRequest {
         model: "offline".into(),
@@ -243,4 +260,164 @@ async fn provider_failure_fences_retries_before_the_failed_stream_is_dropped() {
         assert_eq!(requests.lock().unwrap().len(), 1);
         drop(stream);
     }
+}
+
+#[tokio::test]
+async fn durable_checkpoint_failure_stops_dispatch_or_delivery_without_retry() {
+    for failed in 0..=2 {
+        let observations = Arc::new(Observations {
+            fail_revision: Some(failed),
+            ..Default::default()
+        });
+        let m = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observations.clone()));
+        let (p, requests) = provider(
+            m.clone(),
+            vec![
+                Ok(report(Some(8), Some(3))),
+                Ok(ProviderStreamEvent::Completed(Box::new(response(8, 3)))),
+            ],
+        );
+        let error = p.complete(request()).await.unwrap_err();
+        assert_eq!(error.safe_code(), Some("goal_usage_checkpoint_failed"));
+        assert_eq!(requests.lock().unwrap().len(), usize::from(failed != 0));
+        assert_eq!(observations.values.lock().unwrap().len(), failed as usize);
+        assert!(!m.measurement().complete);
+        assert!(p.stream(request()).await.is_err());
+        assert_eq!(requests.lock().unwrap().len(), usize::from(failed != 0));
+    }
+}
+
+#[tokio::test]
+async fn durable_observations_bracket_dispatch_usage_and_completion() {
+    let observations = Arc::new(Observations::default());
+    let m = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observations.clone()));
+    let (p, _) = provider(
+        m.clone(),
+        vec![
+            Ok(report(Some(8), Some(3))),
+            Ok(ProviderStreamEvent::Completed(Box::new(response(8, 3)))),
+        ],
+    );
+    let mut stream = p.stream(request()).await.unwrap();
+    assert_eq!(observations.values.lock().unwrap().len(), 1);
+    stream.next().await.unwrap().unwrap();
+    assert_eq!(observations.values.lock().unwrap().len(), 2);
+    stream.next().await.unwrap().unwrap();
+    drop(stream);
+    let values = observations.values.lock().unwrap();
+    assert_eq!(values.len(), 3);
+    assert_eq!(
+        (
+            values[0].revision,
+            values[0].input_tokens,
+            values[0].complete
+        ),
+        (0, None, false)
+    );
+    assert_eq!(
+        (
+            values[1].revision,
+            values[1].input_tokens,
+            values[1].output_tokens,
+            values[1].complete
+        ),
+        (1, Some(8), Some(3), false)
+    );
+    assert_eq!(
+        values[2],
+        RequestObservation {
+            revision: 2,
+            complete: true,
+            ..values[1].clone()
+        }
+    );
+    assert!(m.measurement().complete);
+}
+
+#[tokio::test]
+async fn cancellation_retains_an_open_durable_request_with_known_usage() {
+    let observations = Arc::new(Observations::default());
+    let m = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observations.clone()));
+    let (p, _) = provider(m.clone(), vec![Ok(report(Some(8), Some(3)))]);
+    let mut stream = p.stream(request()).await.unwrap();
+    stream.next().await.unwrap().unwrap();
+    drop(stream);
+    assert!(!m.measurement().complete);
+    let values = observations.values.lock().unwrap();
+    assert_eq!(values.len(), 2);
+    assert_eq!(values[1].input_tokens, Some(8));
+    assert!(!values[1].complete);
+}
+
+#[tokio::test]
+async fn exhausted_goal_blocks_tool_policy_without_weakening_original_authority() {
+    #[derive(Debug)]
+    struct Upstream(std::sync::atomic::AtomicBool);
+    impl crate::policy::ExecutionAuthority for Upstream {
+        fn check(&self) -> anyhow::Result<()> {
+            anyhow::ensure!(
+                !self.0.load(std::sync::atomic::Ordering::SeqCst),
+                "upstream revoked"
+            );
+            Ok(())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let m = GoalMeter::new(10, Duration::from_secs(60));
+    let upstream = Arc::new(Upstream(std::sync::atomic::AtomicBool::new(false)));
+    let policy = crate::policy::Policy::new(&Config::default(), root.path().to_path_buf())
+        .unwrap()
+        .with_execution_authority(m.execution_authority(Some(upstream.clone())));
+    policy.check_execution_authority().unwrap();
+    upstream.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        policy
+            .check_execution_authority()
+            .unwrap_err()
+            .to_string()
+            .contains("upstream revoked")
+    );
+    upstream.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (p, _) = provider(
+        m.clone(),
+        vec![
+            Ok(report(Some(7), Some(3))),
+            Ok(ProviderStreamEvent::Completed(Box::new(response(7, 3)))),
+        ],
+    );
+    p.complete(request()).await.unwrap();
+    assert!(
+        policy
+            .check_execution_authority()
+            .unwrap_err()
+            .to_string()
+            .contains("Goal token limit")
+    );
+    assert!(m.measurement().complete);
+    assert!(GoalMeter::new(10, Duration::ZERO).check_budget().is_err());
+}
+
+#[tokio::test]
+async fn deadline_requests_cancellation_then_waits_for_cleanup_completion() {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let child = cancel.clone();
+    let m = GoalMeter::new(10, Duration::ZERO);
+    let work = async move {
+        child.cancelled().await;
+        tokio::task::yield_now().await;
+        "cleanup observed"
+    };
+    assert_eq!(
+        m.finish_with_deadline(work, cancel.clone()).await,
+        "cleanup observed"
+    );
+    assert!(cancel.is_cancelled());
+    let cancel = tokio_util::sync::CancellationToken::new();
+    assert_eq!(
+        meter()
+            .finish_with_deadline(async { "completed" }, cancel.clone())
+            .await,
+        "completed"
+    );
+    assert!(!cancel.is_cancelled());
 }
