@@ -963,6 +963,7 @@ async fn perform(
                     after,
                     limit: page(limit)?,
                     wait_ms,
+                    projection: None,
                 },
             )
             .await
