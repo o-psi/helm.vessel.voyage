@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-09-29T03:08:36.193208+00:00",
-  "source_commit": "e441cef3f7138e9348017146501c553dbb74df79",
+  "measured_at_utc": "2026-09-29T03:44:57.862891+00:00",
+  "source_commit": "dffeea1c23c96997c6429b9d46ee67ace1d2c492",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -13,24 +13,24 @@
   },
   "totals": {
     "lines": {
-      "count": 107882,
-      "covered": 83163,
-      "percent": 77.08700246565692
+      "count": 107857,
+      "covered": 81790,
+      "percent": 75.83188851905764
     },
     "functions": {
-      "count": 10250,
-      "covered": 7596,
-      "percent": 74.10731707317073
+      "count": 10248,
+      "covered": 7473,
+      "percent": 72.92154566744732
     },
     "regions": {
-      "count": 177172,
-      "covered": 130690,
-      "notcovered": 46482,
-      "percent": 73.76447745693451
+      "count": 177135,
+      "covered": 128768,
+      "notcovered": 48367,
+      "percent": 72.69483727100798
     }
   },
-  "command": "umask 077; RUST_TEST_THREADS=2 LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $SHARED_TARGET/coverage-report/v103-e441cef -j 4 > $SHARED_TARGET/coverage-report/v103-e441cef.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov report --json --summary-only --output-path $SHARED_TARGET/coverage-report/v103-e441cef/summary.json -v",
+  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2 cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-human-browser -j 4 > $WORKTREE_TARGET/coverage-report/v103-human-browser/run.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-human-browser/summary.json -v",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,8 +40,8 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests on clean source e441cef after the host-browser Python fixture change; owner-only umask and unchanged standard exclusions. SHARED_TARGET denotes the existing checkout target directory.",
-    "Before measurement, a scoped cargo clean --profile dev of six workspace packages removed ordinary/historical workspace artifacts while preserving dependencies. Raw profiles were then cleared. 13 executed test binaries and three production entry-point binaries were included (19 paths, 16 unique objects including hardlink aliases); all 471 source entries belong to this checkout except one unavailable distribution Rust standard-library source.",
-    "Compared with prior source 21a0afd: same 107,882 measured production lines, four more covered lines on unchanged Rust source, likely test scheduling variation; functions unchanged and region coverage increased by six. This measurement does not narrow scope or resolve #353."
+    "Full workspace default-feature Rust tests on clean source dffeea1 after a JavaScript host-browser worker test edit. WORKTREE_TARGET denotes this isolated checkout target directory. The profraw-only clean printed a warning about combining --workspace and --profraw-only; coverage proceeded from this worktree artifact set.",
+    "Current report has 13 executed test binaries and three production entry-point binaries (19 listed paths, 16 distinct content objects); all 471 source entries belong to this checkout except one unavailable distribution Rust standard-library source. No source entries from another worktree were included.",
+    "Compared with prior source e441cef (77.0870% lines), current lines are 81,790/107,857 (75.8319%), down 1,373 covered and 25 total. Rust source, Cargo manifest and lockfile are byte-unchanged between these commits. The 25-line count difference is entirely helm/src/process_client/ui/accounts.rs, indicating an artifact or instrumentation difference between measurements; the larger covered-line drop is not fully explained and is not represented as product regression or improvement. No exclusions were added or scope intentionally narrowed. #353 remains open."
   ]
 }
