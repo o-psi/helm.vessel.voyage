@@ -355,61 +355,22 @@ fn workflow_administration_and_typed_preview_do_not_launch_a_voyage() {
 }
 
 #[test]
-fn inference_allowance_preview_commit_retry_audit_and_history_are_offline() {
+fn retired_inference_allowance_commands_are_unavailable_in_real_main() {
     let cli = Cli::new();
-    let initial = cli.json(&["inference", "inspect"]);
-    assert_eq!(initial["unit"], "local_inference_dispatch_permits");
-    let operation = "76c49f94-745d-4d27-8af3-cf7dd778104e";
-    let args = [
-        "inference",
-        "configure",
-        "--operation",
-        operation,
-        "--expected-revision",
-        "0",
-        "--limit",
-        "10",
-        "--warning",
-        "8",
-        "--reason",
-        "offline regression",
-    ];
-    let preview = cli.json(&args);
-    assert_eq!(preview["committed"], false);
-    let mut commit = args.to_vec();
-    commit.push("--confirm");
-    let applied = cli.json(&commit);
-    assert_eq!(applied["committed"], true);
-    let duplicate = cli.json(&commit);
-    assert!(duplicate.to_string().contains(operation));
-    let audit = cli.json(&["inference", "audit"]);
-    assert!(audit.to_string().contains("offline regression"));
-    let history = cli.json(&[
-        "inference",
-        "history",
-        "--from",
-        "2020-01-01T00:00:00Z",
-        "--until",
-        "2030-01-01T00:00:00Z",
-    ]);
-    assert!(history.is_object());
+    let help = cli.ok(&["--help"]);
     assert!(
-        !cli.run(&[
-            "inference",
-            "configure",
-            "--operation",
-            "386128e0-47b8-43f8-a9c2-6612f4d5d280",
-            "--expected-revision",
-            "0",
-            "--unlimited",
-            "--reason",
-            "stale",
-            "--confirm"
-        ])
-        .status
-        .success()
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("inference "))
     );
+    for command in ["inspect", "configure", "audit", "history"] {
+        cli.fails(
+            &["inference", command],
+            "unrecognized subcommand 'inference'",
+        );
+    }
 }
+
 #[test]
 fn onboarding_cli_only_publishes_explicit_reviewed_guidance() {
     let cli = Cli::new();
@@ -556,51 +517,6 @@ fn policy_defaults_cli_initializes_enables_previews_and_activates_exact_workspac
         "1",
     ]);
     assert!(output.exists());
-}
-
-#[test]
-fn inference_history_rejects_invalid_windows_and_group_cursors_without_dispatch() {
-    let cli = Cli::new();
-    cli.json(&["inference", "inspect"]);
-    for args in [
-        vec![
-            "inference",
-            "history",
-            "--from",
-            "2030-01-01T00:00:00Z",
-            "--until",
-            "2020-01-01T00:00:00Z",
-        ],
-        vec![
-            "inference",
-            "history",
-            "--from",
-            "2020-01-01T00:00:00Z",
-            "--until",
-            "2030-01-01T00:00:00Z",
-            "--offset",
-            "1",
-        ],
-        vec![
-            "inference",
-            "history",
-            "--from",
-            "2020-01-01T00:00:00Z",
-            "--until",
-            "2030-01-01T00:00:00Z",
-            "--group",
-            "invalid",
-        ],
-        vec!["inference", "inspect", "--limit", "0"],
-        vec![
-            "inference",
-            "inspect",
-            "--session",
-            "36be6361-1a1d-4547-a1d0-ec6e8b954ee6",
-        ],
-    ] {
-        assert!(!cli.run(&args).status.success(), "{args:?}");
-    }
 }
 
 #[test]
