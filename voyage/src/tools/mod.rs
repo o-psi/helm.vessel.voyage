@@ -1,3 +1,4 @@
+pub(crate) mod goal;
 mod host_browser;
 pub use host_browser::HostBrowserTool;
 pub(crate) mod action_schema;
@@ -647,6 +648,7 @@ impl ToolRegistry {
                     | "process"
                     | "subagent"
                     | "todo"
+                    | "goal"
                     | "completion"
                     | "github"
                     | "vessel"
@@ -904,6 +906,9 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "request_filesystem_root" => arguments["permission"] == "read",
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
+        // Root-bound Goal assessments only record canonical observations; they
+        // cannot grant continuation or change workspace execution policy.
+        "goal" => matches!(action, Some("read" | "report")),
         "completion" => matches!(action, Some("snapshot" | "read")),
         "github" => matches!(action, Some("read" | "logs" | "inspect" | "list")),
         "vessel" => matches!(

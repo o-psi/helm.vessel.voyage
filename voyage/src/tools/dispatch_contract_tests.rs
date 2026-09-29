@@ -146,6 +146,7 @@ fn read_only_action_matrix_is_fail_closed() {
     for (name, actions) in [
         ("process", vec!["read", "list"]),
         ("todo", vec!["list"]),
+        ("goal", vec!["read", "report"]),
         ("completion", vec!["snapshot", "read"]),
         ("github", vec!["read", "logs", "inspect", "list"]),
         (

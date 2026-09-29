@@ -9,6 +9,11 @@ pub(super) async fn suspend(state: &Arc<State>) -> Result<()> {
     if state.shutdown.is_cancelled() || state.active.lock().await.is_some() {
         return Ok(());
     }
+    if state.owner.goal().await?.goal.is_some_and(|g| {
+        g.status == voyage_protocol::goals::GoalStatus::Active && g.continuation_authorized
+    }) {
+        return Ok(());
+    }
     ensure!(
         !state.workflows.pending().await,
         "private turn preparation remains pending"

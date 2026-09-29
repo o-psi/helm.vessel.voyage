@@ -130,17 +130,22 @@ pub async fn execute_admitted_with_controls(
     };
     let prepared = async {
         let record = run.record().await.map_err(|_| preparation::RECORD_READ)?;
-        crate::participant::ParticipantTool::configured(
+        let goal_tool = owner
+            .goal_tool(run_id)
+            .await
+            .map_err(|_| preparation::GOAL_CONFIG)?;
+        let participant_tool = crate::participant::ParticipantTool::configured(
             owner.clone(),
             run_id,
             record.principal_id,
             config,
         )
         .await
-        .map_err(|_| preparation::PARTICIPANT_CONFIG)
+        .map_err(|_| preparation::PARTICIPANT_CONFIG)?;
+        Ok((participant_tool, goal_tool))
     }
     .await;
-    let participant_tool = match prepared {
+    let (participant_tool, goal_tool) = match prepared {
         Ok(tool) => tool,
         Err(reason) => {
             let actual = run.fail_before_execution_reason(reason).await?;
@@ -166,6 +171,7 @@ pub async fn execute_admitted_with_controls(
         approver,
         crate::build::BuildResources {
             extra_tool: participant_tool,
+            goal_tool,
             terminal_manager: retained_terminal,
         },
     )

@@ -199,7 +199,18 @@ async fn finished(state: &Arc<State>) -> Value {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
         loop {
             state.cleanup.advance(1).await.unwrap();
-            let snapshot = state.owner.process_snapshot().await.unwrap();
+            let snapshot = match state.owner.process_snapshot().await {
+                Ok(snapshot) => snapshot,
+                Err(error) if matches!(error.downcast_ref::<rusqlite::Error>(),
+                    Some(rusqlite::Error::SqliteFailure(code,_)) if matches!(code.code,rusqlite::ErrorCode::DatabaseBusy|rusqlite::ErrorCode::DatabaseLocked)) => {
+                    // This is a bounded observation poll, never mutation replay.
+                    // A live journal intentionally refuses rather than blocks
+                    // behind a concurrent writer; the outer deadline still applies.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(error) => panic!("snapshot failed: {error:#}"),
+            };
             if state.active.lock().await.is_none()
                 && !snapshot["run"].is_null()
                 && !matches!(
@@ -1260,4 +1271,326 @@ async fn goal_terminal_accounting_retains_admission_until_active_handle_is_relea
         finished.id.to_string()
     );
     assert!(provider.requests.lock().await.is_empty());
+}
+
+async fn automatic_goal(state: &Arc<State>, limits: voyage_protocol::goals::GoalLimits) {
+    automatic_goal_objective(
+        state,
+        limits,
+        "Finish the larger task; this text is user data.",
+    )
+    .await;
+}
+async fn automatic_goal_objective(
+    state: &Arc<State>,
+    limits: voyage_protocol::goals::GoalLimits,
+    objective: &str,
+) {
+    use voyage_protocol::goals::GoalAction;
+    state.config.write().await.vessel.enabled = false;
+    let response = call(
+        state,
+        RuntimeCommand::GoalUpdate {
+            command_id: Uuid::new_v4(),
+            expected_revision: state.owner.snapshot().await.unwrap().revision,
+            expires_at_ms: deadline(),
+            action: GoalAction::Set {
+                objective: objective.into(),
+                limits,
+                replace_goal_id: None,
+                continue_automatically: true,
+            },
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{response:?}");
+}
+fn measured_reply() -> Reply {
+    Reply::chunks(vec![
+        json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"One step completed."},"finish_reason":"stop"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}}),
+    ])
+}
+async fn goal_stopped(state: &Arc<State>) -> voyage_protocol::goals::Goal {
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            let goal = state.owner.goal().await.unwrap().goal.unwrap();
+            if goal.status != voyage_protocol::goals::GoalStatus::Active
+                && state.active.lock().await.is_none()
+            {
+                return goal;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Goal did not stop")
+}
+
+#[tokio::test]
+async fn goal_driver_continues_once_and_limits_do_not_claim_success() {
+    use voyage_protocol::goals::*;
+    let second = Arc::new(tokio::sync::Notify::new());
+    let (_root, state, provider) = configured(vec![
+        measured_reply(),
+        measured_reply().held(second.clone()),
+    ])
+    .await;
+    automatic_goal(
+        &state,
+        GoalLimits {
+            runs: 2,
+            ..Default::default()
+        },
+    )
+    .await;
+    let driver = tokio::spawn(super::goals::drive(state.clone()));
+    provider.wait_requests(2).await;
+    let goal = state.owner.goal().await.unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            goal.usage.runs,
+            goal.usage.input_tokens,
+            goal.usage.output_tokens
+        ),
+        (2, 20, 4)
+    );
+    // More wakes cannot admit a third turn or replace the current handle.
+    for _ in 0..10 {
+        state.goal_wake.notify_one();
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(provider.requests.lock().await.len(), 2);
+    second.notify_one();
+    let stopped = goal_stopped(&state).await;
+    assert_eq!(stopped.status, GoalStatus::Limited);
+    assert_eq!(stopped.stop_reason, Some(GoalStopReason::RunLimit));
+    assert_eq!(
+        (
+            stopped.usage.runs,
+            stopped.usage.input_tokens,
+            stopped.usage.output_tokens,
+            stopped.usage.unmeasured_runs
+        ),
+        (2, 40, 8, 0)
+    );
+    let saved = state.owner.snapshot().await.unwrap();
+    assert_eq!(saved.session.run_summaries.len(), 2);
+    assert_eq!(saved.session.id, state.registration.session_id);
+    let requests = provider.requests.lock().await;
+    for request in requests.iter() {
+        let messages = request["messages"].as_array().unwrap();
+        assert!(messages.iter().any(|m| {
+            m["role"] == "user"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("Finish the larger task"))
+        }));
+        assert!(!messages.iter().any(|m| {
+            m["role"] == "system"
+                && m["content"]
+                    .as_str()
+                    .is_some_and(|s| s.contains("Finish the larger task"))
+        }));
+    }
+    drop(requests);
+    state.shutdown.cancel();
+    driver.await.unwrap();
+}
+
+#[tokio::test]
+async fn goal_driver_pause_during_run_prevents_next_admission_and_keeps_usage() {
+    use voyage_protocol::goals::*;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (_root, state, provider) = configured(vec![measured_reply().held(gate.clone())]).await;
+    automatic_goal(&state, GoalLimits::default()).await;
+    let driver = tokio::spawn(super::goals::drive(state.clone()));
+    provider.wait_requests(1).await;
+    let goal = state.owner.goal().await.unwrap().goal.unwrap();
+    let response = call(
+        &state,
+        RuntimeCommand::GoalUpdate {
+            command_id: Uuid::new_v4(),
+            expected_revision: state.owner.snapshot().await.unwrap().revision,
+            expires_at_ms: deadline(),
+            action: GoalAction::Pause { goal_id: goal.id },
+        },
+    )
+    .await;
+    assert!(response.error.is_none(), "{response:?}");
+    gate.notify_one();
+    let stopped = goal_stopped(&state).await;
+    assert_eq!(stopped.status, GoalStatus::Paused);
+    assert_eq!(
+        (
+            stopped.usage.runs,
+            stopped.usage.input_tokens,
+            stopped.usage.output_tokens
+        ),
+        (1, 20, 4)
+    );
+    assert_eq!(provider.requests.lock().await.len(), 1);
+    state.shutdown.cancel();
+    driver.await.unwrap();
+}
+
+#[tokio::test]
+async fn goal_driver_rechecks_authority_and_pending_input_before_dispatch() {
+    use voyage_protocol::goals::*;
+    for changed_authority in [false, true] {
+        let (_root, state, provider) = configured(vec![]).await;
+        automatic_goal(&state, GoalLimits::default()).await;
+        if changed_authority {
+            let goal = state.owner.goal().await.unwrap().goal.unwrap();
+            state
+                .owner
+                .update_goal(
+                    crate::attachment::journal::GoalAuthority {
+                        installation_id: Uuid::new_v4(),
+                        principal_id: state.actor.principal_id,
+                        grant: None,
+                    },
+                    RuntimeCommand::GoalUpdate {
+                        command_id: Uuid::new_v4(),
+                        expected_revision: state.owner.snapshot().await.unwrap().revision,
+                        expires_at_ms: deadline(),
+                        action: GoalAction::Pause { goal_id: goal.id },
+                    },
+                )
+                .await
+                .unwrap();
+            state
+                .owner
+                .update_goal(
+                    crate::attachment::journal::GoalAuthority {
+                        installation_id: Uuid::new_v4(),
+                        principal_id: state.actor.principal_id,
+                        grant: None,
+                    },
+                    RuntimeCommand::GoalUpdate {
+                        command_id: Uuid::new_v4(),
+                        expected_revision: state.owner.snapshot().await.unwrap().revision,
+                        expires_at_ms: deadline(),
+                        action: GoalAction::Resume { goal_id: goal.id },
+                    },
+                )
+                .await
+                .unwrap();
+        } else {
+            let input = submit("Pending human input");
+            state
+                .owner
+                .bind_process_command(
+                    input.mutation_id().unwrap(),
+                    state.actor.principal_id,
+                    input,
+                )
+                .await
+                .unwrap();
+        }
+        super::goals::advance(&state).await.unwrap();
+        let stopped = goal_stopped(&state).await;
+        assert_eq!(stopped.status, GoalStatus::NeedsAttention);
+        assert_eq!(
+            stopped.stop_reason,
+            Some(if changed_authority {
+                GoalStopReason::AuthorityRevoked
+            } else {
+                GoalStopReason::UserInput
+            })
+        );
+        assert_eq!(stopped.usage.runs, 0);
+        assert!(provider.requests.lock().await.is_empty());
+        super::goals::advance(&state).await.unwrap();
+        assert_eq!(state.owner.goal().await.unwrap().goal.unwrap(), stopped);
+    }
+}
+
+#[tokio::test]
+async fn goal_driver_completes_only_after_current_run_tool_evidence() {
+    use voyage_protocol::goals::*;
+    // First run makes no completion claim; the next run observes a real file,
+    // reports those receipts, and finishes. All inference stays on loopback.
+    let mut proof = Reply::tool("read_file", json!({"path":"result.txt"}));
+    proof.body = proof.body.replace("fixture-call", "proof-call");
+    let mut assessment = Reply::tool(
+        "goal",
+        json!({"action":"report","report":{
+            "outcome":"complete","summary":"The result has been verified","evidence":[{"call_id":"proof-call","conclusion":"The file contains the expected result"}]
+        }}),
+    );
+    assessment.body = assessment.body.replace("fixture-call", "assessment-call");
+    for reply in [&mut proof, &mut assessment] {
+        reply.body=reply.body.replace("data: [DONE]",&format!("data: {}\n\ndata: [DONE]",json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})));
+    }
+    let (root, state, provider) =
+        configured(vec![measured_reply(), proof, assessment, measured_reply()]).await;
+    std::fs::write(root.path().join("result.txt"), "expected result\n").unwrap();
+    automatic_goal_objective(
+        &state,
+        GoalLimits::default(),
+        "Verify result.txt contains expected result and report the observation.",
+    )
+    .await;
+    let driver = tokio::spawn(super::goals::drive(state.clone()));
+    let goal = goal_stopped(&state).await;
+    assert_eq!(
+        goal.status,
+        GoalStatus::Complete,
+        "{goal:?} history={}",
+        serde_json::to_string(&state.owner.snapshot().await.unwrap().session.messages).unwrap()
+    );
+    assert_eq!(goal.usage.runs, 2);
+    assert_eq!(
+        (
+            goal.usage.input_tokens,
+            goal.usage.output_tokens,
+            goal.usage.unmeasured_runs
+        ),
+        (80, 16, 0)
+    );
+    assert!(goal.assessment.is_some());
+    assert_eq!(provider.requests.lock().await.len(), 4);
+    state.shutdown.cancel();
+    driver.await.unwrap();
+}
+
+#[tokio::test]
+async fn goal_driver_rejects_invented_completion_and_stops_without_progress() {
+    use voyage_protocol::goals::*;
+    let mut report = Reply::tool(
+        "goal",
+        json!({"action":"report","report":{
+            "outcome":"complete","summary":"I claim success without a check","evidence":[{"call_id":"invented","conclusion":"Unsupported claim"}]
+        }}),
+    );
+    report.body=report.body.replace("data: [DONE]",&format!("data: {}\n\ndata: [DONE]",json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})));
+    let (_root, state, provider) = configured(vec![report, measured_reply()]).await;
+    automatic_goal(
+        &state,
+        GoalLimits {
+            no_progress_runs: 1,
+            ..Default::default()
+        },
+    )
+    .await;
+    let driver = tokio::spawn(super::goals::drive(state.clone()));
+    let goal = goal_stopped(&state).await;
+    assert_eq!(goal.status, GoalStatus::Limited, "{goal:?}");
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::NoProgress));
+    assert!(goal.assessment.is_none());
+    assert_eq!(goal.usage.runs, 1);
+    assert_eq!(provider.requests.lock().await.len(), 2);
+    let saved = state.owner.snapshot().await.unwrap();
+    assert!(
+        saved
+            .session
+            .messages
+            .iter()
+            .any(|m| m.role == crate::model::Role::Tool
+                && m.tool_success == Some(false)
+                && m.content.contains("Goal evidence is missing"))
+    );
+    state.shutdown.cancel();
+    driver.await.unwrap();
 }

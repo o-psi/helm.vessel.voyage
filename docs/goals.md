@@ -1,9 +1,9 @@
 # Persistent Goals (#378)
 
 This is an implementation checkpoint for the v1.0.3 Goal feature. The protocol
-and canonical state layer is under development. It is not advertised as a
-capability and does not yet schedule automatic continuation or provide Helm
-controls. The release gate remains [#378](https://github.com/o-psi/helm.vessel.voyage/issues/378).
+and canonical runtime are under development. Automatic continuation and model
+reporting are implemented in Voyage, but the feature is not yet advertised as a
+capability and Helm controls remain unfinished. The release gate remains [#378](https://github.com/o-psi/helm.vessel.voyage/issues/378).
 
 Voyage owns one Goal per session UUID in its canonical journal. The public record
 contains its objective, status, finite limits, usage, timestamps and explicit
@@ -46,7 +46,9 @@ IDs, ordered revisions and terminal records prevent reset, reordering, decreasin
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
 restart retains known child counts and marks open requests uncertain. The meter
 distinguishes explicit zero from missing counters and retains partial counts on
-cancellation. Schema 19 fences writers that cannot preserve these observations, child allocations, delegated-run receipts late accounting and dispatch/non-admission records.
+cancellation. Schema 20 fences writers that cannot preserve these observations, child
+allocations, delegated-run receipts, late accounting, dispatch/non-admission
+records and evidence-linked Goal assessments.
 
 The meter refuses subsequent requests after uncertainty or observed token/time
 limits. It also adds a deny-only check to the existing execution authority, so
@@ -155,7 +157,8 @@ client journeys remain release verification obligations.
 
 Empty turns and previously seen successful tool-result batches increase the
 consecutive no-progress counter. Novel batches reset it. This is a bounded
-heuristic, not verification of the objective. Cancelled/interrupted/failed runs,
+heuristic, not verification of the objective. Tool invocation timing is excluded
+from repeated-result comparisons. Cancelled/interrupted/failed runs,
 approval decisions and unconfirmed cleanup stop automatic continuation; an
 explicit concurrent Pause retains its status while usage is still charged.
 
@@ -168,16 +171,55 @@ reconciles the retained reservation after ordinary interrupted-run recovery:
 unadmitted work is abandoned permanently, and accepted terminal work settles its
 known usage once with an unknown-aggregate marker. Neither path redispatches a
 command. The journal schema upgrade fences older writers before introducing
-settlement records. The execution scheduler is still pending.
+settlement records.
+
+One Voyage-local wake loop runs after startup recovery, owner mutations and terminal
+settlement. Each wake re-reads the private authority and the current host grant;
+installation/principal changes, revoked/expired grants and loss of human owner
+scope stop the Goal. It reserves one exact Submit and uses ordinary admission.
+The admission transaction checks again for pending input or effects after the
+reservation, and refuses a paused or changed Goal. Idle suspension waits while
+an authorized Goal remains active; client disconnect is not cancellation.
+
+Unresolved command bindings for human input, steering or cancellation block
+continuation, even across restart. Expiry alone does not prove non-admission;
+exact receipt resolution closes the binding. Accepted ordinary input/steering
+stops future continuation with `user_input` while preserving the current run and
+usage. Required decisions, pending workflow input and unresolved effects stop
+automatic admission. An explicit owner Resume is required after the obstruction
+has been handled. A delayed failure cannot stop a replacement or undo a Pause.
+The continuation prompt contains bounded Goal state as user task data.
 
 Snapshots expose the History-authorized objective. Ordered `goal` observations
 carry only identity, revision, status, usage and a fixed stop reason; they omit
 objective text and private authority. Client reducers and controls still need
-integration. Model completion/blocked reporting and its evidence checks are
-also pending; the owner mutation API cannot claim completion.
+integration. The root of a metered Goal run receives a `goal` model tool with
+`read` and `report` actions. Local children and independently budgeted child
+Voyages do not receive authority to report the parent's Goal. The owner mutation
+API cannot claim completion, and the model tool cannot create, resume, clear or
+increase a Goal. Reading/reporting this bound metadata is permitted during a
+read-only run; filesystem, process and remote-tool policies remain authoritative.
 
-Before delivery, complete runtime continuation, usage/evidence enforcement,
-restart/cancellation/approval handling, both Helm clients, offline process
+A report binds its completion/blocked assessment to the current objective revision,
+run, incarnation and exact canonical tool call. It needs bounded explanations and
+actual tool-result IDs from the same run. Completion evidence must be successful
+and complete. Invented, repeated, ambiguous, failed, stale and other-run evidence
+is refused. Configured secrets are rejected before report persistence. A run can
+record one immutable assessment; it remains pending until terminal settlement.
+
+Settlement revalidates the evidence digest against the final canonical transcript.
+A completed run, known aggregate usage, current authority and observed cleanup are
+required. Pause, intervening input, cancellation, interruption, decisions, token/time
+limits or unknown effects prevent promotion. A valid assessment may complete the
+last allowed run; a run limit or no-progress limit alone never means success.
+Blocked assessments carry their evidence separately from a limit stop. The Goal
+snapshot retains the accepted assessment and evidence digest; public invalidation
+events omit its text. Evidence validation establishes provenance and freshness;
+it does not mechanically prove that the model's interpretation of an arbitrary
+objective is correct. Goal-tool reads/reports do not count as automatic progress.
+
+Before delivery, qualify runtime continuation and usage/evidence enforcement,
+restart/cancellation/approval handling, complete both Helm clients and offline process
 journeys, full workspace coverage and hosted build/artifact verification. The
 state-layer tests alone do not establish #378 acceptance.
 

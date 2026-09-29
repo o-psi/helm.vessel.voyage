@@ -33,6 +33,10 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         super::super::lifecycle::ensure_admissible(&tx, guard.session_id)?;
         ensure_idle(&tx, guard.session_id)?;
+        ensure!(
+            super::scheduling::obstruction(&tx, guard.session_id)?.is_none(),
+            "Goal continuation blocked by pending input or effects"
+        );
         let mut current = read(&tx, guard.session_id)?;
         ensure!(
             current.revision == expected_goal_revision,
@@ -154,7 +158,7 @@ impl Journal {
             "reserved goal identity conflict"
         );
         // Explicit human pause remains a pause; a restart cannot override it.
-        if goal.status != GoalStatus::Paused {
+        if goal.status == GoalStatus::Active {
             goal.status = GoalStatus::NeedsAttention;
             goal.stop_reason = Some(reason);
         }

@@ -59,6 +59,7 @@ pub enum GoalStatus {
 #[serde(rename_all = "snake_case")]
 pub enum GoalStopReason {
     UserPaused,
+    UserInput,
     RunLimit,
     TokenLimit,
     TimeLimit,
@@ -85,6 +86,8 @@ pub struct Goal {
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub stop_reason: Option<GoalStopReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assessment: Option<GoalAssessment>,
 }
 
 impl Goal {
@@ -202,4 +205,33 @@ mod tests {
             Some(ProcessRight::Execute)
         );
     }
+}
+
+/// An evidence-linked model assessment. Receipt validation establishes the
+/// observations' provenance, not a semantic proof of an arbitrary objective.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalReport {
+    pub outcome: GoalReportOutcome,
+    pub summary: String,
+    pub evidence: Vec<GoalEvidence>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalReportOutcome {
+    Complete,
+    Blocked,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalEvidence {
+    pub call_id: String,
+    pub conclusion: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalAssessment {
+    pub run_id: Uuid,
+    pub report: GoalReport,
+    pub evidence_sha256: String,
 }

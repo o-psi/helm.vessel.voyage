@@ -33,6 +33,7 @@ pub struct ManagedAgent {
 #[derive(Default)]
 pub struct BuildResources {
     pub extra_tool: Option<Arc<dyn crate::tools::Tool>>,
+    pub goal_tool: Option<Arc<dyn crate::tools::Tool>>,
     pub terminal_manager: Option<crate::tools::ProcessTool>,
 }
 pub struct BuildFailure {
@@ -57,6 +58,7 @@ pub async fn build_authorized_agent_bundle(
     let result: Result<ManagedAgent> = async {
         let BuildResources {
             extra_tool,
+            goal_tool,
             terminal_manager,
         } = retained;
         if let Some(authority) = &authority {
@@ -136,6 +138,9 @@ pub async fn build_authorized_agent_bundle(
             managed_resources.register_browser(browser.clone())?;
         }
         if let Some(tool) = extra_tool {
+            tools.register_arc(tool)?;
+        }
+        if let Some(tool) = goal_tool {
             tools.register_arc(tool)?;
         }
         if let Some(manager) = terminal_manager {

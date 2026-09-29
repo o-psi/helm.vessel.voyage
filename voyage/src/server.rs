@@ -19,6 +19,7 @@ pub mod controls;
 pub(crate) mod decisions;
 mod dispatch;
 mod github;
+mod goals;
 pub mod guardian;
 mod images;
 pub mod models;
@@ -62,6 +63,7 @@ struct State {
     config: tokio::sync::RwLock<Config>,
     registration: ProcessRegistration,
     active: Mutex<Option<ActiveRun>>,
+    goal_wake: tokio::sync::Notify,
     admission: Mutex<()>,
     requests: tokio::sync::RwLock<()>,
     suspend_requested: std::sync::atomic::AtomicBool,
@@ -279,6 +281,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             config: tokio::sync::RwLock::new(config),
             registration,
             active: Mutex::new(None),
+            goal_wake: tokio::sync::Notify::new(),
             admission: Mutex::new(()),
             requests: tokio::sync::RwLock::new(()),
             suspend_requested: std::sync::atomic::AtomicBool::new(false),

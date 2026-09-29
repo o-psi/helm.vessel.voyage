@@ -75,7 +75,7 @@ pub(super) async fn dispatch_admitted(
                 authority.check()?;
             }
             let _admission = state.admission.lock().await;
-            state
+            let receipt = state
                 .owner
                 .update_goal(
                     crate::attachment::journal::GoalAuthority {
@@ -85,7 +85,9 @@ pub(super) async fn dispatch_admitted(
                     },
                     command,
                 )
-                .await
+                .await?;
+            state.goal_wake.notify_one();
+            Ok(receipt)
         }
         RuntimeCommand::NotificationEvents { after, limit } => {
             state.owner.notification_events(after, limit).await

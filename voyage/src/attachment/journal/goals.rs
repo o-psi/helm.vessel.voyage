@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS process_goal_meters(command_id TEXT PRIMARY KEY REFER
 CREATE TABLE IF NOT EXISTS process_goal_requests(request_id TEXT PRIMARY KEY,command_id TEXT NOT NULL REFERENCES process_goal_meters(command_id),observation TEXT NOT NULL);";
 
 mod continuation;
+pub(super) mod scheduling;
 pub(crate) use continuation::GoalTurnReservation;
 mod allocations;
 mod dispatch;
@@ -22,6 +23,8 @@ mod reconciliation;
 pub(crate) use reconciliation::GoalAllocation;
 mod delegated;
 mod metering;
+pub(super) mod reporting;
+pub(crate) use reporting::GoalReportContext;
 mod settlement;
 pub(crate) use settlement::GoalMeasurement;
 
@@ -60,6 +63,7 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
         ALTER TABLE process_goal_allocations ADD COLUMN closure TEXT;")?;
     }
     db.execute_batch("CREATE TABLE IF NOT EXISTS process_goal_reconciliations(command_id TEXT PRIMARY KEY REFERENCES process_goal_meters(command_id),input_tokens INTEGER NOT NULL,output_tokens INTEGER NOT NULL,local_cleanup_observed INTEGER NOT NULL DEFAULT 0);")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS process_goal_reports(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),goal_revision INTEGER NOT NULL,call_id TEXT NOT NULL,report TEXT NOT NULL,evidence_digest TEXT NOT NULL);")?;
     Ok(())
 }
 
@@ -234,6 +238,7 @@ impl Journal {
                     usage: GoalUsage::default(),
                     created_at_ms: now,
                     updated_at_ms: now,
+                    assessment: None,
                     stop_reason: (!continue_automatically).then_some(GoalStopReason::UserPaused),
                 });
                 continuation = continue_automatically.then_some(authority);
@@ -253,6 +258,7 @@ impl Journal {
                     goal.status != GoalStatus::Complete,
                     "completed goal requires explicit replacement"
                 );
+                goal.assessment = None;
                 goal.objective = objective.clone();
                 goal.limits = limits.clone();
                 // Continuation consent describes the accepted objective/limits.

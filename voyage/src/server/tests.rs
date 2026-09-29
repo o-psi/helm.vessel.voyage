@@ -62,6 +62,7 @@ pub(super) async fn fixture() -> (tempfile::TempDir, Arc<State>) {
         config: tokio::sync::RwLock::new(config),
         registration,
         active: Mutex::new(None),
+        goal_wake: tokio::sync::Notify::new(),
         admission: Mutex::new(()),
         requests: tokio::sync::RwLock::new(()),
         suspend_requested: std::sync::atomic::AtomicBool::new(false),

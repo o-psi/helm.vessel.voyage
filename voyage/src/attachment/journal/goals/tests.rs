@@ -524,7 +524,14 @@ fn finish_reserved(
             arguments: json!({"path":"result.txt"}),
         });
         messages.push(request);
-        messages.push(Message::tool_result(call, result, true));
+        let mut observed = Message::tool_result(call, result, true);
+        observed.tool_outcome = Some(voyage_protocol::tool_result::ToolOutcome {
+            // Real tool observations carry invocation timing. Vary it across
+            // runs so repeated-result detection cannot depend on equal timing.
+            elapsed_ms: Some(now as u64),
+            ..Default::default()
+        });
+        messages.push(observed);
     }
     j.checkpoint_canonical_at(
         guard,
@@ -2086,4 +2093,306 @@ fn legacy_goal_allocation_cannot_infer_non_dispatch_after_schema_upgrade() {
         )
         .unwrap()
     );
+}
+
+#[test]
+fn pending_input_between_goal_reservation_and_admission_fences_the_goal() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+    let reserved = j
+        .reserve_goal_turn(
+            &guard,
+            j.goal(session.id).unwrap().revision,
+            Uuid::new_v4(),
+            "Continue".into(),
+            1000,
+        )
+        .unwrap();
+    let input = RuntimeCommand::Submit {
+        command_id: Uuid::new_v4(),
+        expected_revision: j.load_session(session.id).unwrap().revision,
+        expires_at_ms: 9000,
+        prompt: "New human instruction".into(),
+        budget: None,
+        coordination: None,
+    };
+    let input_id = input.mutation_id().unwrap();
+    j.bind_process_command(&guard, input_id, a.principal_id, &input)
+        .unwrap();
+    let RuntimeCommand::Submit {
+        command_id,
+        expected_revision,
+        expires_at_ms,
+        prompt,
+        ..
+    } = reserved.command
+    else {
+        panic!()
+    };
+    let request = TurnAdmission {
+        command_id,
+        expected_revision,
+        expires_at_ms: expires_at_ms as i64,
+        prompt,
+        parts: vec![],
+        session_id: session.id,
+        machine_id: a.installation_id,
+        principal_id: a.principal_id,
+        budget: None,
+        coordination: None,
+        operator_name: None,
+    };
+    assert!(
+        j.admit_turn(&guard, &request, 1001)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("pending input")
+    );
+    assert!(j.process_receipt(command_id).unwrap().is_none());
+    assert_eq!(
+        j.goal_obstruction(session.id).unwrap(),
+        Some(GoalStopReason::UserInput)
+    );
+    j.abandon_goal_turn(&guard, command_id, GoalStopReason::UserInput, 1001)
+        .unwrap();
+    assert_eq!(
+        j.process_receipt(command_id).unwrap().unwrap()["status"],
+        "not_admitted"
+    );
+    assert!(j.admit_turn(&guard, &request, 1002).is_err());
+    j.resolve_process_command(&guard, input_id, a.principal_id, Some(&input))
+        .unwrap();
+    assert_eq!(j.goal_obstruction(session.id).unwrap(), None);
+    // Exact non-admission only resolves input; it cannot grant continuation.
+    assert!(j.goal_continuation(session.id).unwrap().is_none());
+}
+
+#[test]
+fn ordinary_turn_preempts_goal_without_changing_its_input_revision() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+    let before = j.load_session(session.id).unwrap().revision;
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        expected_revision: before,
+        expires_at_ms: 9000,
+        prompt: "User takes over".into(),
+        parts: vec![],
+        session_id: session.id,
+        machine_id: a.installation_id,
+        principal_id: a.principal_id,
+        budget: None,
+        coordination: None,
+        operator_name: None,
+    };
+    let admitted = j.admit_turn(&guard, &request, 1001).unwrap();
+    assert!(!admitted.duplicate);
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UserInput));
+    assert_eq!(goal.usage.runs, 0);
+    assert!(!goal.continuation_authorized);
+    assert_eq!(j.load_session(session.id).unwrap().revision, before + 1);
+    assert!(j.admit_turn(&guard, &request, 1002).unwrap().duplicate);
+}
+
+fn report_fixture(outcome: GoalReportOutcome) -> GoalReport {
+    GoalReport {
+        outcome,
+        summary: "The objective was checked against the result".into(),
+        evidence: vec![GoalEvidence {
+            call_id: "proof".into(),
+            conclusion: "The observed file contains the required value".into(),
+        }],
+    }
+}
+fn report_messages(
+    j: &mut Journal,
+    guard: &ExecutionGuard,
+    run: Uuid,
+    report: &GoalReport,
+    success: bool,
+) {
+    let mut messages = j.load_session(guard.session_id).unwrap().session.messages;
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(crate::model::ToolCall {
+        id: "proof".into(),
+        name: "read_file".into(),
+        arguments: json!({"path":"result.txt"}),
+    });
+    messages.push(call);
+    messages.push(Message::tool_result("proof", "verified result", success));
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(crate::model::ToolCall {
+        id: "assessment".into(),
+        name: "goal".into(),
+        arguments: json!({"action":"report","report":report}),
+    });
+    messages.push(call);
+    j.checkpoint_canonical_at(guard, run, &messages, &Usage::default(), 1100)
+        .unwrap();
+}
+
+#[test]
+fn goal_assessment_needs_current_real_evidence_and_cannot_change_authority() {
+    for invalid in ["missing", "failed", "wrong_call", "stale", "foreign_run"] {
+        let (_root, mut j, session, guard, a) = fixture();
+        let c = command(&j, session.id, set(None, true));
+        j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+        let (run, incarnation) = start_reserved(&mut j, &guard, 1000);
+        j.begin_goal_meter(&guard, run.command_id, incarnation, 1000)
+            .unwrap();
+        let mut context = j.goal_report_context(session.id, run.id).unwrap().unwrap();
+        let mut report = report_fixture(GoalReportOutcome::Complete);
+        if invalid == "missing" {
+            report.evidence[0].call_id = "invented".into();
+        }
+        report_messages(&mut j, &guard, run.id, &report, invalid != "failed");
+        if invalid == "stale" {
+            let id = j.goal(session.id).unwrap().goal.unwrap().id;
+            let pause = command(&j, session.id, GoalAction::Pause { goal_id: id });
+            j.update_goal(&guard, a, &pause, 1100).unwrap();
+        }
+        if invalid == "foreign_run" {
+            context.run = Uuid::new_v4();
+        }
+        assert!(
+            j.report_goal(
+                &guard,
+                &context,
+                if invalid == "wrong_call" {
+                    "invented"
+                } else {
+                    "assessment"
+                },
+                &report
+            )
+            .is_err(),
+            "{invalid}"
+        );
+        assert_ne!(
+            j.goal(session.id).unwrap().goal.unwrap().status,
+            GoalStatus::Complete
+        );
+    }
+}
+
+#[test]
+fn goal_report_finalization_requires_successful_measured_clean_uninterrupted_run() {
+    for mode in [
+        "complete",
+        "blocked",
+        "cancelled",
+        "unknown_usage",
+        "cleanup",
+        "paused",
+        "revoked",
+        "last_run",
+    ] {
+        let (_root, mut j, session, guard, a) = fixture();
+        let mut action = set(None, true);
+        if mode == "last_run"
+            && let GoalAction::Set { limits, .. } = &mut action
+        {
+            limits.runs = 1;
+        }
+        let c = command(&j, session.id, action);
+        j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+        let (run, incarnation) = start_reserved(&mut j, &guard, 1000);
+        j.begin_goal_meter(&guard, run.command_id, incarnation, 1000)
+            .unwrap();
+        let context = j.goal_report_context(session.id, run.id).unwrap().unwrap();
+        let report = report_fixture(if mode == "blocked" {
+            GoalReportOutcome::Blocked
+        } else {
+            GoalReportOutcome::Complete
+        });
+        report_messages(&mut j, &guard, run.id, &report, mode != "blocked");
+        let receipt = j
+            .report_goal(&guard, &context, "assessment", &report)
+            .unwrap();
+        assert_eq!(receipt["pending_terminal_checks"], true);
+        assert_eq!(
+            j.goal(session.id).unwrap().goal.unwrap().status,
+            GoalStatus::Active
+        );
+        assert_eq!(
+            j.report_goal(&guard, &context, "assessment", &report)
+                .unwrap(),
+            receipt
+        );
+        let mut changed = report.clone();
+        changed.summary = "changed claim".into();
+        assert!(
+            j.report_goal(&guard, &context, "assessment", &changed)
+                .is_err()
+        );
+        let mut messages = j.load_session(session.id).unwrap().session.messages;
+        messages.push(Message::tool_result("assessment", "recorded", true));
+        j.checkpoint_canonical_at(&guard, run.id, &messages, &Usage::default(), 1200)
+            .unwrap();
+        if mode == "paused" {
+            let id = j.goal(session.id).unwrap().goal.unwrap().id;
+            let pause = command(&j, session.id, GoalAction::Pause { goal_id: id });
+            j.update_goal(&guard, a, &pause, 1200).unwrap();
+        } else if mode == "revoked" {
+            j.stop_goal(
+                &guard,
+                j.goal(session.id).unwrap().revision,
+                GoalStopReason::AuthorityRevoked,
+                1200,
+            )
+            .unwrap();
+        }
+        let state = if mode == "cancelled" {
+            RunState::Cancelled
+        } else {
+            RunState::Completed
+        };
+        j.finish(
+            &guard,
+            run.id,
+            state,
+            if mode == "cancelled" {
+                Some("cancelled")
+            } else {
+                None
+            },
+            if mode == "cancelled" {
+                None
+            } else {
+                Some("finished")
+            },
+        )
+        .unwrap();
+        j.settle_goal_run(
+            &guard,
+            run.id,
+            if mode == "unknown_usage" {
+                None
+            } else {
+                measured()
+            },
+            mode != "cleanup",
+            1300,
+        )
+        .unwrap();
+        let goal = j.goal(session.id).unwrap().goal.unwrap();
+        match mode {
+            "complete" | "last_run" => {
+                assert_eq!(goal.status, GoalStatus::Complete);
+                assert_eq!(goal.assessment.unwrap().report, report);
+            }
+            "blocked" => assert_eq!(goal.status, GoalStatus::Blocked),
+            "paused" => assert_eq!(goal.status, GoalStatus::Paused),
+            _ => assert_eq!(goal.status, GoalStatus::NeedsAttention, "{mode}"),
+        }
+        assert!(!goal.continuation_authorized);
+        assert!(
+            j.report_goal(&guard, &context, "assessment", &report)
+                .is_err()
+        );
+    }
 }

@@ -1,5 +1,6 @@
 //! Pre-dispatch failures release only resources positively observed idle.
 use super::*;
+pub(super) const GOAL_CONFIG: &str = "Runtime startup failed during Goal reporting configuration.";
 pub(super) const RECORD_READ: &str = "Runtime startup failed during preparation record read.";
 pub(super) const PARTICIPANT_CONFIG: &str =
     "Runtime startup failed during participant configuration.";

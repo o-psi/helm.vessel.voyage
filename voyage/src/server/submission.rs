@@ -214,6 +214,7 @@ pub(super) async fn submit(
         }
         Admission::New(run) => run,
     };
+    let terminal_authority = authorization.authority.clone();
     let workflow_result: Result<()> = async {
         config.goal_meter = state
             .owner
@@ -350,6 +351,33 @@ pub(super) async fn submit(
                             complete: measured.complete,
                         }
                     });
+                    if terminal_authority
+                        .as_ref()
+                        .is_some_and(|authority| authority.check().is_err())
+                        || !super::goals::authority_current(&state)
+                            .await
+                            .unwrap_or(false)
+                    {
+                        let stopped = async {
+                            let goal = state.owner.goal().await?;
+                            state
+                                .owner
+                                .stop_goal(
+                                    goal.revision,
+                                    voyage_protocol::goals::GoalStopReason::AuthorityRevoked,
+                                )
+                                .await
+                        }
+                        .await;
+                        if let Err(error) = stopped {
+                            tracing::error!(
+                                "Goal authority revocation remains unresolved: {error}"
+                            );
+                            // Keep admission fenced for explicit recovery rather
+                            // than publishing a report after unrecorded revocation.
+                            return;
+                        }
+                    }
                     if let Err(error) = state
                         .owner
                         .settle_metered_run(result.actual.id, measurement, result.cleanup_observed)
@@ -362,6 +390,7 @@ pub(super) async fn submit(
                 Err(error) => tracing::error!("voyage execution failed: {}", error),
             }
             *state.active.lock().await = None;
+            state.goal_wake.notify_one();
         }
         if let Err(error) = super::suspension::suspend(&state).await {
             tracing::warn!("voyage suspension blocked: {error}");

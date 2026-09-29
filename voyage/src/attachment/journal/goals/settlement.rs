@@ -55,6 +55,7 @@ impl Journal {
         );
         let saved = read_session(&tx, guard.session_id)?;
         let mut current = read(&tx, guard.session_id)?;
+        let assessment = super::reporting::assessment(&tx, &saved.session, &run, current.revision)?;
         let goal = current.goal.as_mut().context("reserved goal missing")?;
         ensure!(
             goal.id.to_string() == goal_id,
@@ -163,8 +164,31 @@ impl Journal {
             goal.limit_reached()
                 .map(|reason| (GoalStatus::Limited, reason))
         };
+        let report_eligible = goal.status == GoalStatus::Active
+            && run.state == RunState::Completed
+            && measured
+            && cleanup_observed
+            && unresolved == 0
+            && decisions == 0
+            && cleanup_ready(&tx, guard.session_id)?
+            && super::scheduling::obstruction(&tx, guard.session_id)?.is_none()
+            && stop.is_none_or(|(_, reason)| {
+                matches!(
+                    reason,
+                    GoalStopReason::RunLimit | GoalStopReason::NoProgress
+                )
+            });
+        if report_eligible && let Some(assessment) = assessment {
+            goal.status = match assessment.report.outcome {
+                GoalReportOutcome::Complete => GoalStatus::Complete,
+                GoalReportOutcome::Blocked => GoalStatus::Blocked,
+            };
+            goal.stop_reason = None;
+            goal.continuation_authorized = false;
+            goal.assessment = Some(assessment);
+        }
         // A concurrent explicit pause wins over every automatic transition.
-        if goal.status != GoalStatus::Paused
+        if goal.status == GoalStatus::Active
             && let Some((status, reason)) = stop
         {
             goal.status = status;
@@ -258,7 +282,16 @@ fn progress_digest(session: &Session, run: Uuid) -> Result<Option<String>> {
         else {
             continue;
         };
-        evidence.push(json!({"name":call.name,"arguments":call.arguments,"content":message.content,"outcome":message.tool_outcome}));
+        if call.name == "goal" {
+            continue;
+        }
+        // Timing varies between identical observations and cannot count as
+        // substantive progress. Keep execution/exit/completeness facts.
+        let mut outcome = message.tool_outcome.clone();
+        if let Some(outcome) = &mut outcome {
+            outcome.elapsed_ms = None;
+        }
+        evidence.push(json!({"name":call.name,"arguments":call.arguments,"content":message.content,"outcome":outcome}));
     }
     if evidence.is_empty() {
         Ok(None)

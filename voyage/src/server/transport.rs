@@ -69,6 +69,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         tokio::time::Instant::now() + std::time::Duration::from_secs(2),
         std::time::Duration::from_secs(2),
     );
+    let goals = tokio::spawn(super::goals::drive(state.clone()));
     loop {
         tokio::select! {
             _=idle.tick() => {
@@ -123,6 +124,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     } else {
         drop(listener);
     }
+    goals.await?;
     while suspensions.join_next().await.is_some() {}
     // Wait for accepted commands to register their owned work before shutdown observation.
     let barrier = state.admission.lock().await;
