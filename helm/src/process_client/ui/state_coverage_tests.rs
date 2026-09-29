@@ -1,6 +1,21 @@
 use super::super::coverage_support;
 use super::*;
+use ratatui::{Terminal, backend::TestBackend};
 use serde_json::json;
+
+fn rendered_sidebar(app: &crate::process_client::ui::App) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    terminal
+        .draw(|frame| crate::process_client::ui::render::draw(frame, app))
+        .unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
 
 #[test]
 fn generated_names_require_a_nonempty_hex_suffix() {
@@ -71,4 +86,52 @@ async fn lifecycle_and_route_filters_control_navigation() {
         .lifecycle["deleted"] = json!(true);
     assert!(app.views[&target].deleted());
     assert!(app.ordered_targets().is_empty());
+}
+
+#[tokio::test]
+async fn settled_voyages_have_one_labeled_section_after_active_voyages() {
+    let (_fixture, mut app, active) = coverage_support::app();
+    let settled = Target {
+        session: Uuid::new_v4(),
+        ..active
+    };
+    let mut view = View::new(app.views[&active].process.clone());
+    view.snapshot = app.views[&active].snapshot.clone();
+    view.process.session_id = settled.session;
+    view.snapshot.as_mut().unwrap().session_id = settled.session;
+    view.snapshot.as_mut().unwrap().run =
+        serde_json::from_value(json!({"run_id":Uuid::new_v4(),"state":"completed"})).unwrap();
+    view.observe_settlement(app.presentation_now);
+    app.settle_after_secs = 0;
+    app.views.insert(settled, view);
+
+    let targets = app.ordered_targets();
+    assert_eq!(targets, vec![active, settled]);
+    assert_eq!(
+        crate::process_client::ui::render::settled_section_start(&app, &targets),
+        Some(1)
+    );
+    let screen = rendered_sidebar(&app);
+    assert!(screen.contains("Settled"), "{screen}");
+    assert_eq!(
+        app.sidebar
+            .hits
+            .borrow()
+            .iter()
+            .map(|hit| hit.target)
+            .collect::<Vec<_>>(),
+        targets
+    );
+
+    app.views.remove(&active);
+    assert_eq!(
+        crate::process_client::ui::render::settled_section_start(&app, &[settled]),
+        Some(0)
+    );
+    assert!(rendered_sidebar(&app).contains("Settled conversations"));
+    app.archives = true;
+    assert_eq!(
+        crate::process_client::ui::render::settled_section_start(&app, &[settled]),
+        None
+    );
 }

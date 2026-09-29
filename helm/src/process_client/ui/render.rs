@@ -444,6 +444,14 @@ fn sidebar_text(title: &str, host: Option<&str>) -> Text<'static> {
     Text::from(vec![line, Line::default()])
 }
 
+pub(super) fn settled_section_start(app: &App, targets: &[super::state::Target]) -> Option<usize> {
+    (!app.archives).then(|| {
+        targets.iter().position(|target| {
+            app.views[target].sidebar_settled(app.presentation_now, app.settle_after_secs)
+        })
+    })?
+}
+
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let divider_style = if app.sidebar.resize.highlighted(app.sidebar.pointer) {
         accent().add_modifier(Modifier::BOLD)
@@ -474,9 +482,13 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Constraint::Length(2),
     ])
     .split(area);
+    let targets = app.ordered_targets();
+    let settled_start = settled_section_start(app, &targets);
     frame.render_widget(
         Paragraph::new(if app.archives {
             "Archived conversations"
+        } else if settled_start == Some(0) {
+            "Settled conversations"
         } else {
             "Conversations"
         })
@@ -493,7 +505,6 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             app.new_drafts.len().min(4) as u16,
         ),
     );
-    let targets = app.ordered_targets();
     let multiple_vessels = targets.first().is_some_and(|first| {
         targets
             .iter()
@@ -573,6 +584,12 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     .border_style(muted()),
                 Rect::new(rows[1].x, y + height - 1, rows[1].width, 1),
             );
+            if settled_start == Some(index + 1) {
+                frame.render_widget(
+                    Paragraph::new(" Settled ").style(muted()),
+                    Rect::new(rows[1].x, y + height - 1, rows[1].width.min(9), 1),
+                );
+            }
         }
         app.sidebar.hits.borrow_mut().push(super::sidebar::Hit {
             area,
