@@ -34,6 +34,7 @@ fn fixture() -> (tempfile::TempDir, Journal, Session, ExecutionGuard) {
 
 fn admit(journal: &mut Journal, guard: &ExecutionGuard) -> RunRecord {
     let request = TurnAdmission {
+        budget: None,
         coordination: None,
         operator_name: None,
         command_id: Uuid::new_v4(),

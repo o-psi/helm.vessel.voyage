@@ -28,8 +28,8 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 15 fences writers that cannot preserve durable Goal request accounting.
-pub(crate) const SCHEMA_VERSION: i64 = 15;
+// Version 16 extends the Goal accounting ledger to bounded delegated runs.
+pub(crate) const SCHEMA_VERSION: i64 = 16;
 mod goals;
 pub(crate) use goals::{GoalAuthority, GoalMeasurement, GoalTurnReservation};
 pub(super) mod checkpoint_wait;
@@ -155,6 +155,8 @@ pub struct VersionedSession {
 #[derive(Clone, Serialize)]
 pub struct TurnAdmission {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget: Option<voyage_protocol::execution_budget::ExecutionBudget>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     // Presentation metadata must not change the established command digest.
     #[serde(skip_serializing)]
@@ -266,7 +268,7 @@ impl Journal {
             ensure!(
                 matches!(
                     version,
-                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | SCHEMA_VERSION
+                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION
                 ),
                 "unsupported attachment journal schema"
             );
@@ -283,7 +285,7 @@ impl Journal {
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
             notifications::initialize(&tx)?;
-            tx.execute_batch(goals::SCHEMA)?;
+            goals::initialize(&tx)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -390,7 +392,7 @@ impl Journal {
         if self.opened_schema < 12 {
             notifications::initialize(&tx)?;
         }
-        tx.execute_batch(goals::SCHEMA)?;
+        goals::initialize(&tx)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -554,6 +556,12 @@ impl Journal {
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
         self.check_schema()?;
+        ensure!(
+            request.budget.as_ref().is_none_or(
+                |b| b.valid_for(request.command_id) && b.session_id == request.session_id
+            ),
+            "invalid delegated execution budget"
+        );
         if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
@@ -607,6 +615,12 @@ impl Journal {
     ) -> Result<Admission> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
+            request.budget.as_ref().is_none_or(
+                |b| b.valid_for(request.command_id) && b.session_id == request.session_id
+            ),
+            "invalid delegated execution budget"
+        );
+        ensure!(
             request
                 .coordination
                 .as_ref()
@@ -624,6 +638,9 @@ impl Journal {
                 && request.prompt.len() <= MAX_PROMPT,
             "invalid prompt size"
         );
+        if request.budget.is_some() {
+            self.require_content_schema(guard, false)?;
+        }
         if !request.parts.is_empty() {
             crate::images::validate_parts(&request.parts)?;
             self.require_image_schema(guard)?;
@@ -1802,7 +1819,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=14),
+            matches!(self.opened_schema, 8..=15),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self
@@ -1821,7 +1838,7 @@ impl Journal {
         if self.opened_schema < 12 {
             notifications::initialize(&tx)?;
         }
-        tx.execute_batch(goals::SCHEMA)?;
+        goals::initialize(&tx)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],

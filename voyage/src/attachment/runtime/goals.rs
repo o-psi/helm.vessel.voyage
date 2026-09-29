@@ -48,10 +48,11 @@ impl ManagedSessionOwner {
         .await?
     }
 
-    pub(crate) async fn begin_goal_meter(
+    pub(crate) async fn begin_execution_meter(
         &self,
         command: Uuid,
         incarnation: Uuid,
+        delegated: Option<voyage_protocol::execution_budget::ExecutionBudget>,
     ) -> anyhow::Result<Option<Arc<GoalMeter>>> {
         let shared = self.store.clone();
         let budget = tokio::task::spawn_blocking(move || {
@@ -59,7 +60,20 @@ impl ManagedSessionOwner {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
-            journal.begin_goal_meter(guard, command, incarnation, SystemClock.now_ms()?)
+            match delegated {
+                Some(budget) => {
+                    anyhow::ensure!(
+                        budget.valid_for(command),
+                        "delegated command identity mismatch"
+                    );
+                    journal
+                        .begin_delegated_meter(guard, &budget, incarnation, SystemClock.now_ms()?)
+                        .map(Some)
+                }
+                None => {
+                    journal.begin_goal_meter(guard, command, incarnation, SystemClock.now_ms()?)
+                }
+            }
         })
         .await??;
         Ok(budget.map(|(tokens, time)| {
@@ -75,7 +89,7 @@ impl ManagedSessionOwner {
         }))
     }
 
-    pub(crate) async fn settle_goal_run(
+    pub(crate) async fn settle_metered_run(
         &self,
         run: Uuid,
         measurement: Option<GoalMeasurement>,
@@ -87,6 +101,15 @@ impl ManagedSessionOwner {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
+            if let Some(receipt) = journal.settle_delegated_run(
+                guard,
+                run,
+                measurement.clone(),
+                cleanup_observed,
+                SystemClock.now_ms()?,
+            )? {
+                return Ok(Some(serde_json::to_value(receipt)?));
+            }
             journal.settle_goal_run(
                 guard,
                 run,
@@ -105,7 +128,8 @@ impl ManagedSessionOwner {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
-            journal.recover_goal_turn(guard, SystemClock.now_ms()?)
+            journal.recover_goal_turn(guard, SystemClock.now_ms()?)?;
+            journal.recover_delegated_meter(guard, SystemClock.now_ms()?)
         })
         .await?
     }

@@ -23,6 +23,7 @@ pub(super) async fn fixture_authorized(
     let Admission::New(run) = owner
         .admit_authorized_after(
             TurnAdmission {
+                budget: None,
                 coordination: None,
                 operator_name: None,
                 command_id: Uuid::new_v4(),

@@ -794,6 +794,7 @@ mod live_controls_batch {
         let admission = state
             .owner
             .admit(crate::attachment::journal::TurnAdmission {
+                budget: None,
                 coordination: None,
                 operator_name: None,
                 command_id: Uuid::new_v4(),
@@ -1071,6 +1072,7 @@ mod submission_configuration_batch {
     }
     fn submit(id: Uuid, expiry: u64) -> RuntimeCommand {
         RuntimeCommand::Submit {
+            budget: None,
             coordination: None,
             command_id: id,
             expected_revision: 0,
@@ -1148,6 +1150,7 @@ mod submission_configuration_batch {
         let admitted = state
             .owner
             .admit(crate::attachment::journal::TurnAdmission {
+                budget: None,
                 coordination: None,
                 operator_name: None,
                 command_id: id,

@@ -161,6 +161,7 @@ impl<'a> Connection<'a> {
                 "voyage already has an active run; use chat to steer it"
             );
             VoyageCommand::Submit {
+                budget: None,
                 coordination: None,
                 command_id,
                 expected_revision,

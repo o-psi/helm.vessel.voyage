@@ -147,6 +147,7 @@ pub(super) async fn execute(
         } => (
             session,
             VoyageCommand::Submit {
+                budget: None,
                 coordination: None,
                 command_id,
                 expected_revision,

@@ -46,7 +46,7 @@ IDs, ordered revisions and terminal records prevent reset, reordering, decreasin
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
 restart retains known child counts and marks open requests uncertain. The meter
 distinguishes explicit zero from missing counters and retains partial counts on
-cancellation. Schema 15 fences writers that cannot preserve these observations.
+cancellation. Schema 16 fences writers that cannot preserve these observations and delegated-run receipts.
 
 The meter refuses subsequent requests after uncertainty or observed token/time
 limits. It also adds a deny-only check to the existing execution authority, so
@@ -55,6 +55,22 @@ upstream revocation. A time limit requests cancellation and awaits the same
 execution through cleanup. Goal settlement releases the active steering callback
 and observes cleanup under the admission lock before allowing a new turn.
 Elapsed settlement includes admission, setup and cleanup time.
+
+A delegated `Submit` can carry a deny-only `ExecutionBudget` bound to its exact
+command, child session and parent session/run identities. Its finite token allowance, elapsed
+limit and absolute expiry are enforced by the receiving Voyage without creating
+a Goal or granting continuation. The budget is part of admission deduplication;
+ordinary submissions omit it and retain their existing serialized form.
+
+A budgeted run publishes an immutable `execution_usage` snapshot receipt with its
+budget, child session/run identity, known counters and separate completeness and
+observed-cleanup flags. The existing History-authorized command receipt also
+returns this usage after later child runs, preserving exact-command lookup.
+Recovery retains known counters and marks interrupted
+accounting incomplete; it never redispatches a request. Schema 16 migrates the
+existing request ledger and scrubs both ordinary Goal and delegated meter records
+when deleting a session. Receiving-side support is staged; parent allocation,
+participant transport and capability admission still need integration.
 
 Requested output is capped to the remaining allowance; input/billing totals are
 known only after dispatch, so this is not a strict billing ceiling. The meter is

@@ -237,6 +237,7 @@ mod tests {
             .admit_turn(
                 &guard,
                 &TurnAdmission {
+                    budget: None,
                     coordination: None,
                     operator_name: None,
                     command_id: Uuid::new_v4(),

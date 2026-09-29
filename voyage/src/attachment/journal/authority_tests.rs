@@ -13,6 +13,7 @@ fn fixture() -> (
     journal.create_session(&session).unwrap();
     let guard = journal.acquire_execution(session.id).unwrap();
     let request = TurnAdmission {
+        budget: None,
         coordination: None,
         operator_name: Some("First operator".into()),
         command_id: Uuid::new_v4(),

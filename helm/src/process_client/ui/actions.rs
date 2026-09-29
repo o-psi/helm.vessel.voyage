@@ -366,6 +366,7 @@ impl App {
             }
         } else {
             VoyageCommand::Submit {
+                budget: None,
                 coordination: None,
                 command_id,
                 expected_revision,

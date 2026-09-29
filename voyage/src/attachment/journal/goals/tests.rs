@@ -251,6 +251,7 @@ fn active_run_blocks_replacement_but_allows_pause() {
     j.admit_turn(
         &guard,
         &TurnAdmission {
+            budget: None,
             coordination: None,
             operator_name: None,
             command_id: Uuid::new_v4(),
@@ -485,6 +486,7 @@ fn start_reserved(j: &mut Journal, guard: &ExecutionGuard, now: i64) -> (RunReco
         .admit_turn(
             guard,
             &TurnAdmission {
+                budget: None,
                 coordination: None,
                 operator_name: None,
                 command_id,
@@ -1150,5 +1152,240 @@ fn deleting_session_scrubs_goal_reservations_and_settlements_in_foreign_key_orde
             .unwrap()
             .unwrap()["status"],
         "deleted"
+    );
+}
+
+fn delegated_run(
+    j: &mut Journal,
+    guard: &ExecutionGuard,
+) -> (
+    RunRecord,
+    voyage_protocol::execution_budget::ExecutionBudget,
+    Uuid,
+) {
+    use voyage_protocol::execution_budget::ExecutionBudget;
+    let budget = ExecutionBudget {
+        session_id: guard.session_id,
+        command_id: Uuid::new_v4(),
+        parent_session_id: Uuid::new_v4(),
+        parent_run_id: Uuid::new_v4(),
+        tokens: 100,
+        elapsed_ms: 10_000,
+        expires_at_ms: 11_000,
+    };
+    let request = TurnAdmission {
+        budget: Some(budget.clone()),
+        coordination: None,
+        operator_name: None,
+        command_id: budget.command_id,
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: guard.session_id,
+        expected_revision: j.load_session(guard.session_id).unwrap().revision,
+        expires_at_ms: 11_000,
+        prompt: "Bounded child work".into(),
+        parts: vec![],
+    };
+    let mut foreign = request.clone();
+    foreign.budget.as_mut().unwrap().session_id = Uuid::new_v4();
+    assert!(j.admit_turn(guard, &foreign, 1000).is_err());
+    let run = j.admit_turn(guard, &request, 1000).unwrap().run;
+    let mut changed = request.clone();
+    changed.budget.as_mut().unwrap().tokens += 1;
+    assert!(j.admit_turn(guard, &changed, 1000).is_err());
+    let incarnation = Uuid::new_v4();
+    assert_eq!(
+        j.begin_delegated_meter(guard, &budget, incarnation, 1000)
+            .unwrap(),
+        (100, 10_000)
+    );
+    assert!(
+        j.begin_delegated_meter(guard, &budget, incarnation, 1000)
+            .is_err()
+    );
+    j.mark_running(guard, run.id).unwrap();
+    (run, budget, incarnation)
+}
+
+#[test]
+fn delegated_budget_receipt_is_exact_durable_and_does_not_create_goal() {
+    let (root, mut j, session, guard, _) = fixture();
+    let (run, budget, incarnation) = delegated_run(&mut j, &guard);
+    let request = RequestObservation {
+        request_id: Uuid::new_v4(),
+        revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    j.record_goal_request(&guard, run.command_id, incarnation, request.clone())
+        .unwrap();
+    let reported = RequestObservation {
+        revision: 1,
+        input_tokens: Some(20),
+        output_tokens: Some(4),
+        complete: true,
+        ..request
+    };
+    j.record_goal_request(&guard, run.command_id, incarnation, reported.clone())
+        .unwrap();
+    assert!(
+        j.settle_delegated_run(&guard, run.id, None, true, 1500)
+            .is_err()
+    );
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Completed,
+        None,
+        Some("Child result"),
+    )
+    .unwrap();
+    let measured = GoalMeasurement {
+        input_tokens: 20,
+        output_tokens: 4,
+        elapsed_ms: 500,
+        complete: true,
+    };
+    let receipt = j
+        .settle_delegated_run(&guard, run.id, Some(measured), true, 1500)
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.budget, budget);
+    assert!(receipt.complete && receipt.cleanup_observed);
+    assert_eq!(
+        receipt,
+        j.settle_delegated_run(&guard, run.id, None, false, 2000)
+            .unwrap()
+            .unwrap()
+    );
+    assert!(
+        j.record_goal_request(&guard, run.command_id, incarnation, reported)
+            .is_err()
+    );
+    assert!(j.goal(session.id).unwrap().goal.is_none());
+    drop(guard);
+    drop(j);
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    assert_eq!(
+        j.delegated_usage(session.id).unwrap(),
+        Some(receipt.clone())
+    );
+    assert_eq!(
+        j.process_receipt(run.command_id).unwrap().unwrap()["execution_usage"],
+        serde_json::to_value(&receipt).unwrap()
+    );
+    let guard = j.acquire_execution(session.id).unwrap();
+    let (later, _, _) = delegated_run(&mut j, &guard);
+    assert_ne!(later.id, run.id);
+    assert!(j.delegated_usage(session.id).unwrap().is_none());
+    assert_eq!(
+        j.process_receipt(run.command_id).unwrap().unwrap()["execution_usage"],
+        serde_json::to_value(&receipt).unwrap()
+    );
+    assert!(
+        j.delegated_command_usage(Uuid::new_v4(), run.command_id)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn delegated_recovery_retains_lower_bound_without_certifying_unknown_usage() {
+    let (_root, mut j, session, guard, _) = fixture();
+    let (run, _, incarnation) = delegated_run(&mut j, &guard);
+    let request = RequestObservation {
+        request_id: Uuid::new_v4(),
+        revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    j.record_goal_request(&guard, run.command_id, incarnation, request.clone())
+        .unwrap();
+    j.record_goal_request(
+        &guard,
+        run.command_id,
+        incarnation,
+        RequestObservation {
+            revision: 1,
+            input_tokens: Some(13),
+            output_tokens: Some(7),
+            ..request
+        },
+    )
+    .unwrap();
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture process death"),
+        None,
+    )
+    .unwrap();
+    j.recover_delegated_meter(&guard, 2000).unwrap();
+    let receipt = j.delegated_usage(session.id).unwrap().unwrap();
+    assert_eq!((receipt.input_tokens, receipt.output_tokens), (13, 7));
+    assert!(!receipt.complete);
+    j.recover_delegated_meter(&guard, 3000).unwrap();
+    assert_eq!(j.delegated_usage(session.id).unwrap(), Some(receipt));
+}
+
+#[test]
+fn schema_15_meter_upgrade_preserves_existing_request_and_settlement() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let command = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &command, 1000).unwrap();
+    let (run, incarnation) = start_reserved(&mut j, &guard, 1000);
+    j.begin_goal_meter(&guard, run.command_id, incarnation, 1000)
+        .unwrap();
+    let request = RequestObservation {
+        request_id: Uuid::new_v4(),
+        revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    j.record_goal_request(&guard, run.command_id, incarnation, request.clone())
+        .unwrap();
+    j.connection.execute_batch("CREATE TEMP TABLE saved_requests AS SELECT * FROM process_goal_requests; CREATE TEMP TABLE saved_meters AS SELECT command_id,incarnation FROM process_goal_meters; DROP TABLE process_goal_requests; DROP TABLE process_goal_meters;
+    CREATE TABLE process_goal_meters(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),incarnation TEXT NOT NULL);
+    CREATE TABLE process_goal_requests(request_id TEXT PRIMARY KEY,command_id TEXT NOT NULL REFERENCES process_goal_meters(command_id),observation TEXT NOT NULL);
+    INSERT INTO process_goal_meters SELECT * FROM saved_meters; INSERT INTO process_goal_requests SELECT * FROM saved_requests; UPDATE attachment_schema SET version=15 WHERE id=1;").unwrap();
+    j.opened_schema = 15;
+    assert!(
+        j.begin_goal_meter(&guard, run.command_id, Uuid::new_v4(), 1000)
+            .unwrap_err()
+            .to_string()
+            .contains("current accounting schema")
+    );
+    j.require_content_schema(&guard, true).unwrap();
+    assert_eq!(j.opened_schema, 16);
+    j.record_goal_request(
+        &guard,
+        run.command_id,
+        incarnation,
+        RequestObservation {
+            revision: 1,
+            input_tokens: Some(20),
+            output_tokens: Some(4),
+            complete: true,
+            ..request
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (20, 4, true, true)
+    );
+    assert!(
+        j.connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none()
     );
 }

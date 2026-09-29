@@ -226,6 +226,7 @@ fn canonical_journal_reopen_preserves_outcomes_and_fences_old_writers() {
     let guard = journal.acquire_execution(session.id).unwrap();
     let now = chrono::Utc::now().timestamp_millis();
     let request = TurnAdmission {
+        budget: None,
         coordination: None,
         operator_name: None,
         command_id: uuid::Uuid::new_v4(),

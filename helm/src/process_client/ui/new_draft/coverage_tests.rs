@@ -205,6 +205,7 @@ async fn saved_draft_identity_matrix_refuses_partial_or_cross_bound_launch_state
             }
             "turn" => {
                 s.submit = Some(VoyageCommand::Submit {
+                    budget: None,
                     coordination: None,
                     command_id: Uuid::new_v4(),
                     expected_revision: 0,
@@ -272,6 +273,7 @@ async fn first_send_handoff_keeps_exact_text_on_rejection_and_observation_only_o
             deletion: None,
         });
         saved.submit = Some(VoyageCommand::Submit {
+            budget: None,
             coordination: None,
             command_id: saved.turn,
             expected_revision: 0,

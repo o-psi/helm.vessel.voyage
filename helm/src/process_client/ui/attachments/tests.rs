@@ -7,6 +7,7 @@ fn image() -> Image {
 }
 fn submit(text: &str) -> VoyageCommand {
     VoyageCommand::Submit {
+        budget: None,
         coordination: None,
         command_id: Uuid::from_u128(74),
         expected_revision: 9,

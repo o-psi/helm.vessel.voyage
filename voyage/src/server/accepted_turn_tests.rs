@@ -174,6 +174,7 @@ async fn configured(replies: Vec<Reply>) -> (tempfile::TempDir, Arc<State>, Prov
 }
 fn submit(prompt: &str) -> RuntimeCommand {
     RuntimeCommand::Submit {
+        budget: None,
         coordination: None,
         command_id: Uuid::new_v4(),
         expected_revision: 0,
@@ -1091,4 +1092,131 @@ async fn history_one_message_pages_are_lossless_after_tool_execution() {
             .await
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn delegated_goal_budget_is_enforced_and_returns_exact_usage_without_goal() {
+    use voyage_protocol::execution_budget::*;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let (_root, state, provider) = configured(vec![Reply::chunks(vec![json!({"choices":[{"index":0,"delta":{"role":"assistant","content":"Bounded child result"},"finish_reason":"stop"}]}),json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})]).held(gate.clone())]).await;
+    state.config.write().await.vessel.enabled = false;
+    let mut command = submit("Do one bounded child turn");
+    let allocation = if let RuntimeCommand::Submit {
+        command_id, budget, ..
+    } = &mut command
+    {
+        let allocation = ExecutionBudget {
+            session_id: state.registration.session_id,
+            command_id: *command_id,
+            parent_session_id: Uuid::new_v4(),
+            parent_run_id: Uuid::new_v4(),
+            tokens: 100,
+            elapsed_ms: 30_000,
+            expires_at_ms: deadline(),
+        };
+        *budget = Some(allocation.clone());
+        allocation
+    } else {
+        unreachable!()
+    };
+    let run = accepted(&state, command.clone()).await;
+    provider.wait_requests(1).await;
+    let duplicate = call(&state, command.clone()).await;
+    assert!(duplicate.error.is_none(), "{duplicate:?}");
+    assert_eq!(duplicate.result["run_id"], run.to_string(), "{duplicate:?}");
+    if let RuntimeCommand::Submit {
+        budget: Some(b), ..
+    } = &mut command
+    {
+        b.tokens += 1;
+    }
+    assert!(call(&state, command).await.error.is_some());
+    gate.notify_one();
+    let snapshot = finished(&state).await;
+    let receipt: ExecutionUsage =
+        serde_json::from_value(snapshot["execution_usage"].clone()).unwrap();
+    assert_eq!(receipt.budget, allocation);
+    assert_eq!(receipt.run_id, run);
+    assert_eq!((receipt.input_tokens, receipt.output_tokens), (20, 4));
+    assert!(receipt.complete && receipt.cleanup_observed, "{receipt:?}");
+    assert!(state.owner.goal().await.unwrap().goal.is_none());
+    assert_eq!(provider.requests.lock().await.len(), 1);
+    assert_eq!(
+        state.owner.process_snapshot().await.unwrap()["execution_usage"],
+        snapshot["execution_usage"]
+    );
+}
+
+#[tokio::test]
+async fn expired_delegated_goal_budget_never_dispatches_provider() {
+    use voyage_protocol::execution_budget::*;
+    let (_root, state, provider) = configured(vec![]).await;
+    let mut command = submit("Expired bounded child turn");
+    if let RuntimeCommand::Submit {
+        command_id, budget, ..
+    } = &mut command
+    {
+        *budget = Some(ExecutionBudget {
+            session_id: state.registration.session_id,
+            command_id: *command_id,
+            parent_session_id: Uuid::new_v4(),
+            parent_run_id: Uuid::new_v4(),
+            tokens: 100,
+            elapsed_ms: 30_000,
+            expires_at_ms: 1,
+        });
+    }
+    assert!(call(&state, command).await.error.is_some());
+    assert_eq!(provider.requests.lock().await.len(), 0);
+}
+
+#[tokio::test]
+async fn delegated_goal_token_budget_blocks_a_returned_write_tool() {
+    use voyage_protocol::execution_budget::*;
+    let mut reply = Reply::tool(
+        "write_file",
+        json!({"path":"delegated-budget-blocked.txt","content":"must not be written"}),
+    );
+    reply.body=reply.body.replace("data: [DONE]",&format!("data: {}\n\ndata: [DONE]",json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})));
+    let (root, state, provider) = configured(vec![reply]).await;
+    {
+        let mut config = state.config.write().await;
+        config.vessel.enabled = false;
+        config.access = Some(crate::config::AccessMode::Unrestricted);
+    }
+    let mut command = submit("Write a file within the child budget");
+    if let RuntimeCommand::Submit {
+        command_id, budget, ..
+    } = &mut command
+    {
+        *budget = Some(ExecutionBudget {
+            session_id: state.registration.session_id,
+            command_id: *command_id,
+            parent_session_id: Uuid::new_v4(),
+            parent_run_id: Uuid::new_v4(),
+            tokens: 24,
+            elapsed_ms: 30_000,
+            expires_at_ms: deadline(),
+        });
+    }
+    accepted(&state, command).await;
+    let snapshot = finished(&state).await;
+    assert!(
+        !root
+            .path()
+            .join("workspace/delegated-budget-blocked.txt")
+            .exists()
+    );
+    assert!(
+        !state
+            .registration
+            .workspace
+            .join("delegated-budget-blocked.txt")
+            .exists()
+    );
+    let receipt: ExecutionUsage =
+        serde_json::from_value(snapshot["execution_usage"].clone()).unwrap();
+    assert_eq!((receipt.input_tokens, receipt.output_tokens), (20, 4));
+    assert!(receipt.cleanup_observed);
+    assert_eq!(provider.requests.lock().await.len(), 1);
 }

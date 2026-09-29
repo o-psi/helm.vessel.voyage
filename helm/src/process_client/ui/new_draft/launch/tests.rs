@@ -161,6 +161,7 @@ async fn uncertain_submission_resolves_exact_saved_command_without_replay() {
     state.start_attempted = true;
     state.attempted = true;
     state.submit = Some(VoyageCommand::Submit {
+        budget: None,
         coordination: None,
         command_id: state.turn,
         expected_revision: 0,

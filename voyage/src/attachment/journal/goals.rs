@@ -11,14 +11,45 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS process_goals(sessio
 CREATE TABLE IF NOT EXISTS process_goal_turns(command_id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),goal_id TEXT NOT NULL,incarnation TEXT NOT NULL,started_at_ms INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','settled','abandoned')),request TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_goal_turn ON process_goal_turns(session_id) WHERE state='reserved';
 CREATE TABLE IF NOT EXISTS process_goal_settlements(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),receipt TEXT NOT NULL,progress_digest TEXT);
-CREATE TABLE IF NOT EXISTS process_goal_meters(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),incarnation TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS process_goal_meters(command_id TEXT PRIMARY KEY REFERENCES commands(id),incarnation TEXT NOT NULL,budget TEXT,started_at_ms INTEGER NOT NULL,settlement TEXT);
 CREATE TABLE IF NOT EXISTS process_goal_requests(request_id TEXT PRIMARY KEY,command_id TEXT NOT NULL REFERENCES process_goal_meters(command_id),observation TEXT NOT NULL);";
 
 mod continuation;
 pub(crate) use continuation::GoalTurnReservation;
+mod delegated;
 mod metering;
 mod settlement;
 pub(crate) use settlement::GoalMeasurement;
+
+pub(super) fn initialize(db: &Connection) -> Result<()> {
+    db.execute_batch(SCHEMA)?;
+    let columns: u64 = db.query_row(
+        "SELECT count(*) FROM pragma_table_info('process_goal_meters')",
+        [],
+        |r| r.get(0),
+    )?;
+    if columns == 2 {
+        // Schema 15 only admitted meters attached to Goal reservations. Preserve
+        // their exact observations while moving the FK to the admitted command.
+        db.execute_batch("CREATE TABLE budget_meters_v16(command_id TEXT PRIMARY KEY REFERENCES commands(id),incarnation TEXT NOT NULL,budget TEXT,started_at_ms INTEGER NOT NULL,settlement TEXT);
+            INSERT INTO budget_meters_v16 SELECT m.command_id,m.incarnation,NULL,t.started_at_ms,NULL FROM process_goal_meters m JOIN process_goal_turns t USING(command_id);
+            CREATE TABLE budget_requests_v16(request_id TEXT PRIMARY KEY,command_id TEXT NOT NULL REFERENCES budget_meters_v16(command_id),observation TEXT NOT NULL);
+            INSERT INTO budget_requests_v16 SELECT * FROM process_goal_requests;
+            DROP TABLE process_goal_requests;
+            DROP TABLE process_goal_meters;
+            ALTER TABLE budget_meters_v16 RENAME TO process_goal_meters;
+            ALTER TABLE budget_requests_v16 RENAME TO process_goal_requests;")?;
+    }
+    ensure!(
+        db.query_row(
+            "SELECT count(*) FROM pragma_table_info('process_goal_meters')",
+            [],
+            |r| r.get::<_, u64>(0)
+        )? == 5,
+        "unsupported Goal meter schema"
+    );
+    Ok(())
+}
 
 /// Host-private continuation binding. It is never copied into snapshots/events.
 #[derive(Clone, Serialize, Deserialize)]

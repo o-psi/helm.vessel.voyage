@@ -22,6 +22,7 @@ pub mod vessel;
 /// Opt-in ordered, bounded public client observations.
 pub mod live_events;
 
+pub mod execution_budget;
 /// Persistent bounded task objectives owned by Voyage.
 pub mod goals;
 

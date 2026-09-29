@@ -1057,6 +1057,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
+                    budget: None,
                     coordination,
                     command_id,
                     expected_revision: revision,
@@ -1081,6 +1082,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
+                    budget: None,
                     coordination,
                     command_id,
                     expected_revision,

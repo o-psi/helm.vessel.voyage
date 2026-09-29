@@ -299,6 +299,7 @@ mod tests {
             draft: "UNSENT COMPOSER SECRET".into(),
             preserve_draft: true,
             original: Some(Box::new(VoyageCommand::Submit {
+                budget: None,
                 coordination: None,
                 command_id,
                 expected_revision: 7,
@@ -340,6 +341,7 @@ mod tests {
     fn malformed_original_is_not_used_to_reserve_a_different_command() {
         let mut pending = pending();
         pending.original = Some(Box::new(VoyageCommand::Submit {
+            budget: None,
             coordination: None,
             command_id: Uuid::new_v4(),
             expected_revision: 7,

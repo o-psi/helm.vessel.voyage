@@ -180,6 +180,7 @@ async fn advance_mode(
         };
         saved.submit = Some(super::super::attachments::prepare(
             VoyageCommand::Submit {
+                budget: None,
                 coordination: None,
                 command_id: saved.turn,
                 expected_revision: revision,

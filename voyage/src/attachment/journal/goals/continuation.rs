@@ -27,6 +27,7 @@ impl Journal {
                 && prompt.len() <= MAX_PROMPT,
             "invalid goal turn reservation"
         );
+        self.require_content_schema(guard, false)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -54,6 +55,7 @@ impl Journal {
         let saved = read_session(&tx, guard.session_id)?;
         let command_id = Uuid::new_v4();
         let command = RuntimeCommand::Submit {
+            budget: None,
             coordination: None,
             command_id,
             expected_revision: saved

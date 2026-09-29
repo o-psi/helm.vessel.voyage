@@ -56,6 +56,7 @@ async fn fixture() -> (
         .unwrap();
     let admission = owner
         .admit(TurnAdmission {
+            budget: None,
             coordination: None,
             operator_name: None,
             command_id: Uuid::new_v4(),
@@ -363,6 +364,7 @@ async fn failed_runs_and_submission_retries_do_not_shift_user_message_checkpoint
     for count in 2..=5 {
         let snapshot = owner.snapshot().await.unwrap();
         let request = TurnAdmission {
+            budget: None,
             coordination: None,
             operator_name: None,
             command_id: Uuid::new_v4(),

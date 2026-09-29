@@ -254,6 +254,8 @@ pub enum VoyageCommand {
     },
     Submit {
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        budget: Option<crate::execution_budget::ExecutionBudget>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         coordination: Option<crate::coordination::CoordinationSource>,
         command_id: Uuid,
         expected_revision: u64,

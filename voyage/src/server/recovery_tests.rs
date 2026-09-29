@@ -283,6 +283,7 @@ async fn interrupted_run_is_retained_without_replay_or_can_be_explicitly_atteste
             .await
             .unwrap();
         let admission = crate::attachment::journal::TurnAdmission {
+            budget: None,
             coordination: None,
             operator_name: None,
             command_id: Uuid::new_v4(),

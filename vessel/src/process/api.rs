@@ -253,12 +253,14 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             content,
         },
         VoyageCommand::Submit {
+            budget,
             coordination,
             command_id,
             expected_revision,
             expires_at_ms,
             prompt,
         } => RuntimeCommand::Submit {
+            budget,
             coordination,
             command_id,
             expected_revision,

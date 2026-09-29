@@ -48,9 +48,11 @@ impl Journal {
             .optional()?;
         if let Some(run) = run {
             let run = self.run(Uuid::parse_str(&run)?)?;
-            return Ok(Some(
-                json!({"run_id":run.id,"command_id":id,"status":if self.lifecycle_status(run.session_id)?["deleted"]==true {"deleted"}else{"accepted"},"state":run.state}),
-            ));
+            let mut receipt = json!({"run_id":run.id,"command_id":id,"status":if self.lifecycle_status(run.session_id)?["deleted"]==true {"deleted"}else{"accepted"},"state":run.state});
+            if let Some(usage) = self.delegated_command_usage(run.session_id, id)? {
+                receipt["execution_usage"] = serde_json::to_value(usage)?;
+            }
+            return Ok(Some(receipt));
         }
         let steering: Option<String> = self
             .connection

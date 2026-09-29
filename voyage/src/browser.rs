@@ -999,6 +999,7 @@ mod tests {
             .admit_turn(
                 &guard,
                 &crate::attachment::journal::TurnAdmission {
+                    budget: None,
                     coordination: None,
                     operator_name: None,
                     command_id: Uuid::new_v4(),

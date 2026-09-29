@@ -255,6 +255,7 @@ mod tests {
         let guard = journal.acquire_execution(session.id).unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         let admission = TurnAdmission {
+            budget: None,
             coordination: None,
             operator_name: None,
             command_id: Uuid::new_v4(),

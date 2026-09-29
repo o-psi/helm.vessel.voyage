@@ -25,6 +25,7 @@ async fn connected_cli_dispatches_exact_read_and_mutation_identities() {
                 prompt: vec!["one".into(), "two".into()],
             },
             Q::Submit {
+                budget: None,
                 coordination: None,
                 command_id: c,
                 expected_revision: 7,

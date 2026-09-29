@@ -263,3 +263,33 @@ fn goal_command_mapping_preserves_exact_owner_mutation_and_read_rights() {
         Some(ProcessRight::History)
     );
 }
+
+#[test]
+fn delegated_goal_budget_survives_public_private_mapping_without_extra_authority() {
+    let id = Uuid::new_v4();
+    let budget = voyage_protocol::execution_budget::ExecutionBudget {
+        session_id: Uuid::new_v4(),
+        command_id: id,
+        parent_session_id: Uuid::new_v4(),
+        parent_run_id: Uuid::new_v4(),
+        tokens: 100,
+        elapsed_ms: 1000,
+        expires_at_ms: 2000,
+    };
+    let command = VoyageCommand::Submit {
+        command_id: id,
+        expected_revision: 0,
+        expires_at_ms: 2000,
+        prompt: "bounded child".into(),
+        coordination: None,
+        budget: Some(budget.clone()),
+    };
+    assert_eq!(required_right(&command), Some(ProcessRight::Execute));
+    let RuntimeCommand::Submit {
+        budget: received, ..
+    } = runtime(command).unwrap()
+    else {
+        panic!("expected submit")
+    };
+    assert_eq!(received, Some(budget));
+}

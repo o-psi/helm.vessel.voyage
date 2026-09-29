@@ -190,6 +190,7 @@ impl Workflows {
                 .retain(|_, (_, deadline, _)| *deadline > Instant::now());
         });
         Ok(RuntimeCommand::Submit {
+            budget: None,
             coordination: None,
             command_id: *command_id,
             expected_revision: *expected_revision,

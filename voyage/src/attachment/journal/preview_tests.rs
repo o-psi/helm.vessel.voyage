@@ -11,6 +11,7 @@ fn previews_reopen_and_atomically_yield_to_canonical_calls() {
     let guard = journal.acquire_execution(session.id).unwrap();
     let now = chrono::Utc::now().timestamp_millis();
     let request = TurnAdmission {
+        budget: None,
         coordination: None,
         operator_name: None,
         command_id: Uuid::new_v4(),

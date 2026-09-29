@@ -16,6 +16,11 @@ pub(super) async fn submit(
     mut authorization: super::authorization::Authorization,
     command: RuntimeCommand,
 ) -> Result<Value> {
+    let budget = match &command {
+        RuntimeCommand::Submit { budget, .. } => budget.clone(),
+        _ => None,
+    };
+
     let coordination = match &command {
         RuntimeCommand::Submit { coordination, .. } => coordination.clone(),
         _ => None,
@@ -38,6 +43,7 @@ pub(super) async fn submit(
             )
         }
         RuntimeCommand::Submit {
+            budget: _,
             coordination: _,
             command_id,
             expected_revision,
@@ -83,6 +89,7 @@ pub(super) async fn submit(
     let _admission = state.admission.lock().await;
     ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
     let request = TurnAdmission {
+        budget: budget.clone(),
         coordination,
         operator_name: operator.as_ref().map(|(name, _)| name.clone()),
         command_id,
@@ -206,7 +213,7 @@ pub(super) async fn submit(
     let workflow_result: Result<()> = async {
         config.goal_meter = state
             .owner
-            .begin_goal_meter(command_id, state.registration.incarnation)
+            .begin_execution_meter(command_id, state.registration.incarnation, budget.clone())
             .await?;
         if let Some(meter) = &config.goal_meter {
             authorization.authority =
@@ -238,7 +245,10 @@ pub(super) async fn submit(
             .fail_before_execution()
             .await
             .map_err(|_| anyhow::anyhow!("workflow failure finalization uncertain"))?;
-        state.owner.settle_goal_run(failed.id, None, true).await?;
+        state
+            .owner
+            .settle_metered_run(failed.id, None, true)
+            .await?;
         return Err(error);
     }
     run.register_local_cleanup().await?;
@@ -331,7 +341,7 @@ pub(super) async fn submit(
                     });
                     if let Err(error) = state
                         .owner
-                        .settle_goal_run(result.actual.id, measurement, result.cleanup_observed)
+                        .settle_metered_run(result.actual.id, measurement, result.cleanup_observed)
                         .await
                     {
                         tracing::error!("goal terminal accounting remains unresolved: {error}");
