@@ -210,9 +210,66 @@ def run(fixture):
         "additional_events": len(slow_events), "fresh_incarnation": True})
 
 
+def long_history(fixture):
+    """Real retained-journal overflow; a fast reader progresses while one is idle."""
+    session = fixture.session()
+    requests_before = len(fixture.provider.bodies)
+    cursor, observed, largest_page = 0, 0, 0
+    prompts = [f"bounded-long-history-turn-{index:03d}" for index in range(80)]
+    for prompt in prompts:
+        fixture.command(session, fixture.submit(session, prompt))
+        admitted_owner = fixture.request({"op":"inspect", "session_id":session})["incarnation"]
+        finished = fixture.finished(session)
+        assert finished["run"]["state"] == "completed", finished["run"]
+        while True:
+            result = page(fixture, session, cursor, limit=128)
+            assert not result["replay_gap"], "active observer fell behind retention"
+            events = result["events"]
+            assert len(events) <= 128
+            assert all(event["cursor"] > cursor for event in events)
+            assert all(len(json.dumps(event["payload"], ensure_ascii=False).encode()) <= 32768 for event in events)
+            largest_page = max(largest_page, len(json.dumps(result).encode()))
+            observed += len(events)
+            cursor = result["cursor"]
+            if not result["has_more"]:
+                break
+        assert fixture.request({"op":"inspect", "session_id":session})["incarnation"] == admitted_owner, "saved reads launched an execution owner"
+    assert observed > 2048, "fixture did not exercise actual retention overflow"
+    delayed = page(fixture, session, 0, limit=128)
+    assert delayed["replay_gap"] and delayed["events"] == [] and not delayed["has_more"], delayed
+    snapshot = fixture.command(session, {"op":"snapshot"})
+    assert snapshot["history_truncated"] and snapshot["message_offset"] > 0
+    assert len(snapshot["messages"]) <= 128
+    revision = snapshot["revision"]
+    history, offset = [], 0
+    while True:
+        result = fixture.command(session, {"op":"history", "offset":offset, "limit":17, "expected_revision":revision})
+        assert result["message_offset"] == offset and result["revision"] == revision
+        assert len(result["messages"]) <= 17
+        history.extend(result["messages"])
+        assert result["next_offset"] == offset + len(result["messages"])
+        offset = result["next_offset"]
+        if not result["has_more"]:
+            break
+        assert result["messages"], "history page made no progress"
+    assert len(history) == snapshot["total_messages"]
+    assert [message["message_index"] for message in history] == list(range(len(history)))
+    assert [message["content"] for message in history if message["role"] == "user"] == prompts
+    assert all(message["content"] == "Fixture finished." for message in history if message["role"] == "assistant")
+    resumed = page(fixture, session, snapshot["observation_cursor"], limit=128)
+    assert not resumed["replay_gap"] and resumed["events"] == []
+    assert len(fixture.provider.bodies) == requests_before + len(prompts), "observation repeated inference"
+    fixture.record("public-v2-retention-overflow-and-long-history", {"turns":len(prompts),
+        "messages":len(history), "observed_events":observed, "fast_cursor":cursor,
+        "delayed_recovery_cursor":snapshot["observation_cursor"], "revision":revision,
+        "snapshot_messages":len(snapshot["messages"]), "history_pages_limit":17,
+        "largest_event_page_bytes":largest_page, "inference_replayed":False})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True)
+    parser.add_argument("--long-history", action="store_true", help="Also qualify 80 turns, retention overflow and paged history")
     args = parser.parse_args()
     if not __debug__:
         raise SystemExit("Do not run with python -O; assertions are the test oracle")
@@ -223,6 +280,8 @@ def main():
     try:
         fixture.start()
         run(fixture)
+        if args.long_history:
+            long_history(fixture)
         print("public-v2 process replay PASS", flush=True)
     finally:
         fixture.close()

@@ -220,3 +220,73 @@ async fn remembered_names_validate_and_persist_only_for_current_incarnation() {
         Some(name.as_str())
     );
 }
+
+#[tokio::test]
+async fn saved_reads_after_recovery_keep_incarnation_and_never_launch_executor() {
+    for stale_socket in [false, true] {
+        let f = Fixture::new();
+        let supervisor = f.supervisor().await;
+        let mut registration = f.registration();
+        registration.state = ProcessState::Unavailable;
+        registration.executable = Some(f.0.join("retired-voyage"));
+        database::save(&f.0, &registration).await.unwrap();
+        let directory = registry::directory(&f.0, registration.session_id);
+        registry::private_directory(&directory).unwrap();
+        super::super::access::store::save(
+            &directory.join("recovered.json"),
+            &serde_json::json!({"session_id":registration.session_id,
+                "incarnation":registration.incarnation,"restart_permitted":true,
+                "cleanup_disposition":"observed"}),
+        )
+        .unwrap();
+        if stale_socket {
+            let listener =
+                std::os::unix::net::UnixListener::bind(directory.join("runtime.sock")).unwrap();
+            drop(listener); // A pathname alone is not a live owner.
+        }
+        let source = r#"#!/usr/bin/env python3
+import json, pathlib, struct, sys
+pathlib.Path(sys.argv[0]).with_suffix('.calls').open('a').write(sys.argv[1]+'\n')
+assert sys.argv[1] == 'observe-suspended', 'observation launched an executor'
+n=struct.unpack('>I',sys.stdin.buffer.read(4))[0]
+r=json.loads(sys.stdin.buffer.read(n))
+assert r['command']['op'] in ('snapshot','history')
+reply=dict(protocol=r['protocol'],session_id=r['session_id'],incarnation=r['incarnation'],resumed_from=None,error=None,outcome_unknown=False,result={'saved':True})
+payload=json.dumps(reply).encode()
+sys.stdout.buffer.write(struct.pack('>I',len(payload))+payload)
+"#;
+        std::fs::write(&supervisor.binary, source).unwrap();
+        std::fs::set_permissions(&supervisor.binary, std::fs::Permissions::from_mode(0o700))
+            .unwrap();
+        for command in [
+            RuntimeCommand::Snapshot,
+            RuntimeCommand::History {
+                offset: 0,
+                limit: 1,
+                expected_revision: None,
+            },
+        ] {
+            let result = supervisor
+                .dispatch_session(registration.session_id, None, command, None)
+                .await
+                .unwrap();
+            assert_eq!(result.incarnation, registration.incarnation);
+            assert!(result.resumed_from.is_none());
+            assert_eq!(result.result, serde_json::json!({"saved":true}));
+            assert_eq!(
+                serde_json::to_value(
+                    supervisor
+                        .registration(registration.session_id)
+                        .await
+                        .unwrap()
+                )
+                .unwrap(),
+                serde_json::to_value(&registration).unwrap()
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(supervisor.binary.with_extension("calls")).unwrap(),
+            "observe-suspended\nobserve-suspended\n"
+        );
+    }
+}

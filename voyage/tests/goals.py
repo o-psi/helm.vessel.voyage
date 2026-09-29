@@ -140,6 +140,22 @@ class Provider(http.server.BaseHTTPRequestHandler):
             response = {"id": f"fixture-{scenario}-{attempt}", "status": "completed", "output": output}
             if scenario != "unknown":
                 response["usage"] = {"input_tokens": 20, "output_tokens": 4}
+            stream = getattr(self.server, "web_stream", None)
+            if stream is not None:
+                first_text, last_text = "Shared live prefix. ", "Both clients recovered."
+                response["output"][0]["content"][0]["text"] = first_text + last_text
+                first = ("data: " + json.dumps({"type":"response.output_text.delta", "delta":first_text}) + "\n\n").encode()
+                rest = ("data: " + json.dumps({"type":"response.output_text.delta", "delta":last_text}) + "\n\n" +
+                        "data: " + json.dumps({"type":"response.completed", "response":response}) + "\n\n").encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Content-Length", str(len(first) + len(rest)))
+                self.end_headers()
+                self.wfile.write(first)
+                self.wfile.flush()
+                assert stream.wait(45), "cross-client disconnect gate timed out"
+                self.wfile.write(rest)
+                return
             payload = ("data: " + json.dumps({"type": "response.completed", "response": response}) + "\n\n").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
@@ -603,12 +619,19 @@ def web(fixture):
             pty = launch([str(fixture.binaries / "helm"), "connect", "--directory", str(fixture.directory), "--no-start"],
                          fixture.env, fixture.workspace, fixture.root / "stream-web-tui.pty", 120, 36)
             wait_for(lambda: "fixture-model" in screen(pty))
+            fixture.provider.web_stream = threading.Event()
             command = fixture.submit(sid, "goal-case-budget shared live event qualification")
             fixture.command(sid, command)
+            wait_for(lambda: "Shared live prefix." in screen(pty))
+            wait_for(lambda: (fixture.root / "goal-web-stream-disconnected").exists(), timeout=40)
+            running = fixture.command(sid, {"op":"snapshot"})
+            assert running["run"]["state"] == "running", running["run"]
+            fixture.provider.web_stream.set()
             finished = fixture.finished(sid)
             assert finished["run"]["state"] == "completed", finished["run"]
-            wait_for(lambda: "One bounded step finished." in screen(pty))
-            (fixture.root / "goal-web-stream-done").write_text("done")
+            wait_for(lambda: "Both clients recovered." in screen(pty))
+            (fixture.root / "goal-web-stream-done").write_text(json.dumps({"revision":finished["revision"],
+                "run_id":finished["run"]["run_id"], "observation_cursor":finished["observation_cursor"]}))
             assert client.wait(timeout=45) == 0, "Web journey failed; inspect private fixture web.log"
             assert len(fixture.provider.bodies) == 1, "observation replayed inference"
             pty_helpers.stop_pty(pty, wait_for)
@@ -616,6 +639,8 @@ def web(fixture):
         assert fixture.command(sid, {"op": "goal_read"})["goal"] is None
         fixture.record("goal-real-web-tui-canonical-controls", json.loads((fixture.root / "goal-web-result.json").read_text()))
     finally:
+        if getattr(fixture.provider, "web_stream", None):
+            fixture.provider.web_stream.set()
         if pty:
             pty_helpers.stop_pty(pty, wait_for)
         try:

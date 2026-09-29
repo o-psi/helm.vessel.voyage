@@ -335,17 +335,18 @@ impl Supervisor {
                     ),
                     "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
                 );
-                if let Err(error) = self
+                let recovery = self
                     .recover_abandoned(session, registration.incarnation)
-                    .await
-                {
-                    if command.observes_saved() {
-                        return self
-                            .observe_current(&directory, &registration, command, authorization)
-                            .await;
-                    }
-                    return Err(error);
+                    .await;
+                // A durable read never needs another execution owner, including
+                // when recovery succeeds. The helper takes the existing fences
+                // and reports saved state without changing the incarnation.
+                if command.observes_saved() {
+                    return self
+                        .observe_current(&directory, &registration, command, authorization)
+                        .await;
                 }
+                recovery?;
                 self.restart(Uuid::new_v4(), session, registration.incarnation)
                     .await?;
                 registration = self.registration(session).await?;
@@ -432,17 +433,17 @@ impl Supervisor {
                         ),
                         "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
                     );
-                    if let Err(error) = self
+                    let recovery = self
                         .recover_abandoned(session, registration.incarnation)
-                        .await
-                    {
-                        if command.observes_saved() {
-                            return self
-                                .observe_current(&directory, &registration, command, authorization)
-                                .await;
-                        }
-                        return Err(error);
+                        .await;
+                    // A stale socket pathname follows the same saved-read rule
+                    // as an absent endpoint. Do not launch merely to observe.
+                    if command.observes_saved() {
+                        return self
+                            .observe_current(&directory, &registration, command, authorization)
+                            .await;
                     }
+                    recovery?;
                     self.restart(Uuid::new_v4(), session, registration.incarnation)
                         .await?;
                     registration = self.registration(session).await?;

@@ -557,6 +557,11 @@ options. The menu lists the current process-client controls, not retired command
 
 ## Persistence, migration and lifecycle
 
+Durable saved-state reads after abandoned-owner recovery use the fenced observer
+under the existing incarnation, whether the old socket is absent or stale. Successful
+recovery does not itself launch a new Voyage for a snapshot or history read. A new
+execution owner is prepared only by the applicable execution/lifecycle admission.
+
 Each active voyage holds its exclusive session fence through turn execution and
 cleanup. After a terminal turn and positively observed cleanup, the process exits
 with an internal suspended disposition. The next submission automatically starts

@@ -1,6 +1,6 @@
 # Live events integration and rollout matrix (#372)
 
-Status: acceptance plan for #366, **not passing-test evidence**. Run against the
+Status: acceptance matrix for #366; the plan alone is **not passing-test evidence**. Run against the
 integrated public-v2 source and deployed WebHelm revision; record actual commands,
 results and source identities in #372. This document does not define the wire
 contract or modify the clients. Contract changes belong to #366/#367–#371.
@@ -67,3 +67,21 @@ fixture result/cursor and any failures, workspace coverage summary, hosted build
 run/artifact identity when required, WebHelm source and deployment receipt, and
 explicit Linux-only or browser/manual limitations. Close only after all required
 oracles have evidence; leave unresolved rows open with a concrete next action.
+
+## Current fixture coverage
+
+The public-v2 process fixture now includes catalogue cursor checkpoint/paging,
+retained journal replay across Vessel restart, fresh Voyage incarnation and repeated
+one-event pages. Its optional `--long-history` mode exercises real event retention
+overflow and paged older history with independent fast and delayed read cursors.
+The real TUI/Web journey in `goals.py --only web` exercises partial response display
+in both clients, Web-only transport loss while TUI continues, and automatic Web
+recovery to the same completed canonical run without duplicate text or inference.
+See [quality commands](quality.md#ordered-event-replay-and-reconnect).
+
+These fixtures complement deterministic client reducer cases for malformed,
+duplicate, out-of-order, wrong-incarnation and missing-offset events, and the Vessel
+bounded-queue slow-consumer test. Retention overflow is not a measurement of socket
+congestion, browser memory, or rendering a large history. The deployed authenticated
+console and remaining adverse/large-history client journeys still need explicit
+results in #372; do not close the matrix from process or component evidence alone.

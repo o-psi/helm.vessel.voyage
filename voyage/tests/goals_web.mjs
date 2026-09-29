@@ -31,10 +31,13 @@ const server=createServer({key:await readFile(config.key),cert:await readFile(co
         res.setHeader('Content-Type',extname(path)==='.css'?'text/css':'text/javascript');res.end(await readFile(path));
     }catch(error){console.error(error.message);res.writeHead(500).end();}
 });
-const sockets=new Set();
+const sockets=new Set(),webSockets=new Set();
+let blockWebSocket=false;
 server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
 server.on('upgrade',(req,socket,head)=>{
     assert.equal(req.url,'/v1/vessel/browser-socket');
+    if(blockWebSocket){socket.destroy();return;}
+    webSockets.add(socket);socket.on('close',()=>webSockets.delete(socket));
     const destination=new URL(config.gateway);
     const upstream=connect(Number(destination.port),'127.0.0.1',()=>{
         upstream.write(`${req.method} ${req.url} HTTP/1.1\r\n${Object.entries(req.headers).map(([key,value])=>`${key}: ${key==='host'?destination.host:value}`).join('\r\n')}\r\n\r\n`);
@@ -93,16 +96,28 @@ try {
     await dialog.getByRole('button',{name:'Clear goal',exact:true}).click();
     await page.getByRole('button',{name:'Set goal',exact:true}).waitFor();
     await writeFile(`${config.evidence}/goal-web-stream-ready`,'ready');
-    await waitForFile(`${config.evidence}/goal-web-stream-done`);
-    await page.getByText('One bounded step finished.',{exact:true}).waitFor();
-    const liveEvents=frames.flatMap(frame=>frame.received?.event?.result?.events||[]);
-    assert.ok(liveEvents.some(event=>event.kind==='message_finalized'),'Web received committed transcript events during catalogue observation');
+    await page.getByText('Shared live prefix.',{exact:true}).waitFor();
+    const beforeDisconnect=frames.flatMap(frame=>frame.received?.event?.result?.events||[]);
+    assert.ok(beforeDisconnect.some(event=>event.kind==='text_delta'),'partial text arrived through public-v2');
+    const beforeCursor=Math.max(...beforeDisconnect.map(event=>event.cursor));
+    blockWebSocket=true;
+    for(const socket of webSockets)socket.destroy();
+    await page.getByText('Reconnecting…',{exact:true}).waitFor();
+    await writeFile(`${config.evidence}/goal-web-stream-disconnected`,'disconnected');
+    const canonical=JSON.parse(await waitForFile(`${config.evidence}/goal-web-stream-done`));
+    blockWebSocket=false;
+    await page.getByText('Shared live prefix. Both clients recovered.',{exact:true}).waitFor({timeout:45000});
+    assert.equal(await page.getByText('Shared live prefix. Both clients recovered.',{exact:true}).count(),1,'reconnect did not duplicate canonical text');
+    const recovered=frames.map(frame=>frame.received?.response?.result?.result).filter(value=>value?.run?.run_id===canonical.run_id&&value.run.state==='completed').at(-1);
+    assert.ok(recovered,'automatic reconnect hydrates the canonical completed run');
+    assert.ok(recovered.revision>=canonical.revision&&recovered.observation_cursor>=canonical.observation_cursor,'recovery reaches the observed terminal revision and cursor');
+    assert.ok(canonical.observation_cursor>beforeCursor,'producer progressed while Web was disconnected');
     const catalogueRequests=frames.flatMap(frame=>frame.sent?.request?.command?[frame.sent.request.command]:[]);
-    assert.equal(catalogueRequests.filter(command=>command.op==='catalogue').length,2,'one hydration per page load');
+    assert.equal(catalogueRequests.filter(command=>command.op==='catalogue').length,3,'one hydration per initial load, reload and reconnect');
     assert.ok(catalogueRequests.filter(command=>command.op==='catalogue_changes'&&command.after===null).length>=2,'each socket checkpoints before hydration');
     assert.ok(catalogueRequests.some(command=>command.op==='catalogue_changes'&&command.after!==null&&command.wait_ms===8000),'real bounded catalogue long poll');
     assert.deepEqual(errors,[]);
-    await writeFile(`${config.evidence}/goal-web-result.json`,JSON.stringify({chromium:browser.version(),asset:entry.file,realProtocol:true,realVoyage:true,fixtureTls:true,checks:['create-paused','untrusted-text','concurrent-TUI-stale-review','reconnect-canonical-limits','confirmed-clear','catalogue-checkpoint-and-independent-long-poll','simultaneous-TUI-Web-canonical-reply'],errors},null,2));
+    await writeFile(`${config.evidence}/goal-web-result.json`,JSON.stringify({chromium:browser.version(),asset:entry.file,realProtocol:true,realVoyage:true,fixtureTls:true,checks:['create-paused','untrusted-text','concurrent-TUI-stale-review','reconnect-canonical-limits','confirmed-clear','catalogue-checkpoint-and-independent-long-poll','simultaneous-TUI-Web-live-deltas','Web-disconnect-TUI-continues','automatic-Web-reconnect-canonical-reply-no-duplicates'],canonical,beforeCursor,errors},null,2));
 }catch(error){
     if(page){await page.screenshot({path:`${config.evidence}/goal-web-failure.png`});await writeFile(`${config.evidence}/goal-web-failure.txt`,await page.locator('body').innerText());}
     throw error;

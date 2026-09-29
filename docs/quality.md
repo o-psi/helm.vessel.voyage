@@ -190,8 +190,22 @@ synthetic accounts. They do not rely on the removed implicit provider-account
 selection. The recovery check asserts canonical tool outcomes for approval expiry,
 denial and cancellation, plus absent filesystem effects. All three journeys retain
 private evidence and must observe fixture cleanup before reporting overall success.
-Simultaneous TUI/Web event display, transport congestion and production TLS remain
-separate acceptance evidence under #372.
+`python3 voyage/tests/goals.py --bin-dir target/debug --only web --web-root /path/to/webhelm`
+uses the built React client in Chromium and a real Helm PTY against one isolated
+Vessel. After the Goal review checks it holds a synthetic streamed response until
+both clients display its partial text, disconnects only Web, observes TUI completion,
+and verifies automatic Web reconnection reaches the canonical run/revision/cursor
+without duplicate text or repeated inference. It checks independent catalogue
+hydration and long polling across reconnect. The local TLS proxy is fixture evidence;
+it does not prove the production proxy or account login.
+
+Add `--long-history` to the process replay command to complete 80 synthetic turns
+while advancing one event reader and leaving another behind. The fixture requires
+actual 2,048-event retention overflow, explicit gap recovery, a bounded recent
+snapshot and lossless revision-fenced 17-message history pages. It records the
+largest event page and checks observation never repeats inference. This exercises
+retention and paging, not TCP congestion or client heap limits. Socket backpressure
+has separate focused tests; deployed TLS and browser rollout remain #372 gates.
 
 ## Everyday workflow checks
 
