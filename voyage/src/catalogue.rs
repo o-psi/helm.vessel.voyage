@@ -58,7 +58,7 @@ pub fn read(directory: &Path, session: Uuid) -> Result<CatalogueSummary> {
         |r| r.get(0),
     )?;
     ensure!(
-        (2..=12).contains(&version),
+        (2..=crate::attachment::journal::SCHEMA_VERSION).contains(&version),
         "unsupported catalogue journal version"
     );
     // SQL projects only display fields; conversation/tool/provider payloads never

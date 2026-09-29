@@ -216,6 +216,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             .await?;
         // Recovery commits interrupted evidence; it never claims descendants stopped.
         owner.recover_interrupted().await?;
+        owner.recover_goal_turn().await?;
         let mut config = match owner.saved_configuration().await? {
             Some(settings) => {
                 serde_json::from_str::<crate::launch_config::LaunchConfig>(&settings)?

@@ -1,0 +1,241 @@
+//! Account terminal goal turns once. A run's final answer is not Goal completion.
+use super::*;
+
+/// Supplied only by the executing runtime's aggregate meter, never a provider,
+/// model tool, Helm request or persisted configuration. Includes subordinate use.
+#[derive(Clone, Debug)]
+pub(crate) struct GoalMeasurement {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub elapsed_ms: u64,
+    pub complete: bool,
+}
+
+impl Journal {
+    pub(crate) fn settle_goal_run(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        measurement: Option<GoalMeasurement>,
+        cleanup_observed: bool,
+        now: i64,
+    ) -> Result<Option<Value>> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(now >= 0, "invalid goal settlement time");
+        // Legacy journals and ordinary runs have no Goal reservation to settle.
+        if self.opened_schema < 14 {
+            return Ok(None);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.session_id == guard.session_id,
+            "goal run session mismatch"
+        );
+        let reservation:Option<(String,String,i64)>=tx.query_row("SELECT goal_id,state,started_at_ms FROM process_goal_turns WHERE command_id=?1 AND session_id=?2",params![run.command_id.to_string(),guard.session_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+        let Some((goal_id, state, started)) = reservation else {
+            return Ok(None);
+        };
+        let prior: Option<String> = tx
+            .query_row(
+                "SELECT receipt FROM process_goal_settlements WHERE command_id=?1",
+                [run.command_id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(prior) = prior {
+            return Ok(Some(serde_json::from_str(&prior)?));
+        }
+        ensure!(state == "reserved", "goal turn was already abandoned");
+        ensure!(
+            !matches!(run.state, RunState::Accepted | RunState::Running),
+            "goal run is still active"
+        );
+        let saved = read_session(&tx, guard.session_id)?;
+        let mut current = read(&tx, guard.session_id)?;
+        let goal = current.goal.as_mut().context("reserved goal missing")?;
+        ensure!(
+            goal.id.to_string() == goal_id,
+            "goal settlement identity mismatch"
+        );
+        let measured = measurement.as_ref().is_some_and(|m| m.complete);
+        let observed = measurement.unwrap_or(GoalMeasurement {
+            input_tokens: run.usage.input_tokens,
+            output_tokens: run.usage.output_tokens,
+            elapsed_ms: u64::try_from(now.saturating_sub(started).max(0))?,
+            complete: false,
+        });
+        ensure!(
+            observed.input_tokens >= run.usage.input_tokens
+                && observed.output_tokens >= run.usage.output_tokens,
+            "aggregate goal usage is below canonical run usage"
+        );
+        goal.usage.input_tokens = goal
+            .usage
+            .input_tokens
+            .checked_add(observed.input_tokens)
+            .context("goal input usage overflow")?;
+        goal.usage.output_tokens = goal
+            .usage
+            .output_tokens
+            .checked_add(observed.output_tokens)
+            .context("goal output usage overflow")?;
+        goal.usage.elapsed_ms = goal
+            .usage
+            .elapsed_ms
+            .checked_add(observed.elapsed_ms)
+            .context("goal elapsed usage overflow")?;
+        if !measured {
+            goal.usage.unmeasured_runs = goal
+                .usage
+                .unmeasured_runs
+                .checked_add(1)
+                .context("goal unmeasured usage overflow")?;
+        }
+        let digest = progress_digest(&saved.session, run_id)?;
+        let repeated = if let Some(digest) = &digest {
+            tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_settlements s JOIN process_goal_turns t USING(command_id) WHERE t.session_id=?1 AND t.goal_id=?2 AND s.progress_digest=?3)",params![guard.session_id.to_string(),goal_id,digest],|r|r.get::<_,bool>(0))?
+        } else {
+            true
+        };
+        goal.usage.no_progress_runs = if repeated {
+            goal.usage
+                .no_progress_runs
+                .checked_add(1)
+                .context("goal no-progress counter overflow")?
+        } else {
+            0
+        };
+        let unresolved:u64=tx.query_row("SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL",[guard.session_id.to_string()],|r|r.get(0))?;
+        let decisions: u64 = tx.query_row(
+            "SELECT count(*) FROM process_decisions WHERE run_id=?1",
+            [run_id.to_string()],
+            |r| r.get(0),
+        )?;
+        let stop = if !cleanup_observed || unresolved > 0 || !cleanup_ready(&tx, guard.session_id)?
+        {
+            Some((
+                GoalStatus::NeedsAttention,
+                GoalStopReason::UnresolvedEffects,
+            ))
+        } else if run.state == RunState::Cancelled {
+            Some((GoalStatus::NeedsAttention, GoalStopReason::Cancelled))
+        } else if run.state == RunState::Interrupted {
+            Some((GoalStatus::NeedsAttention, GoalStopReason::Interrupted))
+        } else if decisions > 0 {
+            Some((GoalStatus::NeedsAttention, GoalStopReason::ApprovalRequired))
+        } else if run.state != RunState::Completed {
+            Some((GoalStatus::NeedsAttention, GoalStopReason::ProviderFailure))
+        } else if !measured {
+            Some((GoalStatus::NeedsAttention, GoalStopReason::UsageUnknown))
+        } else {
+            goal.limit_reached()
+                .map(|reason| (GoalStatus::Limited, reason))
+        };
+        // A concurrent explicit pause wins over every automatic transition.
+        if goal.status != GoalStatus::Paused
+            && let Some((status, reason)) = stop
+        {
+            goal.status = status;
+            goal.stop_reason = Some(reason);
+            goal.continuation_authorized = false;
+        }
+        goal.updated_at_ms = goal.updated_at_ms.max(u64::try_from(now)?);
+        let keep_authority = goal.status == GoalStatus::Active && goal.continuation_authorized;
+        let authority: Option<GoalAuthority> = if keep_authority {
+            let value: String = tx.query_row(
+                "SELECT authority FROM process_goals WHERE session_id=?1",
+                [guard.session_id.to_string()],
+                |r| r.get(0),
+            )?;
+            Some(serde_json::from_str(&value)?)
+        } else {
+            None
+        };
+        let receipt = json!({"command_id":run.command_id,"goal_id":goal.id,"run_id":run_id,"status":"settled","usage_complete":measured,"goal_status":goal.status,"stop_reason":goal.stop_reason,"usage":goal.usage});
+        current.revision = current
+            .revision
+            .checked_add(1)
+            .context("goal revision overflow")?;
+        update_session(&tx, &saved)?;
+        persist(&tx, guard.session_id, &current, authority.as_ref())?;
+        tx.execute(
+            "INSERT INTO process_goal_settlements VALUES(?1,?2,?3)",
+            params![
+                run.command_id.to_string(),
+                serde_json::to_string(&receipt)?,
+                digest
+            ],
+        )?;
+        tx.execute(
+            "UPDATE process_goal_turns SET state='settled' WHERE command_id=?1",
+            [run.command_id.to_string()],
+        )?;
+        commit(tx, &self.commit_fence)?;
+        Ok(Some(receipt))
+    }
+
+    /// Called only on startup, after ordinary interrupted-run recovery. Never
+    /// returns a Submit command, and never claims an old process survived.
+    pub(crate) fn recover_goal_turn(&mut self, guard: &ExecutionGuard, now: i64) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        if self.opened_schema < 14 {
+            return Ok(());
+        }
+        let pending:Option<(String,Option<String>)>=self.connection.query_row("SELECT t.command_id,c.run_id FROM process_goal_turns t LEFT JOIN commands c ON c.id=t.command_id WHERE t.session_id=?1 AND t.state='reserved'",[guard.session_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+        if let Some((command, run)) = pending {
+            if let Some(run) = run {
+                let unresolved:u64=self.connection.query_row("SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL",[guard.session_id.to_string()],|r|r.get(0))?;
+                self.settle_goal_run(guard, Uuid::parse_str(&run)?, None, unresolved == 0, now)?;
+            } else {
+                self.abandon_goal_turn(
+                    guard,
+                    Uuid::parse_str(&command)?,
+                    GoalStopReason::Interrupted,
+                    now,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Only new, successful tool observations count as progress automatically.
+/// Changing call IDs or repeating the same tool/result does not reset the bound.
+fn progress_digest(session: &Session, run: Uuid) -> Result<Option<String>> {
+    let Some(summary) = session.run_summaries.iter().find(|s| s.run_id == run) else {
+        return Ok(None);
+    };
+    let (Some(start), Some(end)) = (summary.message_start, summary.message_end) else {
+        return Ok(None);
+    };
+    let Some(messages) = session.messages.get(start..end) else {
+        return Ok(None);
+    };
+    let mut evidence = Vec::new();
+    for message in messages
+        .iter()
+        .filter(|m| m.role == Role::Tool && m.tool_success == Some(true))
+    {
+        let Some(id) = message.tool_call_id.as_ref() else {
+            continue;
+        };
+        let Some(call) = messages
+            .iter()
+            .flat_map(|m| &m.tool_calls)
+            .find(|c| &c.id == id)
+        else {
+            continue;
+        };
+        evidence.push(json!({"name":call.name,"arguments":call.arguments,"content":message.content,"outcome":message.tool_outcome}));
+    }
+    if evidence.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(hex::encode(Sha256::digest(serde_json::to_vec(
+            &evidence,
+        )?))))
+    }
+}

@@ -28,10 +28,10 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 13 fences writers that cannot preserve Goal authority and state.
-const SCHEMA_VERSION: i64 = 13;
+// Version 14 fences writers that cannot preserve Goal terminal settlements.
+pub(crate) const SCHEMA_VERSION: i64 = 14;
 mod goals;
-pub(crate) use goals::GoalAuthority;
+pub(crate) use goals::{GoalAuthority, GoalMeasurement};
 pub(super) mod checkpoint_wait;
 mod notifications;
 mod reconciliation;
@@ -266,7 +266,7 @@ impl Journal {
             ensure!(
                 matches!(
                     version,
-                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | SCHEMA_VERSION
+                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | SCHEMA_VERSION
                 ),
                 "unsupported attachment journal schema"
             );
@@ -1802,7 +1802,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=12),
+            matches!(self.opened_schema, 8..=13),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self

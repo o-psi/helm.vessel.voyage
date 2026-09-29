@@ -9,9 +9,12 @@ use voyage_protocol::{
 
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS process_goals(session_id TEXT PRIMARY KEY REFERENCES sessions(id),revision INTEGER NOT NULL CHECK(revision>=0),state TEXT,authority TEXT);
 CREATE TABLE IF NOT EXISTS process_goal_turns(command_id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES sessions(id),goal_id TEXT NOT NULL,incarnation TEXT NOT NULL,started_at_ms INTEGER NOT NULL,state TEXT NOT NULL CHECK(state IN ('reserved','settled','abandoned')),request TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_goal_turn ON process_goal_turns(session_id) WHERE state='reserved';";
+CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_goal_turn ON process_goal_turns(session_id) WHERE state='reserved';
+CREATE TABLE IF NOT EXISTS process_goal_settlements(command_id TEXT PRIMARY KEY REFERENCES process_goal_turns(command_id),receipt TEXT NOT NULL,progress_digest TEXT);";
 
 mod continuation;
+mod settlement;
+pub(crate) use settlement::GoalMeasurement;
 
 /// Host-private continuation binding. It is never copied into snapshots/events.
 #[derive(Clone, Serialize, Deserialize)]
@@ -235,6 +238,10 @@ impl Journal {
                     goal.limit_reached().is_none(),
                     "goal limit reached; edit limits before resuming"
                 );
+                ensure!(
+                    goal.usage.unmeasured_runs == 0,
+                    "goal usage is incomplete; explicitly replace the goal with a new budget"
+                );
                 goal.status = GoalStatus::Active;
                 goal.stop_reason = None;
                 goal.continuation_authorized = true;
@@ -298,7 +305,38 @@ fn ensure_idle(db: &Connection, session: Uuid) -> Result<()> {
     );
     let cleanup: u64 = db.query_row("SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL",[session.to_string()],|r|r.get(0))?;
     ensure!(cleanup == 0, "goal continuation requires observed cleanup");
+    ensure!(
+        cleanup_ready(db, session)?,
+        "goal continuation has unresolved retained effects"
+    );
     Ok(())
+}
+
+fn cleanup_ready(db: &Connection, session: Uuid) -> Result<bool> {
+    for (table, query) in [
+        (
+            "local_cleanup_obligations",
+            "SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND (confirmation IS NULL OR confirmation!='observed')",
+        ),
+        (
+            "process_session_resources",
+            "SELECT count(*) FROM process_session_resources WHERE session_id=?1 AND state IN ('cleanup_unknown','retained_unknown','operator_attested')",
+        ),
+        (
+            "process_retained_cleanup",
+            "SELECT count(*) FROM process_retained_cleanup WHERE session_id=?1 AND (confirmation IS NULL OR confirmation!='observed')",
+        ),
+    ] {
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1)",
+            [table],
+            |r| r.get(0),
+        )?;
+        if exists && db.query_row(query, [session.to_string()], |r| r.get::<_, u64>(0))? > 0 {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

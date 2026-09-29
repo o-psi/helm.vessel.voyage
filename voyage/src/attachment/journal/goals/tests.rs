@@ -293,7 +293,80 @@ fn schema_upgrade_fences_pre_goal_writers() {
     let c = command(&j, session.id, set(None, true));
     j.update_goal(&guard, a, &c, 1000).unwrap();
     assert!(stale.check_schema().is_err());
-    assert_eq!(j.opened_schema, 13);
+    assert_eq!(j.opened_schema, SCHEMA_VERSION);
+}
+
+#[test]
+fn settlement_upgrade_preserves_staged_goal_and_fences_old_writer() {
+    let (root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let before = j.goal(session.id).unwrap();
+    drop(guard);
+    drop(j);
+    let db = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+    db.execute_batch(
+        "DROP TABLE process_goal_settlements; UPDATE attachment_schema SET version=13;",
+    )
+    .unwrap();
+    drop(db);
+    let stale = Journal::open(root.path().join("journal")).unwrap();
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    j.upgrade_quiescent().unwrap();
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    assert!(stale.check_schema().is_err());
+    let guard = j.acquire_execution(session.id).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+}
+
+#[test]
+fn partial_aggregate_retains_subordinate_lower_bound_without_claiming_complete_usage() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    let mut aggregate = measured().unwrap();
+    aggregate.complete = false;
+    j.settle_goal_run(&guard, run.id, Some(aggregate), true, 1200)
+        .unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            goal.usage.input_tokens,
+            goal.usage.output_tokens,
+            goal.usage.unmeasured_runs
+        ),
+        (20, 8, 1)
+    );
+    assert_eq!(goal.status, GoalStatus::NeedsAttention);
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UsageUnknown));
+}
+
+#[test]
+fn operator_attestation_is_not_observed_cleanup_for_automatic_continuation() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, Some("progress"), RunState::Completed);
+    j.connection
+        .execute(
+            "INSERT INTO local_cleanup_obligations VALUES(?1,?2,?3,?4,'operator_attested')",
+            params![
+                run.id.to_string(),
+                session.id.to_string(),
+                run.machine_id.to_string(),
+                run.principal_id.to_string()
+            ],
+        )
+        .unwrap();
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(goal.status, GoalStatus::NeedsAttention);
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UnresolvedEffects));
+    assert!(!goal.continuation_authorized);
 }
 
 #[test]
@@ -382,5 +455,429 @@ fn interrupted_reservation_survives_reopen_without_replay_or_success() {
     assert_eq!(
         j.process_receipt(id).unwrap().unwrap()["status"],
         "not_admitted"
+    );
+}
+
+fn finish_reserved(
+    j: &mut Journal,
+    guard: &ExecutionGuard,
+    now: i64,
+    tool: Option<&str>,
+    state: RunState,
+) -> RunRecord {
+    let revision = j.goal(guard.session_id).unwrap().revision;
+    let reserved = j
+        .reserve_goal_turn(
+            guard,
+            revision,
+            Uuid::new_v4(),
+            "Continue the current goal".into(),
+            now,
+        )
+        .unwrap();
+    let RuntimeCommand::Submit {
+        command_id,
+        expected_revision,
+        expires_at_ms,
+        prompt,
+        ..
+    } = reserved.command
+    else {
+        panic!("expected submit")
+    };
+    let run = j
+        .admit_turn(
+            guard,
+            &TurnAdmission {
+                coordination: None,
+                operator_name: None,
+                command_id,
+                machine_id: reserved.authority.installation_id,
+                principal_id: reserved.authority.principal_id,
+                session_id: guard.session_id,
+                expected_revision,
+                expires_at_ms: i64::try_from(expires_at_ms).unwrap(),
+                prompt,
+                parts: vec![],
+            },
+            now,
+        )
+        .unwrap()
+        .run;
+    j.mark_running(guard, run.id).unwrap();
+    let mut messages = j.load_session(guard.session_id).unwrap().session.messages;
+    if let Some(result) = tool {
+        let call = Uuid::new_v4().to_string();
+        let mut request = Message::new(Role::Assistant, "");
+        request.tool_calls.push(crate::model::ToolCall {
+            id: call.clone(),
+            name: "read_file".into(),
+            arguments: json!({"path":"result.txt"}),
+        });
+        messages.push(request);
+        messages.push(Message::tool_result(call, result, true));
+    }
+    j.checkpoint_canonical_at(
+        guard,
+        run.id,
+        &messages,
+        &Usage {
+            input_tokens: 10,
+            output_tokens: 5,
+        },
+        now,
+    )
+    .unwrap();
+    let text = (state == RunState::Completed).then_some("A run result, not proof of the full goal");
+    let reason = (state != RunState::Completed).then_some("fixture terminal failure");
+    j.finish(guard, run.id, state, reason, text).unwrap()
+}
+
+fn measured() -> Option<GoalMeasurement> {
+    Some(GoalMeasurement {
+        input_tokens: 20,
+        output_tokens: 8,
+        elapsed_ms: 100,
+        complete: true,
+    })
+}
+
+#[test]
+fn terminal_settlement_is_once_only_and_run_completion_is_not_goal_completion() {
+    let (root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    let receipt = j
+        .settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap()
+        .unwrap();
+    let before = j.goal(session.id).unwrap();
+    let g = before.goal.as_ref().unwrap();
+    assert_eq!(g.status, GoalStatus::Active);
+    assert_eq!(g.usage.input_tokens, 20);
+    assert_eq!(g.usage.output_tokens, 8);
+    assert_eq!(g.usage.elapsed_ms, 100);
+    assert_eq!(g.usage.no_progress_runs, 1);
+    assert_eq!(
+        j.settle_goal_run(&guard, run.id, None, false, 1300)
+            .unwrap()
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    drop(guard);
+    drop(j);
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    let guard = j.acquire_execution(session.id).unwrap();
+    assert_eq!(
+        j.settle_goal_run(&guard, run.id, None, false, 1400)
+            .unwrap()
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(j.goal(session.id).unwrap(), before);
+}
+
+#[test]
+fn missing_usage_is_visible_and_cannot_be_resumed_by_editing_limits() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    j.settle_goal_run(&guard, run.id, None, true, 1200).unwrap();
+    let g = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(g.status, GoalStatus::NeedsAttention);
+    assert_eq!(g.stop_reason, Some(GoalStopReason::UsageUnknown));
+    assert_eq!(g.usage.unmeasured_runs, 1);
+    assert_eq!(g.usage.input_tokens, 10);
+    let edit = command(
+        &j,
+        session.id,
+        GoalAction::Edit {
+            goal_id: g.id,
+            objective: g.objective.clone(),
+            limits: GoalLimits::default(),
+        },
+    );
+    j.update_goal(&guard, a.clone(), &edit, 1200).unwrap();
+    let resume = command(&j, session.id, GoalAction::Resume { goal_id: g.id });
+    assert!(j.update_goal(&guard, a, &resume, 1200).is_err());
+}
+
+#[test]
+fn empty_runs_stop_at_no_progress_limit_without_claiming_success() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    for i in 0..3 {
+        let run = finish_reserved(&mut j, &guard, 1100 + i * 100, None, RunState::Completed);
+        j.settle_goal_run(&guard, run.id, measured(), true, 1200 + i * 100)
+            .unwrap();
+    }
+    let g = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(g.status, GoalStatus::Limited);
+    assert_eq!(g.stop_reason, Some(GoalStopReason::NoProgress));
+    assert_eq!(g.usage.runs, 3);
+    assert!(!g.continuation_authorized);
+}
+
+#[test]
+fn identical_tool_results_with_fresh_call_ids_do_not_count_as_new_progress() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    for (i, result, expected) in [
+        (0, "same bytes", 0),
+        (1, "same bytes", 1),
+        (2, "changed bytes", 0),
+    ] {
+        let run = finish_reserved(
+            &mut j,
+            &guard,
+            1100 + i * 100,
+            Some(result),
+            RunState::Completed,
+        );
+        j.settle_goal_run(&guard, run.id, measured(), true, 1200 + i * 100)
+            .unwrap();
+        assert_eq!(
+            j.goal(session.id)
+                .unwrap()
+                .goal
+                .unwrap()
+                .usage
+                .no_progress_runs,
+            expected
+        );
+    }
+}
+
+#[test]
+fn incomplete_or_cancelled_work_and_unknown_cleanup_never_continue() {
+    for (state, cleanup, reason) in [
+        (RunState::Cancelled, true, GoalStopReason::Cancelled),
+        (RunState::Interrupted, true, GoalStopReason::Interrupted),
+        (RunState::Failed, true, GoalStopReason::ProviderFailure),
+        (RunState::Incomplete, true, GoalStopReason::ProviderFailure),
+        (
+            RunState::Completed,
+            false,
+            GoalStopReason::UnresolvedEffects,
+        ),
+    ] {
+        let (_root, mut j, session, guard, a) = fixture();
+        let c = command(&j, session.id, set(None, true));
+        j.update_goal(&guard, a, &c, 1000).unwrap();
+        let run = finish_reserved(&mut j, &guard, 1100, None, state);
+        j.settle_goal_run(&guard, run.id, measured(), cleanup, 1200)
+            .unwrap();
+        let g = j.goal(session.id).unwrap().goal.unwrap();
+        assert_eq!(g.status, GoalStatus::NeedsAttention);
+        assert_eq!(g.stop_reason, Some(reason));
+        assert!(!g.continuation_authorized);
+    }
+}
+
+#[test]
+fn pause_wins_over_automatic_settlement_and_usage_still_accumulates() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    let id = j.goal(session.id).unwrap().goal.unwrap().id;
+    let pause = command(&j, session.id, GoalAction::Pause { goal_id: id });
+    j.update_goal(&guard, a, &pause, 1150).unwrap();
+    j.settle_goal_run(&guard, run.id, measured(), false, 1200)
+        .unwrap();
+    let g = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(g.status, GoalStatus::Paused);
+    assert_eq!(g.stop_reason, Some(GoalStopReason::UserPaused));
+    assert_eq!(g.usage.input_tokens, 20);
+    assert!(!g.continuation_authorized);
+}
+
+#[test]
+fn recovered_accepted_turn_accounts_lower_bound_once_and_never_replays() {
+    let (root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    assert!(
+        j.abandon_goal_turn(&guard, run.command_id, GoalStopReason::Interrupted, 1200)
+            .is_err()
+    );
+    drop(guard);
+    drop(j);
+    let mut j = Journal::open(root.path().join("journal")).unwrap();
+    let guard = j.acquire_execution(session.id).unwrap();
+    j.recover_goal_turn(&guard, 1200).unwrap();
+    let before = j.goal(session.id).unwrap();
+    j.recover_goal_turn(&guard, 1300).unwrap();
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    assert_eq!(before.goal.as_ref().unwrap().usage.unmeasured_runs, 1);
+    assert!(!before.goal.unwrap().continuation_authorized);
+    assert_eq!(
+        j.process_latest_run(session.id).unwrap().unwrap().id,
+        run.id
+    );
+    assert_eq!(
+        j.process_receipt(run.command_id).unwrap().unwrap()["status"],
+        "accepted"
+    );
+}
+
+#[test]
+fn aggregate_below_canonical_usage_rolls_back_and_corrected_settlement_can_finish() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Completed);
+    let before = j.goal(session.id).unwrap();
+    assert!(
+        j.settle_goal_run(
+            &guard,
+            run.id,
+            Some(GoalMeasurement {
+                input_tokens: 9,
+                output_tokens: 5,
+                elapsed_ms: 100,
+                complete: true,
+            }),
+            true,
+            1200
+        )
+        .is_err()
+    );
+    assert_eq!(j.goal(session.id).unwrap(), before);
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+}
+
+#[test]
+fn each_finite_budget_stops_new_work_and_remains_distinct_from_success() {
+    for (limits, measurement, reason) in [
+        (
+            GoalLimits {
+                runs: 1,
+                ..GoalLimits::default()
+            },
+            measured(),
+            GoalStopReason::RunLimit,
+        ),
+        (
+            GoalLimits {
+                tokens: 28,
+                ..GoalLimits::default()
+            },
+            measured(),
+            GoalStopReason::TokenLimit,
+        ),
+        (
+            GoalLimits {
+                elapsed_ms: 1000,
+                ..GoalLimits::default()
+            },
+            Some(GoalMeasurement {
+                input_tokens: 20,
+                output_tokens: 8,
+                elapsed_ms: 1000,
+                complete: true,
+            }),
+            GoalStopReason::TimeLimit,
+        ),
+    ] {
+        let (_root, mut j, session, guard, a) = fixture();
+        let c = command(
+            &j,
+            session.id,
+            GoalAction::Set {
+                objective: "bounded task".into(),
+                limits,
+                replace_goal_id: None,
+                continue_automatically: true,
+            },
+        );
+        j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
+        let run = finish_reserved(&mut j, &guard, 1100, Some("progress"), RunState::Completed);
+        j.settle_goal_run(&guard, run.id, measurement, true, 2100)
+            .unwrap();
+        let snapshot = j.goal(session.id).unwrap();
+        let g = snapshot.goal.unwrap();
+        assert_eq!(g.status, GoalStatus::Limited);
+        assert_eq!(g.stop_reason, Some(reason));
+        assert!(!g.continuation_authorized);
+        assert!(
+            j.reserve_goal_turn(
+                &guard,
+                snapshot.revision,
+                Uuid::new_v4(),
+                "More work".into(),
+                2200
+            )
+            .is_err()
+        );
+        let resume = command(&j, session.id, GoalAction::Resume { goal_id: g.id });
+        assert!(j.update_goal(&guard, a, &resume, 2200).is_err());
+    }
+}
+
+#[test]
+fn retained_unknown_effects_block_automatic_continuation() {
+    let (_root, mut j, session, guard, a) = fixture();
+    j.initialize_session_resources(&guard).unwrap();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, Some("progress"), RunState::Completed);
+    j.connection
+        .execute(
+            "INSERT INTO process_session_resources VALUES(?1,?2,?3,'fixture','retained_unknown')",
+            params![
+                Uuid::new_v4().to_string(),
+                session.id.to_string(),
+                run.id.to_string()
+            ],
+        )
+        .unwrap();
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+    let g = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(g.stop_reason, Some(GoalStopReason::UnresolvedEffects));
+    assert!(!g.continuation_authorized);
+}
+
+#[test]
+fn deleting_session_scrubs_goal_reservations_and_settlements_in_foreign_key_order() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(
+        &mut j,
+        &guard,
+        1100,
+        Some("private result"),
+        RunState::Completed,
+    );
+    j.settle_goal_run(&guard, run.id, measured(), true, 1200)
+        .unwrap();
+    let tx = j.connection.transaction().unwrap();
+    super::super::deletion::scrub(&tx, session.id).unwrap();
+    tx.commit().unwrap();
+    for table in [
+        "process_goals",
+        "process_goal_turns",
+        "process_goal_settlements",
+    ] {
+        let count: u64 = j
+            .connection
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+    assert_eq!(
+        j.process_receipt(c.mutation_id().unwrap())
+            .unwrap()
+            .unwrap()["status"],
+        "deleted"
     );
 }

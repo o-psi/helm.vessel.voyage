@@ -99,6 +99,9 @@ pub struct Config {
     /// Admitted run's current grant check, never restored from serialized settings.
     #[serde(skip)]
     pub provider_authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
+    /// One admitted Goal turn's local aggregate; configuration cannot grant a budget.
+    #[serde(skip)]
+    pub goal_meter: Option<std::sync::Arc<crate::provider::goal_meter::GoalMeter>>,
     /// Runtime-owned artifact storage; never accepted from configuration.
     #[serde(skip)]
     pub artifact_scope: Option<crate::artifacts::Scope>,
@@ -500,6 +503,7 @@ impl Default for Config {
             redact_values: Vec::new(),
             live_access: None,
             provider_authority: None,
+            goal_meter: None,
             artifact_scope: None,
             extension_private_files: Vec::new(),
             extension_private_files_complete: false,
@@ -845,6 +849,7 @@ impl Config {
         updated.host_browser_launch = self.host_browser_launch.clone();
         updated.live_access = self.live_access.clone();
         updated.provider_authority = self.provider_authority.clone();
+        updated.goal_meter = self.goal_meter.clone();
         updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();

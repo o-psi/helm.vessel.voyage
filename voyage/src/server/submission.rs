@@ -287,6 +287,13 @@ pub(super) async fn submit(
         .await;
         match result {
             Ok(result) => {
+                if let Err(error) = state
+                    .owner
+                    .settle_goal_run(result.actual.id, None, result.cleanup_observed)
+                    .await
+                {
+                    tracing::error!("goal terminal accounting remains unresolved: {error}");
+                }
                 tracing::info!(state=?result.actual.state, cleanup_observed=result.cleanup_observed, construction_failed=result.construction_failed,"voyage run finalized")
             }
             Err(error) => tracing::error!("voyage execution failed: {}", error),

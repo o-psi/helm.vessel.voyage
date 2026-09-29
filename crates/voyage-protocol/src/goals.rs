@@ -39,6 +39,9 @@ pub struct GoalUsage {
     pub output_tokens: u64,
     pub elapsed_ms: u64,
     pub no_progress_runs: u32,
+    /// A known lower bound is retained, but missing aggregate usage prevents resume.
+    #[serde(default)]
+    pub unmeasured_runs: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

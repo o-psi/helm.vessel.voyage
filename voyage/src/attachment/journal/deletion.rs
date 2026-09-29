@@ -65,6 +65,7 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
         "process_assignments",
         "process_configuration",
         "process_goals",
+        "process_goal_settlements",
         "process_goal_turns",
     ] {
         let exists: bool = tx.query_row(
@@ -91,6 +92,9 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
                         "DELETE FROM process_goal_turns WHERE session_id=?1",
                         [session.to_string()],
                     )?;
+                }
+                "process_goal_settlements" => {
+                    tx.execute("DELETE FROM process_goal_settlements WHERE command_id IN (SELECT command_id FROM process_goal_turns WHERE session_id=?1)",[session.to_string()])?;
                 }
                 "process_configuration" => {
                     tx.execute(

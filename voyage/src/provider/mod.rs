@@ -1,4 +1,5 @@
 mod coordination;
+pub mod goal_meter;
 pub(crate) mod multimodal;
 pub use multimodal::validate_image_capability;
 mod anthropic;
@@ -510,13 +511,21 @@ pub(crate) fn from_config_with_redactor(
     config
         .validate_account()
         .map_err(|e| ProviderError::Authentication(e.to_string()))?;
-    if config.account.is_some() {
-        return Ok(Box::new(BoundProvider {
+    let provider: Box<dyn Provider> = if config.account.is_some() {
+        Box::new(BoundProvider {
             config: config.clone(),
             redactor,
-        }));
-    }
-    native_from_config(config, redactor)
+        })
+    } else {
+        native_from_config(config, redactor)?
+    };
+    Ok(match &config.goal_meter {
+        Some(meter) => Box::new(goal_meter::MeteredProvider {
+            inner: provider,
+            meter: meter.clone(),
+        }),
+        None => provider,
+    })
 }
 
 fn native_from_config(

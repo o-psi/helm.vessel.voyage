@@ -954,6 +954,7 @@ impl RunCheckpoint for RunOwner {
 }
 
 mod controls;
+mod goals;
 mod process;
 
 mod decisions;

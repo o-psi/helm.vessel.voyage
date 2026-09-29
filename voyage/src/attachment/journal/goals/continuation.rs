@@ -43,6 +43,7 @@ impl Journal {
             "goal continuation is not authorized"
         );
         ensure!(goal.limit_reached().is_none(), "goal limit reached");
+        ensure!(goal.usage.unmeasured_runs == 0, "goal usage is incomplete");
         let authority: String = tx.query_row(
             "SELECT authority FROM process_goals WHERE session_id=?1",
             [guard.session_id.to_string()],
@@ -130,6 +131,7 @@ impl Journal {
             [command_id.to_string()],
             |r| r.get(0),
         )?;
+        ensure!(!accepted, "accepted goal turn requires terminal settlement");
         if !accepted {
             let receipt =
                 json!({"command_id":command_id,"status":"not_admitted","effects_replayed":false});

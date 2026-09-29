@@ -33,17 +33,40 @@ one hour of execution time, and three consecutive runs without progress.
 Limits are owner-configurable within the bounds in
 [`goals.rs`](../crates/voyage-protocol/src/goals.rs). The journal records an
 admitted-run charge before a continuation effect; a failed reservation does
-not refund its charge. Token, elapsed-time and subordinate usage settlement
-still need to be connected to the execution path.
+not refund its charge. Terminal settlement records aggregate token/time usage
+once, retaining an immutable receipt across reopen. Missing aggregate usage
+retains the known lower bound, increments `unmeasured_runs`, stops continuation
+and prevents Resume from disguising an unknown cost as fresh budget. An explicit
+replacement creates a new Goal. A successful run does not complete the Goal.
+
+The staged local provider meter shares one process-local counter across cloned
+child configurations. It observes native cumulative usage, distinguishes an
+explicit zero from missing counters, retains partial counts on cancellation,
+and refuses subsequent requests after uncertainty or observed token/time limits.
+It caps requested output to the remaining allowance; input/billing totals are
+known only after dispatch, so this is not a strict billing ceiling. The meter is
+not serializable authority. It still needs runtime installation, durable request
+observations and remote subordinate accounting before automatic continuation
+can use its measurements. The terminal execution hook currently uses incomplete
+aggregate accounting, which stops a reserved Goal turn rather than allowing
+an unmeasured follow-up.
+
+Empty turns and previously seen successful tool-result batches increase the
+consecutive no-progress counter. Novel batches reset it. This is a bounded
+heuristic, not verification of the objective. Cancelled/interrupted/failed runs,
+approval decisions and unconfirmed cleanup stop automatic continuation; an
+explicit concurrent Pause retains its status while usage is still charged.
 
 A continuation reservation contains one exact Submit command, the current
 process incarnation, Goal identity and the private authorization binding. Only
 one reservation may be outstanding per session. Pause or competing input changes
 the canonical revision before that command can be admitted. An unadmitted
-abandoned command receives a permanent `not_admitted` receipt. Recovery must
-reconcile the retained reservation; it must never redispatch it just because
-the owner process restarted. The execution scheduler and recovery integration
-are still pending.
+abandoned command receives a permanent `not_admitted` receipt. Startup recovery
+reconciles the retained reservation after ordinary interrupted-run recovery:
+unadmitted work is abandoned permanently, and accepted terminal work settles its
+known usage once with an unknown-aggregate marker. Neither path redispatches a
+command. The journal schema upgrade fences older writers before introducing
+settlement records. The execution scheduler is still pending.
 
 Snapshots expose the History-authorized objective. Ordered `goal` observations
 carry only identity, revision, status, usage and a fixed stop reason; they omit
@@ -55,3 +78,17 @@ Before delivery, complete runtime continuation, usage/evidence enforcement,
 restart/cancellation/approval handling, both Helm clients, offline process
 journeys, full workspace coverage and hosted build/artifact verification. The
 state-layer tests alone do not establish #378 acceptance.
+
+Focused offline checks during implementation (from the repository root, with
+private test fixtures) are:
+
+```sh
+umask 077
+cargo test -p voyage -p vessel -p voyage-protocol --locked --lib goal -j 4
+cargo test -p voyage --locked --lib -j 4
+cargo check -p helm -p vessel --locked -j 4
+```
+
+The library suite also exercises the read-only catalogue against current journals;
+schema changes must preserve that reader alongside owner recovery. These checks
+do not replace final workspace coverage, client journeys or hosted builds.
