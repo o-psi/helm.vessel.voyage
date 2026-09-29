@@ -270,7 +270,7 @@ claim the account is unprivileged from a nonzero UID or remove its rights silent
 The installer now has a **read-only** `system-assess --execution-user USER --gateway-user USER`
 diagnostic. It reports both explicit, distinct ordinary accounts, host identity/mappings/capabilities,
 systemd state, protected path ancestry and existing-installation markers without
-changing a service. Its `ready_to_install` value remains false while the gateway,
+changing a service. Its `ready_to_install` value remains false while gateway activation,
 scope-aware update/rollback and full adoption checks are unavailable. It is a
 preflight input, not the supported system installer or an activation gate. The
 staged unit template pins immutable binaries and separates the root supervisor
@@ -280,7 +280,7 @@ assets. Publication, activation, scope-aware rollback and adoption remain unavai
 
 Introduce an explicit installation-scope abstraction consumed by every layout,
 service, status, update, rollback and uninstall operation. Proposed CLI shape:
-`install --scope system --execution-user USER`, with administrator enablement as a
+`install --scope system --execution-user USER --gateway-user USER --gateway-origin HTTPS_ORIGIN`, with administrator enablement as a
 separate explicit choice. These flags do not exist yet. Never infer the ordinary
 user from a remote login, directory owner, browser user, or `SUDO_USER` alone.
 
