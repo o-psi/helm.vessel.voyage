@@ -209,6 +209,7 @@ async fn inspect(
     directory: &std::path::Path,
 ) -> Result<Value> {
     match command.clone() {
+        RuntimeCommand::GoalRead => Ok(serde_json::to_value(owner.goal().await?)?),
         RuntimeCommand::NotificationEvents { after, limit } => {
             owner.notification_events(after, limit).await
         }

@@ -55,6 +55,7 @@ pub enum LiveEventKind {
     Session,
     Lifecycle,
     Catalogue,
+    Goal,
 }
 
 /// Canonical message index is stable across snapshots and history pages.

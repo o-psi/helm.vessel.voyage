@@ -11,6 +11,13 @@ pub const MAX_PROCESS_FRAME: usize = 8 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    GoalRead,
+    GoalUpdate {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        action: crate::goals::GoalAction,
+    },
     /// Metadata-only outbox read by the authenticated local supervisor. No recipient
     /// or payload is accepted; this is deliberately not a public VoyageCommand.
     NotificationEvents {
@@ -298,7 +305,8 @@ impl RuntimeCommand {
         match self {
             Self::HostBrowser { operation, .. } => operation.mutation_id(),
             Self::Browser { operation } => operation.mutation_id(),
-            Self::Clear { command_id, .. }
+            Self::GoalUpdate { command_id, .. }
+            | Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
             | Self::OperatorTool { command_id, .. }
             | Self::Github { command_id, .. }
@@ -331,6 +339,7 @@ impl RuntimeCommand {
             Self::Health
                 | Self::Stop
                 | Self::Snapshot
+                | Self::GoalRead
                 | Self::ProviderAttempts { .. }
                 | Self::History { .. }
                 | Self::MessageChunk { .. }

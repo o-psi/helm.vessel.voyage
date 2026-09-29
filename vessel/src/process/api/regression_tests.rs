@@ -234,3 +234,32 @@ async fn host_browser_translation_requires_private_socket_scope() {
         None
     );
 }
+#[test]
+fn goal_command_mapping_preserves_exact_owner_mutation_and_read_rights() {
+    use voyage_protocol::goals::{GoalAction, GoalLimits};
+    let command = VoyageCommand::GoalUpdate {
+        command_id: uuid::Uuid::new_v4(),
+        expected_revision: 7,
+        expires_at_ms: 1000,
+        action: GoalAction::Set {
+            objective: "Verify task".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: true,
+        },
+    };
+    assert_eq!(required_right(&command), None);
+    assert_eq!(
+        owner_connection_right(&command),
+        Some(ProcessRight::Execute)
+    );
+    let public = serde_json::to_value(&command).unwrap();
+    assert_eq!(
+        serde_json::to_value(runtime(command).unwrap()).unwrap(),
+        public
+    );
+    assert_eq!(
+        required_right(&VoyageCommand::GoalRead),
+        Some(ProcessRight::History)
+    );
+}

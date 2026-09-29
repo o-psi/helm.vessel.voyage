@@ -104,6 +104,13 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    GoalRead,
+    GoalUpdate {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        action: crate::goals::GoalAction,
+    },
     /// Executing-host browser, available only on authenticated duplex sockets.
     HostBrowser {
         operation: crate::host_browser::HostBrowserOperation,
@@ -367,7 +374,8 @@ impl VoyageCommand {
         match self {
             Self::HostBrowser { operation, .. } => operation.mutation_id(),
             Self::Browser { operation } => operation.mutation_id(),
-            Self::Clear { command_id, .. }
+            Self::GoalUpdate { command_id, .. }
+            | Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
             | Self::OperatorTool { command_id, .. }
             | Self::Github { command_id, .. }

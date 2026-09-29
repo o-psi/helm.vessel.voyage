@@ -521,7 +521,7 @@ mod tests {
             .bind_notification_incarnation(&mut guard, Uuid::new_v4())
             .unwrap();
         assert!(old_reader.check_schema().is_err());
-        assert_eq!(journal.opened_schema, 12);
+        assert_eq!(journal.opened_schema, SCHEMA_VERSION);
         journal.recover_interrupted(&guard).unwrap();
         let page = journal.notification_events(run.session_id, 0, 128).unwrap();
         assert_eq!(page["gap"], true);

@@ -28,8 +28,10 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 12 fences writers that cannot atomically persist notification intents.
-const SCHEMA_VERSION: i64 = 12;
+// Version 13 fences writers that cannot preserve Goal authority and state.
+const SCHEMA_VERSION: i64 = 13;
+mod goals;
+pub(crate) use goals::GoalAuthority;
 pub(super) mod checkpoint_wait;
 mod notifications;
 mod reconciliation;
@@ -264,7 +266,7 @@ impl Journal {
             ensure!(
                 matches!(
                     version,
-                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | SCHEMA_VERSION
+                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | SCHEMA_VERSION
                 ),
                 "unsupported attachment journal schema"
             );
@@ -281,6 +283,7 @@ impl Journal {
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
             notifications::initialize(&tx)?;
+            tx.execute_batch(goals::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -384,7 +387,10 @@ impl Journal {
         if self.opened_schema < 6 {
             tx.execute_batch(reconciliation::SCHEMA)?;
         }
-        notifications::initialize(&tx)?;
+        if self.opened_schema < 12 {
+            notifications::initialize(&tx)?;
+        }
+        tx.execute_batch(goals::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -1796,7 +1802,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=11),
+            matches!(self.opened_schema, 8..=12),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self
@@ -1812,7 +1818,10 @@ impl Journal {
             active == 0,
             "typed content upgrade requires exclusive session execution"
         );
-        notifications::initialize(&tx)?;
+        if self.opened_schema < 12 {
+            notifications::initialize(&tx)?;
+        }
+        tx.execute_batch(goals::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],

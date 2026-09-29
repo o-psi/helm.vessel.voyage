@@ -279,6 +279,7 @@ impl Journal {
                 "command_receipt" => "command_outcome",
                 "lifecycle" => "lifecycle",
                 "session" => "session",
+                "goal" => "goal",
                 "assignment" | "cleanup" => "run_state",
                 _ => "catalogue",
             };

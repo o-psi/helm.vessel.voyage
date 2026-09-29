@@ -61,7 +61,12 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
         "UPDATE process_branches SET snapshot='',configuration=NULL WHERE source_session_id=?1",
         [session.to_string()],
     )?;
-    for table in ["process_assignments", "process_configuration"] {
+    for table in [
+        "process_assignments",
+        "process_configuration",
+        "process_goals",
+        "process_goal_turns",
+    ] {
         let exists: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name=?1)",
             [table],
@@ -73,6 +78,18 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
                     tx.execute(
                         "UPDATE process_assignments SET request='',observation=NULL",
                         [],
+                    )?;
+                }
+                "process_goals" => {
+                    tx.execute(
+                        "DELETE FROM process_goals WHERE session_id=?1",
+                        [session.to_string()],
+                    )?;
+                }
+                "process_goal_turns" => {
+                    tx.execute(
+                        "DELETE FROM process_goal_turns WHERE session_id=?1",
+                        [session.to_string()],
                     )?;
                 }
                 "process_configuration" => {

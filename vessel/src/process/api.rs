@@ -9,6 +9,18 @@ use voyage_protocol::{
 
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
+        VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
+        VoyageCommand::GoalUpdate {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            action,
+        } => RuntimeCommand::GoalUpdate {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            action,
+        },
         VoyageCommand::HostBrowser { operation } => {
             ensure!(operation.valid(), "invalid host browser operation");
             let socket = super::service::HOST_BROWSER_SOCKET
@@ -625,7 +637,8 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
             Some(ProcessRight::History)
         }
         VoyageCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
-        VoyageCommand::Snapshot
+        VoyageCommand::GoalRead
+        | VoyageCommand::Snapshot
         | VoyageCommand::ProviderAttempts { .. }
         | VoyageCommand::History { .. }
         | VoyageCommand::MessageChunk { .. }
@@ -656,7 +669,8 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         }
         VoyageCommand::Terminal { .. } => Some(ProcessRight::Terminal),
         VoyageCommand::SetAccountInference { .. } => Some(ProcessRight::AccountUse),
-        VoyageCommand::Configure { .. }
+        VoyageCommand::GoalUpdate { .. }
+        | VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }
         | VoyageCommand::SetInference { .. } => None,
         _ => None,
@@ -703,7 +717,8 @@ pub fn owner_connection_right(command: &VoyageCommand) -> Option<ProcessRight> {
         VoyageCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
             Some(ProcessRight::Execute)
         }
-        VoyageCommand::Configure { .. }
+        VoyageCommand::GoalUpdate { .. }
+        | VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }
         | VoyageCommand::SetInference { .. } => Some(ProcessRight::Execute),
         VoyageCommand::Controls { section, .. } if section == "host_resources" => {

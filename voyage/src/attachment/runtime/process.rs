@@ -5,6 +5,33 @@ use serde_json::{Value, json};
 use voyage_protocol::process::RuntimeCommand;
 mod projection;
 impl ManagedSessionOwner {
+    pub(crate) async fn goal(&self) -> anyhow::Result<voyage_protocol::goals::GoalSnapshot> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            store.journal.goal(store.session_id)
+        })
+        .await?
+    }
+
+    pub(crate) async fn update_goal(
+        &self,
+        authority: super::super::journal::GoalAuthority,
+        command: RuntimeCommand,
+    ) -> anyhow::Result<Value> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.update_goal(guard, authority, &command, SystemClock.now_ms()?)
+        })
+        .await?
+    }
+
     /// Only server startup supplies the authenticated registration generation.
     pub(crate) async fn bind_notification_incarnation(
         &self,
@@ -91,7 +118,7 @@ impl ManagedSessionOwner {
             let retained = store.journal.retained_cleanup(store.session_id)?;
             let has_retained = retained["run_ids"].as_array().is_some_and(|v| !v.is_empty()) || retained["resources"].as_array().is_some_and(|v| !v.is_empty());
             let recovery_notice = has_retained.then_some("Conversation ready to continue. Previous interrupted work has unknown effects; its unfinished commands were not repeated.");
-            Ok(json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"total_turns":session.run_summaries.len(),"turns_truncated":session.run_summaries.len()>128,"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"cleanup":store.journal.cleanup_progress(store.session_id)?,"retained_cleanup":retained,"recovery_notice":recovery_notice,"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
+            Ok(json!({"goal":store.journal.goal(session.id)?,"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"total_turns":session.run_summaries.len(),"turns_truncated":session.run_summaries.len()>128,"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"cleanup":store.journal.cleanup_progress(store.session_id)?,"retained_cleanup":retained,"recovery_notice":recovery_notice,"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
         }).await?
     }
     pub(crate) async fn process_provider_attempts(

@@ -34,6 +34,28 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
+        command @ RuntimeCommand::GoalUpdate { .. } => {
+            ensure!(
+                authorization.grant.is_none() || authorization.owner_connection,
+                "goal mutations require human owner authority"
+            );
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            let _admission = state.admission.lock().await;
+            state
+                .owner
+                .update_goal(
+                    crate::attachment::journal::GoalAuthority {
+                        installation_id: authorization.actor.installation_id,
+                        principal_id: authorization.actor.principal_id,
+                        grant: authorization.grant,
+                    },
+                    command,
+                )
+                .await
+        }
         RuntimeCommand::NotificationEvents { after, limit } => {
             state.owner.notification_events(after, limit).await
         }

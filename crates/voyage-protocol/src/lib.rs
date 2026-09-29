@@ -22,6 +22,9 @@ pub mod vessel;
 /// Opt-in ordered, bounded public client observations.
 pub mod live_events;
 
+/// Persistent bounded task objectives owned by Voyage.
+pub mod goals;
+
 /// Ordered turn content metadata. Not yet accepted by submission transports.
 pub mod content;
 

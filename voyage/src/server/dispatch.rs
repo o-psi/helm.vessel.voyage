@@ -16,7 +16,8 @@ pub(super) async fn dispatch(
     };
     validate_public(public, &*state.config.read().await)?;
     let command_id = match &command {
-        RuntimeCommand::Clear { command_id, .. }
+        RuntimeCommand::GoalUpdate { command_id, .. }
+        | RuntimeCommand::Clear { command_id, .. }
         | RuntimeCommand::Compact { command_id, .. }
         | RuntimeCommand::OperatorTool { command_id, .. }
         | RuntimeCommand::Github { command_id, .. }
@@ -111,7 +112,8 @@ pub(super) fn validate_public(command: &RuntimeCommand, config: &Config) -> Resu
     }
     if matches!(
         command,
-        RuntimeCommand::SetModel { .. }
+        RuntimeCommand::GoalUpdate { .. }
+            | RuntimeCommand::SetModel { .. }
             | RuntimeCommand::SetInference { .. }
             | RuntimeCommand::SetAccountInference { .. }
             | RuntimeCommand::OperatorTool { .. }

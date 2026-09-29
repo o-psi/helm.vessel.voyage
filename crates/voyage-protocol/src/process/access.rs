@@ -99,7 +99,8 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             Some(ProcessRight::History)
         }
         RuntimeCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
-        RuntimeCommand::Snapshot
+        RuntimeCommand::GoalRead
+        | RuntimeCommand::Snapshot
         | RuntimeCommand::ProviderAttempts { .. }
         | RuntimeCommand::History { .. }
         | RuntimeCommand::MessageChunk { .. }
@@ -134,7 +135,8 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
             Some(ProcessRight::Execute)
         }
-        RuntimeCommand::Configure { .. }
+        RuntimeCommand::GoalUpdate { .. }
+        | RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
         | RuntimeCommand::SetInference { .. } => None,
         _ => None,
@@ -215,7 +217,8 @@ pub fn owner_connection_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         RuntimeCommand::Respond { response, .. } if response.get("root_grant").is_some() => {
             Some(ProcessRight::Execute)
         }
-        RuntimeCommand::Configure { .. }
+        RuntimeCommand::GoalUpdate { .. }
+        | RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
         | RuntimeCommand::SetInference { .. } => Some(ProcessRight::Execute),
         RuntimeCommand::Controls { section, .. } if section == "host_resources" => {
