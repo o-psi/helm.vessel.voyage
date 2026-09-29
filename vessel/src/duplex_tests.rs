@@ -170,3 +170,44 @@ async fn control_burst_coalesces_without_disconnect_and_shutdown_is_independent(
         Some(Message::Ping(_))
     ));
 }
+
+#[tokio::test]
+async fn stalled_event_client_is_bounded_without_blocking_other_clients() {
+    let (slow, _held) = mpsc::channel(1);
+    let session = Uuid::new_v4();
+    assert!(
+        enqueue(
+            &slow,
+            ServerFrame::Subscribed {
+                request_id: session
+            },
+            None
+        )
+        .await
+    );
+    let blocked = tokio::time::timeout(
+        IO_TIMEOUT + Duration::from_secs(1),
+        enqueue(
+            &slow,
+            ServerFrame::Subscribed {
+                request_id: Uuid::new_v4(),
+            },
+            None,
+        ),
+    )
+    .await
+    .expect("slow publication deadline");
+    assert!(!blocked);
+    let (fast, mut receiver) = mpsc::channel(1);
+    assert!(
+        enqueue(
+            &fast,
+            ServerFrame::Subscribed {
+                request_id: session
+            },
+            None
+        )
+        .await
+    );
+    assert!(receiver.recv().await.is_some());
+}

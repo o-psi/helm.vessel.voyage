@@ -118,3 +118,31 @@ async fn observer_publishes_catalogue_and_hydrated_selection_without_blocking_in
     let _ = job.await;
     observed.unwrap();
 }
+
+#[test]
+fn catalogue_probe_ignores_refresh_time_but_detects_owner_and_process_transition() {
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let mut original: ProcessInfo = serde_json::from_value(json!({
+        "session_id":session,"incarnation":incarnation,"workspace":"/synthetic",
+        "state":"live","catalogue":{"summary":null,"observed_at_ms":1,"stale":false,"error_code":null}
+    })).unwrap();
+    let mut next = original.clone();
+    next.catalogue.as_mut().unwrap().observed_at_ms = Some(2);
+    assert!(!catalogue_changed(&[original.clone()], &[next.clone()]));
+    assert!(!catalogue_roster_changed(
+        &[original.clone()],
+        &[next.clone()]
+    ));
+    next.state = voyage_protocol::process::ProcessState::Suspended;
+    assert!(catalogue_changed(&[original.clone()], &[next.clone()]));
+    assert!(catalogue_roster_changed(
+        &[original.clone()],
+        &[next.clone()]
+    ));
+    next = original.clone();
+    next.incarnation = Uuid::new_v4();
+    assert!(catalogue_changed(&[original.clone()], &[next]));
+    original.catalogue.as_mut().unwrap().stale = true;
+    assert!(catalogue_changed(&[original], &[]));
+}

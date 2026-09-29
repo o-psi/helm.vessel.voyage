@@ -188,6 +188,7 @@ pub fn spawn(
                             }
                         }
                     }
+                    let mut catalogue_baseline = processes.clone();
                     let processes = processes
                         .into_iter()
                         .filter(|process| {
@@ -298,11 +299,29 @@ pub fn spawn(
                     match client.events(subscriptions).await {
                         Ok(mut events) => {
                             let mut ended_unexpectedly = false;
-                            let refresh_catalogue = tokio::time::sleep(Duration::from_secs(30));
-                            tokio::pin!(refresh_catalogue);
+                            // A timer checks metadata without retiring a healthy subscription.
+                            // A changed roster re-enters the snapshot path; metadata alone
+                            // updates the sidebar without resubscribing.
+                            let mut catalogue_check = tokio::time::interval(Duration::from_secs(5));
+                            catalogue_check
+                                .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                            catalogue_check.tick().await;
                             loop {
                                 tokio::select! {
-                                    _ = &mut refresh_catalogue => break,
+                                    _ = catalogue_check.tick() => {
+                                        match client.request(VesselCommand::Catalogue).await
+                                            .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?)) {
+                                            Ok(current) => {
+                                                if catalogue_changed(&catalogue_baseline, &current) {
+                                                    let retire = catalogue_roster_changed(&catalogue_baseline, &current);
+                                                    if sender.send(Update::Catalogue { route, processes: current.clone() }).await.is_err() { return; }
+                                                    catalogue_baseline = current;
+                                                    if retire { break; }
+                                                }
+                                            }
+                                            Err(_) => { ended_unexpectedly = true; break; }
+                                        }
+                                    },
                                     _ = selected.changed() => break,
                                     event = events.next() => {
                                         let Some(event) = event else { ended_unexpectedly = true; break; };
@@ -406,6 +425,39 @@ pub fn spawn(
                 }
             }
         }
+    })
+}
+
+// Only a changed roster or owner requires retiring subscriptions. Metadata
+// changes update the sidebar in place, avoiding normal timed churn.
+fn catalogue_roster_changed(old: &[ProcessInfo], current: &[ProcessInfo]) -> bool {
+    old.len() != current.len()
+        || old.iter().zip(current).any(|(a, b)| {
+            a.session_id != b.session_id
+                || a.incarnation != b.incarnation
+                || a.state != b.state
+                || a.archive.is_some() != b.archive.is_some()
+                || a.deletion.is_some() != b.deletion.is_some()
+        })
+}
+
+// Ignore observation timestamps; changed identity, lifecycle or summary requires
+// updating the sidebar projection.
+fn catalogue_changed(old: &[ProcessInfo], current: &[ProcessInfo]) -> bool {
+    if old.len() != current.len() {
+        return true;
+    }
+    old.iter().zip(current).any(|(a, b)| {
+        a.session_id != b.session_id
+            || a.incarnation != b.incarnation
+            || a.state != b.state
+            || a.name != b.name
+            || a.archive.is_some() != b.archive.is_some()
+            || a.deletion.is_some() != b.deletion.is_some()
+            || a.catalogue.as_ref().and_then(|c| c.summary.as_ref())
+                != b.catalogue.as_ref().and_then(|c| c.summary.as_ref())
+            || a.catalogue.as_ref().map(|c| (&c.stale, &c.error_code))
+                != b.catalogue.as_ref().map(|c| (&c.stale, &c.error_code))
     })
 }
 

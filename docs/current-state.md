@@ -660,7 +660,13 @@ The explicit HTTP `/v1/vessel/command` and SSE `/v1/vessel/events` API remain fo
 compatibility and non-Helm callers. Its explicit session operations are distinct from private
 runtime commands. Vessel selects owners under lifecycle arbitration, translates
 requests and normalizes responses; live-resource actions retain exact incarnation
-fences. Public events follow session owners and report observed incarnation changes.
+fences. Public events follow session owners and report observed incarnation changes. The TUI maintains its opt-in public-v2 voyage
+subscription across unchanged five-second catalogue probes; changed metadata
+updates its sidebar, while roster/owner transitions retire and rehydrate the
+subscription. This is still a bounded read-only catalogue poll, **not** a live
+Vessel catalogue event feed. The supervisor records committed catalogue
+invalidations privately, but they are not yet exposed as authorized replayable
+public subscriptions.
 The private runtime IPC remains protocol v1. See [process access](process-access.md#wire-and-retained-state)
 for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
 

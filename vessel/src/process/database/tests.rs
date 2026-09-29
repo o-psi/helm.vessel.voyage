@@ -540,3 +540,72 @@ async fn malformed_legacy_record_rolls_back_whole_import() {
     registry::publish(&bad_dir, &bad).unwrap();
     assert_eq!(initialize(&f.0).await.unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn process_invalidation_is_bounded_to_transitions_and_current_incarnation() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let r = f.registration();
+    admit(&f.0, &r, bytes(&r)).await.unwrap();
+    let count = || {
+        open(&f.0)
+            .unwrap()
+            .query_row("SELECT count(*) FROM catalogue_events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap()
+    };
+    let mut info = ProcessInfo::from(&r);
+    observe_process(&f.0, &r, &info).await.unwrap();
+    let initial = count();
+    observe_process(&f.0, &r, &info).await.unwrap();
+    assert_eq!(count(), initial);
+    info.state = ProcessState::Live;
+    observe_process(&f.0, &r, &info).await.unwrap();
+    assert_eq!(count(), initial + 1);
+    let mut stale = r.clone();
+    stale.incarnation = Uuid::new_v4();
+    observe_process(&f.0, &stale, &info).await.unwrap();
+    assert_eq!(count(), initial + 1);
+}
+
+#[tokio::test]
+async fn restart_invalidates_once_and_ignores_stale_process_publication() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let first = f.registration();
+    admit(&f.0, &first, bytes(&first)).await.unwrap();
+    let mut next = first.clone();
+    next.restart_from = Some(first.incarnation);
+    next.incarnation = Uuid::new_v4();
+    next.command_id = Uuid::new_v4();
+    save(&f.0, &next).await.unwrap();
+    let db = open(&f.0).unwrap();
+    let changes: i64 = db
+        .query_row(
+            "SELECT count(*) FROM catalogue_events WHERE kind='owner_changed'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(changes, 1);
+    drop(db);
+    save(&f.0, &next).await.unwrap();
+    let mut old_info = ProcessInfo::from(&first);
+    old_info.state = ProcessState::Live;
+    observe_process(&f.0, &first, &old_info).await.unwrap();
+    let db = open(&f.0).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT count(*) FROM catalogue_events WHERE kind='owner_changed'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        catalogue(&f.0).await.unwrap()[0].incarnation,
+        next.incarnation
+    );
+}

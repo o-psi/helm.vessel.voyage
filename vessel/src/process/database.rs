@@ -176,6 +176,9 @@ fn save_tx(
     tx.execute("INSERT INTO voyages VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(session_id) DO UPDATE SET incarnation=excluded.incarnation,workspace=excluded.workspace,state=excluded.state,name=excluded.name,registration=excluded.registration,updated_at_ms=excluded.updated_at_ms",params![id,inc,registration.workspace.as_os_str().as_encoded_bytes(),state,registration.name,bytes,now()])?;
     tx.execute("INSERT INTO incarnations VALUES(?1,?2,?3,?4,?5) ON CONFLICT(incarnation) DO UPDATE SET registration=excluded.registration",params![inc,id,registration.command_id.to_string(),bytes,now()])?;
     tx.execute("INSERT INTO catalogue(session_id,incarnation) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET incarnation=excluded.incarnation,fingerprint=CASE WHEN incarnation!=excluded.incarnation THEN NULL ELSE fingerprint END,error_code=CASE WHEN incarnation!=excluded.incarnation THEN 'owner_changed' ELSE error_code END,next_attempt_ms=0",params![id,inc])?;
+    if current.as_deref().is_some_and(|previous| previous != inc) {
+        tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'owner_changed',?2)",params![id,now()])?;
+    }
     Ok(())
 }
 fn record_tx(
@@ -700,17 +703,23 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
   let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;
   let current:String=tx.query_row("SELECT incarnation FROM voyages WHERE session_id=?1",[r.session_id.to_string()],|row|row.get(0))?;
   if current!=r.incarnation.to_string(){return Ok(())}
+  let mut changed = false;
+  let success = summary.is_ok();
   match summary {
    Ok(summary)=>{
     let previous:Option<String>=tx.query_row("SELECT summary FROM catalogue WHERE session_id=?1",[r.session_id.to_string()],|row|row.get(0))?;
+    let summary_json=serde_json::to_string(&summary)?;
+    changed=previous.as_ref()!=Some(&summary_json);
     if let Some(previous)=previous {
         let previous:CatalogueSummary=serde_json::from_str(&previous)?;
         if (summary.revision,summary.observation_cursor)<(previous.revision,previous.observation_cursor) {return Ok(())}
     }
-    tx.execute("UPDATE catalogue SET summary=?2,observed_at_ms=?3,fingerprint=?4,process_info=?5,error_code=NULL,failures=0,next_attempt_ms=0 WHERE session_id=?1",params![r.session_id.to_string(),serde_json::to_string(&summary)?,now(),fingerprint,serde_json::to_string(&info)?])?;},
+    tx.execute("UPDATE catalogue SET summary=?2,observed_at_ms=?3,fingerprint=?4,process_info=?5,error_code=NULL,failures=0,next_attempt_ms=0 WHERE session_id=?1",params![r.session_id.to_string(),summary_json,now(),fingerprint,serde_json::to_string(&info)?])?;},
    Err(_)=>{tx.execute("UPDATE catalogue SET process_info=?2,error_code='journal_unavailable',failures=min(failures+1,6),next_attempt_ms=?3+min(60000,1000*(1<<min(failures,6))) WHERE session_id=?1",params![r.session_id.to_string(),serde_json::to_string(&info)?,now()])?;}
   }
-  tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'metadata',?2)",params![r.session_id.to_string(),now()])?;
+  if success && changed {
+    tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'metadata',?2)",params![r.session_id.to_string(),now()])?;
+  }
   tx.commit()?;Ok(())
  }).await
 }
@@ -746,7 +755,16 @@ pub async fn observe_process(
 ) -> Result<()> {
     let r = registration.clone();
     let i = info.clone();
-    blocking(root,move|db|{db.execute("UPDATE catalogue SET process_info=?3,observed_at_ms=?4 WHERE session_id=?1 AND incarnation=?2",params![r.session_id.to_string(),r.incarnation.to_string(),serde_json::to_string(&i)?,now()])?;Ok(())}).await
+    blocking(root,move|db|{
+        let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous:Option<String>=tx.query_row("SELECT process_info FROM catalogue WHERE session_id=?1 AND incarnation=?2",params![r.session_id.to_string(),r.incarnation.to_string()],|row|row.get(0)).optional()?.flatten();
+        let previous_state=previous.and_then(|json|serde_json::from_str::<ProcessInfo>(&json).ok()).map(|info|info.state);
+        let updated=tx.execute("UPDATE catalogue SET process_info=?3,observed_at_ms=?4 WHERE session_id=?1 AND incarnation=?2",params![r.session_id.to_string(),r.incarnation.to_string(),serde_json::to_string(&i)?,now()])?;
+        if updated!=0 && previous_state.as_ref()!=Some(&i.state) {
+            tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'process',?2)",params![r.session_id.to_string(),now()])?;
+        }
+        tx.commit()?;Ok(())
+    }).await
 }
 
 /// Serialize lifecycle operations while loading their starting state from SQLite.
