@@ -1098,6 +1098,8 @@ installation, administrator review and identity transitions remain unimplemented
 ## Remote update admission
 
 Helm Web capability-gates profile setup and exposes owner-reviewed remote updates
-for managed Linux Vessels. See [remote updates](remote-updates.md) for the exact
-prepare/approve/receipt contract, fixed artifact sources, platform requirements
+for managed Linux Vessels. Its Manage Vessels screen loads both release channels;
+one Update click approves the displayed version and the client applies only after
+the Vessel verifies a matching prepared receipt. See [remote updates](remote-updates.md)
+for the exact prepare/apply/receipt contract, fixed artifact sources, platform requirements
 and pre-updater bootstrap limitation. Live deployment evidence remains in #343.

@@ -10,14 +10,24 @@ or discard an update. Workspace/session execution and lifecycle grants do not
 confer installation authority. Helm presents the operation; an independent
 installer process on the Vessel host performs it.
 
-## Review and approval
+## Channel selection and approval
 
-In React voyage settings, open **Vessel updates**. Choose the latest stable
-release or explicitly choose the latest completed development build. Preparing
-an update downloads and checks its archive, binary and browser-asset hashes,
+In Helm Web, open **Manage Vessels**, then the selected Vessel's details. The
+update view defaults to the installed release channel and loads the latest
+published stable and development versions asynchronously. Selecting a channel
+shows its latest version. One **Update this Vessel** click approves preparation
+and installation of that displayed channel and version. The button is disabled
+when the selected channel's installed version is current or newer.
+
+Preparation downloads and checks the archive, binary and browser-asset hashes,
 platform loader, managed services and updater compatibility. It does not publish
-binaries or restart services. Helm shows the exact version, source identity and
-services before **Update this Vessel** approves that prepared release.
+binaries or restart services. Helm automatically applies only when the Vessel's
+prepared receipt has the same operation, channel and version as the click, a
+valid release hash and an unexpired approval window. A different or invalid
+receipt stops before installation. An expired previous preparation is discarded
+and replaced within the same click. The click's approval remains in page memory;
+after a reload, Helm observes the saved operation without automatically
+reapproving it. An uncertain apply reply is never replayed automatically.
 
 Stable downloads use the canonical GitHub repository's latest published stable
 release. Explicit nightly updates resolve the newest public `nightly-VERSION`
@@ -31,8 +41,8 @@ release-signature verification.
 
 Python 3.11+, curl and a working systemd user manager are required. Public
 nightlies currently target Linux x86-64 and glibc 2.39+; unsupported hosts are
-refused before installation. A managed update still requires owner review and
-approval of the exact prepared artifact.
+refused before installation. A managed update still requires owner approval of
+the displayed version and Vessel verification of the exact prepared artifact.
 
 ## Durable operation and reconnect
 
