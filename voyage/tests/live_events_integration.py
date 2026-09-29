@@ -7,12 +7,51 @@ or TUI rendering; it verifies the shared server subscription boundary.
 """
 import argparse
 import json
+import os
+import subprocess
+import time
 from pathlib import Path
 import sys
 import uuid
 
-from delivery_recovery import Fixture, wait_for
+from delivery_recovery import Fixture as BaseFixture
 
+
+
+class Fixture(BaseFixture):
+    """Explicit synthetic account; never borrow the executing host's default."""
+    def __init__(self, binaries):
+        super().__init__(binaries)
+        self.env["LIVE_EVENTS_FIXTURE_KEY"] = "synthetic-fixture-key"
+
+    def session(self):
+        session = str(uuid.uuid4())
+        endpoint = f"http://127.0.0.1:{self.provider.server_port}/v1"
+        def account_cli(*args):
+            result = subprocess.run([str(self.binaries / "vessel"), "auth", "accounts", *args],
+                env=self.env, cwd=self.workspace, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+        connection = account_cli("connect", "--label", session, "--endpoint", endpoint,
+            "--transports", "openai-responses")
+        account = account_cli("add", "--connection", connection["id"], "--account", session,
+            "--env", "LIVE_EVENTS_FIXTURE_KEY")
+        binding = {"account_id": account["id"], "connection_id": connection["id"],
+            "identity_generation": account["identity_generation"],
+            "connection_revision": connection["revision"], "transport": "openai_responses"}
+        config = self.root / (session + ".json")
+        config.write_text(json.dumps({"version":1, "workspace":str(self.workspace),
+            "config":{"provider":"openai-responses", "model":"fixture-model",
+                "api_key_required":False, "base_url":endpoint, "account":binding,
+                "access":"read-only", "provider_retry_attempts":1,
+                "context_window":0, "command_timeout_secs":2},
+            "explicit":{"access":"read-only"}, "selection":None, "confirmation":None}))
+        config.chmod(0o600)
+        self.request({"op":"start_settings", "session_id":session,
+            "command_id":str(uuid.uuid4()), "workspace":str(self.workspace),
+            "config_path":str(config), "binding":binding, "settings":{}})
+        self.sessions.append(session)
+        return session
 
 def page(fixture, session, after=0, limit=4, projection="public-v2"):
     return fixture.command(session, {"op": "events", "after": after,
