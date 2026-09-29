@@ -61,11 +61,14 @@ by catalogue reload; an uncertain refresh is not replayed, and a mismatched repl
 requires explicit reload before use. Account usage is loaded only on request.
 
 **Vessel maintenance** is in Manage Vessels under the selected Vessel's details.
-It uses the existing reviewed updater and saved operation journal, checks the
-Vessel identity and capabilities, reviews an exact release, applies only on
-approval and verifies the running release after reconnect. New voyage setup
-directs users there when a Vessel lacks profile support. A Vessel predating the
-updater still needs one administrator bootstrap. See
+It checks the Vessel identity and capabilities, defaults to its installed
+channel and loads the latest published version. One Update click authorizes
+preparation and installation of that displayed version; Helm applies only when
+the Vessel verifies the same channel and version in a valid prepared receipt.
+The saved operation journal prevents automatic replay after reload or an
+uncertain reply. Helm verifies the running release after reconnect. New voyage
+setup directs users there when a Vessel lacks profile support. A Vessel
+predating the updater still needs one administrator bootstrap. See
 [remote updates](remote-updates.md).
 
 ## Ownership
