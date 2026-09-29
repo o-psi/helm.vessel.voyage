@@ -1,9 +1,10 @@
 //! Bound processes keep supervisor authority outside runtime-owned files.
 use super::{database, guardian, routing, runtime_storage, service::Supervisor};
 use anyhow::{Result, ensure};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{process::Stdio, time::Duration};
 use uuid::Uuid;
+use voyage_protocol::execution_identity::{AuthorityClass, ExecutionBinding};
 use voyage_protocol::process::*;
 
 pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> ProcessInfo {
@@ -32,6 +33,169 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
 }
 
 impl Supervisor {
+    /// Initial admission for a caller that already holds a reviewed, protected
+    /// ordinary execution binding. No client transport invokes this until the
+    /// owner review and identity-scoped account path are complete.
+    #[allow(dead_code)]
+    pub(super) async fn start_bound_configured(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+    ) -> Result<serde_json::Value> {
+        ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
+        ensure!(
+            !command_id.is_nil()
+                && !session_id.is_nil()
+                && !binding.incarnation.is_nil()
+                && binding.session_id == session_id
+                && binding.peer_uids.supervisor == 0
+                && binding.administrator_grant_id.is_none(),
+            "invalid bound creation identity"
+        );
+        ensure!(
+            workspace.is_absolute() && config_path.is_absolute(),
+            "bound workspace and configuration must be absolute host paths"
+        );
+        let command = VesselCommand::StartConfigured {
+            command_id,
+            session_id,
+            workspace: workspace.clone(),
+            config_path: config_path.clone(),
+        };
+        let lock = self
+            .lifecycle_locks
+            .lock()
+            .await
+            .entry(session_id)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+        let mut registrations = self.registrations.lock().await?;
+        if super::registry::command_record(&self.directory, command_id, &command, false).await? {
+            let previous = registrations.get(&session_id).ok_or_else(|| {
+                anyhow::anyhow!("bound creation outcome unconfirmed; inspect retained admission")
+                    .context(routing::OutcomeUnknown)
+            })?;
+            ensure!(
+                previous.command_id == command_id
+                    && previous.config_path.as_ref() == Some(&config_path)
+                    && previous.incarnation == binding.incarnation
+                    && previous.peer_uids.as_ref() == Some(&binding.peer_uids)
+                    && database::execution_binding(&self.directory, session_id)
+                        .await?
+                        .as_ref()
+                        == Some(&binding),
+                "bound creation receipt conflict"
+            );
+            let previous = previous.clone();
+            drop(registrations);
+            return Ok(serde_json::to_value(
+                inspect(&self.directory, &previous).await,
+            )?);
+        }
+        ensure!(
+            !registrations.contains_key(&session_id),
+            "voyage already reserved"
+        );
+        runtime_storage::validate_bound_layout(&self.directory)?;
+        let identity = database::configured_identity(&self.directory, &binding.identity).await?;
+        ensure!(
+            identity.authority == AuthorityClass::Ordinary
+                && identity.account_context == binding.account_context
+                && identity.uid == binding.peer_uids.runtime,
+            "bound creation identity changed"
+        );
+        super::launch::validate_identity(&identity)?;
+        super::launch::protected_binary(&self.binary)?;
+        super::launch::protected_binary(&self.binary.with_file_name("vessel"))?;
+        ensure!(
+            config_path.is_file(),
+            "bound launch configuration unavailable"
+        );
+        let workspace = std::fs::canonicalize(workspace)?;
+        ensure!(workspace.is_dir(), "workspace must be a directory");
+        let registration = ProcessRegistration {
+            executable: Some(self.binary.clone()),
+            protocol: PROCESS_PROTOCOL,
+            session_id,
+            incarnation: binding.incarnation,
+            command_id,
+            restart_from: None,
+            initialize: None,
+            config_path: Some(config_path),
+            token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+            peer_uids: Some(binding.peer_uids.clone()),
+            workspace,
+            state: ProcessState::Starting,
+            name: None,
+        };
+        database::admit_with_binding(
+            &self.directory,
+            &registration,
+            serde_json::to_vec(&command)?,
+            Some(&binding),
+        )
+        .await
+        .map_err(|error| error.context(routing::OutcomeUnknown))?;
+        registrations.insert(session_id, registration.clone());
+        drop(registrations);
+        self.spawn_bound_guardian(&registration)
+            .await
+            .map_err(|error| error.context(routing::OutcomeUnknown))?;
+        let info = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let info = inspect(&self.directory, &registration).await;
+                if matches!(info.state, ProcessState::Live | ProcessState::Stopped) {
+                    return info;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("bound creation outcome unconfirmed; inspect retained incarnation")
+                .context(routing::OutcomeUnknown)
+        })?;
+        database::settle_creation(&self.directory, command_id, &info)
+            .await
+            .map_err(|error| error.context(routing::OutcomeUnknown))?;
+        Ok(serde_json::to_value(info)?)
+    }
+
+    async fn spawn_bound_guardian(&self, registration: &ProcessRegistration) -> Result<()> {
+        let vessel = self.binary.with_file_name("vessel");
+        let mut process = tokio::process::Command::new(vessel);
+        process
+            .arg("guard-bound")
+            .arg("--directory")
+            .arg(&self.directory)
+            .arg("--session")
+            .arg(registration.session_id.to_string())
+            .arg("--incarnation")
+            .arg(registration.incarnation.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(false);
+        // Independent process group/lifetime; service detach cannot cancel it.
+        unsafe {
+            process.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = process.spawn()?;
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        Ok(())
+    }
+
     pub(super) async fn restart_bound(
         &self,
         command_id: Uuid,
@@ -86,34 +250,9 @@ impl Supervisor {
         )
         .await
         .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        let mut process = tokio::process::Command::new(vessel);
-        process
-            .arg("guard-bound")
-            .arg("--directory")
-            .arg(&self.directory)
-            .arg("--session")
-            .arg(session_id.to_string())
-            .arg("--incarnation")
-            .arg(next.incarnation.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(false);
-        // Independent process group/lifetime; service detach cannot cancel it.
-        unsafe {
-            process.pre_exec(|| {
-                if libc::setsid() < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-        let mut child = process
-            .spawn()
-            .map_err(|error| anyhow::Error::new(error).context(routing::OutcomeUnknown))?;
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
+        self.spawn_bound_guardian(&next)
+            .await
+            .map_err(|error| error.context(routing::OutcomeUnknown))?;
         let info = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let info = inspect(&self.directory, &next).await;
@@ -287,5 +426,48 @@ impl Supervisor {
             }
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    use crate::process::test_support::Fixture;
+    use voyage_protocol::execution_identity::{AccountContextRef, IdentityRef};
+
+    #[tokio::test]
+    async fn ordinary_process_cannot_reserve_a_bound_start() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let fixture = Fixture::new();
+        let supervisor = fixture.supervisor().await;
+        let session = Uuid::new_v4();
+        let config = fixture.0.join("config.json");
+        let binding = ExecutionBinding {
+            session_id: session,
+            incarnation: Uuid::new_v4(),
+            identity: IdentityRef {
+                id: Uuid::new_v4(),
+                revision: 1.try_into().unwrap(),
+            },
+            account_context: AccountContextRef {
+                id: Uuid::new_v4(),
+                revision: 1.try_into().unwrap(),
+            },
+            peer_uids: ProcessPeerUids {
+                supervisor: 0,
+                runtime: unsafe { libc::geteuid() },
+            },
+            administrator_grant_id: None,
+            host_identity_digest: "a".repeat(64),
+            policy_digest: "b".repeat(64),
+        };
+        let error = supervisor
+            .start_bound_configured(Uuid::new_v4(), session, fixture.0.clone(), config, binding)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("root supervisor required"));
+        assert!(database::registration(&fixture.0, session).await.is_err());
     }
 }

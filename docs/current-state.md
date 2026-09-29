@@ -421,8 +421,12 @@ storage. Runtime projections and stopped markers cannot create that evidence.
 The service routes existing bound voyages, supports protected Stop and explicit
 Restart, and keeps the independent guardian alive across service detachment.
 Continuing identity/grant invalidation retires the owned process. Exact restart
-receipts never re-launch on retry. Supported initial service launch, owner identity
-controls, system installation and automatic bound recovery remain incomplete. Bound startup does not derive scoped Vessel
+receipts never re-launch on retry. An internal root-only initial bound admission
+can reserve an ordinary identity and launch through that guardian; an exact retry
+observes the saved incarnation, including an unavailable admission after a crash
+before launch. No public command invokes that path yet. Supported initial service
+launch, owner identity controls, system installation and automatic bound recovery
+remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
 
@@ -472,7 +476,7 @@ The read-only `system-assess --execution-user USER` command reports host and
 account prerequisites; it never enables a privileged service. A hidden Linux
 root/ordinary gateway route handles public commands, events, pairing and browser
 sockets in isolated fixtures. System-scope installation, initial bound Voyage
-creation and supported activation remain unavailable.
+creation through a public route and supported activation remain unavailable.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
 including admission refused by older Vessels, so existing voyages remain reachable.

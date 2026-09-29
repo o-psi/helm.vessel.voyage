@@ -119,8 +119,14 @@ installation and full acceptance. A disposable Ubuntu VM has exercised separate
 root/ordinary services, pairing and exact replay, a granted command, WebSocket
 routing, wrong gateway UID, false root peer, root loss and restart. That evidence
 does not establish installer upgrade/rollback, browser runtime handoff, initial
-system voyage creation or live deployment. The bound `Start` path still refuses
-initial system voyage creation. #380 retains those installation and native gates.
+system voyage creation through a public route or live deployment. The bound public
+`Start` path still refuses initial system voyage creation. A separate internal
+root-only admission now accepts a previously reviewed ordinary identity binding,
+reserves its exact command/registration/binding atomically, and starts the bound
+guardian. It is not connected to owner review or account-scoped public creation.
+A disposable native Ubuntu fixture exercised live creation, duplicate/conflicting
+receipts, cleanup and the crash-after-admission/no-relaunch boundary. #380 retains
+the installer and native end-to-end gates.
 
 The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains

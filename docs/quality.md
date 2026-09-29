@@ -145,7 +145,11 @@ contacted. The fixture runs no system installation and establishes no client,
 owner-review or adoption acceptance. It also exercises actual service detachment
 and restart, protected Stop, a fresh bound incarnation, duplicate and conflicting
 restart requests, stale Stop refusal, owner exclusion and continuing identity
-invalidation. Both supplied executable wrappers must be named `vessel`/`voyage`
+invalidation. It also checks internal root-only initial admission, an exact
+duplicate without relaunch, a conflicting binding, and crash-after-admission
+recovery that observes an unavailable owner without launching a guardian. These
+checks do not establish public bound creation or a system installation. Both
+supplied executable wrappers must be named `vessel`/`voyage`
 in the same protected directory. Its ignored native execution is
 separate from default workspace coverage.
 

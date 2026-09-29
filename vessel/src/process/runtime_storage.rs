@@ -10,6 +10,12 @@ pub(super) fn has_bound_layout(root: &Path) -> bool {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn validate_bound_layout(root: &Path) -> Result<()> {
+    let _ = runtime_root(root)?;
+    Ok(())
+}
+
 /// Legacy user scope keeps its original location. Bound observations use only
 /// administrator-provisioned layout metadata, never runtime-supplied paths.
 pub(super) async fn directory(root: &Path, registration: &ProcessRegistration) -> Result<PathBuf> {

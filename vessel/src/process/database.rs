@@ -305,6 +305,39 @@ pub async fn store_identity(root: &Path, identity: &ConfiguredExecutionIdentity)
     .await
 }
 
+/// Resolve the exact current host-controlled identity before reserving a new
+/// bound voyage. A reused or revised account reference cannot acquire a launch.
+#[cfg(target_os = "linux")]
+pub async fn configured_identity(
+    root: &Path,
+    reference: &voyage_protocol::execution_identity::IdentityRef,
+) -> Result<ConfiguredExecutionIdentity> {
+    let reference = reference.clone();
+    blocking(root, move |db| {
+        let latest: u64 = db.query_row(
+            "SELECT max(revision) FROM execution_identities WHERE identity_id=?1",
+            [reference.id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            latest == reference.revision.get(),
+            "execution identity revision changed"
+        );
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![reference.id.to_string(), reference.revision.get()],
+            |row| row.get(0),
+        )?;
+        let identity: ConfiguredExecutionIdentity = serde_json::from_str(&saved)?;
+        ensure!(
+            identity.enabled && identity.identity == reference,
+            "execution identity is unavailable"
+        );
+        Ok(identity)
+    })
+    .await
+}
+
 #[allow(dead_code)] // Used by the privileged launch/recovery path after migration.
 pub async fn execution_binding(root: &Path, session: Uuid) -> Result<Option<ExecutionBinding>> {
     blocking(root, move |db| {

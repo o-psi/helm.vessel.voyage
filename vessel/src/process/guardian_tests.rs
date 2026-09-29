@@ -760,6 +760,125 @@ os._exit(0)
     }
     assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
     assert!(cleanup_observed(&control, abandoned.session_id, abandoned.incarnation).is_err());
+    // Initial creation uses the same protected admission/guardian path as a
+    // restart. The command receipt and binding precede the external launch;
+    // an exact retry observes the owner without spawning a second guardian.
+    let fresh = registration(voyage.clone());
+    let new_supervisor = || crate::process::service::Supervisor {
+        directory: control.clone(),
+        binary: voyage.clone(),
+        model_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
+        devices: voyage_runtime::accounts::device::DeviceService::new(
+            voyage_runtime::accounts::Registry::new(control.join("unused-test-accounts")),
+            std::sync::Arc::new(|_, _| false),
+        ),
+        enrollment_workers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        assignment_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        lifecycle_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        registrations: database::Registrations::new(control.clone()),
+    };
+    let supervisor = new_supervisor();
+    let created = supervisor
+        .start_bound_configured(
+            fresh.command_id,
+            fresh.session_id,
+            workspace.clone(),
+            config.clone(),
+            binding(&fresh),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created["state"], "live");
+    assert_eq!(created["incarnation"], fresh.incarnation.to_string());
+    let admitted = database::registration(&control, fresh.session_id)
+        .await
+        .unwrap();
+    assert_ne!(admitted.token, fresh.token);
+    assert_eq!(admitted.peer_uids, fresh.peer_uids);
+    assert!(
+        !control
+            .join("sessions")
+            .join(fresh.session_id.to_string())
+            .join("registration.json")
+            .exists()
+    );
+    let duplicate = supervisor
+        .start_bound_configured(
+            fresh.command_id,
+            fresh.session_id,
+            workspace.clone(),
+            config.clone(),
+            binding(&fresh),
+        )
+        .await
+        .unwrap();
+    assert_eq!(duplicate["incarnation"], created["incarnation"]);
+    let mut changed = binding(&fresh);
+    changed.policy_digest = "c".repeat(64);
+    assert!(
+        supervisor
+            .start_bound_configured(
+                fresh.command_id,
+                fresh.session_id,
+                workspace.clone(),
+                config.clone(),
+                changed,
+            )
+            .await
+            .is_err()
+    );
+    request_stop(&control, fresh.session_id, fresh.incarnation).unwrap();
+    let mut fresh_cleaned = false;
+    for _ in 0..200 {
+        if cleanup_observed(&control, fresh.session_id, fresh.incarnation).unwrap_or(false) {
+            fresh_cleaned = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(fresh_cleaned);
+    // A crash after the atomic admission and before the guardian effect leaves
+    // an exact command receipt. Recovery may inspect it, but must not launch.
+    let pending = registration(voyage.clone());
+    let pending_command = VesselCommand::StartConfigured {
+        command_id: pending.command_id,
+        session_id: pending.session_id,
+        workspace: workspace.clone(),
+        config_path: config.clone(),
+    };
+    database::admit_with_binding(
+        &control,
+        &pending,
+        serde_json::to_vec(&pending_command).unwrap(),
+        Some(&binding(&pending)),
+    )
+    .await
+    .unwrap();
+    let recovered = new_supervisor()
+        .start_bound_configured(
+            pending.command_id,
+            pending.session_id,
+            workspace.clone(),
+            config.clone(),
+            binding(&pending),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovered["state"], "unavailable");
+    assert_eq!(recovered["incarnation"], pending.incarnation.to_string());
+    assert!(
+        database::creation_receipt(&control, pending.command_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !control
+            .join("guardians")
+            .join(pending.session_id.to_string())
+            .join(pending.incarnation.to_string())
+            .exists()
+    );
     // A newly admitted launch cannot survive a configured-identity revision
     // change, even when its saved numeric UID remains the same.
     let stale = registration(voyage.clone());
