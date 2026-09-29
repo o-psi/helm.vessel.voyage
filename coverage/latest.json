@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-09-29T09:29:44.136370+00:00",
-  "source_commit": "80f3bd6dd200ffe97b181884d9c4396d7960f690",
+  "measured_at_utc": "2026-09-29T10:00:07.646193+00:00",
+  "source_commit": "f1aa8bce955361c381ad1c2488755b08d3a8d39f",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -14,8 +14,8 @@
   "totals": {
     "lines": {
       "count": 112817,
-      "covered": 87596,
-      "percent": 77.64432665289806
+      "covered": 87591,
+      "percent": 77.63989469672123
     },
     "functions": {
       "count": 10710,
@@ -24,13 +24,13 @@
     },
     "regions": {
       "count": 185502,
-      "covered": 137754,
-      "notcovered": 47748,
-      "percent": 74.2601157938998
+      "covered": 137747,
+      "notcovered": 47755,
+      "percent": 74.25634224967925
     }
   },
-  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-recovery-read -j 8 > $WORKTREE_TARGET/coverage-report/v103-recovery-read/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-recovery-read/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
+  "command": "umask 077; export LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$WORKTREE_TARGET RUST_TEST_THREADS=2; cargo llvm-cov clean --workspace --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $WORKTREE_TARGET/coverage-report/v103-socket-backpressure -j 8 > $WORKTREE_TARGET/coverage-report/v103-socket-backpressure/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path $WORKTREE_TARGET/coverage-report/v103-socket-backpressure/summary.json -v; llvm-cov export -format=text -instr-profile=$WORKTREE_TARGET/voyage-release-v1.0.3.profdata -summary-only with the same default ignore-filename-regex and explicit -object arguments for all 13 executed workspace test binaries plus the three current production entry-point binaries",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,10 +40,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default-feature workspace measurement on clean source 80f3bd6dd200ffe97b181884d9c4396d7960f690. All 13 workspace target source-root timestamps from cargo metadata were refreshed without changing bytes before raw-profile cleaning and the exact coverage command. All six workspace packages were rebuilt with uniform instrumentation; dependency caches and earlier reports were preserved. WORKTREE_TARGET is the release checkout target directory.",
+    "Full default-feature workspace measurement on clean source f1aa8bce955361c381ad1c2488755b08d3a8d39f. All 13 workspace target source-root timestamps from cargo metadata were refreshed without changing bytes before raw-profile cleaning and the exact coverage command. All six workspace packages rebuilt with uniform instrumentation; dependency caches and prior evidence preserved. WORKTREE_TARGET is the release checkout target directory.",
     "Explicit current-object export includes all 13 executed test binaries and three current production entry points, with 16 distinct hashes. All 492 preceding source files are present. Current-object and default export totals match exactly; no source exclusions added (#251).",
-    "Compared with the previous clean 10a1fa3 measurement: lines +15 covered / -2 total (+0.014672 percentage points), functions unchanged, regions +23 covered / -2 total. The denominator change is the saved-read recovery branch simplification, not exclusion. Runtime path variability remains in the measured execution counts.",
+    "Production Rust/Cargo bytes are unchanged from the previous measured source 80f3bd6. Five fewer lines executed in unchanged preview decoder (-1), execution (-2) and host-browser (-2) modules: lines -5 covered / unchanged total (-0.004432 percentage points), functions unchanged, regions -7 covered / unchanged total. The full denominator is retained; this is execution-count variation, not a new source exclusion.",
     "HTML reports the existing unavailable distribution Rust standard-library thread-local source. This was retained in the default report and is not a test failure.",
-    "2,014 Rust tests passed, zero failed, four ignored. Real 80-turn event-retention/history and simultaneous TUI/Chromium disconnect-recovery journeys passed separately with synthetic providers and observed cleanup; they do not contribute to this Rust coverage measurement. No paid-provider or native macOS/Windows claim."
+    "2,014 Rust tests passed, zero failed, four ignored. The added real scoped-WebSocket TCP backpressure fixture passed separately twice with a synthetic provider, exact fast-peer output, bounded stalled-peer disconnection, explicit gap/snapshot recovery, no inference replay and observed cleanup. Python/JavaScript/manual journeys do not contribute to the Rust measurement. No paid-provider, production-network or native macOS/Windows claim."
   ]
 }
