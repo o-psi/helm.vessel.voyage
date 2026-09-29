@@ -142,6 +142,9 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer system-assess --execution-user USER --gateway-user USER
   voyage-installer install --scope system --bin-dir ABS --execution-user USER --gateway-user USER --gateway-origin HTTPS_ORIGIN --credential-key /run/PATH --credential-unit NAME.service [--start | --no-start] [--dry-run]
   voyage-installer status --scope system
+  voyage-installer upgrade --scope system --bin-dir ABS [--dry-run]
+  voyage-installer rollback --scope system [--dry-run]
+  voyage-installer uninstall --scope system [--dry-run]
 
 upgrade defaults to the latest published GitHub release, downloaded and verified.
 --dev selects the latest public nightly prerelease; no source build is performed.

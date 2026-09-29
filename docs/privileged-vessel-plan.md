@@ -623,3 +623,15 @@ installation remain outstanding. An explicit system layout refuses account,
 model and implicit-identity start operations that would otherwise use root's
 login namespace. Enrollment bookkeeping uses a separate control-root account
 registry; this does not implement administrator account selection.
+
+## Root-local system lifecycle increment
+
+The installer now implements explicit system upgrade, inactive-only rollback and
+service-removal uninstall using protected lifecycle records. Identity and credential
+provisioner configuration are retained, releases remain version-pinned, readiness is
+observed for both managed processes, and interrupted mutations block replay. A
+candidate that may have opened state is never automatically replaced with old
+binaries: schema compatibility is unknown. Uninstall retains independent voyages
+and their protected state. The user-scoped remote updater refuses root system
+invocations. Remote system prepare/review/apply, active schema rollback and native
+lifecycle qualification remain unfinished #380 gates.

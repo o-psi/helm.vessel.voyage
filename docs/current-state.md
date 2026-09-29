@@ -1167,3 +1167,17 @@ one Update click approves the displayed version and the client applies only afte
 the Vessel verifies a matching prepared receipt. See [remote updates](remote-updates.md)
 for the exact prepare/apply/receipt contract, fixed artifact sources, platform requirements
 and pre-updater bootstrap limitation. Live deployment evidence remains in #343.
+
+### Root-local system installer lifecycle increment
+
+Explicit `upgrade --scope system --bin-dir ABS` stages a newer verified release,
+retains configured ordinary identity/state and independent voyages, then publishes
+exact root/gateway units and observes active readiness. Protected lifecycle records
+block interrupted operation replay. `rollback --scope system` supports only a
+completed inactive upgrade whose candidate was never started; active/schema rollback
+is refused. `uninstall --scope system` removes reviewed managed services while
+retaining releases, private state, external provisioner/key and independent voyages.
+Fresh installation provisions a protected ordinary default-execution identity;
+upgrades preserve it. The user-scoped remote updater refuses root system invocation.
+These commands remain an implementation increment pending native qualification,
+remote system update admission, schema compatibility and owner/adoption acceptance.

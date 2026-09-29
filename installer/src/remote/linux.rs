@@ -537,6 +537,13 @@ fn reconcile(record: &mut Record) -> Result<()> {
     }
 }
 pub(super) fn run(args: &[String]) -> Result<()> {
+    // The existing updater snapshots user units and user layout only. A root
+    // system invocation must never reach those effects with broader authority.
+    ensure!(
+        !(unsafe { libc::geteuid() } == 0
+            && std::path::Path::new("/etc/voyage/system-install.json").try_exists()?),
+        "System installation requires the scope-aware updater; user updater refused before any journal or service effect"
+    );
     ensure!(args.len() >= 2, "Update action and identity required");
     let (action, operation) = if args[0] == "worker" {
         ensure!(args.len() == 3, "Invalid worker invocation");

@@ -637,3 +637,14 @@ existing Web test scripts; they do not establish live sign-in or provider behavi
 ### Separate Helm Web source
 
 Run the browser client checks in the private `o-psi/webhelm` checkout; the public repository no longer contains those tests. The public repository does not contain those tests. See its README for setup and shared browser asset synchronization.
+
+### System lifecycle qualification remaining
+
+On disposable native Linux guests, qualify explicit system upgrade for active and
+inactive installs, exact root/gateway release PIDs and readiness, preserved paired
+identity, credentials and running independent voyages. Verify inactive-only rollback
+refuses candidates that were started; do not infer database-schema compatibility.
+Inject unit publication/readiness failure and interruption, observe retained journal
+and bounded refusal without replay. Service-removal uninstall must observe managed
+PIDs zero and disabled/absent exact units while retaining state, releases, provisioner
+and independent voyages. Root-local command tests do not qualify remote system updates.

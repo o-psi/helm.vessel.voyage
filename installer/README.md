@@ -203,10 +203,10 @@ The root unit takes an explicit path to an externally provisioned root-owned
 it never embeds the key. The root gateway refuses startup when provisioning is
 absent or invalid. A supported installation still needs to review and qualify
 that service and the same key across reboot.
-The explicit `install --scope system` path now supports **fresh installation only**
+The explicit `install --scope system` path supports fresh installation
 in a designated disposable native Linux fixture. It is an implementation increment,
-not a supported production path: update, rollback, uninstall, public bound Voyage
-creation, owner review and adoption remain unavailable. It refuses existing system
+not a supported production path: remote system updates, schema rollback, owner
+review and adoption remain unqualified. It refuses existing system
 state and existing user installations for either selected account. It requires a
 root-controlled unpacked full release with a valid manifest, two distinct ordinary
 local accounts, an HTTPS gateway origin and an independently provisioned key unit.
@@ -286,3 +286,39 @@ installation is unsupported; packaging those binaries is not deployment evidence
 ## Updates from Helm Web
 
 Managed Linux installations support the owner-approved [remote update flow](../docs/remote-updates.md). The updater prepares a pinned stable or explicitly selected nightly artifact, retains a durable operation receipt and runs outside the Vessel service during replacement. Pre-updater releases require one remote administrator bootstrap. Existing provider credentials and independent voyages are preserved.
+
+### Root-local system lifecycle transactions
+
+`upgrade --scope system --bin-dir ABS [--dry-run]` verifies the retained installation,
+accounts, exact units and provisioner, then stages the full verified release with
+the same architecture and a strictly newer SemVer version. It retains both root-private control state and independent
+Voyage processes. A protected lifecycle journal is written before stop/publication.
+Both units pin the new release; active installations require root/gateway PID and
+public readiness observations before completion. Inactive installations remain
+inactive. No identity, provider credential or user installation is inferred.
+
+An interrupted transaction blocks another mutation. The installer never replays
+an uncertain service effect. Candidate startup failure stops both managed services
+and retains the release and unresolved record. It does **not** run an older binary
+over state the candidate may have migrated. `rollback --scope system [--dry-run]`
+therefore supports only a completed inactive upgrade whose candidate was never
+started. Active/schema rollback needs an explicit compatibility contract and remains
+a release gate. Stopping the supervisor is not proof that independent voyages ended.
+
+`uninstall --scope system [--dry-run]` stops the managed root/gateway processes,
+observes their PIDs at zero, disables/removes only the exact reviewed units and
+retains all releases, private control/runtime/gateway state, credential provisioner
+and its key. This is service removal, not destructive session cleanup or adoption.
+Reinstallation over retained state is refused pending a reviewed adoption inventory.
+
+The existing remote updater is scoped to user installations. A root invocation
+with a system installation record is refused before updater journal/service effects;
+remote system prepare/review/apply remains unavailable. Native lifecycle tests and
+full updater admission are still required for #380 acceptance.
+
+Fresh system installation also publishes a root-private `default-execution.json`
+with fresh host-local identity/account-context UUIDs and the explicitly configured
+ordinary account. Primary GID is excluded from supplementary groups; root group
+membership is refused. Upgrades preserve this identity record rather than creating
+a new authority binding. Public configured start admission is separately verified
+by Vessel; this file does not grant administrator execution or provider credentials.
