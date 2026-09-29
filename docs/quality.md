@@ -7,6 +7,10 @@ passing runs do not establish coverage for today's source.
 
 ## Linux binary release checks
 
+Use `umask 077` for local test processes: the private-storage fixtures require
+owner-only temporary files and directories. This tightens fixture creation and
+does not disable the runtime's storage checks.
+
 Run from clean committed source, retaining logs under ignored `target/`:
 
 ```sh
@@ -27,7 +31,10 @@ Its `--hosted` mode simulates the bootstrap's systemd user-manager reachability
 check inside Bubblewrap before testing anonymous pinned and latest downloads;
 it does not establish real user-manager or service activation.
 Use `python3 voyage/tests/two_voyages.py --bin-dir target/release` for the
-current concurrent file-work check. The legacy `tests/concurrent_voyages.py`
+current concurrent file-work check. Its `--legacy-ledger corrupt`,
+`--legacy-ledger locked` and `--legacy-ledger exhausted` variants verify that
+retired global allowance records cannot block execution or be mutated; the normal
+variant verifies that no new global ledger is created. The legacy `tests/concurrent_voyages.py`
 fixture below calls a retired endpoint and is not a current release gate. Missing/deleted historical
 scripts are not a passing gate and must not be restored implicitly. This release
 workflow does not depend on `scripts/check-quality` or the old packagers.

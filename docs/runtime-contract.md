@@ -156,13 +156,15 @@ original terminal outcome; it never repeats the effects. Its identity checks are
 also response-local, so reuse in a previously completed response cannot prevent
 recovery. Conflicts within the unresolved batch still refuse reconciliation.
 
-The inference ledger attributes every admitted attempt and keeps missing usage
-unknown. Reported usage from failed or incomplete streams remains there; completed
-responses rejected by tool preflight also retain their totals in the canonical run
-record. Usage is not a pricing or billing ledger. Public failure summaries identify
-the authored failure category without exposing provider bodies, credentials or
-subprocess diagnostics. Failure of a checkpoint retains recovery obligations and
-cannot authorize a provider/tool replay.
+Completed responses retain provider-reported usage in canonical session/run
+records, including responses rejected by tool preflight. Request outcomes remain
+in run attempt records. There is no separate global inference ledger or local
+request allowance. Legacy ledger files are not opened during execution. Usage is
+not a pricing or complete billing ledger; partial-stream token reports are not
+retained separately. Public failure summaries identify authored categories without
+exposing provider bodies, credentials or subprocess diagnostics. Failure of a
+canonical checkpoint retains recovery obligations and cannot authorize a
+provider/tool replay.
 
 ## Completion, cancellation and recovery
 

@@ -13,7 +13,7 @@ starting at the first recoverable failure. The attempt budget includes the initi
 request and any history-based continuation requests. A completed response ends the
 group; a subsequent tool-result inference starts its own group. Exponential waits
 use equal jitter (half to the full ceiling). Every actual retry has a new attempt ID
-and inference admission; no adapter hides additional inference retries. Retries of
+and runtime authority; no adapter hides additional inference retries. Retries of
 unchanged input share a logical request ID. Continuation from retained partial
 history has a new request ID and links to the interrupted attempt.
 
@@ -173,8 +173,8 @@ prose by string matching.
 No tool-call fragment from the interrupted response is admitted for execution.
 Completed tool results from earlier requests remain in history, and runtime
 recovery does not replay those calls. A withheld possible secret suffix is not
-flushed on stream failure. Checkpoint or accounting failure stops recovery before
-another dispatch. Policy, cancellation and inference budget are checked again for
+flushed on stream failure. Checkpoint failure stops recovery before
+another dispatch. Policy and cancellation are checked again for
 each attempt; changing retry limits does not authorize uncertain external effects.
 Unknown tool effects still require reconciliation, and model instructions are not
 a guarantee of exactly-once effects.

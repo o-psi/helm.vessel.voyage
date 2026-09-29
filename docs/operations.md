@@ -128,7 +128,7 @@ Separate voyages may run and delegate simultaneously in the same workspace.
 Their histories, tasks and subagent ownership are separate; each voyage still
 allows only one active root run. Workspace files remain shared, so coordinate edits
 to the same files or use separate workspaces for independent changes. Host resource
-limits and shared inference accounting apply across all voyages.
+limits apply across voyages; there is no shared inference allowance or global accounting gate.
 
 ### Interactive terminals and passwords
 

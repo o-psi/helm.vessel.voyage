@@ -7,7 +7,6 @@ pub use voyage_runtime::context;
 pub use voyage_runtime::extensions;
 
 pub use voyage_runtime::github;
-pub use voyage_runtime::inference;
 pub use voyage_runtime::local_provider;
 mod clipboard;
 mod composer;

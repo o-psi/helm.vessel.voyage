@@ -6,7 +6,6 @@ use std::{
     path::PathBuf,
 };
 use tracing_subscriber::EnvFilter;
-use voyage_runtime::build::redactor;
 mod auth;
 mod catalogue;
 mod cli;
@@ -337,10 +336,6 @@ async fn main() -> Result<()> {
         }
         Command::Extension(_) => {
             unreachable!("extension command handled before provider configuration")
-        }
-        Command::Inference(args) => {
-            let workspace = config.resolve_workspace(cli.workspace)?;
-            helm::inference::cli::run(args, &workspace, &redactor(&config)).await
         }
         Command::Policy(args) => {
             let workspace = config.resolve_workspace(cli.workspace)?;

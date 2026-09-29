@@ -208,10 +208,6 @@ impl SubagentExecutor for CliSubagentExecutor {
             .policy
             .check_execution_authority()
             .map_err(|error| error.to_string())?;
-        let accounting =
-            crate::inference::runtime::Accounting::child(&config.provider_profile(), context.id.0)
-                .await
-                .map_err(|error| error.to_string())?;
         let mut tools = build_tools(
             &config,
             child_tool,
@@ -236,7 +232,7 @@ impl SubagentExecutor for CliSubagentExecutor {
                 .map_err(|e| e.to_string())?,
             tools,
             tool_context,
-            context.inference_warning_sink(),
+            Arc::new(crate::agent::SilentSink),
             config.model.clone(),
             config.system_prompt.clone(),
             config.max_tokens,
@@ -244,7 +240,6 @@ impl SubagentExecutor for CliSubagentExecutor {
         )
         .with_inference_provider(config.provider.clone())
         .with_inference_settings(config.reasoning_effort.clone(), config.service_tier.clone())
-        .with_inference_accounting(accounting)
         .with_context_window(config.context_window)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,

@@ -422,7 +422,7 @@ Raw byte trickles and SSE heartbeats do not reset the idle timer. These are sepa
 from the retry-admission window and shell command timeout.
 The elapsed window includes request and backoff time and prevents a new retry once
 exhausted; it does not abort an in-flight response. Native transport deadlines and
-explicit inference/runtime budgets still apply. Existing explicitly configured
+runtime execution controls still apply. Existing explicitly configured
 attempt/delay values remain effective; the new elapsed bound also applies. Exponential
 waits use half-to-full equal jitter. Explicit `Retry-After` seconds or HTTP dates
 are honored for throttling and transient service errors; a server delay above the
@@ -430,10 +430,10 @@ configured maximum returns a failure instead of retrying early. Cancellation
 interrupts the wait; executing authority and policy freshness are rechecked during
 backoff and before dispatch. Exhausted accounts, authentication, ambiguous transport
 failures and invalid/truncated responses are not retried. Missing usage remains
-unknown in inference history. See the [runtime contract](runtime-contract.md#provider-outcomes-retries-and-accounting)
+unknown in saved run observations. See the [runtime contract](runtime-contract.md#provider-outcomes-retries-and-accounting)
 for completion signals and replay boundaries, and [provider attempt observations](provider-attempts.md)
-for persisted diagnostics and explicit continuation. Optional
-`helm inference` limits count dispatch attempts, not money or complete token cost.
+for persisted diagnostics and explicit continuation. Voyage does not impose local
+inference quotas or request-count allowances.
 
 ## Storage and diagnostics
 
@@ -627,7 +627,7 @@ empty stages do not dispatch. Every retried request must be materially smaller
 and any explicitly requested local preflight. This measure is not billing usage
 or an authoritative tokenizer. Recovery never loops on an unchanged request.
 Ordinary transient retries remain separately bounded, and every dispatched
-request passes normal inference admission/accounting.
+request rechecks runtime authority and cancellation.
 
 Only a rejection before any response delta can recover automatically. A rejection
 after text **or tool-call** deltas ends as an incomplete response, including when

@@ -291,6 +291,14 @@ Confirmed changes survive runtime suspension and supervisor restart. Helm retain
 pending commands and reconciles their original identities after reconnect without
 replaying uncertain commands. Stale or unsupported changes preserve prior values.
 
+Voyage has no local inference allowance, quota, warning threshold or request-count
+admission gate. The former global inference ledger and its `helm inference`
+commands have been removed. Startup, title generation, model streaming, tool
+continuations and subordinate voyages do not open that ledger. Legacy ledger files
+are left untouched and cannot block a run, even when locked, corrupt or previously
+configured with an exhausted limit. Provider-reported token usage remains in the
+canonical session usage and request outcomes remain in the run's attempt records.
+
 Named provider connections/accounts keep credentials on the execution host. Helm's
 Account control stages an atomic account/model/override choice independently of the
 active run; private device sign-in exposes only temporary verification material to

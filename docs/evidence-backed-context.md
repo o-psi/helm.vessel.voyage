@@ -168,18 +168,16 @@ Use disjoint tagged byte buckets: system/runtime instructions, tool definitions,
 
 Record actual input/output, cached input/write/read and reasoning details only where exposed; absent counters are null, not zero. Provider accounting may include cached input inside input totals: preserve raw field semantics and normalize with documented adapter/version mapping. Sum actual attempt totals once for task totals; reconcile against run/session rollups without adding them. Include failed/retried calls and compressor usage. Report unknown-usage attempts and known lower bounds rather than manufacture complete totals. Price only with dated model-specific rates and supported non-overlapping cache fields; otherwise report tokens/latency without a cost claim.
 
-Existing accounting integration: `model.rs::Usage` supplies run/session input
-and output totals, but absent response usage can become zero and failed attempts
-are not fully represented there. `inference/mod.rs` records optional attempt
-usage and attribution; `inference/history.rs` exposes missing/reported counts
-and may omit detail at capacity. Extend that ledger rather than summing it with
-run totals. `crates/voyage-protocol/src/provider_attempt.rs` and
-`agent/provider_attempts.rs` provide retry identities/timing and an inference
-permit join key, not encoded sizes or usage. Account quota windows in
-`accounts/usage.rs` are not request billing. Record omitted ledger records,
-admitted versus actually dispatched requests, and partial versus final usage.
-Include title generation, delegated work and all compressor requests in task
-rollups, not only the main agent's completed calls.
+Existing usage integration: `model.rs::Usage` supplies run/session input and
+output totals, but absent response usage can become zero and failed attempts are
+not fully represented there. The separate allowance ledger was removed in #373.
+`crates/voyage-protocol/src/provider_attempt.rs` and `agent/provider_attempts.rs`
+retain request identities, timing, encoded request sizes and outcomes in canonical
+run records. Extend observational reporting there without adding request quotas or
+making optional usage analytics a condition of model execution. Account usage
+windows in `accounts/usage.rs` describe provider-reported account availability;
+they are not request billing. Complete cross-request billing rollups remain a
+target capability, not current behavior.
 
 Track retrieval calls/bytes/scan work, empty/repeated queries, state-update/compression tokens, full task wall time, TTFT when observed, peak active context, stored bytes/artifact counts, and missing/corrupt/revoked evidence. Separate harness overhead from model task latency. Canonical bytes counted once per recorded result and content-deduplicated bytes are separate metrics.
 

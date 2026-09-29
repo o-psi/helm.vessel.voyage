@@ -105,10 +105,6 @@ pub async fn build_authorized_agent_bundle(
             },
             redactor: redactor(config),
         };
-        stage = "inference accounting";
-        let accounting =
-            crate::inference::runtime::Accounting::root(&workspace, &config.provider_profile())
-                .await?;
         stage = "subagent initialization";
         let subagents = build_subagents_managed(
             config,
@@ -161,7 +157,6 @@ pub async fn build_authorized_agent_bundle(
         )
         .with_inference_provider(config.provider.clone())
         .with_inference_settings(config.reasoning_effort.clone(), config.service_tier.clone())
-        .with_inference_accounting(accounting)
         .with_completion_coordinator(subagents.coordinator)
         .with_completion_gate(gate_todos, gate_agents, gate_runtime)
         .with_context_window(config.context_window)

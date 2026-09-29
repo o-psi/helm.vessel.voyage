@@ -931,23 +931,6 @@ async fn default_checkpoint_interfaces_are_explicitly_nonpersistent() {
     let (agent, _) = fixture(root.path(), vec![], true);
     let session = crate::session::Session::new(root.path().into(), "loop-model".into());
     assert!(agent.prepare_run(&session).await.unwrap().is_none());
-    assert!(agent.inference_status(session.id).await.unwrap().is_empty());
-    let now = chrono::Utc::now();
-    let query = crate::inference::history::Query {
-        from: now - chrono::Duration::hours(1),
-        until: now,
-        group_by: crate::inference::history::GroupBy::Session,
-        detail: None,
-        offset: 0,
-        limit: 10,
-        snapshot: None,
-    };
-    assert!(matches!(
-        agent
-            .inference_history(session.id, false, query, CancellationToken::new())
-            .await,
-        Err(AgentError::Inference(_))
-    ));
 }
 
 #[tokio::test]

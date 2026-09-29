@@ -251,7 +251,6 @@ async fn execute(
             cancel,
             Some(checkpoint),
             &mut String::new(),
-            None,
             &mut provider_attempts::RecoveryState::new(&agent.retry),
         )
         .await

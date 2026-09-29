@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -85,6 +86,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True)
+    parser.add_argument("--legacy-ledger", choices=("corrupt", "locked", "exhausted"),
+                        help="Prove that retired global accounting cannot block native voyages")
     args = parser.parse_args()
     binaries = args.bin_dir.resolve()
     for name in ("vessel", "voyage"):
@@ -101,6 +104,37 @@ def main():
         path = root / key.lower()
         path.mkdir(mode=0o700)
         env[key] = str(path)
+    legacy_connection = None
+    legacy_file = Path(env["XDG_DATA_HOME"]) / "helm/inference/journal.sqlite3"
+    legacy_before = None
+    if args.legacy_ledger:
+        legacy_file.parent.mkdir(parents=True, mode=0o700)
+        if args.legacy_ledger == "corrupt":
+            legacy_file.write_bytes(b"invalid retired accounting database")
+        else:
+            legacy_connection = sqlite3.connect(legacy_file)
+            # Old schema fixture only: production no longer reads these tables.
+            legacy_connection.executescript("""
+                CREATE TABLE inference_schema(id INTEGER PRIMARY KEY, version INTEGER);
+                INSERT INTO inference_schema VALUES(1,2);
+                CREATE TABLE projects(id TEXT PRIMARY KEY, root BLOB UNIQUE);
+                CREATE TABLE sessions(id TEXT PRIMARY KEY, project TEXT);
+                CREATE TABLE limits(scope TEXT PRIMARY KEY,revision INTEGER DEFAULT 0,
+                    consumed INTEGER DEFAULT 0,hard_limit INTEGER,warning INTEGER,
+                    warned_revision INTEGER,omitted INTEGER DEFAULT 0);
+                CREATE TABLE receipts(id TEXT PRIMARY KEY,payload TEXT,record TEXT);
+                CREATE TABLE attempts(sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id TEXT UNIQUE,project TEXT,session TEXT,record TEXT);
+                CREATE TABLE audit(sequence INTEGER PRIMARY KEY AUTOINCREMENT,scope TEXT,record TEXT);
+            """)
+            project = str(uuid.uuid4())
+            legacy_connection.execute("INSERT INTO projects VALUES(?,?)", (project, os.fsencode(workspace.resolve())))
+            legacy_connection.execute("INSERT INTO limits(scope,hard_limit) VALUES(?,0)", ("project:" + project,))
+            legacy_connection.commit()
+            if args.legacy_ledger == "locked":
+                legacy_connection.execute("BEGIN EXCLUSIVE")
+        legacy_file.chmod(0o600)
+        legacy_before = legacy_file.read_bytes()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     server.requests, server.errors = [], []
     labels = ("orchard", "harbor")
@@ -239,6 +273,10 @@ def main():
             peer = next(other for other in labels if other != label)
             assert server.contents[peer].strip() not in json.dumps(messages), "peer conversation leaked"
             assert (workspace / (label + ".txt")).read_text() == server.contents[label]
+        if legacy_before is not None:
+            assert legacy_file.read_bytes() == legacy_before, "retired ledger was touched"
+        else:
+            assert not legacy_file.exists(), "runtime recreated the retired ledger"
         assert server.steps == dict.fromkeys(labels, 2), server.steps
         assert not server.errors, server.errors
     finally:
@@ -266,6 +304,8 @@ def main():
                 server.server_close()
                 thread.join(timeout=5)
                 log.close()
+                if legacy_connection is not None:
+                    legacy_connection.close()
                 (root / "cleanup.json").write_text(json.dumps({
                     "remaining_owned_voyage_pids": owned_pids(),
                     "supervisor_returncode": supervisor.poll() if supervisor is not None else None,

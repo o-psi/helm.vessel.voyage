@@ -77,10 +77,7 @@ impl RecoveryState {
 }
 
 pub(super) enum RequestOutcome {
-    Completed(
-        Box<crate::model::ModelResponse>,
-        Option<crate::inference::Permit>,
-    ),
+    Completed(Box<crate::model::ModelResponse>),
     /// No tools from this response have been admitted. Caller must checkpoint
     /// its safe text as a distinct interrupted segment before the next request.
     Interrupted(uuid::Uuid),
@@ -144,7 +141,6 @@ impl Agent {
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
-        reference: Option<&crate::completion::runtime::RunReference>,
         recovery: &mut RecoveryState,
     ) -> Result<RequestOutcome, AgentError> {
         for attempt in recovery.next_attempt..=self.retry.max_attempts.max(1) {
@@ -159,13 +155,6 @@ impl Agent {
                 .map_err(|_| {
                     AgentError::Policy("foreground execution authority unavailable".into())
                 })?;
-            let permit = self
-                .inference_admit(
-                    reference,
-                    &request.model,
-                    crate::inference::Purpose::Conversation,
-                )
-                .await?;
             let started = tokio::time::Instant::now();
             let mut record = ProviderAttempt {
                 retry: voyage_protocol::provider_attempt::RetryObservation {
@@ -178,10 +167,7 @@ impl Agent {
                     ..Default::default()
                 },
                 request_id: recovery.request_id,
-                attempt_id: permit
-                    .as_ref()
-                    .map(|p| p.id)
-                    .unwrap_or_else(uuid::Uuid::new_v4),
+                attempt_id: uuid::Uuid::new_v4(),
                 provider: self
                     .inference_provider
                     .as_ref()
@@ -214,8 +200,6 @@ impl Agent {
             };
             // Durable intent precedes the external request; failure here never dispatches.
             if let Err(error) = self.record_provider_attempt(checkpoint, &record).await {
-                self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
-                    .await?;
                 return Err(error);
             }
             recovery.pending = None;
@@ -223,8 +207,6 @@ impl Agent {
                 record.decision = RetryDecision::ElapsedBudget;
                 record.retry.elapsed_ms = Some(millis(recovery.elapsed()));
                 let saved = self.record_provider_attempt(checkpoint, &record).await;
-                self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
-                    .await?;
                 saved?;
                 return Err(ProviderError::Timeout(
                     "retry admission window elapsed before dispatch".into(),
@@ -234,7 +216,6 @@ impl Agent {
             let (outcome, request_bytes) =
                 crate::provider::request_accounting::observe(self.provider_attempt_stream(
                     &request,
-                    permit.as_ref(),
                     cancel,
                     checkpoint,
                     partial_output,
@@ -242,33 +223,12 @@ impl Agent {
                 ))
                 .await;
             record.retry.request_bytes = request_bytes.clone();
-            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref())
-                && accounting
-                    .request_bytes(permit, request_bytes)
-                    .await
-                    .is_err()
-            {
-                record.decision = RetryDecision::LocalFailure;
-                record.duration_ms = millis(started.elapsed());
-                self.record_provider_attempt(checkpoint, &record).await?;
-                return Err(AgentError::Policy(
-                    "request accounting persistence failed; recorded provider observation retained"
-                        .into(),
-                ));
-            }
             record.duration_ms = millis(started.elapsed());
             match outcome {
                 Ok(response) => {
                     record.decision = RetryDecision::Completed;
-                    if let Err(error) = self.record_provider_attempt(checkpoint, &record).await {
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Completed,
-                        )
-                        .await?;
-                        return Err(error);
-                    }
-                    return Ok(RequestOutcome::Completed(Box::new(response), permit));
+                    self.record_provider_attempt(checkpoint, &record).await?;
+                    return Ok(RequestOutcome::Completed(Box::new(response)));
                 }
                 Err(AgentError::Provider(error)) => {
                     if error.is_retryable() {
@@ -293,15 +253,6 @@ impl Agent {
                     record.decision = decision;
                     record.retry_delay_ms = wait.map(millis);
                     let saved = self.record_provider_attempt(checkpoint, &record).await;
-                    // Failed provider outcome does not mean unbilled, no usage, or a tool failure.
-                    if let Err(error) = self
-                        .inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
-                        .await
-                    {
-                        record.decision = RetryDecision::LocalFailure;
-                        self.record_provider_attempt(checkpoint, &record).await?;
-                        return Err(error);
-                    }
                     saved?;
                     let Some(wait) = wait else {
                         // An explicit context rejection after any delta is interruption,
@@ -359,11 +310,7 @@ impl Agent {
                         _ => RetryDecision::LocalFailure,
                     };
                     let saved = self.record_provider_attempt(checkpoint, &record).await;
-                    let finished = self
-                        .inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
-                        .await;
                     saved?;
-                    finished?;
                     return Err(error);
                 }
             }
@@ -374,7 +321,6 @@ impl Agent {
     async fn provider_attempt_stream(
         &self,
         request: &ModelRequest,
-        permit: Option<&crate::inference::Permit>,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
@@ -409,9 +355,7 @@ impl Agent {
                     self.record_provider_attempt(checkpoint, record).await?;
                 }
                 Some(Ok(ProviderStreamEvent::Activity)) => tokio::task::yield_now().await,
-                Some(Ok(ProviderStreamEvent::UsageReported(report))) => {
-                    self.inference_report(permit, report).await?
-                }
+                Some(Ok(ProviderStreamEvent::UsageReported(_))) => {}
                 Some(Ok(ProviderStreamEvent::Delta(delta))) => {
                     match &delta {
                         ProviderDelta::Text(text) if text.is_empty() => continue,

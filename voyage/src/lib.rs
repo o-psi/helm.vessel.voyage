@@ -14,7 +14,6 @@ pub mod host_browser;
 pub(crate) mod host_browser_capacity;
 pub mod host_resources;
 pub mod images;
-pub mod inference;
 pub mod launch_config;
 pub mod local_provider;
 pub mod model;

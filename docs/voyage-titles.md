@@ -43,8 +43,7 @@ work. There are no detached title tasks or automatic restart retries.
 
 The build-time model is selected in [`utility-models.json`](../voyage/utility-models.json).
 It must be available through the executing voyage's provider. Requests use that
-provider's credentials, policy and inference accounting, not a Vessel-owned
-provider. The helper redacts before bounding recent user text to 6,000 characters
+provider's credentials and execution policy. The helper redacts before bounding recent user text to 6,000 characters
 (at most 1,500 per message), and rejects empty, oversized or control-containing
 responses. The request has a maximum ten-second timeout, also bounded by the
 configured tool-context timeout, and responds to cancellation.

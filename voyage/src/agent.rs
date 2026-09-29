@@ -167,7 +167,6 @@ pub enum AgentEvent {
         error: String,
     },
     ContextBudget(crate::context::ContextReport),
-    InferenceWarning(crate::inference::Status),
     CompletionState {
         phase: CompletionPhase,
         readiness: Option<crate::completion::Readiness>,
@@ -312,8 +311,6 @@ pub struct ContextFailure {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
-    #[error("local inference admission/accounting failed: {0}")]
-    Inference(String),
     #[error(transparent)]
     Finalization(Box<FinalizationFailure>),
     #[error("completion ownership failed: {0}")]
@@ -360,7 +357,6 @@ impl AgentError {
         match self {
             Self::Finalization(failure) => failure.source.public_failure_reason(),
             Self::Provider(error) => error.public_failure_reason(),
-            Self::Inference(_) => "Local inference admission or accounting failed.",
             Self::Completion(_) => "Completion records could not be verified.",
             Self::Context(_) => "Configured context limit prevented the request.",
             Self::Policy(_) => "Execution policy prevented the run.",
@@ -405,7 +401,6 @@ impl AgentError {
 }
 
 pub struct Agent {
-    inference: Option<crate::inference::runtime::Accounting>,
     provider: Box<dyn Provider>,
     tools: ToolRegistry,
     context: ToolContext,
@@ -612,7 +607,6 @@ impl Agent {
         temperature: Option<f32>,
     ) -> Self {
         Self {
-            inference: None,
             provider,
             tools,
             context,
@@ -658,105 +652,6 @@ impl Agent {
         self.reasoning_effort = reasoning_effort;
         self.service_tier = service_tier;
         self
-    }
-
-    pub fn with_inference_accounting(
-        mut self,
-        accounting: crate::inference::runtime::Accounting,
-    ) -> Self {
-        self.inference = Some(accounting);
-        self
-    }
-    pub async fn inference_status(
-        &self,
-        session: uuid::Uuid,
-    ) -> Result<Vec<crate::inference::Status>, AgentError> {
-        let Some(accounting) = &self.inference else {
-            return Ok(Vec::new());
-        };
-        accounting
-            .bind(session)
-            .await
-            .map_err(|error| AgentError::Inference(error.to_string()))?;
-        accounting
-            .status(session)
-            .await
-            .map_err(|error| AgentError::Inference(error.to_string()))
-    }
-    pub async fn inference_history(
-        &self,
-        session: uuid::Uuid,
-        project_scope: bool,
-        query: crate::inference::history::Query,
-        cancel: CancellationToken,
-    ) -> Result<crate::inference::history::History, AgentError> {
-        self.check_current_policy()?;
-        let accounting = self
-            .inference
-            .as_ref()
-            .ok_or_else(|| AgentError::Inference("Inference accounting is unavailable".into()))?;
-        tokio::select! {biased; _=cancel.cancelled()=>return Err(AgentError::Cancelled), result=accounting.bind(session)=>result.map_err(|error|AgentError::Inference(error.to_string()))?};
-        self.check_current_policy()?;
-        let result = accounting
-            .history(session, project_scope, query, cancel.clone())
-            .await
-            .map_err(|error| AgentError::Inference(error.to_string()))?;
-        self.check_current_policy()?;
-        if cancel.is_cancelled() {
-            return Err(AgentError::Cancelled);
-        }
-        crate::inference::history::ensure_display_safe(&result, &self.context.redactor)
-            .map_err(|error| AgentError::Inference(error.to_string()))?;
-        Ok(result)
-    }
-    async fn inference_admit(
-        &self,
-        reference: Option<&crate::completion::runtime::RunReference>,
-        model: &str,
-        purpose: crate::inference::Purpose,
-    ) -> Result<Option<crate::inference::Permit>, AgentError> {
-        let Some(accounting) = &self.inference else {
-            return Ok(None);
-        };
-        let reference = reference.ok_or_else(|| {
-            AgentError::Inference("execution has no durable session/run attribution".into())
-        })?;
-        let permit = accounting
-            .admit(reference, &self.context.redactor.redact(model), purpose)
-            .await
-            .map_err(|error| AgentError::Inference(error.to_string()))?;
-        for warning in &permit.warnings {
-            self.sink
-                .emit(AgentEvent::InferenceWarning(warning.clone()))
-                .await;
-        }
-        Ok(Some(permit))
-    }
-    async fn inference_report(
-        &self,
-        permit: Option<&crate::inference::Permit>,
-        report: crate::provider::ReportedUsage,
-    ) -> Result<(), AgentError> {
-        if let (Some(accounting), Some(permit)) = (&self.inference, permit) {
-            accounting
-                .report(permit, report)
-                .await
-                .map_err(|error| AgentError::Inference(error.to_string()))?;
-        }
-        Ok(())
-    }
-    async fn inference_finish(
-        &self,
-        permit: Option<&crate::inference::Permit>,
-        outcome: crate::inference::AttemptOutcome,
-    ) -> Result<(), AgentError> {
-        if let (Some(accounting), Some(permit)) = (&self.inference, permit) {
-            accounting
-                .finish(permit, outcome)
-                .await
-                .map_err(|error| AgentError::Inference(error.to_string()))?;
-        }
-        Ok(())
     }
 
     pub fn with_completion_gate(
@@ -805,12 +700,6 @@ impl Agent {
         run_id: uuid::Uuid,
     ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
         self.check_current_policy()?;
-        if let Some(accounting) = &self.inference {
-            accounting
-                .bind(session.id)
-                .await
-                .map_err(|error| AgentError::Inference(error.to_string()))?;
-        }
         let Some(coordinator) = &self.completion_coordinator else {
             return Ok(None);
         };
@@ -942,21 +831,19 @@ impl Agent {
         messages: &[Message],
         cancel: CancellationToken,
     ) -> Option<crate::titles::TitleResult> {
-        self.generate_title_inner(messages, cancel, None).await
+        self.generate_title_inner(messages, cancel).await
     }
     pub async fn generate_title_for_session(
         &self,
         session: &crate::session::Session,
         cancel: CancellationToken,
     ) -> Option<crate::titles::TitleResult> {
-        self.generate_title_inner(&session.messages, cancel, session.completion_runs.last())
-            .await
+        self.generate_title_inner(&session.messages, cancel).await
     }
     async fn generate_title_inner(
         &self,
         messages: &[Message],
         cancel: CancellationToken,
-        reference: Option<&crate::completion::runtime::RunReference>,
     ) -> Option<crate::titles::TitleResult> {
         use futures_util::StreamExt;
         let work = async {
@@ -977,61 +864,21 @@ impl Agent {
                 crate::context::preflight(&mut request, limit).ok()?;
             }
             self.check_current_policy().ok()?;
-            let permit = self
-                .inference_admit(reference, &request.model, crate::inference::Purpose::Title)
-                .await
-                .ok()?;
-            self.check_current_policy().ok()?;
             if cancel.is_cancelled() {
                 return None;
             }
-            let (result, bytes) =
-                crate::provider::request_accounting::observe(self.provider.stream(request)).await;
-            if let (Some(accounting), Some(permit)) = (&self.inference, permit.as_ref()) {
-                accounting.request_bytes(permit, bytes).await.ok()?;
-            }
-            let mut stream = match result {
-                Ok(stream) => stream,
-                Err(_) => {
-                    self.inference_finish(
-                        permit.as_ref(),
-                        crate::inference::AttemptOutcome::Failed,
-                    )
-                    .await
-                    .ok()?;
-                    return None;
-                }
-            };
+            let mut stream = self.provider.stream(request).await.ok()?;
             let mut text_bytes = 0_usize;
             while let Some(event) = stream.next().await {
-                let event = match event {
-                    Ok(event) => event,
-                    Err(_) => {
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Failed,
-                        )
-                        .await
-                        .ok()?;
-                        return None;
-                    }
-                };
+                let event = event.ok()?;
                 match event {
                     crate::provider::ProviderStreamEvent::Delta(
                         crate::provider::ProviderDelta::Reasoning { .. },
                     )
                     | crate::provider::ProviderStreamEvent::Activity
                     | crate::provider::ProviderStreamEvent::ResponseMetadata { .. } => {}
-                    crate::provider::ProviderStreamEvent::UsageReported(report) => {
-                        self.inference_report(permit.as_ref(), report).await.ok()?
-                    }
+                    crate::provider::ProviderStreamEvent::UsageReported(_) => {}
                     crate::provider::ProviderStreamEvent::Completed(response) => {
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Completed,
-                        )
-                        .await
-                        .ok()?;
                         return Some(crate::titles::TitleResult {
                             title: crate::titles::sanitize(
                                 &response.message,
@@ -1326,7 +1173,7 @@ impl Agent {
             }
             let mut provider_recovery = provider_attempts::RecoveryState::new(&self.retry);
             let mut recovery_attempt = 0;
-            let (response, permit) = loop {
+            let response = loop {
                 let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
                 completion_continuation.project(&mut messages);
                 crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
@@ -1341,9 +1188,9 @@ impl Agent {
                     temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
-                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut provider_recovery).await;
+                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
                 match result {
-                    Ok(provider_attempts::RequestOutcome::Completed(response, permit)) => break (*response, permit),
+                    Ok(provider_attempts::RequestOutcome::Completed(response)) => break *response,
                     Ok(provider_attempts::RequestOutcome::Interrupted(attempt_id)) => {
                         let prepared: Result<(), AgentError> = async {
                             let mut segment = Message::new(crate::model::Role::Assistant, partial_output.clone());
@@ -1396,7 +1243,6 @@ impl Agent {
                 .output_tokens
                 .checked_add(response.usage.output_tokens)
                 .ok_or(AgentError::UsageOverflow)?;
-            self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Completed).await?;
             let mut assistant = response.message;
             if let Err(error) = tool_replay::normalize(&mut assistant.tool_calls) {
                 // Account for the completed provider response without accepting
@@ -1673,7 +1519,6 @@ impl Agent {
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
-        reference: Option<&crate::completion::runtime::RunReference>,
         recovery: &mut provider_attempts::RecoveryState,
     ) -> Result<provider_attempts::RequestOutcome, AgentError> {
         if cancel.is_cancelled() {
@@ -1758,15 +1603,8 @@ impl Agent {
             return Err(AgentError::ContextExhausted(None));
         }
         recovery.previous_request_size = Some(request_size);
-        self.provider_request_attempts(
-            request,
-            cancel,
-            checkpoint,
-            partial_output,
-            reference,
-            recovery,
-        )
-        .await
+        self.provider_request_attempts(request, cancel, checkpoint, partial_output, recovery)
+            .await
     }
 
     pub fn workspace(&self) -> &std::path::Path {

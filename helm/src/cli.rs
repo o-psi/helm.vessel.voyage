@@ -98,8 +98,6 @@ pub(crate) enum Command {
     Github(GithubArgs),
     /// Install, inspect and explicitly review declarative or executable packages.
     Extension(helm::extensions::cli::ExtensionArgs),
-    /// Inspect and configure local session/project inference attempt allowances.
-    Inference(helm::inference::cli::InferenceArgs),
     /// Manage named policy profiles and preview explicit launch selection.
     Policy(helm::policy_profile::cli::PolicyArgs),
     /// Discover, inspect and run saved nonsecret workflows.
@@ -155,4 +153,12 @@ pub(crate) struct GithubArgs {
     pub(crate) session: Option<String>,
     #[command(flatten)]
     pub(crate) args: helm::github::operator::Args,
+}
+
+#[cfg(test)]
+#[test]
+fn removed_local_allowance_commands_are_not_available() {
+    for command in ["configure", "inspect", "audit", "history"] {
+        assert!(Cli::try_parse_from(["helm", "inference", command]).is_err());
+    }
 }

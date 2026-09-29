@@ -206,18 +206,12 @@ helm extension remove <ID> --expected <DIGEST>
 
 Pack validates and creates a bounded archive. Install/fetch are inactive; update clears activation first. Fetch is explicit digest-pinned HTTPS index access. Enable grants exact declarative bytes as untrusted context, not execution authority. Executable review is separate, requires one or more explicit capabilities and does not start a process. Runtime policy still applies to execution. Orphaned grants remain inspectable/revocable independently of missing source packages. Revocation does not assert that active execution stopped. Resource prints a JSON string, avoiding raw terminal controls. Scope is local user/repository storage, not a remote Vessel account selector.
 
-### `helm inference` (4 leaves)
+### Removed local inference controls
 
-[Source](../../voyage/src/inference/cli.rs), [history](../../voyage/src/inference/history.rs).
-
-```text
-helm inference inspect [--session <UUID>] [--after <N>] [--limit <N>]
-helm inference history [--session <UUID>] --from <UTC> --until <UTC> [--group-by <session|model|agent|purpose|day>] [--group <EXACT_JSON_KEY>] [--offset <N>] [--limit <N>] [--snapshot <TOKEN>]
-helm inference audit [--session <UUID>] [--after <N>] [--limit <N>]
-helm inference configure [--session <UUID>] --operation <UUID> --expected-revision <N> (--limit <N> | --unlimited) [--warning <N>] --reason <TEXT> [--confirm]
-```
-
-Inspect/audit default after 0/limit 100. History defaults group model, offset 0, limit 50; nonzero offset requires the preceding snapshot, and group drill-down uses exact returned JSON keys. Session must already belong to this local project; omission selects project scope. Configure previews until repeated exactly with confirm, requires reason and immutable operation ID; limit is cumulative attempts since binding, not extra credits. Provider token fields can be null; historical sums are not billing totals. Local ledger operations are not provider budget authorization and cannot broaden execution policy. Read-style commands may initialize local ledger storage; they were not executed for this audit.
+The former `helm inference` family was removed in #373 with the global allowance
+ledger. Its configuration, audit and global-ledger history commands are no longer
+part of the CLI. Provider usage remains in canonical session records; request
+outcomes remain available through voyage attempt observations.
 
 ### `helm policy` (9 regular + 8 defaults leaves)
 

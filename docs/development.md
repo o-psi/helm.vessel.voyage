@@ -22,7 +22,7 @@ operator interfaces. Paths in backticks require the source checkout.
 | `voyage/src/build/`, `voyage/src/execution.rs` | Runtime construction and admitted execution, per-process resource root |
 | `voyage/src/terminal.rs`, `voyage/src/subagent/`, `voyage/src/todo.rs`, `voyage/src/completion/` | Resources, task state and completion accounting |
 | `voyage/src/policy_profile/`, `voyage/src/runtime_policy.rs` | Local policy, administrator ceilings and profile transitions |
-| `voyage/src/github/`, `voyage/src/workflow/`, `voyage/src/extensions/`, `voyage/src/inference/` | Execution services and shared legacy operator workflows |
+| `voyage/src/github/`, `voyage/src/workflow/`, `voyage/src/extensions/` | Execution services and shared legacy operator workflows |
 | `helm/src/managed.rs` | Thin supervised managed client |
 | `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
 | `vessel/src/main.rs` and HTTP/transport modules | Management, human pairing and scoped process gateway |
