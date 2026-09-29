@@ -270,23 +270,26 @@ claim the account is unprivileged from a nonzero UID or remove its rights silent
 The installer now has a **read-only** `system-assess --execution-user USER --gateway-user USER`
 diagnostic. It reports both explicit, distinct ordinary accounts, host identity/mappings/capabilities,
 systemd state, protected path ancestry and existing-installation markers without
-changing a service. Its `ready_to_install` value remains false while gateway activation,
+changing a service. Its `ready_to_install` value remains false while
 scope-aware update/rollback and full adoption checks are unavailable. It is a
 preflight input, not the supported system installer or an activation gate. The
-staged unit template pins immutable binaries and separates the root supervisor
-from the ordinary gateway. A staged system release stager verifies root ownership,
-manifest hashes and ordinary read/execute access to pinned binaries and browser
-assets. Publication, activation, scope-aware rollback and adoption remain unavailable.
+fresh `install --scope system` increment uses the unit template and release stager
+to publish pinned root and ordinary-gateway units, a root-owned release and separate
+protected control/runtime roots. It refuses existing installations, checks an exact
+external key provisioner, and records fresh activation or observed unit rollback.
+A disposable Ubuntu VM passed fresh install, route and reboot and a separate
+failed-provisioner fixture passed unit rollback. Scope-aware update, rollback,
+uninstall, public bound creation, owner review and adoption remain unavailable.
 The staged root unit passes only the path to an externally provisioned private
 tmpfs connection key and requires its named provisioning service. Root gateway
-startup validates the key before binding its route. A supported installer must
-review that boot-time provisioner and service ordering without generating or
-exposing key bytes.
+startup validates the key before binding its route. The fresh path pins and
+rechecks the provisioner unit hash and ordering without generating or exposing
+key bytes; broader qualification remains required.
 
-Introduce an explicit installation-scope abstraction consumed by every layout,
-service, status, update, rollback and uninstall operation. Proposed CLI shape:
-`install --scope system --execution-user USER --gateway-user USER --gateway-origin HTTPS_ORIGIN`, with administrator enablement as a
-separate explicit choice. These flags do not exist yet. Never infer the ordinary
+Extend the explicit `--scope system` path through update, rollback, uninstall and
+service commands before calling it supported. Fresh install takes explicit
+execution/gateway accounts and HTTPS origin; administrator enablement remains a
+separate explicit choice. Never infer the ordinary
 user from a remote login, directory owner, browser user, or `SUDO_USER` alone.
 
 Before mutation, produce a reviewable plan that probes:

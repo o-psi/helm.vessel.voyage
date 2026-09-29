@@ -6,6 +6,8 @@ mod remote;
 mod service;
 mod source;
 #[cfg(target_os = "linux")]
+mod system_install;
+#[cfg(target_os = "linux")]
 mod system_preflight;
 #[cfg(target_os = "linux")]
 mod system_service;
@@ -25,6 +27,14 @@ fn run() -> Result<bool> {
     #[cfg(target_os = "linux")]
     if args.first().is_some_and(|s| s == "system-assess") {
         system_preflight::run(&args[1..])?;
+        return Ok(false);
+    }
+    #[cfg(target_os = "linux")]
+    if args
+        .windows(2)
+        .any(|pair| pair[0] == "--scope" && pair[1] == "system")
+    {
+        system_install::run(&args)?;
         return Ok(false);
     }
     match args.first().map(String::as_str) {

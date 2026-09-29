@@ -31,11 +31,11 @@ struct Assessment {
     ready_to_install: bool,
 }
 
-struct Account {
-    uid: u32,
-    gid: u32,
-    home: PathBuf,
-    groups: Vec<u32>,
+pub(super) struct Account {
+    pub(super) uid: u32,
+    pub(super) gid: u32,
+    pub(super) home: PathBuf,
+    pub(super) groups: Vec<u32>,
 }
 
 pub(super) fn run(args: &[String]) -> Result<()> {
@@ -50,7 +50,7 @@ struct AccountNames<'a> {
     gateway_user: &'a str,
 }
 
-fn valid_name(name: &str) -> bool {
+pub(super) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
         && name.as_bytes()[0].is_ascii_alphabetic()
@@ -83,7 +83,7 @@ fn parse(args: &[String]) -> Result<AccountNames<'_>> {
     })
 }
 
-fn account(name: &str) -> Result<Account> {
+pub(super) fn account(name: &str) -> Result<Account> {
     let name = CString::new(name)?;
     let mut entry = unsafe { std::mem::zeroed::<libc::passwd>() };
     let mut result = std::ptr::null_mut();
@@ -173,7 +173,7 @@ fn checked_path(path: &Path, expected_uid: u32, directory: bool) -> Result<Strin
     Ok(if exists { "present" } else { "absent" }.into())
 }
 
-fn proc_value(path: &str, limit: usize) -> Result<String> {
+pub(super) fn proc_value(path: &str, limit: usize) -> Result<String> {
     let mut bytes = Vec::new();
     fs::File::open(path)
         .with_context(|| format!("cannot inspect {path}"))?
@@ -183,7 +183,7 @@ fn proc_value(path: &str, limit: usize) -> Result<String> {
     Ok(String::from_utf8(bytes)?.trim().to_owned())
 }
 
-fn capability_bits() -> Result<u64> {
+pub(super) fn capability_bits() -> Result<u64> {
     let status = proc_value("/proc/self/status", 65536)?;
     let value = status
         .lines()
@@ -192,7 +192,7 @@ fn capability_bits() -> Result<u64> {
     Ok(u64::from_str_radix(value.trim(), 16)?)
 }
 
-fn full_identity_map(value: &str) -> bool {
+pub(super) fn full_identity_map(value: &str) -> bool {
     let mut lines = value.lines();
     let Some(line) = lines.next() else {
         return false;
@@ -459,7 +459,7 @@ fn assess(execution_user: &str, gateway_user: &str) -> Result<Assessment> {
     if existing_system_installation || existing_user_installation {
         blockers.push("existing installation requires a separate exact state, process, endpoint and rollback inventory before adoption".into());
     }
-    blockers.push("system unit publication, scope-aware update/rollback and native install qualification are incomplete; system installation remains disabled".into());
+    blockers.push("fresh system installation is an isolated-fixture increment; scope-aware update/rollback, public bound creation and production qualification remain incomplete".into());
     blockers.push("execution home/workspace access, isolation and live voyages need an actual identity and service review before mutation".into());
     Ok(Assessment {
         schema_version: 1,

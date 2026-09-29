@@ -519,10 +519,11 @@ path checks:
 ```sh
 cargo test -p voyage-installer --locked system_preflight -j 8
 cargo test -p voyage-installer --locked system_service -j 8
+cargo test -p voyage-installer --locked system_install -j 8
 voyage-installer system-assess --execution-user USER --gateway-user USER
 ```
 
-The second command observes the selected host but does not establish a supported
+The `system-assess` command observes the selected host but does not establish a supported
 system installation, native root authority, workspace access, service startup or
 gateway readiness. Run it as an ordinary user first; any root inspection belongs
 in the designated disposable native Linux fixture.
@@ -533,6 +534,17 @@ The ignored `install::release::system_tests::root_staged_release_is_readable_by_
 test requires the same disposable root fixture. It creates and removes a fresh
 `/opt/voyage` in that fixture and verifies ordinary execution/read access and
 tamper refusal. It does not install or start services.
+The fresh system installer path must be exercised in a separate disposable
+native Linux VM with two ordinary accounts, a root-controlled unpacked full
+release and an external fixture provisioner. Check dry-run non-mutation, exact
+root-owned release and worker hashes, protected control/runtime modes, effective
+root/gateway UIDs and executable paths, pairing and scoped route, actual reboot,
+and failure rollback after a deliberately failing provisioner. Preserve the
+retained failure transaction and inspect that both service PIDs are zero and
+both managed units disabled/removed. The fixture establishes fresh-install
+behavior; update, rollback, public bound Voyage creation and production adoption
+remain separate gates. Retain exact source/binary identities and results in #380.
+
 System gateway service activation additionally requires a root-owned, 32-byte
 external key on tmpfs supplied through `VOYAGE_CREDENTIAL_KEY_FILE` by its named
 provisioning service. A unit syntax check alone does not establish key readiness

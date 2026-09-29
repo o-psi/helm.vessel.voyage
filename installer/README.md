@@ -194,21 +194,51 @@ existing user/system installation markers. It prints bounded JSON with a
 `ready_to_install: false` result and specific blockers. This command makes no
 filesystem or service changes and can run without root to identify prerequisites.
 It does not prove the account can access a workspace or that namespace root has
-host authority. A supported system installation, gateway activation, scope-aware updater
-and adoption procedure are still being implemented under
-[#344](https://github.com/o-psi/helm.vessel.voyage/issues/344); do not run the
-ordinary user installer with sudo to approximate one. The staged system unit
-contract pins immutable binaries and separates a root supervisor from an ordinary
-gateway, but the installer does not yet publish or activate those units.
+host authority. Full system installation, scope-aware updater and adoption remain
+under [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344) and
+[#380](https://github.com/o-psi/helm.vessel.voyage/issues/380). Do not run the
+ordinary user installer with sudo to approximate one.
 The root unit takes an explicit path to an externally provisioned root-owned
 32-byte credential key on tmpfs and requires the named provisioning service;
 it never embeds the key. The root gateway refuses startup when provisioning is
 absent or invalid. A supported installation still needs to review and qualify
 that service and the same key across reboot.
-The system release stager is also staged behind this boundary: it requires
-root-owned `/opt/voyage/releases` paths, verifies the exact manifest and hashes,
-and makes the pinned binaries and browser worker readable by ordinary execution
-identities. It is not wired to the installer CLI, service activation or rollback.
+The explicit `install --scope system` path now supports **fresh installation only**
+in a designated disposable native Linux fixture. It is an implementation increment,
+not a supported production path: update, rollback, uninstall, public bound Voyage
+creation, owner review and adoption remain unavailable. It refuses existing system
+state and existing user installations for either selected account. It requires a
+root-controlled unpacked full release with a valid manifest, two distinct ordinary
+local accounts, an HTTPS gateway origin and an independently provisioned key unit.
+The installer verifies the provisioner unit's root ownership, lack of drop-ins and
+exact hash during review and before activation. It never creates or prints key bytes.
+
+The exact command shape is:
+
+```sh
+voyage-installer install --scope system --bin-dir /root/reviewed-release/bin \
+  --execution-user USER --gateway-user GATEWAY \
+  --gateway-origin https://helm.example.test \
+  --credential-key /run/voyage-secrets/connections.key \
+  --credential-unit voyage-key-provision.service --start --dry-run
+voyage-installer install --scope system --bin-dir /root/reviewed-release/bin \
+  --execution-user USER --gateway-user GATEWAY \
+  --gateway-origin https://helm.example.test \
+  --credential-key /run/voyage-secrets/connections.key \
+  --credential-unit voyage-key-provision.service --start
+voyage-installer status --scope system
+```
+
+The dry run checks the host and prints both exact units without mutation. Apply
+rechecks the account, source and provisioner facts, stages a root-owned versioned
+release and separate protected control/runtime roots, then publishes both units.
+`--start` requires observed root/gateway PIDs and public preflight readiness. If
+activation fails, it stops both services, disables/removes the units after observing
+their PIDs at zero, and retains the release and a failure transaction record for
+inspection. A crash or failed cleanup leaves an unresolved record; it is not
+automatically replayed. `status --scope system` checks the retained release and
+service identities for a completed fresh installation. Do not treat this path as
+permission to convert a live user installation or deploy on a production host.
 
 ### User service
 

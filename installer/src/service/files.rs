@@ -60,7 +60,7 @@ pub fn executable(path: &Path, uid: u32) -> Result<()> {
 }
 
 /// Atomically exchange reviewed content; displaced files remain recoverable backups.
-pub(super) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Result<()> {
+pub(crate) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Result<()> {
     let parent = path.parent().context("Unit path has no parent")?;
     let temporary = temporary(parent, "backup")?;
     let mut output = OpenOptions::new()
@@ -90,7 +90,7 @@ pub(super) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Res
     File::open(parent)?.sync_all()?;
     Ok(())
 }
-pub(super) fn remove_reviewed(path: &Path, expected: &str) -> Result<()> {
+pub(crate) fn remove_reviewed(path: &Path, expected: &str) -> Result<()> {
     let parent = path.parent().context("Unit path has no parent")?;
     let backup = temporary(parent, "removed")?;
     rename(path, &backup, libc::RENAME_NOREPLACE)?;

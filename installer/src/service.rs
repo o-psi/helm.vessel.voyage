@@ -3,7 +3,7 @@ use anyhow::{Result, bail};
 #[cfg(target_os = "linux")]
 pub(crate) mod command;
 #[cfg(target_os = "linux")]
-mod files;
+pub(crate) mod files;
 #[cfg(target_os = "linux")]
 mod lifecycle;
 #[cfg(target_os = "linux")]

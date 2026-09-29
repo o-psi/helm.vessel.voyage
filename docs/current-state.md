@@ -475,14 +475,18 @@ cancellation cleanup. Missing published releases never fall back to main. See
 The read-only `system-assess --execution-user USER --gateway-user USER` command reports host and
 distinct execution/gateway account prerequisites; it never enables a privileged service. A hidden Linux
 root/ordinary gateway route handles public commands, events, pairing and browser
-sockets in isolated fixtures. A staged two-unit template pins immutable binaries
-and a staged root-owned release stager retains ordinary-readable browser assets;
-neither is published or activated through the CLI. System-scope installation, initial bound Voyage
-creation through a public route and supported activation remain unavailable.
+sockets in isolated fixtures. An explicit `install --scope system` fresh-install
+increment can stage a root-owned manifest-verified release with ordinary-readable
+browser assets, protected control/runtime roots and pinned root/gateway units. It
+refuses existing state, checks the external key provisioner and records activation
+and failed cleanup. A disposable Ubuntu VM passed a fresh install, scoped route,
+reboot and deliberately failed activation with observed unit rollback. System
+update, rollback, uninstall, public bound Voyage creation, owner/client controls
+and supported production activation remain unavailable.
 The staged root gateway now refuses startup without its externally provisioned
 root-private tmpfs connection key. The root unit requires a named provisioning
-service; a future supported system installer must review it and verify the same
-key across reboot.
+service. The fresh-install increment checks that exact external unit and native
+fixture evidence verifies the same scoped credential after reboot.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
 including admission refused by older Vessels, so existing voyages remain reachable.
