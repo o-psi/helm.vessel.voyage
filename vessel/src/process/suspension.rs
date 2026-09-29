@@ -234,6 +234,7 @@ impl Supervisor {
             after,
             limit,
             wait_ms,
+            projection,
         } = command
         {
             let registration = self.registration(session).await?;
@@ -252,6 +253,7 @@ impl Supervisor {
                             after,
                             limit,
                             wait_ms: 0,
+                            projection: projection.clone(),
                         },
                         authorization.clone(),
                     )
@@ -283,6 +285,7 @@ impl Supervisor {
                         after,
                         limit,
                         wait_ms,
+                        projection,
                     },
                     authorization,
                 )
