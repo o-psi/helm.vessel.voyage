@@ -111,3 +111,27 @@ fn command_and_decision_observations_never_publish_private_request_or_response()
             .any(|event| event["kind"] == "decision" && event["payload"]["status"] == "pending")
     );
 }
+
+#[test]
+fn tool_result_content_and_arguments_are_never_streamed() {
+    let (_root, mut journal, session, guard) = fixture();
+    let run = admit(&mut journal, &guard);
+    journal.mark_running(&guard, run.id).unwrap();
+    let mut messages = journal.load_session(session.id).unwrap().session.messages;
+    let mut tool = Message::new(Role::Tool, "secret terminal output");
+    tool.tool_call_id = Some("call123".into());
+    messages.push(tool);
+    journal
+        .checkpoint_canonical(&guard, run.id, &messages, &Usage::default())
+        .unwrap();
+    let page = journal.live_observations(session.id, 0, 128).unwrap();
+    assert!(!page.to_string().contains("secret terminal output"));
+    let event = page["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["kind"] == "message_finalized")
+        .unwrap();
+    assert_eq!(event["payload"]["message"]["tool_call_id"], "call123");
+    assert_eq!(event["payload"]["message"]["content"], "");
+}

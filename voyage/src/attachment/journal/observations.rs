@@ -72,7 +72,14 @@ impl Journal {
         // The public history projection can disclose tool arguments and tool
         // output to authorized history readers. Live events are less specific:
         // expose only bounded text and identifiers, never raw tool contents.
-        let (content, truncated) = super::text_prefix(&message.content, 4096);
+        // Tool responses may contain private terminal material. Never stream
+        // their content even if it is part of the canonical conversation.
+        let public_text = message.role != crate::model::Role::Tool;
+        let (content, truncated) = if public_text {
+            super::text_prefix(&message.content, 4096)
+        } else {
+            ("", !message.content.is_empty())
+        };
         let message = json!({"role":message.role,"content":content,"content_truncated":truncated,
             "content_bytes":message.content.len(),"tool_call_id":message.tool_call_id,
             "tool_calls_omitted":!message.tool_calls.is_empty(),"message_index":index,
