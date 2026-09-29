@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-28T20:15:51.630513+00:00",
-  "source_commit": "d0cfeed81750b8da1c90740cc4bce3b0bbed3fb3",
+  "measured_at_utc": "2026-09-29T02:20:55.729573+00:00",
+  "source_commit": "930c32598049636b6d32b5ace24e7cdd2c949765",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1895,
+    "passed": 1899,
     "failed": 0,
     "ignored": 4
   },
   "totals": {
     "lines": {
-      "count": 108655,
-      "covered": 83918,
-      "percent": 77.2334453085454
+      "count": 107866,
+      "covered": 83130,
+      "percent": 77.06784343537352
     },
     "functions": {
-      "count": 10386,
-      "covered": 7715,
-      "percent": 74.28268823416137
+      "count": 10247,
+      "covered": 7592,
+      "percent": 74.08997755440618
     },
     "regions": {
-      "count": 178547,
-      "covered": 131846,
-      "notcovered": 46701,
-      "percent": 73.84386184029974
+      "count": 177140,
+      "covered": 130633,
+      "notcovered": 46507,
+      "percent": 73.74562492943436
     }
   },
-  "command": "umask 077; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov clean --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run-d0cfeed.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$PWD/target cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary-d0cfeed.json",
+  "command": "umask 077; export USER=$(id -un); LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov clean --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $SHARED_TARGET/coverage-report/930c325-instrumented -j 8 > $SHARED_TARGET/coverage-report/930c325-instrumented/run.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov report --json --summary-only --output-path $SHARED_TARGET/coverage-report/930c325-instrumented/summary.json -v",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,6 +40,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests under owner-only umask in this checkout; raw profiles were cleared before the passing measurement. Thirteen executed test binaries produced a report with 473 source entries, one of which is unavailable distribution Rust standard-library source; no other checkout source was present. All tests passed and report generation completed. The new runtime-directory primitive has ordinary-UID tests only; native root and cross-identity installation journeys remain separate."
+    "Full workspace default-feature Rust tests, owner-only umask and USER set; source clean and frozen at the recorded commit. SHARED_TARGET denotes the existing checkout target directory.",
+    "Initial run exposed two obsolete removed-allowance CLI expectations; corrected before this measurement. A subsequent passing run reused noninstrumented ordinary binaries and discovered historical objects; those invalid totals were retained locally and not published.",
+    "Before this final measurement, a scoped cargo clean --profile dev of the six workspace packages removed stale/uninstrumented workspace artifacts while preserving dependencies and release artifacts. Raw profiles were then cleared. cargo-llvm-cov 0.9.1 injects instrumentation through its rustc wrapper, so ordinary --no-clean artifacts must not be assumed instrumented.",
+    "Final export includes all 13 executed test binaries and three current production entry-point binaries (19 paths, 16 unique objects because three are hardlink aliases). All 471 source entries belong to the measured checkout except one unavailable distribution Rust standard-library source. No historical checkout source or mixed totals remain.",
+    "Compared with the prior record: lines -0.166 percentage points, functions -0.193, regions -0.098. The removed allowance subsystem and integrated event changes alter the source denominator; no exclusions were narrowed."
   ]
 }
