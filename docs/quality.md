@@ -380,7 +380,9 @@ cargo test -p voyage-installer --locked browser_assets_are_verified -j 8
 These checks verify staging and integrity, not browser execution. Browser
 execution and cleanup use `npm test --prefix voyage/browser` after pinned npm
 preparation, and `python3 voyage/tests/host_browser.py --binaries
-/absolute/path/to/built/bin` with actual locally built Helm, Vessel and Voyage.
+/absolute/path/to/built/bin --web-resources
+/absolute/path/to/webhelm/resources/js` with actual locally built Helm, Vessel and
+Voyage and the matching `o-psi/webhelm` checkout.
 The process journey checks both Helm clients, DOM replay, ordinary first-action
 claim and private takeover,
 multiple voyages, suspended-owner preparation and observed cleanup. Crash

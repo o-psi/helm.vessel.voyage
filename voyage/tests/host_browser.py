@@ -98,11 +98,21 @@ def main():
     parser.add_argument('--node', type=Path, default=Path('/usr/bin/node'))
     parser.add_argument('--evidence-dir', type=Path, help='Existing ignored target directory for pre-private screenshots (runtime evidence uses short /tmp path)')
     parser.add_argument('--binaries', type=Path, required=True)
+    parser.add_argument('--web-resources', type=Path, required=True,
+                        help='resources/js directory from the matching o-psi/webhelm checkout')
     parser.add_argument('--ws', type=Path, default=Path('/home/psi/voyage/web/gateway/node_modules/ws'))
     parser.add_argument('--chromium', type=Path, default=Path('/usr/bin/chromium'))
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     binaries = args.binaries.resolve()
+    web_resources = args.web_resources.resolve()
+    for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
+        if not (web_resources/name).is_file():
+            parser.error(f'--web-resources is missing {name}')
+    web_shared = web_resources.parents[1]/'shared'
+    for path in ('voyage/browser/rrweb-vendor.mjs', 'helm/browser-view/viewer.mjs'):
+        if not (web_shared/path).is_file():
+            parser.error(f'--web-resources checkout is missing shared/{path}')
     os.umask(0o077)
     root = Path(tempfile.mkdtemp(prefix='host-browser333-'))
     screenshots = args.evidence_dir.resolve() if args.evidence_dir else root
@@ -121,8 +131,12 @@ def main():
                       '/helm/browser-view/viewer.mjs': repo/'helm/browser-view/viewer.mjs'}
     server.modules['/rrweb-vendor.mjs'] = repo/'voyage/browser/rrweb-vendor.mjs'
     server.modules['/voyage/browser/rrweb-vendor.mjs'] = repo/'voyage/browser/rrweb-vendor.mjs'
+    server.modules['/shared/voyage/browser/rrweb-vendor.mjs'] = web_shared/'voyage/browser/rrweb-vendor.mjs'
+    server.modules['/shared/helm/browser-view/viewer.mjs'] = web_shared/'helm/browser-view/viewer.mjs'
+    server.modules['/web/shared/voyage/browser/rrweb-vendor.mjs'] = web_shared/'voyage/browser/rrweb-vendor.mjs'
+    server.modules['/web/shared/helm/browser-view/viewer.mjs'] = web_shared/'helm/browser-view/viewer.mjs'
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
-        server.modules['/web/resources/js/'+name] = repo/'web/resources/js'/name
+        server.modules['/web/resources/js/'+name] = web_resources/name
     server.site = f'http://127.0.0.1:{server.server_port}'
     server.requests, server.errors, server.visits, server.arrived = [], [], [], {}
     server.release = threading.Event()
