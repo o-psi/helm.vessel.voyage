@@ -19,6 +19,8 @@ pub(super) struct Plan {
     pub(super) gateway_uid: u32,
     pub(super) origin: String,
     pub(super) socket: String,
+    pub(super) credential_key: PathBuf,
+    pub(super) credential_unit: String,
 }
 
 pub(super) struct Units {
@@ -88,6 +90,17 @@ fn origin(value: &str) -> bool {
         && parsed.origin().ascii_serialization() == value
 }
 
+fn credential_unit(value: &str) -> bool {
+    (9..=128).contains(&value.len())
+        && value.ends_with(".service")
+        && value.as_bytes()[0].is_ascii_alphanumeric()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.@-".contains(&byte))
+        && value != ROOT_UNIT
+        && value != GATEWAY_UNIT
+}
+
 impl Plan {
     pub(super) fn render(&self) -> Result<Units> {
         ensure!(
@@ -104,6 +117,10 @@ impl Plan {
             "system gateway requires one HTTPS origin"
         );
         ensure!(
+            credential_unit(&self.credential_unit),
+            "system credential provisioner must be a separate service unit"
+        );
+        ensure!(
             (1..=80).contains(&self.socket.len())
                 && self.socket.bytes().all(|byte| {
                     byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
@@ -115,6 +132,8 @@ impl Plan {
                 && absolute(&self.bin)
                 && absolute(&self.control)
                 && absolute(&self.gateway_state)
+                && self.credential_key.starts_with("/run/")
+                && self.credential_key != Path::new("/run")
                 && !self.control.starts_with(&self.gateway_state)
                 && !self.gateway_state.starts_with(&self.control),
             "invalid system installation paths"
@@ -143,6 +162,7 @@ impl Plan {
         let database = quote_path(&self.gateway_state.join("vessel.db"))?;
         let control_working_directory = directive_path(&self.control)?;
         let gateway_working_directory = directive_path(&self.gateway_state)?;
+        let credential_key = directive_path(&self.credential_key)?;
         let state_directory = self
             .gateway_state
             .strip_prefix("/var/lib")
@@ -155,8 +175,8 @@ impl Plan {
             .to_str()
             .context("gateway state directory requires UTF-8")?;
         let root = format!(
-            "[Unit]\nDescription=Voyage privileged Vessel supervisor\nAfter=network.target\n\n[Service]\nType=simple\nExecStart=:{vessel} local-serve --directory {control} --voyage-binary {voyage} --gateway-socket {} --gateway-uid {} --gateway-origin {}\nWorkingDirectory={control_working_directory}\nUMask=0077\nRuntimeDirectory=voyage\nRuntimeDirectoryMode=0711\nRuntimeDirectoryPreserve=yes\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=30\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
-            self.socket, self.gateway_uid, self.origin
+            "[Unit]\nDescription=Voyage privileged Vessel supervisor\nRequires={}\nAfter=network.target {}\n\n[Service]\nType=simple\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE={credential_key}\nExecStart=:{vessel} local-serve --directory {control} --voyage-binary {voyage} --gateway-socket {} --gateway-uid {} --gateway-origin {}\nWorkingDirectory={control_working_directory}\nUMask=0077\nRuntimeDirectory=voyage\nRuntimeDirectoryMode=0711\nRuntimeDirectoryPreserve=yes\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=30\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
+            self.credential_unit, self.credential_unit, self.socket, self.gateway_uid, self.origin
         );
         let gateway = format!(
             "[Unit]\nDescription=Voyage unprivileged public gateway\nWants={ROOT_UNIT}\nAfter={ROOT_UNIT}\n\n[Service]\nType=simple\nUser={}\nExecStart=:{vessel} --bind 127.0.0.1:9480 --database {database} --system-gateway-socket {} {}\nWorkingDirectory={gateway_working_directory}\nStateDirectory={state_directory}\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestart=on-failure\nRestartSec=2\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
@@ -183,6 +203,8 @@ mod tests {
             gateway_uid: 1001,
             origin: "https://helm.example.test".into(),
             socket: "voyage-system-test".into(),
+            credential_key: "/run/voyage-secrets/connections.key".into(),
+            credential_unit: "voyage-key-provision.service".into(),
         }
     }
 
@@ -197,6 +219,14 @@ mod tests {
         );
         assert!(units.root.contains("RuntimeDirectoryPreserve=yes"));
         assert!(units.root.contains("KillMode=process"));
+        assert!(units.root.contains(
+            "Environment=VOYAGE_CREDENTIAL_KEY_FILE=/run/voyage-secrets/connections.key"
+        ));
+        assert!(
+            units
+                .root
+                .contains("Requires=voyage-key-provision.service\n")
+        );
         assert!(!units.root.contains("User="));
         assert!(units.gateway.contains("User=voyagegateway\n"));
         assert!(units.gateway.contains("NoNewPrivileges=yes"));
@@ -238,6 +268,18 @@ mod tests {
         assert!(p.render().is_err());
         let mut p = plan();
         p.socket = "voyage; ExecStart=/bin/sh".into();
+        assert!(p.render().is_err());
+        let mut p = plan();
+        p.credential_key = "/etc/voyage/connections.key".into();
+        assert!(p.render().is_err());
+        let mut p = plan();
+        p.credential_key = "/run/secret%N".into();
+        assert!(p.render().is_err());
+        let mut p = plan();
+        p.credential_unit = "../other.service".into();
+        assert!(p.render().is_err());
+        let mut p = plan();
+        p.credential_unit = ROOT_UNIT.into();
         assert!(p.render().is_err());
         let mut p = plan();
         p.gateway_state = p.control.join("gateway");
@@ -293,12 +335,19 @@ mod tests {
         let units = p.render().unwrap();
         let root = base.join(ROOT_UNIT);
         let gateway = base.join(GATEWAY_UNIT);
+        let credential = base.join(&p.credential_unit);
         fs::write(&root, units.root).unwrap();
         fs::write(&gateway, units.gateway).unwrap();
+        fs::write(
+            &credential,
+            "[Unit]\nDescription=Fixture credential provisioner\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/true\nRemainAfterExit=yes\n",
+        )
+        .unwrap();
         let output = Command::new("/usr/bin/systemd-analyze")
             .arg("verify")
             .arg(&root)
             .arg(&gateway)
+            .arg(&credential)
             .output()
             .unwrap();
         assert!(

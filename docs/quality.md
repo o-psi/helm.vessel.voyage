@@ -533,6 +533,10 @@ The ignored `install::release::system_tests::root_staged_release_is_readable_by_
 test requires the same disposable root fixture. It creates and removes a fresh
 `/opt/voyage` in that fixture and verifies ordinary execution/read access and
 tamper refusal. It does not install or start services.
+System gateway service activation additionally requires a root-owned, 32-byte
+external key on tmpfs supplied through `VOYAGE_CREDENTIAL_KEY_FILE` by its named
+provisioning service. A unit syntax check alone does not establish key readiness
+or pairing; native activation must test the real service dependency and route.
 
 ## Host-browser packaging (#333)
 

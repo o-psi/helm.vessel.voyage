@@ -479,6 +479,10 @@ sockets in isolated fixtures. A staged two-unit template pins immutable binaries
 and a staged root-owned release stager retains ordinary-readable browser assets;
 neither is published or activated through the CLI. System-scope installation, initial bound Voyage
 creation through a public route and supported activation remain unavailable.
+The staged root gateway now refuses startup without its externally provisioned
+root-private tmpfs connection key. The root unit requires a named provisioning
+service; a future supported system installer must review it and verify the same
+key across reboot.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
 including admission refused by older Vessels, so existing voyages remain reachable.

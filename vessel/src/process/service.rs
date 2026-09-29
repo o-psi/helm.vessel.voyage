@@ -66,6 +66,12 @@ pub async fn serve_configured(
         // create authority under a user-writable ancestor on first start.
         let _control = voyage_storage::protected_linux::RootDirectory::open(&directory)?;
     }
+    if gateway.is_some() {
+        // A root gateway that cannot redeem or retain scoped connections must
+        // fail before binding its public-facing peer route. Provisioning is
+        // external and the key bytes never enter service arguments or logs.
+        voyage_storage::credentials::check_key()?;
+    }
     registry::private_directory(&directory)?;
     let _lock = registry::lock(&directory)?;
     super::identity::public(&directory)?;

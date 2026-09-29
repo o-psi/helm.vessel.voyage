@@ -277,6 +277,11 @@ staged unit template pins immutable binaries and separates the root supervisor
 from the ordinary gateway. A staged system release stager verifies root ownership,
 manifest hashes and ordinary read/execute access to pinned binaries and browser
 assets. Publication, activation, scope-aware rollback and adoption remain unavailable.
+The staged root unit passes only the path to an externally provisioned private
+tmpfs connection key and requires its named provisioning service. Root gateway
+startup validates the key before binding its route. A supported installer must
+review that boot-time provisioner and service ordering without generating or
+exposing key bytes.
 
 Introduce an explicit installation-scope abstraction consumed by every layout,
 service, status, update, rollback and uninstall operation. Proposed CLI shape:

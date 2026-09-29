@@ -200,6 +200,11 @@ and adoption procedure are still being implemented under
 ordinary user installer with sudo to approximate one. The staged system unit
 contract pins immutable binaries and separates a root supervisor from an ordinary
 gateway, but the installer does not yet publish or activate those units.
+The root unit takes an explicit path to an externally provisioned root-owned
+32-byte credential key on tmpfs and requires the named provisioning service;
+it never embeds the key. The root gateway refuses startup when provisioning is
+absent or invalid. A supported installation still needs to review and qualify
+that service and the same key across reboot.
 The system release stager is also staged behind this boundary: it requires
 root-owned `/opt/voyage/releases` paths, verifies the exact manifest and hashes,
 and makes the pinned binaries and browser worker readable by ordinary execution
