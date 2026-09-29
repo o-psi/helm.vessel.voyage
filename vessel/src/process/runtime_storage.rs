@@ -26,6 +26,27 @@ pub(super) fn bound_directory(
     uid: u32,
     gid: u32,
 ) -> Result<PathBuf> {
+    let (runtime, path) = runtime_root(root)?;
+    let name = session.to_string();
+    let _directory = runtime.session(name.as_ref(), uid, gid)?;
+    Ok(path.join(name))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn provision_bound_directory(
+    root: &Path,
+    session: uuid::Uuid,
+    uid: u32,
+    gid: u32,
+) -> Result<PathBuf> {
+    let (runtime, path) = runtime_root(root)?;
+    let name = session.to_string();
+    let _directory = runtime.create_session(name.as_ref(), uid, gid)?;
+    Ok(path.join(name))
+}
+
+#[cfg(target_os = "linux")]
+fn runtime_root(root: &Path) -> Result<(voyage_storage::protected_linux::RuntimeRoot, PathBuf)> {
     use voyage_storage::protected_linux::{RootDirectory, RuntimeRoot};
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -44,7 +65,5 @@ pub(super) fn bound_directory(
         "control and runtime roots must be separate"
     );
     let runtime = RuntimeRoot::open(&layout.runtime_root)?;
-    let name = session.to_string();
-    let _directory = runtime.session(name.as_ref(), uid, gid)?;
-    Ok(layout.runtime_root.join(name))
+    Ok((runtime, layout.runtime_root))
 }

@@ -112,7 +112,9 @@ pub fn configure_identity(
                     0,
                 ) != 0
                 || libc::setresuid(uid, uid, uid) != 0
-                || (uid != 0 && libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
+                || (uid != 0
+                    && (clear_capabilities() != 0
+                        || libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0))
             {
                 return Err(std::io::Error::last_os_error());
             }
@@ -120,6 +122,32 @@ pub fn configure_identity(
         });
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn clear_capabilities() -> libc::c_long {
+    #[repr(C)]
+    struct Header {
+        version: u32,
+        pid: i32,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Data {
+        effective: u32,
+        permitted: u32,
+        inheritable: u32,
+    }
+    let header = Header {
+        version: 0x2008_0522,
+        pid: 0,
+    };
+    let data = [Data {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    }; 2];
+    unsafe { libc::syscall(libc::SYS_capset, &header, data.as_ptr()) }
 }
 
 /// A privileged helper may execute only an administrator-controlled program.

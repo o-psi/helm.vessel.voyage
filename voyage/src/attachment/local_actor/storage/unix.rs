@@ -54,17 +54,28 @@ fn walk(path: &Path) -> Result<File> {
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open("/")?;
-    for component in path.components() {
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
         match component {
             Component::RootDir => (),
             Component::Normal(name) => {
                 use std::os::unix::ffi::OsStrExt;
                 let name = CString::new(name.as_bytes())?;
+                // A protected runtime parent grants traversal, not listing.
+                // Keep final directories readable for their durability barrier.
+                #[cfg(target_os = "linux")]
+                let access = if components.peek().is_some() {
+                    libc::O_PATH
+                } else {
+                    libc::O_RDONLY
+                };
+                #[cfg(not(target_os = "linux"))]
+                let access = libc::O_RDONLY;
                 let fd = unsafe {
                     libc::openat(
                         current.as_raw_fd(),
                         name.as_ptr(),
-                        libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                        access | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
                     )
                 };
                 ensure!(

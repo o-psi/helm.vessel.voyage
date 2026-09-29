@@ -409,6 +409,16 @@ Guardian cleanup is bounded to ten seconds and does not establish rollback or th
 completion of external effects. Linux evidence does not establish native behavior
 on macOS or Windows. The guardian does not own a session journal or run an agent loop.
 
+A staged Linux privileged guardian separately accepts protected bound launch
+records, passes startup authority through a root-private pipe, observes the child's
+kernel execution identity and records descendant cleanup in root-controlled
+storage. Runtime projections and stopped markers cannot create that evidence.
+This internal entry point is verified in a disposable native Linux fixture;
+supported service launch, owner identity controls, system installation and full
+bound recovery remain incomplete. Bound startup does not derive scoped Vessel
+access from runtime-directory ancestry. See the
+[privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
+
 Helm chat, one-shot runs, connected clients, workflows and managed sessions use **Helm → Vessel → voyage**. Vessel launches a separate
 long-lived process for each session. Only that voyage constructs the executor,
 loads execution-host credentials, admits turns and writes canonical checkpoints.

@@ -56,3 +56,8 @@ mod updates;
 
 #[cfg(test)]
 mod authority_routing_tests;
+
+#[cfg(target_os = "linux")]
+pub mod guardian;
+#[cfg(target_os = "linux")]
+mod guardian_observation;

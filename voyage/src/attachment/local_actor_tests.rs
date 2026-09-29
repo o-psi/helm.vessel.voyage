@@ -188,3 +188,46 @@ fn malformed_records_and_non_unique_identifiers_never_become_attribution() {
     value["unexpected"] = true.into();
     assert!(decode(&serde_json::to_vec(&value).unwrap()).is_err());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn private_identity_traverses_execute_only_ancestors_without_listing_them() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("traverse");
+    let owned = parent.join("owned");
+    fs::create_dir_all(&owned).unwrap();
+    fs::set_permissions(&owned, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o111)).unwrap();
+    let path = owned.join("identity");
+    let observed = (|| -> Result<LocalActor> {
+        if unsafe { libc::geteuid() } != 0 {
+            ensure!(
+                fs::read_dir(&parent).is_err(),
+                "fixture parent unexpectedly listable"
+            );
+        }
+        let store = LocalActorStore::open(&path)?;
+        let actor = store.identity()?;
+        let existing = storage::Directory::open_existing(&path)?;
+        ensure!(
+            decode(&existing.read(PUBLISHED)?.context("identity missing")?)? == actor,
+            "identity changed"
+        );
+        Ok(actor)
+    })();
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let actor = observed.unwrap();
+    assert_eq!(
+        LocalActorStore::open(&path).unwrap().identity().unwrap(),
+        actor
+    );
+    std::os::unix::fs::symlink(&parent, root.path().join("alias")).unwrap();
+    assert!(LocalActorStore::open(&root.path().join("alias/owned/identity")).is_err());
+    if unsafe { libc::geteuid() } != 0 {
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o000)).unwrap();
+        let denied = LocalActorStore::open(&path);
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(denied.is_err());
+    }
+}

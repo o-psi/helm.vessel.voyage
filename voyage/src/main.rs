@@ -12,6 +12,9 @@ enum Command {
 
     /// Run one supervisor-registered session owner.
     Serve(voyage::server::ServeArgs),
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    ServeBound(voyage::server::ServeArgs),
     /// Guard one runtime and observe descendant cleanup after it exits (Linux).
     Supervise(voyage::server::ServeArgs),
     /// Read one suspended-session observation without starting an execution runtime.
@@ -59,6 +62,8 @@ fn main() -> anyhow::Result<()> {
                 unreachable!("catalogue helper runs before async runtime creation")
             }
             Command::Serve(args) => voyage::server::serve(args).await,
+            #[cfg(target_os = "linux")]
+            Command::ServeBound(args) => voyage::server::serve_bound(args).await,
             Command::Supervise(_) => unreachable!("guardian runs before async runtime creation"),
             Command::HostResources(args) => voyage::host_resources::cli::run(args),
             Command::ValidateStart(args) => voyage::server::bootstrap::validate_start(args),

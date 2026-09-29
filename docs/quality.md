@@ -110,6 +110,29 @@ links/permissions, runtime permission changes, a hostile journal symlink, stale
 metadata retention and changed identity refusal. It does not start a Voyage owner,
 install a system service, use a provider or establish full #344 acceptance.
 
+The protected guardian has an ignored integration test in the same disposable
+native-root fixture. Supply root-controlled Vessel and Voyage executables:
+
+```sh
+VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_VESSEL_EXECUTABLE=/opt/voyage-test/vessel VOYAGE_TEST_CATALOGUE_EXECUTABLE=/opt/voyage-test/voyage cargo test -p vessel --locked --lib -- --ignored --exact process::guardian::tests::native_guardian_attests_pipe_launch_and_proves_descendant_cleanup
+```
+
+It starts an actual ordinary-identity Voyage through a root-private pipe, checks
+kernel UID/GID/groups, cleared inherited capabilities and authenticated Health,
+then verifies projection/cleanup-marker forgery, duplicate/stale admission and
+wrong pipe/identity refusal. A controlled runtime fixture double-forks into a
+separate session; protected completion requires its observed death and reaping.
+Killing a guardian leaves cleanup unresolved even after test teardown removes its
+pinned child. Account state is synthetic and local to the fixture; no provider is
+contacted. The fixture runs no system installation and establishes no client,
+owner-review, restart or adoption acceptance. Its ignored native execution is
+separate from default workspace coverage.
+
+`cargo test -p voyage --locked --lib server::bound -j 8` checks bounded framed
+input, truncated EOF and timeout cancellation without leaving a blocking stdin
+reader. Local-actor tests cover execute-only ancestor traversal, denied listing
+and symlink/non-traversable ancestor refusal.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

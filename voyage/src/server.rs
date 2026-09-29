@@ -70,10 +70,25 @@ struct State {
     shutdown: CancellationToken,
     archive_receipt: Mutex<Option<serde_json::Value>>,
 }
+#[cfg(target_os = "linux")]
+mod bound;
+
 pub async fn serve(args: ServeArgs) -> Result<()> {
+    serve_registered(args, None).await
+}
+
+/// Root-owned launch pipe, distinct from the child-writable projection. No
+/// configuration or journal is opened until this registration is authenticated.
+#[cfg(target_os = "linux")]
+pub async fn serve_bound(args: ServeArgs) -> Result<()> {
+    let registration = bound::registration().await?;
+    serve_registered(args, Some(registration)).await
+}
+
+async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>) -> Result<()> {
     #[cfg(not(unix))]
     {
-        let _ = args;
+        let _ = (args, admitted);
         anyhow::bail!("private voyage process transport unsupported on this platform");
     }
     #[cfg(unix)]
@@ -88,7 +103,17 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
                 < 108,
             "runtime socket path exceeds Unix socket limit"
         );
-        let registration = transport::registration(&directory)?;
+        let registration = match &admitted {
+            Some(registration) => registration.clone(),
+            None => {
+                let registration = transport::registration(&directory)?;
+                ensure!(
+                    registration.peer_uids.is_none(),
+                    "bound startup requires protected launch admission"
+                );
+                registration
+            }
+        };
         ensure!(
             registration.session_id == args.session
                 && registration.incarnation == args.incarnation
@@ -115,7 +140,14 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
                 }
             }
         }
-        let current = transport::registration(&directory)?;
+        // A child-writable projection cannot replace authority received on the
+        // launch pipe. Publish only as this runtime identity for later observers.
+        let current = if let Some(registration) = &admitted {
+            bound_projection(&directory, registration)?;
+            registration.clone()
+        } else {
+            transport::registration(&directory)?
+        };
         ensure!(
             current.session_id == registration.session_id
                 && current.incarnation == registration.incarnation
@@ -234,14 +266,18 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             directory: directory.join("journal"),
             session: registration.session_id,
         });
-        config.vessel_context = Some(crate::tools::VesselContext {
-            session_id: registration.session_id,
-            directory: directory
-                .parent()
-                .and_then(std::path::Path::parent)
-                .context("runtime directory missing supervising Vessel")?
-                .to_path_buf(),
-        });
+        config.vessel_context = if registration.peer_uids.is_some() {
+            None
+        } else {
+            Some(crate::tools::VesselContext {
+                session_id: registration.session_id,
+                directory: directory
+                    .parent()
+                    .and_then(std::path::Path::parent)
+                    .context("runtime directory missing supervising Vessel")?
+                    .to_path_buf(),
+            })
+        };
         config.live_access = Some(Arc::new(crate::policy::LiveAccess::new(
             crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)?
                 .policy()
@@ -310,3 +346,28 @@ mod recovery_tests;
 
 #[cfg(all(test, unix))]
 mod image_upload_tests;
+
+#[cfg(unix)]
+fn bound_projection(directory: &std::path::Path, registration: &ProcessRegistration) -> Result<()> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let bytes = serde_json::to_vec(registration)?;
+    ensure!(bytes.len() <= 16384, "bound projection exceeds limit");
+    let temporary = directory.join(format!(".registration-{}", Uuid::new_v4()));
+    let result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .open(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, directory.join("registration.json"))?;
+        std::fs::File::open(directory)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(temporary);
+    }
+    result
+}

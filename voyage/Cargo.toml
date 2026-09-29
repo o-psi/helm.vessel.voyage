@@ -10,6 +10,7 @@ name = "voyage"
 path = "src/main.rs"
 
 [dependencies]
+voyage-storage.workspace = true
 log.workspace = true
 voyage-protocol.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -67,4 +68,3 @@ tree-sitter-bash = "0.25.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
-voyage-storage.workspace = true

@@ -12,3 +12,6 @@ pub mod credentials;
 /// Staged privileged-control storage; requires protected root-owned ancestors.
 #[cfg(target_os = "linux")]
 pub mod protected_linux;
+
+#[cfg(target_os = "linux")]
+pub mod descendant_cleanup;

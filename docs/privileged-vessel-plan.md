@@ -35,8 +35,8 @@ these migrations alone do not grant administrator execution.
 A bound suspended-state observer now resolves its exact identity and continuing
 administrator grant from the protected catalogue, then configures the helper to
 run under that identity before reading runtime state. The bound path remains
-unreachable through a supported system installation; process cleanup observation,
-account helpers and the complete control/runtime lifecycle are still incomplete.
+unreachable through a supported system installation; account helpers and complete
+control/runtime lifecycle integration are still incomplete.
 Bound registrations also refuse legacy stopped/recovered markers and restart or
 recovery helpers as proof of cleanup. Those paths require protected process
 observation before administrator launches can be enabled.
@@ -59,7 +59,7 @@ from protected `runtime-layout.json` (`version: 1`, absolute `runtime_root`). Th
 root-owned private control directory and root-owned mode-0711 runtime parent must
 be separate; the named session directory must have the bound UID/GID and mode
 0700. The installer does not provision this layout yet. The legacy projection
-writer refuses bound registrations; full bound startup remains disabled.
+writer refuses bound registrations; supported service launch remains disabled.
 
 Bound catalogue refresh uses `voyage observe-catalogue` after validating the
 protected binding, current OS account and protected executable ancestry. The
@@ -72,15 +72,39 @@ falls back to parsing the bound journal itself. These display summaries do not
 prove process liveness or descendant cleanup. Saved-state observers receive the
 control root explicitly rather than deriving authority from a runtime path.
 
-A separate Linux launch primitive now resolves the saved account name, UID, GID,
-home and groups immediately before spawn, clears ambient capabilities and drops
-ordinary child privileges with `NoNewPrivs`. A disposable native Ubuntu KVM test
-observed all four UID/GID values, supplementary groups, zero permitted/effective/
-ambient capabilities and refused root regain. Only the bound saved-state observer
-uses the identity helper so far; full Voyage launch is still disabled. Protected
-control/runtime storage, lifecycle observation, account isolation, system service,
-owner approval, transition and client work remain
-required before the capability can be enabled.
+The Linux identity helper resolves the saved account name, UID, GID, home and
+groups immediately before spawn. Ordinary children clear effective, permitted,
+inheritable and ambient capabilities and set `NoNewPrivs`. Native verification
+seeds an inheritable capability in the root guardian and observes zero capabilities
+in its ordinary child.
+
+The internal Linux `vessel guard-bound` entry point now owns an independent
+root-controlled subreaper. It accepts only an exact protected Starting registration
+and current binding, acquires a session-wide protected fence and publishes an
+immutable admission before spawning. It observes kernel UID/GID/groups,
+capabilities, user namespace and process start ticks, records the configured
+protected executable digest, rechecks authority and hands registration to
+`voyage serve-bound` over a root-owned private pipe. The bounded pipe reader is
+cancellable; it cannot leave a blocking stdin thread alive after timeout. Voyage
+writes its own runtime registration projection and retains pipe authority in
+memory. Neither runtime projection nor stopped marker can manufacture protected
+cleanup evidence. Linux private-identity storage traverses execute-only parents
+without requiring directory-listing permission.
+
+After the direct child exits, the guardian kills/reaps remaining descendants
+through kernel child ownership and pidfds, including detached sessions. Only
+observed ECHILD permits a protected completion record. A missing same-boot
+completion blocks reuse; a changed boot establishes only local process retirement.
+These records do not establish successful application startup, remote-effect
+completion or rollback. An unrestricted administrator runtime remains a trusted
+host administrator, not an adversary isolated by these local records.
+
+This entry point is staged and native-tested, not wired into supported service
+startup or the installer. Bound runtime configuration does not infer a Vessel
+control root from its runtime directory; nested Vessel routing still needs an
+explicit scoped connection. Account helpers, owner approval/revocation, complete
+bound lifecycle/restart routing, system installation/update, client controls and
+adoption remain required before advertising the capability.
 
 The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
@@ -121,9 +145,9 @@ adoption are distinct reviewed operations.
 | Surface | Current behavior | Required work |
 | --- | --- | --- |
 | Installer | User-owned layout and `systemctl --user` | Explicit installation scope, protected system layout, system lifecycle adapter |
-| Process launch | Child inherits supervisor identity | Pinned execution identity, complete privilege setup/drop, startup attestation |
-| Registration | No execution-principal binding | Supervisor-owned identity, policy revision and authorization binding |
-| IPC | Supervisor checks peer UID equals its own UID | Verify the registered runtime UID and exact process incarnation |
+| Process launch | Supported service launch inherits supervisor identity; internal bound guardian applies and observes a protected identity | Wire authenticated bound launch into the reviewed service lifecycle |
+| Registration | Protected identity/binding catalogue plus private-pipe bound startup | Complete service admission, revocation and restart routing |
+| IPC | Bound sockets check registered peer UID and incarnation; legacy peers use the current UID | Exercise every enabled cross-identity service route |
 | Private files | Current-user ownership checks | Separate supervisor control and per-identity runtime ownership rules |
 | Provider accounts | Host registry discovered from process environment | Explicit account namespace and authorized identity association |
 | Filesystem grants | Runtime policy overlay | Actual-identity access preflight and truthful failure classification |

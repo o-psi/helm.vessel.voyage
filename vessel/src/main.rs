@@ -52,6 +52,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    GuardBound(vessel::process::guardian::Args),
     /// Read bounded content-free workspace-grant lifecycle history (runtime key required).
     #[cfg(target_os = "linux")]
     ConnectionAudit(vessel::process::pair_cli::ConnectionAuditArgs),
@@ -125,9 +128,16 @@ struct AppState {
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
+    #[cfg(target_os = "linux")]
+    if let Some(Command::GuardBound(args)) = cli.command {
+        return vessel::process::guardian::run(args);
+    }
+    tokio::runtime::Runtime::new()?.block_on(run(cli))
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "vessel=info".into());
     match cli.log_format {
