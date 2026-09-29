@@ -100,6 +100,7 @@ async fn private_forwarding_preserves_identity_authorization_payload_and_refusal
                 after: 71,
                 limit: 9,
                 wait_ms: 0,
+                projection: None,
             },
             Some(binding.clone()),
         )
@@ -118,7 +119,8 @@ async fn private_forwarding_preserves_identity_authorization_payload_and_refusal
             RuntimeCommand::Events {
                 after: 71,
                 limit: 9,
-                wait_ms: 0
+                wait_ms: 0,
+                projection: None
             }
         ));
     }

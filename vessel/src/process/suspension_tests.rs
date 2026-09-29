@@ -125,6 +125,7 @@ async fn lifecycle_lock_is_per_session_and_incarnation_fences_precede_io() {
             after: 0,
             limit: 1,
             wait_ms: 0,
+            projection: None,
         },
     ] {
         assert!(

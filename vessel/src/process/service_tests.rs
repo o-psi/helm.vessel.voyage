@@ -450,7 +450,8 @@ async fn local_event_observation_forwards_cursor_and_continues_only_known_succes
                 RuntimeCommand::Events {
                     after: 37,
                     limit: 128,
-                    wait_ms: 10_000
+                    wait_ms: 10_000,
+                    projection: None
                 }
             ));
             write_frame(
