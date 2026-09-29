@@ -24,7 +24,16 @@ python3 packaging/package_linux.py --version v1.0.2 --bin-dir target/release --o
 ```
 
 Also run the workspace coverage workflow in `AGENTS.md` after final Rust/test
-edits, and commit `coverage/latest.json`. Verify the extracted release with
+edits, and commit `coverage/latest.json`. When reusing the ordinary `target/` with
+cargo-llvm-cov's wrapper and `--no-clean`, passing tests alone do not prove that
+all workspace artifacts were instrumented. Inspect executed artifact timestamps,
+LLVM mappings and the source inventory against the previous full report. Ordinary
+cached workspace dependencies can lose cross-crate counters even when every source
+file appears in the union. If confirmed, refresh the source-root timestamps for
+all workspace targets returned by `cargo metadata --no-deps --format-version 1`
+without changing bytes, verify clean Git content, clear raw profiles only, and
+repeat the full measurement. Preserve rejected reports and dependency caches;
+never publish the reduced inventory or hide missing source (#251). Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
 [release guide](releases-v1.0.2.md#maintainer-install-check).
 Its `--hosted` mode simulates the bootstrap's systemd user-manager reachability

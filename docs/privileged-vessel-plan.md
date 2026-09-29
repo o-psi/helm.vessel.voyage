@@ -15,7 +15,7 @@ Related: [filesystem consent #327](https://github.com/o-psi/helm.vessel.voyage/i
 [recovery #238](https://github.com/o-psi/helm.vessel.voyage/issues/238).
 
 Planning baseline: `470eb82a030357537200883620659a2249302ffa`; implementation starts
-from `a527980567ffa4a8b7acf2e5e3af6da02b2c16a9`. Release milestone remains unassigned.
+from `a527980567ffa4a8b7acf2e5e3af6da02b2c16a9`. The user assigned the implementation to v1.0.3; #343/#363 remain deferred to v1.1.0.
 
 Initial implementation adds strict identity/review/receipt records and an exact
 review-freshness validator in `crates/voyage-protocol/src/execution_identity.rs`.
