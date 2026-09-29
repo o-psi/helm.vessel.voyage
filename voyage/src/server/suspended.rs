@@ -313,10 +313,17 @@ async fn inspect(
             after,
             limit,
             wait_ms,
+            projection,
         } => {
             ensure!(wait_ms <= 10_000, "event wait exceeds ten seconds");
             // No producer exists until wake. Return immediately instead of fencing a new turn.
-            owner.observations(after, limit).await
+            match projection.as_deref() {
+                None | Some("public-v1") => owner.observations(after, limit).await,
+                Some(voyage_protocol::live_events::PROJECTION) => {
+                    owner.live_observations(after, limit).await
+                }
+                _ => anyhow::bail!("unsupported event projection"),
+            }
         }
         RuntimeCommand::Decisions => owner.decisions(registration.incarnation).await,
         RuntimeCommand::WorkflowPreview {

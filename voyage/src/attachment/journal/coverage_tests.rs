@@ -9,6 +9,8 @@ mod catalogue;
 mod configuration;
 #[path = "coverage_tests/controls_tests.rs"]
 mod controls;
+#[path = "coverage_tests/observation_tests.rs"]
+mod observation_tests;
 #[path = "coverage_tests/transfers_tests.rs"]
 mod transfers;
 

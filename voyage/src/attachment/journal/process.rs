@@ -188,6 +188,7 @@ impl Journal {
             "INSERT INTO process_commands VALUES(?1,?2,?3)",
             params![id.to_string(), request, serde_json::to_string(&receipt)?],
         )?;
+        Journal::append_public_command(&tx, guard.session_id, id)?;
         commit(tx, &self.commit_fence)?;
         Ok(receipt)
     }

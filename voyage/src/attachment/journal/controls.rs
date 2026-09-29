@@ -123,6 +123,7 @@ impl Journal {
                 serde_json::to_string(&receipt)?
             ],
         )?;
+        Journal::append_public_command(&tx, guard.session_id, command_id)?;
         tx.commit()?;
         Ok((receipt, true))
     }

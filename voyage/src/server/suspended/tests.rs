@@ -38,7 +38,8 @@ async fn saved_observation_never_implies_cleanup_or_wakes_execution() {
             &RuntimeCommand::Events {
                 after: 0,
                 limit: 10,
-                wait_ms: 10001
+                wait_ms: 10001,
+                projection: None
             }
         )
         .await
@@ -154,6 +155,7 @@ async fn suspended_observations_reject_stale_and_missing_history_without_executi
             after: 0,
             limit: 10,
             wait_ms: 0,
+            projection: None,
         },
     )
     .await

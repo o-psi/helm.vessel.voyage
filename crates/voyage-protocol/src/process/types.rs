@@ -265,6 +265,8 @@ pub enum RuntimeCommand {
         after: u64,
         limit: u32,
         wait_ms: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projection: Option<String>,
     },
     Decisions,
     Respond {

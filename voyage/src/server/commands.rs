@@ -204,7 +204,10 @@ pub(super) async fn dispatch_admitted(
             after,
             limit,
             wait_ms,
-        } => super::observations::observe(state, after, limit, wait_ms).await,
+            projection,
+        } => {
+            super::observations::observe(state, after, limit, wait_ms, projection.as_deref()).await
+        }
         RuntimeCommand::Health => {
             let capabilities = vec![
                 "notification_events",
@@ -234,6 +237,7 @@ pub(super) async fn dispatch_admitted(
                 "clear",
                 "compact",
                 "events",
+                "public-v2",
                 "controls",
                 "operator_tool",
                 "configure",

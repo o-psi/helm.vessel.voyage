@@ -85,16 +85,34 @@ mod tests {
     fn public_v2_fixture_round_trips_and_keeps_sparse_cursor() {
         let session_id = Uuid::nil();
         let page = LiveEventPage {
-            projection: PROJECTION.into(), replay_gap: false, cursor: 14,
-            latest_cursor: 20, has_more: true, recovery: None,
+            projection: PROJECTION.into(),
+            replay_gap: false,
+            cursor: 14,
+            latest_cursor: 20,
+            has_more: true,
+            recovery: None,
             events: vec![LiveEvent {
-                cursor: 14, session_id, kind: LiveEventKind::TextDelta,
-                revision: 4, run_id: Some(session_id), entity_id: None,
-                payload: serde_json::to_value(TextAppend { offset: 3, text: "é".into() }).unwrap(),
+                cursor: 14,
+                session_id,
+                kind: LiveEventKind::TextDelta,
+                revision: 4,
+                run_id: Some(session_id),
+                entity_id: None,
+                payload: serde_json::to_value(TextAppend {
+                    offset: 3,
+                    text: "é".into(),
+                })
+                .unwrap(),
             }],
         };
         let wire = serde_json::to_value(&page).unwrap();
         assert_eq!(wire["events"][0]["payload"], json!({"offset":3,"text":"é"}));
-        assert_eq!(serde_json::from_value::<LiveEventPage>(wire).unwrap().events[0].cursor, 14);
+        assert_eq!(
+            serde_json::from_value::<LiveEventPage>(wire)
+                .unwrap()
+                .events[0]
+                .cursor,
+            14
+        );
     }
 }

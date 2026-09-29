@@ -720,6 +720,16 @@ impl Journal {
         // Admission owns the user turn even when construction fails before dispatch.
         current.session.begin_run_summary(run.id);
         update_session(&tx, &current)?;
+        Journal::append_public_message_created(
+            &tx,
+            &run,
+            current.session.messages.len() - 1,
+            current
+                .session
+                .messages
+                .last()
+                .expect("just appended user message"),
+        )?;
         tx.execute(
             "INSERT INTO runs VALUES(?1,?2,?3,1)",
             params![
@@ -802,11 +812,13 @@ impl Journal {
                 .is_some_and(|n| n <= MAX_PARTIAL),
             "partial output capacity reached"
         );
+        let text_offset = run.partial_text.len();
         run.partial_text.push_str(delta);
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
+        Journal::append_public_text(&tx, &run, text_offset, delta)?;
         let sequence = append_event(&tx, &run, EventKind::TextDelta(delta.to_owned()))?;
         commit(tx, &self.commit_fence)?;
         Ok(sequence)
@@ -839,6 +851,7 @@ impl Journal {
             return Ok(());
         }
         run.tool_previews = previews;
+        Journal::append_public_tool_activity(&tx, &run)?;
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
@@ -1061,6 +1074,9 @@ impl Journal {
         // hook may classify a final response; no-tool text alone is insufficient.
         run.final_checkpointed = false;
         update_session(&tx, &current)?;
+        for (index, message) in messages.iter().enumerate().skip(previous) {
+            Journal::append_public_message(&tx, &run, index, message)?;
+        }
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
@@ -1326,6 +1342,18 @@ impl Journal {
             )?;
         }
         update_session(&tx, &current)?;
+        if final_text.is_some() {
+            Journal::append_public_message(
+                &tx,
+                &run,
+                current.session.messages.len() - 1,
+                current
+                    .session
+                    .messages
+                    .last()
+                    .expect("just appended final message"),
+            )?;
+        }
         run.state = state.clone();
         run.terminal_reason = reason.map(str::to_owned);
         tx.execute(
@@ -1654,6 +1682,13 @@ mod lifecycle;
 
 mod branch;
 
+fn text_prefix(text: &str, limit: usize) -> (&str, bool) {
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&text[..end], end < text.len())
+}
 mod observations;
 
 mod command_binding;

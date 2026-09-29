@@ -270,6 +270,7 @@ async fn event_long_poll_does_not_hold_exclusive_resolve_barrier() {
             after: 0,
             limit: 128,
             wait_ms: 0,
+            projection: None,
         })
         .await;
     assert!(initial.error.is_none());
@@ -279,7 +280,8 @@ async fn event_long_poll_does_not_hold_exclusive_resolve_barrier() {
         fixture.call(RuntimeCommand::Events {
             after: cursor,
             limit: 128,
-            wait_ms: 250
+            wait_ms: 250,
+            projection: None
         }),
         fixture.call(RuntimeCommand::Resolve {
             command_id: id,
@@ -300,6 +302,7 @@ async fn event_pages_advance_after_metadata_and_replay_is_stable() {
             after: 0,
             limit: 128,
             wait_ms: 0,
+            projection: None,
         })
         .await;
     let cursor = initial.result["cursor"].as_u64().unwrap();
@@ -312,6 +315,7 @@ async fn event_pages_advance_after_metadata_and_replay_is_stable() {
             after: cursor,
             limit: 1,
             wait_ms: 0,
+            projection: None,
         })
         .await;
     assert!(first.error.is_none());
@@ -324,6 +328,7 @@ async fn event_pages_advance_after_metadata_and_replay_is_stable() {
             after: cursor,
             limit: 1,
             wait_ms: 0,
+            projection: None,
         })
         .await;
     assert_eq!(replay.result, first.result);
@@ -338,21 +343,25 @@ async fn invalid_event_bounds_leave_owner_responsive() {
             after: 0,
             limit: 0,
             wait_ms: 0,
+            projection: None,
         },
         RuntimeCommand::Events {
             after: 0,
             limit: 129,
             wait_ms: 0,
+            projection: None,
         },
         RuntimeCommand::Events {
             after: u64::MAX,
             limit: 1,
             wait_ms: 0,
+            projection: None,
         },
         RuntimeCommand::Events {
             after: 0,
             limit: 1,
             wait_ms: 10_001,
+            projection: None,
         },
     ] {
         assert!(fixture.call(command).await.error.is_some());
