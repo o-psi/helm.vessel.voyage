@@ -16,6 +16,8 @@ enum Command {
     Supervise(voyage::server::ServeArgs),
     /// Read one suspended-session observation without starting an execution runtime.
     ObserveSuspended(voyage::server::suspended::Args),
+    /// Read bounded catalogue metadata without opening an execution owner.
+    ObserveCatalogue(voyage::catalogue::ObserveArgs),
     /// Inspect or reconcile an unavailable incarnation under its exclusive fence.
     Recover(voyage::server::recovery::RecoverArgs),
     /// Reconcile abandoned work in a legacy installation without replay.
@@ -37,6 +39,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let command = match cli.command {
         Command::Supervise(args) => return voyage::server::guardian::run(args),
+        Command::ObserveCatalogue(args) => return voyage::catalogue::observe(args),
         command => command,
     };
     tokio::runtime::Runtime::new()?.block_on(async move {
@@ -52,6 +55,9 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             }
             Command::ObserveSuspended(args) => voyage::server::suspended::run(args).await,
+            Command::ObserveCatalogue(_) => {
+                unreachable!("catalogue helper runs before async runtime creation")
+            }
             Command::Serve(args) => voyage::server::serve(args).await,
             Command::Supervise(_) => unreachable!("guardian runs before async runtime creation"),
             Command::HostResources(args) => voyage::host_resources::cli::run(args),

@@ -49,7 +49,8 @@ pub(super) async fn forward_authorized(
 ) -> Result<RuntimeResponse> {
     let expected_uid = expected_runtime_uid(registration)?;
     if super::recovery::suspended(directory, registration) && command.observes_suspended() {
-        return super::suspension::observe(directory, registration, command, authorization).await;
+        return super::suspension::observe(None, directory, registration, command, authorization)
+            .await;
     }
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let mut stream = UnixStream::connect(directory.join("runtime.sock"))

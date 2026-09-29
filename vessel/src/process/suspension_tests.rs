@@ -7,14 +7,14 @@ async fn observer_rejects_mutations_and_missing_or_unlaunchable_binaries() {
     let f = Fixture::new();
     let mut r = f.registration();
     assert!(
-        observe(&f.0, &r, RuntimeCommand::PrepareBrowser, None)
+        observe(None, &f.0, &r, RuntimeCommand::PrepareBrowser, None)
             .await
             .unwrap_err()
             .to_string()
             .contains("requires execution owner")
     );
     assert!(
-        observe(&f.0, &r, RuntimeCommand::Snapshot, None)
+        observe(None, &f.0, &r, RuntimeCommand::Snapshot, None)
             .await
             .unwrap_err()
             .to_string()
@@ -22,7 +22,7 @@ async fn observer_rejects_mutations_and_missing_or_unlaunchable_binaries() {
     );
     r.executable = Some(f.0.join("absent"));
     assert!(
-        observe(&f.0, &r, RuntimeCommand::Snapshot, None)
+        observe(None, &f.0, &r, RuntimeCommand::Snapshot, None)
             .await
             .is_err()
     );
@@ -83,7 +83,7 @@ sys.exit(9 if scenario == 'exit' else 0)
         std::fs::write(&binary, source).unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
         r.executable = Some(binary);
-        let result = observe(&f.0, &r, RuntimeCommand::Snapshot, Some(grant)).await;
+        let result = observe(None, &f.0, &r, RuntimeCommand::Snapshot, Some(grant)).await;
         if scenario == "ok" {
             assert_eq!(result.unwrap().result, serde_json::json!({"offline":true}));
         } else {

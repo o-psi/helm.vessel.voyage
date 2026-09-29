@@ -129,7 +129,7 @@ impl Supervisor {
             "source incarnation changed during transfer"
         );
         current.state = ProcessState::Relinquished;
-        registry::save(&source, current).await?;
+        registry::save(&self.directory, &source, current).await?;
         Ok(serde_json::to_value(manifest)?)
     }
     pub(super) async fn transfer_chunk(

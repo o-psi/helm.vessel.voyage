@@ -780,14 +780,36 @@ pub async fn refresh_now(root: &Path, registration: &ProcessRegistration) -> Res
 async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bool) -> Result<()> {
     let r = registration.clone();
     let path = root.to_owned();
+    // Never open execution-identity-owned SQLite inside the supervisor. The
+    // bounded helper runs outside the catalogue transaction and before parsing.
+    let bound_summary = if r.peer_uids.is_some() {
+        let session = r.session_id;
+        let ready = blocking(root, move |db| {
+            let next: i64 = db.query_row(
+                "SELECT next_attempt_ms FROM catalogue WHERE session_id=?1",
+                [session.to_string()],
+                |row| row.get(0),
+            )?;
+            Ok(force || next <= now())
+        })
+        .await?;
+        if !ready {
+            return Ok(());
+        }
+        Some(super::catalogue_observer::read(root, &r).await)
+    } else {
+        None
+    };
     blocking(root,move|db|{
+  let bound = r.peer_uids.is_some();
   let dir=registry::directory(&path,r.session_id);
-  let fingerprint=fingerprint(&dir);
+  let fingerprint=if bound { None } else { fingerprint(&dir) };
   let old:(Option<String>,i64)=db.query_row("SELECT fingerprint,next_attempt_ms FROM catalogue WHERE session_id=?1",[r.session_id.to_string()],|row|Ok((row.get(0)?,row.get(1)?)))?;
   if !force && (old.1>now() || (fingerprint.is_some() && fingerprint==old.0)){return Ok(())}
-  let summary=voyage_runtime::catalogue::read(&dir.join("journal"),r.session_id);
+  let summary=bound_summary.unwrap_or_else(|| voyage_runtime::catalogue::read(&dir.join("journal"),r.session_id));
   let mut info=ProcessInfo::from(&r);
-  info.state=if super::recovery::suspended(&dir,&r){voyage_protocol::process::ProcessState::Suspended}
+  info.state=if bound {voyage_protocol::process::ProcessState::Unavailable}
+   else if super::recovery::suspended(&dir,&r){voyage_protocol::process::ProcessState::Suspended}
    else if r.state==voyage_protocol::process::ProcessState::Relinquished{r.state.clone()}
    else if super::recovery::clean_stop(&dir,&r){voyage_protocol::process::ProcessState::Stopped}
    else {voyage_protocol::process::ProcessState::Unavailable};
@@ -799,7 +821,7 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
   // Journal metadata refresh is not a failed liveness observation. Preserve a
   // current live projection while its socket exists; the separate bounded
   // inspect publishes an actual unavailable/suspended/stopped transition.
-  if info.state==voyage_protocol::process::ProcessState::Unavailable && dir.join("runtime.sock").exists()
+  if !bound && info.state==voyage_protocol::process::ProcessState::Unavailable && dir.join("runtime.sock").exists()
    && let Some(previous)=old_info.as_deref().and_then(|value|serde_json::from_str::<ProcessInfo>(value).ok())
    && previous.incarnation==r.incarnation && previous.state==voyage_protocol::process::ProcessState::Live {info=previous;}
   let mut changed = old_info.as_deref()!=Some(serde_json::to_string(&info)?.as_str()) || old_error.as_deref()!=if summary.is_ok(){None}else{Some("journal_unavailable")};
@@ -812,7 +834,7 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
         let previous:CatalogueSummary=serde_json::from_str(&previous)?;
         if (summary.revision,summary.observation_cursor)<(previous.revision,previous.observation_cursor) {return Ok(())}
     }
-    tx.execute("UPDATE catalogue SET summary=?2,observed_at_ms=?3,fingerprint=?4,process_info=?5,error_code=NULL,failures=0,next_attempt_ms=0 WHERE session_id=?1",params![r.session_id.to_string(),summary_json,now(),fingerprint,serde_json::to_string(&info)?])?;},
+    tx.execute("UPDATE catalogue SET summary=?2,observed_at_ms=?3,fingerprint=?4,process_info=?5,error_code=NULL,failures=0,next_attempt_ms=?6 WHERE session_id=?1",params![r.session_id.to_string(),summary_json,now(),fingerprint,serde_json::to_string(&info)?,if bound { now()+1000 } else { 0 }])?;},
    Err(_)=>{tx.execute("UPDATE catalogue SET process_info=?2,error_code='journal_unavailable',failures=min(failures+1,6),next_attempt_ms=?3+min(60000,1000*(1<<min(failures,6))) WHERE session_id=?1",params![r.session_id.to_string(),serde_json::to_string(&info)?,now()])?;}
   }
   if changed {

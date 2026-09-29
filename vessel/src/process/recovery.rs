@@ -192,7 +192,7 @@ impl Supervisor {
         registry::command_record(&self.directory, command_id, &command, true)
             .await
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        registry::save(&directory, &next)
+        registry::save(&self.directory, &directory, &next)
             .await
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registrations.insert(session_id, next.clone());

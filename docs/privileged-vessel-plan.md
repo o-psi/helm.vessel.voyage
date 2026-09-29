@@ -36,7 +36,7 @@ A bound suspended-state observer now resolves its exact identity and continuing
 administrator grant from the protected catalogue, then configures the helper to
 run under that identity before reading runtime state. The bound path remains
 unreachable through a supported system installation; process cleanup observation,
-account helpers and control/runtime storage separation are still incomplete.
+account helpers and the complete control/runtime lifecycle are still incomplete.
 Bound registrations also refuse legacy stopped/recovered markers and restart or
 recovery helpers as proof of cleanup. Those paths require protected process
 observation before administrator launches can be enabled.
@@ -54,8 +54,23 @@ isolation, IPC, system-service or adoption evidence. See #346 for exact results.
 `RuntimeRoot` now also opens a root-controlled, execute-only runtime parent and
 creates private, explicitly UID/GID-owned session directories by descriptor.
 It refuses symlinks, unsafe ancestors, wrong owner/mode and malformed session
-names. This primitive is not yet connected to the supervisor or installer;
-runtime contents must remain untrusted to root when it is integrated.
+names. Bound saved-state and catalogue observers now resolve their runtime directory
+from protected `runtime-layout.json` (`version: 1`, absolute `runtime_root`). The
+root-owned private control directory and root-owned mode-0711 runtime parent must
+be separate; the named session directory must have the bound UID/GID and mode
+0700. The installer does not provision this layout yet. The legacy projection
+writer refuses bound registrations; full bound startup remains disabled.
+
+Bound catalogue refresh uses `voyage observe-catalogue` after validating the
+protected binding, current OS account and protected executable ancestry. The
+helper drops identity and clears inherited environment before reading the journal;
+its output is limited to 8 KiB, wall time to three seconds, CPU to two seconds and
+address space to 512 MiB. Only typed display metadata for the exact session is
+accepted, and identity/grant freshness is checked again after the helper exits.
+A failed observation retains stale metadata with bounded retry delay. Vessel never
+falls back to parsing the bound journal itself. These display summaries do not
+prove process liveness or descendant cleanup. Saved-state observers receive the
+control root explicitly rather than deriving authority from a runtime path.
 
 A separate Linux launch primitive now resolves the saved account name, UID, GID,
 home and groups immediately before spawn, clears ambient capabilities and drops

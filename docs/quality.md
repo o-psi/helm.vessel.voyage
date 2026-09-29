@@ -94,6 +94,22 @@ VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 cargo test -p vessel --locked --lib -- --ignore
 It observes actual UID/GID/group/capability state and failed root regain in a
 child process. It does not start a Voyage or establish system-service readiness.
 
+The bound catalogue integration has an additional ignored native test. In that
+same disposable fixture, provide a root-controlled `VOYAGE_TEST_CATALOGUE_EXECUTABLE`
+pointing to the built Voyage program (or a root-controlled matching-loader wrapper):
+
+```sh
+VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_CATALOGUE_EXECUTABLE=/opt/voyage-test/voyage cargo test -p vessel --locked --lib -- --ignored --exact process::catalogue_observer::tests::native_bound_catalogue_uses_ordinary_helper_and_protected_layout
+```
+
+Run from a root-owned, non-writable directory outside `/tmp`. The fixture creates
+and removes only its unique child directory. It uses the real journal reader under
+`voyageordinary`, verifies UID/GID/groups/capabilities/environment and control-file
+denial, then exercises wrong-session/oversized/stalled replies, unsafe executable
+links/permissions, runtime permission changes, a hostile journal symlink, stale
+metadata retention and changed identity refusal. It does not start a Voyage owner,
+install a system service, use a provider or establish full #344 acceptance.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

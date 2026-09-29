@@ -38,6 +38,7 @@ impl Supervisor {
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
         observe(
+            Some(&self.directory),
             directory,
             &self.current_observer_registration(registration),
             command,
@@ -119,7 +120,7 @@ impl Supervisor {
                 "runtime changed during stop"
             );
             registration.state = ProcessState::Stopped;
-            registry::save(&directory, &registration).await?;
+            registry::save(&self.directory, &directory, &registration).await?;
             registrations.insert(session, registration);
             return Ok(RuntimeResponse {
                 protocol: PROCESS_PROTOCOL,
@@ -139,7 +140,7 @@ impl Supervisor {
             "runtime changed during stop"
         );
         registration.state = ProcessState::CleanupUnconfirmed;
-        registry::save(&directory, &registration).await?;
+        registry::save(&self.directory, &directory, &registration).await?;
         registrations.insert(session, registration.clone());
         drop(registrations);
         self.forward_current(
@@ -488,13 +489,19 @@ impl Supervisor {
         );
         if registration.name.as_deref() != Some(name) {
             registration.name = Some(name.to_owned());
-            registry::save(&registry::directory(&self.directory, session), registration).await?;
+            registry::save(
+                &self.directory,
+                &registry::directory(&self.directory, session),
+                registration,
+            )
+            .await?;
         }
         Ok(())
     }
 }
 
 pub(super) async fn observe(
+    root: Option<&Path>,
     directory: &Path,
     registration: &ProcessRegistration,
     command: RuntimeCommand,
@@ -520,10 +527,12 @@ pub(super) async fn observe(
     if registration.peer_uids.is_some() {
         #[cfg(target_os = "linux")]
         {
-            let root = directory
-                .parent()
-                .and_then(Path::parent)
-                .context("invalid bound observer directory")?;
+            let root = root.context("bound observer requires explicit protected control root")?;
+            ensure!(
+                directory == super::runtime_storage::directory(root, registration).await?,
+                "bound observer runtime directory mismatch"
+            );
+            super::launch::protected_binary(binary)?;
             let identity = super::database::bound_observer_identity(root, registration).await?;
             super::launch::configure_identity(observer.as_std_mut(), &identity)?;
         }

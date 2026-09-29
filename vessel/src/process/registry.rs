@@ -70,16 +70,24 @@ pub fn load(path: &Path) -> Result<ProcessRegistration> {
     serde_json::from_reader(file).context("invalid process registration")
 }
 
-pub async fn save(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
-    let root = directory
-        .parent()
-        .and_then(Path::parent)
-        .context("invalid session directory")?;
+pub async fn save(root: &Path, directory: &Path, registration: &ProcessRegistration) -> Result<()> {
+    ensure!(
+        registration.peer_uids.is_none(),
+        "bound registration publication requires protected runtime projection"
+    );
+    ensure!(
+        directory == self::directory(root, registration.session_id),
+        "registration directory does not match control root"
+    );
     super::database::save(root, registration).await?;
     publish(directory, registration)
 }
 
 pub fn publish(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
+    ensure!(
+        registration.peer_uids.is_none(),
+        "bound registration requires protected runtime projection"
+    );
     use std::io::Write;
     let bytes = serde_json::to_vec(registration)?;
     ensure!(bytes.len() < 16384, "process registration exceeds limit");
@@ -146,4 +154,29 @@ pub async fn command_record(
     reserve: bool,
 ) -> Result<bool> {
     super::database::command(root, "commands", id, serde_json::to_vec(command)?, reserve).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn saving_a_projection_cannot_derive_or_switch_its_control_root() {
+        let fixture = super::super::test_support::Fixture::new();
+        let supervisor = fixture.supervisor().await;
+        let registration = fixture.registration();
+        let wrong = directory(&fixture.0.join("different"), registration.session_id);
+        assert!(save(&fixture.0, &wrong, &registration).await.is_err());
+        assert!(supervisor.registrations.lock().await.unwrap().is_empty());
+        let mut bound = registration;
+        bound.peer_uids = Some(voyage_protocol::process::ProcessPeerUids {
+            supervisor: 0,
+            runtime: 1000,
+        });
+        assert!(
+            save(&fixture.0, &directory(&fixture.0, bound.session_id), &bound)
+                .await
+                .is_err()
+        );
+        assert!(supervisor.registrations.lock().await.unwrap().is_empty());
+    }
 }

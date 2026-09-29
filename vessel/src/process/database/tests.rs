@@ -138,6 +138,28 @@ async fn identity_binding_is_atomic_with_admission_and_requires_exact_identity()
     )
     .await
     .unwrap();
+    // A readable legacy journal must not become a fallback when the bound
+    // identity/layout helper refuses. This would have succeeded in-process.
+    let directory = registry::directory(&fixture.0, registration.session_id);
+    registry::private_directory(&directory.join("journal")).unwrap();
+    let journal = rusqlite::Connection::open(directory.join("journal/journal.sqlite3")).unwrap();
+    journal.execute_batch("CREATE TABLE attachment_schema(id,version); INSERT INTO attachment_schema VALUES(1,2); CREATE TABLE sessions(id,revision,state); CREATE TABLE process_observations(session_id,cursor); CREATE TABLE runs(id,session_id,record); CREATE TABLE process_lifecycle(session_id,archived,deleted); CREATE TABLE local_cleanup_obligations(session_id,run_id,confirmation);").unwrap();
+    journal.execute("INSERT INTO sessions VALUES(?1,7,?2)", params![registration.session_id.to_string(), serde_json::json!({"name":"Must not leak","model":"fixture","messages":[],"run_summaries":[]}).to_string()]).unwrap();
+    drop(journal);
+    assert!(
+        voyage_runtime::catalogue::read(&directory.join("journal"), registration.session_id)
+            .is_ok()
+    );
+    refresh_now(&fixture.0, &registration).await.unwrap();
+    let metadata = catalogue(&fixture.0)
+        .await
+        .unwrap()
+        .pop()
+        .unwrap()
+        .catalogue
+        .unwrap();
+    assert!(metadata.stale);
+    assert!(metadata.summary.is_none());
     assert_eq!(
         execution_binding(&fixture.0, registration.session_id)
             .await

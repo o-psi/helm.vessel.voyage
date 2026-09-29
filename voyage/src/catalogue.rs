@@ -85,3 +85,22 @@ pub fn read(directory: &Path, session: Uuid) -> Result<CatalogueSummary> {
     );
     Ok(summary)
 }
+
+/// Private local helper. The supervisor chooses the OS identity before exec;
+/// this process never opens its control database or creates a session.
+#[derive(clap::Args)]
+pub struct ObserveArgs {
+    #[arg(long)]
+    pub directory: std::path::PathBuf,
+    #[arg(long)]
+    pub session: Uuid,
+}
+
+pub fn observe(args: ObserveArgs) -> Result<()> {
+    use std::io::Write;
+    let summary = read(&args.directory.join("journal"), args.session)?;
+    let bytes = serde_json::to_vec(&summary)?;
+    ensure!(bytes.len() <= 8192, "catalogue projection exceeds bounds");
+    std::io::stdout().lock().write_all(&bytes)?;
+    Ok(())
+}

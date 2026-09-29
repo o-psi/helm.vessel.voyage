@@ -122,6 +122,46 @@ pub fn configure_identity(
     Ok(())
 }
 
+/// A privileged helper may execute only an administrator-controlled program.
+/// Every ancestor must exclude ordinary writes; symlinks are refused explicitly.
+#[cfg(target_os = "linux")]
+pub(super) fn protected_binary(binary: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    use std::path::Component;
+    ensure!(binary.is_absolute(), "helper binary must be absolute");
+    let mut path = std::path::PathBuf::from("/");
+    let parts: Vec<_> = binary.components().collect();
+    for (index, part) in parts.iter().enumerate() {
+        match part {
+            Component::RootDir => {}
+            Component::Normal(name) => path.push(name),
+            _ => anyhow::bail!("helper binary path must be normalized"),
+        }
+        let metadata = std::fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.uid() == 0
+                && metadata.mode() & 0o022 == 0
+                && !metadata.file_type().is_symlink(),
+            "helper binary has an unsafe owner, ancestor or mode"
+        );
+        if index + 1 == parts.len() {
+            ensure!(
+                metadata.is_file()
+                    && metadata.nlink() == 1
+                    && metadata.mode() & 0o111 != 0
+                    && metadata.mode() & 0o6000 == 0,
+                "helper executable must be a regular single-link executable without set-ID bits"
+            );
+        } else {
+            ensure!(
+                metadata.is_dir(),
+                "helper binary ancestor is not a directory"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn launch(binary: &Path, directory: &Path, registration: &ProcessRegistration) -> Result<()> {
     ensure!(
         registration.peer_uids.is_none(),

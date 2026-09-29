@@ -36,7 +36,9 @@ mod accounts;
 mod notifications;
 
 mod catalogue;
+mod catalogue_observer;
 mod database;
+mod runtime_storage;
 
 #[cfg(test)]
 #[path = "process/test_support_tests.rs"]

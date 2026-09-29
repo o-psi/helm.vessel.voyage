@@ -75,7 +75,7 @@ impl Supervisor {
             "runtime changed during recovery"
         );
         current.state = ProcessState::CleanupUnconfirmed;
-        registry::save(&directory, current).await?;
+        registry::save(&self.directory, &directory, current).await?;
         anyhow::bail!(
             "Saved conversation is available. Previous program cleanup cannot yet be verified; automatic recovery will check again. Older voyages may lack the process evidence needed for automatic cleanup."
         )
