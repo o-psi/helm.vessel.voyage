@@ -99,6 +99,17 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_meters m JOIN commands c ON c.id=m.command_id JOIN runs r ON r.id=c.run_id WHERE m.command_id=?1 AND m.incarnation=?2 AND r.session_id=?3 AND m.settlement IS NULL AND (m.budget IS NOT NULL OR EXISTS(SELECT 1 FROM process_goal_turns t WHERE t.command_id=m.command_id AND t.incarnation=m.incarnation AND t.state='reserved')))",params![command.to_string(),incarnation.to_string(),guard.session_id.to_string()],|r|r.get(0))?;
         ensure!(current, "Goal usage belongs to an inactive reservation");
+        if self.opened_schema >= 17 {
+            let allocation: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM process_goal_allocations WHERE request_id=?1)",
+                [observed.request_id.to_string()],
+                |r| r.get(0),
+            )?;
+            ensure!(
+                !allocation,
+                "delegated usage requires its exact child receipt"
+            );
+        }
         let prior: Option<(String, String)> = tx
             .query_row(
                 "SELECT command_id,observation FROM process_goal_requests WHERE request_id=?1",

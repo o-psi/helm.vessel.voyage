@@ -1360,7 +1360,7 @@ fn schema_15_meter_upgrade_preserves_existing_request_and_settlement() {
             .contains("current accounting schema")
     );
     j.require_content_schema(&guard, true).unwrap();
-    assert_eq!(j.opened_schema, 16);
+    assert_eq!(j.opened_schema, SCHEMA_VERSION);
     j.record_goal_request(
         &guard,
         run.command_id,
@@ -1388,4 +1388,275 @@ fn schema_15_meter_upgrade_preserves_existing_request_and_settlement() {
             .unwrap()
             .is_none()
     );
+}
+
+fn allocation_request() -> crate::provider::goal_meter::AllocationRequest {
+    crate::provider::goal_meter::AllocationRequest {
+        command_id: Uuid::new_v4(),
+        destination: Uuid::new_v4(),
+        session_id: Uuid::new_v4(),
+        tokens: 100,
+        elapsed_ms: 9000,
+        expires_at_ms: 10_000,
+    }
+}
+fn allocation_usage(
+    budget: voyage_protocol::execution_budget::ExecutionBudget,
+    input: u64,
+    output: u64,
+) -> voyage_protocol::execution_budget::ExecutionUsage {
+    voyage_protocol::execution_budget::ExecutionUsage {
+        session_id: budget.session_id,
+        budget,
+        run_id: Uuid::new_v4(),
+        input_tokens: input,
+        output_tokens: output,
+        elapsed_ms: 100,
+        complete: true,
+        cleanup_observed: true,
+    }
+}
+fn allocated_goal(
+    j: &mut Journal,
+    session: Uuid,
+    guard: &ExecutionGuard,
+    a: GoalAuthority,
+) -> (RunRecord, Uuid) {
+    let mut action = set(None, true);
+    if let GoalAction::Set { limits, .. } = &mut action {
+        limits.tokens = 100;
+    }
+    let command = command(j, session, action);
+    j.update_goal(guard, a, &command, 1000).unwrap();
+    let (run, inc) = start_reserved(j, guard, 1000);
+    j.begin_goal_meter(guard, run.command_id, inc, 1000)
+        .unwrap();
+    (run, inc)
+}
+
+#[test]
+fn goal_child_allocations_reserve_budget_and_import_exact_receipts_once() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a);
+    let request = allocation_request();
+    let first = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    assert_eq!(first.tokens, 50);
+    assert_eq!(first.parent_run_id, run.id);
+    let second = j
+        .allocate_goal_child(&guard, run.command_id, inc, allocation_request(), 1000)
+        .unwrap();
+    assert_eq!(second.tokens, 25);
+    assert!(
+        j.allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+            .is_err()
+    );
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (0, 0, false, true)
+    );
+    assert!(
+        j.record_goal_request(
+            &guard,
+            run.command_id,
+            inc,
+            RequestObservation {
+                request_id: first.command_id,
+                revision: 1,
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                complete: true
+            }
+        )
+        .is_err()
+    );
+    let usage = allocation_usage(first, 20, 4);
+    assert!(
+        j.settle_goal_allocation(&guard, run.command_id, inc, Uuid::new_v4(), usage.clone())
+            .is_err()
+    );
+    let mut changed = usage.clone();
+    changed.session_id = Uuid::new_v4();
+    assert!(
+        j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, changed)
+            .is_err()
+    );
+    j.settle_goal_allocation(
+        &guard,
+        run.command_id,
+        inc,
+        request.destination,
+        usage.clone(),
+    )
+    .unwrap();
+    j.settle_goal_allocation(
+        &guard,
+        run.command_id,
+        inc,
+        request.destination,
+        usage.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (20, 4, false, true)
+    );
+    let third = j
+        .allocate_goal_child(&guard, run.command_id, inc, allocation_request(), 1000)
+        .unwrap();
+    assert_eq!(third.tokens, 25); // Remaining 51: reserve half, retain parent capacity.
+    changed = usage;
+    changed.input_tokens += 1;
+    assert!(
+        j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, changed)
+            .is_err()
+    );
+}
+
+#[test]
+fn goal_child_budget_is_clamped_to_its_parent_and_unknown_costs_survive_recovery() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a);
+    let mut request = allocation_request();
+    request.elapsed_ms = 86_400_000;
+    request.expires_at_ms = 86_401_000;
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    assert_eq!(budget.elapsed_ms, GoalLimits::default().elapsed_ms);
+    assert_eq!(
+        budget.expires_at_ms,
+        1000 + GoalLimits::default().elapsed_ms
+    );
+    let mut usage = allocation_usage(budget, 9, 3);
+    usage.complete = false;
+    j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, usage)
+        .unwrap();
+    assert!(
+        j.allocate_goal_child(&guard, run.command_id, inc, allocation_request(), 1001)
+            .is_err()
+    );
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture interrupted parent"),
+        None,
+    )
+    .unwrap();
+    j.recover_goal_turn(&guard, 2000).unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            goal.usage.input_tokens,
+            goal.usage.output_tokens,
+            goal.usage.unmeasured_runs
+        ),
+        (9, 3, 1)
+    );
+    let tx = j.connection.transaction().unwrap();
+    super::super::deletion::scrub(&tx, session.id).unwrap();
+    assert_eq!(
+        tx.query_row("SELECT count(*) FROM process_goal_allocations", [], |r| r
+            .get::<_, u64>(
+            0
+        ))
+        .unwrap(),
+        0
+    );
+    assert!(
+        tx.prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn nested_goal_child_allocations_cannot_widen_received_parent_budget() {
+    let (_root, mut j, _session, guard, _) = fixture();
+    let (run, parent, inc) = delegated_run(&mut j, &guard);
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    assert_eq!(budget.tokens, parent.tokens / 2);
+    assert!(budget.expires_at_ms <= parent.expires_at_ms);
+    assert!(budget.elapsed_ms <= parent.elapsed_ms);
+    let usage = allocation_usage(budget, 12, 5);
+    j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, usage)
+        .unwrap();
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Completed,
+        None,
+        Some("nested task finished"),
+    )
+    .unwrap();
+    let receipt = j
+        .settle_delegated_run(
+            &guard,
+            run.id,
+            Some(GoalMeasurement {
+                input_tokens: 12,
+                output_tokens: 5,
+                elapsed_ms: 100,
+                complete: true,
+            }),
+            true,
+            1100,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(receipt.complete);
+    assert_eq!((receipt.input_tokens, receipt.output_tokens), (12, 5));
+}
+
+#[test]
+fn known_goal_child_usage_and_unobserved_cleanup_are_distinct_stop_conditions() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a.clone());
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    let mut usage = allocation_usage(budget, 9, 3);
+    usage.cleanup_observed = false;
+    j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, usage)
+        .unwrap();
+    assert_eq!(
+        super::metering::retained_usage(&j.connection, run.command_id).unwrap(),
+        (9, 3, true, true)
+    );
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Completed,
+        None,
+        Some("parent result"),
+    )
+    .unwrap();
+    j.settle_goal_run(
+        &guard,
+        run.id,
+        Some(GoalMeasurement {
+            input_tokens: 9,
+            output_tokens: 3,
+            elapsed_ms: 100,
+            complete: true,
+        }),
+        true,
+        1100,
+    )
+    .unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UnresolvedEffects));
+    assert_eq!(goal.usage.unmeasured_runs, 0);
+    let resume = command(&j, session.id, GoalAction::Resume { goal_id: goal.id });
+    assert!(j.update_goal(&guard, a, &resume, 1101).is_err());
 }

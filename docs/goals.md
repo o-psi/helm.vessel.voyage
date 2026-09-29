@@ -46,7 +46,7 @@ IDs, ordered revisions and terminal records prevent reset, reordering, decreasin
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
 restart retains known child counts and marks open requests uncertain. The meter
 distinguishes explicit zero from missing counters and retains partial counts on
-cancellation. Schema 16 fences writers that cannot preserve these observations and delegated-run receipts.
+cancellation. Schema 17 fences writers that cannot preserve these observations, child allocations and delegated-run receipts.
 
 The meter refuses subsequent requests after uncertainty or observed token/time
 limits. It also adds a deny-only check to the existing execution authority, so
@@ -69,17 +69,47 @@ returns this usage after later child runs, preserving exact-command lookup.
 Recovery retains known counters and marks interrupted
 accounting incomplete; it never redispatches a request. Schema 16 migrates the
 existing request ledger and scrubs both ordinary Goal and delegated meter records
-when deleting a session. Receiving-side support is staged; parent allocation,
-participant transport and capability admission still need integration.
+when deleting a session. The `execution_budget` capability advertises this bounded
+single-command contract; Goal continuation remains unadvertised.
 
-Requested output is capped to the remaining allowance; input/billing totals are
-known only after dispatch, so this is not a strict billing ceiling. The meter is
-not serializable authority. Remote subordinate budget/accounting is still
-unfinished: currently, enabling Vessel tool routes or participant endpoints
-makes the aggregate incomplete even if all local requests reported usage. The
-native execution checks exercise this distinction explicitly. Remove this staged
-limitation by completing remote accounting before enabling automatic continuation
-or claiming feature acceptance.
+Parent allocation records precede remote process creation or submission. Each
+allocation binds the destination Vessel, child session, command and parent run.
+The shared meter reserves half of its available tokens, retaining parent capacity;
+the journal independently clamps the allocation against retained usage, outstanding
+reservations and the parent deadline. Each turn admits at most 128 child allocations
+within its existing 10,000-request ledger limit. Local cloned child configurations
+share this meter; independent child Voyages receive explicit budgets and propagate
+bounded allocations for their own children.
+
+Both participant assignments and Vessel-tool Create/Submit require a peer advertising
+`execution_budget`. Unknown or unsupported peers cannot fall back to unbounded
+submission. Existing-child Submit also requires a History-authorized snapshot
+showing idle state and observed cleanup before allocation. Goal-driven steering of an existing child is refused because steering
+cannot establish a budget for its current run. Model tool arguments cannot supply
+or enlarge an allocation.
+
+One observer per allocation polls exact authenticated receipts without resubmitting
+work. Participant observations wait for the child's usage receipt before freezing
+a terminal result and stopping the child process. Receipt import checks all stored
+identities, persists the child counters once and rejects changed receipts. Unknown
+outcomes retain their reservation. Known usage and observed cleanup remain separate:
+a complete usage report with unobserved cleanup keeps its known counts and blocks
+further substantive work with an unresolved-effects condition.
+
+A completed parent waits for pending allocation accounting within its remaining
+deadline plus five seconds for cleanup observation. Cancellation ends that wait;
+it does not certify child cleanup. New submission cannot replace the active handle
+while terminal accounting is still finishing. Outstanding allocations survive parent
+failure/restart as unresolved records and known lower bounds. Reconciliation of late
+remote receipts after the originating meter has settled still needs implementation
+before Goal acceptance; do not reset or silently refund those obligations.
+
+Requested output is capped to the remaining unreserved allowance; input/billing
+totals are known only after dispatch, so this is not a strict billing ceiling.
+The meter is not serializable authority. Merely configuring a remote route no longer
+marks otherwise complete usage unknown: actual durable allocations determine
+aggregate completeness. Separate-process interruption, nested delegation and both
+client journeys remain release verification obligations.
 
 Empty turns and previously seen successful tool-result batches increase the
 consecutive no-progress counter. Novel batches reset it. This is a bounded

@@ -299,19 +299,8 @@ async fn reserved_goal_turn_uses_native_usage_and_settles_without_claiming_goal_
         assert_eq!(snapshot["run"]["run_id"], run.to_string());
         assert_eq!(snapshot["run"]["state"], "completed");
         let goal = state.owner.goal().await.unwrap().goal.unwrap();
-        assert_eq!(
-            goal.status,
-            if remote_enabled {
-                GoalStatus::NeedsAttention
-            } else {
-                GoalStatus::Active
-            },
-            "{goal:?}"
-        );
-        assert_eq!(
-            goal.stop_reason,
-            remote_enabled.then_some(GoalStopReason::UsageUnknown)
-        );
+        assert_eq!(goal.status, GoalStatus::Active, "{goal:?}");
+        assert_eq!(goal.stop_reason, None);
         assert_eq!(
             (
                 goal.usage.runs,
@@ -319,7 +308,7 @@ async fn reserved_goal_turn_uses_native_usage_and_settles_without_claiming_goal_
                 goal.usage.output_tokens,
                 goal.usage.unmeasured_runs
             ),
-            (1, 20, 4, u32::from(remote_enabled))
+            (1, 20, 4, 0)
         );
         assert_eq!(goal.usage.no_progress_runs, 1);
         assert_eq!(provider.requests.lock().await.len(), 1);
@@ -1219,4 +1208,56 @@ async fn delegated_goal_token_budget_blocks_a_returned_write_tool() {
     assert_eq!((receipt.input_tokens, receipt.output_tokens), (20, 4));
     assert!(receipt.cleanup_observed);
     assert_eq!(provider.requests.lock().await.len(), 1);
+}
+
+#[tokio::test]
+async fn goal_terminal_accounting_retains_admission_until_active_handle_is_released() {
+    let (_root, state, provider) = configured(vec![]).await;
+    let request = crate::attachment::journal::TurnAdmission {
+        budget: None,
+        coordination: None,
+        operator_name: None,
+        command_id: Uuid::new_v4(),
+        machine_id: state.actor.installation_id,
+        principal_id: state.actor.principal_id,
+        session_id: state.registration.session_id,
+        expected_revision: 0,
+        expires_at_ms: deadline() as i64,
+        prompt: "Old run".into(),
+        parts: vec![],
+    };
+    let crate::attachment::runtime::Admission::New(mut run) =
+        state.owner.admit(request).await.unwrap()
+    else {
+        panic!("new run required")
+    };
+    let finished = run.fail_before_execution().await.unwrap();
+    drop(run);
+    *state.active.lock().await = Some(ActiveRun {
+        id: finished.id,
+        inference: json!({}),
+        cancel: CancellationToken::new(),
+        steering: None,
+    });
+    let mut command = submit("New human input during terminal accounting");
+    if let RuntimeCommand::Submit {
+        expected_revision, ..
+    } = &mut command
+    {
+        *expected_revision = state.owner.snapshot().await.unwrap().revision;
+    }
+    let response = call(&state, command).await;
+    assert!(
+        response
+            .error
+            .as_ref()
+            .is_some_and(|error| error.contains("terminal accounting")),
+        "{response:?}"
+    );
+    assert_eq!(state.active.lock().await.as_ref().unwrap().id, finished.id);
+    assert_eq!(
+        state.owner.process_snapshot().await.unwrap()["run"]["run_id"],
+        finished.id.to_string()
+    );
+    assert!(provider.requests.lock().await.is_empty());
 }

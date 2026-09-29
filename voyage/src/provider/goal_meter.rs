@@ -2,8 +2,11 @@
 //! Counts come from provider observations, never token estimates or model claims.
 use super::*;
 use futures_util::StreamExt;
+mod delegation;
+pub(crate) use delegation::AllocationRequest;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
 
 #[derive(Debug, Default)]
 struct Totals {
@@ -11,6 +14,19 @@ struct Totals {
     output: u64,
     in_flight: u32,
     uncertain: bool,
+    reserved: u64,
+    allocations: std::collections::HashMap<uuid::Uuid, delegation::Allocation>,
+}
+
+impl Totals {
+    fn cleanup_unobserved(&self) -> bool {
+        self.allocations.values().any(|allocation| {
+            allocation
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| !receipt.cleanup_observed)
+        })
+    }
 }
 
 /// Runtime-only state. It cannot be constructed from serialized configuration.
@@ -21,6 +37,8 @@ pub struct GoalMeter {
     time_allowance: Duration,
     started: Instant,
     observer: Option<Arc<dyn Observer>>,
+    delegation_lock: tokio::sync::Mutex<()>,
+    allocation_changed: tokio::sync::Notify,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,6 +54,16 @@ pub(crate) struct RequestObservation {
 #[async_trait]
 pub(crate) trait Observer: Send + Sync + std::fmt::Debug {
     async fn record(&self, observation: RequestObservation) -> anyhow::Result<()>;
+    async fn allocate(&self, _request: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
+        anyhow::bail!("durable Goal allocation is unavailable")
+    }
+    async fn settle_allocation(
+        &self,
+        _destination: uuid::Uuid,
+        _usage: ExecutionUsage,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("durable Goal allocation accounting is unavailable")
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,9 +99,11 @@ impl GoalMeter {
             .lock()
             .map_err(|_| anyhow::anyhow!("Goal usage is unavailable"))?;
         anyhow::ensure!(!t.uncertain, "Goal usage is incomplete");
+        anyhow::ensure!(!t.cleanup_unobserved(), "Goal child cleanup is unobserved");
         anyhow::ensure!(
             t.input
                 .checked_add(t.output)
+                .and_then(|used| used.checked_add(t.reserved))
                 .is_some_and(|used| used < self.token_allowance),
             "Goal token limit reached"
         );
@@ -106,6 +136,8 @@ impl GoalMeter {
             time_allowance,
             started: Instant::now(),
             observer,
+            delegation_lock: Default::default(),
+            allocation_changed: Default::default(),
         })
     }
 
@@ -116,7 +148,7 @@ impl GoalMeter {
                 input_tokens: t.input,
                 output_tokens: t.output,
                 elapsed_ms,
-                complete: !t.uncertain && t.in_flight == 0,
+                complete: !t.uncertain && t.in_flight == 0 && t.reserved == 0,
             },
             Err(_) => Measurement {
                 input_tokens: 0,
@@ -129,8 +161,13 @@ impl GoalMeter {
 
     fn begin(self: &Arc<Self>, request: &mut ModelRequest) -> Result<Attempt, ProviderError> {
         let mut t = self.totals.lock().map_err(|_| refused())?;
-        let used = t.input.checked_add(t.output).ok_or_else(refused)?;
+        let used = t
+            .input
+            .checked_add(t.output)
+            .and_then(|used| used.checked_add(t.reserved))
+            .ok_or_else(refused)?;
         if t.uncertain
+            || t.cleanup_unobserved()
             || used >= self.token_allowance
             || self.started.elapsed() >= self.time_allowance
         {

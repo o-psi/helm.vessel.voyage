@@ -66,6 +66,7 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
         "process_configuration",
         "process_goals",
         "process_goal_settlements",
+        "process_goal_allocations",
         "process_goal_requests",
         "process_goal_meters",
         "process_goal_turns",
@@ -97,6 +98,9 @@ pub(super) fn scrub(tx: &Transaction<'_>, session: Uuid) -> Result<()> {
                 }
                 "process_goal_settlements" => {
                     tx.execute("DELETE FROM process_goal_settlements WHERE command_id IN (SELECT command_id FROM process_goal_turns WHERE session_id=?1)",[session.to_string()])?;
+                }
+                "process_goal_allocations" => {
+                    tx.execute("DELETE FROM process_goal_allocations WHERE request_id IN (SELECT q.request_id FROM process_goal_requests q JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1)",[session.to_string()])?;
                 }
                 "process_goal_requests" => {
                     tx.execute("DELETE FROM process_goal_requests WHERE command_id IN (SELECT c.id FROM commands c JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1)",[session.to_string()])?;

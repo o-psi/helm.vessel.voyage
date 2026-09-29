@@ -1,5 +1,6 @@
 //! Native model-facing coordination over the public Vessel protocol.
 //! The trusted host supplies routes; the model never supplies credentials or URLs.
+mod goal_budget;
 mod history;
 mod inspection;
 mod journal;
@@ -774,6 +775,7 @@ async fn perform(
     launch: Option<&crate::Config>,
 ) -> Result<Value, ToolError> {
     check(context)?;
+    let budget = goal_budget::prepare(&action, t, launch).await?;
     let coordination = if action.executes() && context.tool_call_id.is_some() {
         let owner = owner.ok_or_else(|| failed("coordination requires an owning voyage"))?;
         let local = transport::Transport::open(&owner.directory, None)?;
@@ -1057,7 +1059,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
-                    budget: None,
+                    budget,
                     coordination,
                     command_id,
                     expected_revision: revision,
@@ -1082,7 +1084,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
-                    budget: None,
+                    budget,
                     coordination,
                     command_id,
                     expected_revision,

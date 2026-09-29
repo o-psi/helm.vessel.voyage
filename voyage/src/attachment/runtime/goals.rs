@@ -1,7 +1,9 @@
 use super::super::journal::GoalMeasurement;
 use super::*;
+use crate::provider::goal_meter::AllocationRequest;
 use crate::provider::goal_meter::{GoalMeter, Observer, RequestObservation};
 use serde_json::Value;
+use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
 
 struct UsageObserver {
     owner: ManagedSessionOwner,
@@ -15,6 +17,36 @@ impl std::fmt::Debug for UsageObserver {
 }
 #[async_trait]
 impl Observer for UsageObserver {
+    async fn allocate(&self, request: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
+        let shared = self.owner.store.clone();
+        let command = self.command;
+        let incarnation = self.incarnation;
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.allocate_goal_child(guard, command, incarnation, request, SystemClock.now_ms()?)
+        })
+        .await?
+    }
+    async fn settle_allocation(
+        &self,
+        destination: Uuid,
+        usage: ExecutionUsage,
+    ) -> anyhow::Result<()> {
+        let shared = self.owner.store.clone();
+        let command = self.command;
+        let incarnation = self.incarnation;
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.settle_goal_allocation(guard, command, incarnation, destination, usage)
+        })
+        .await?
+    }
     async fn record(&self, observed: RequestObservation) -> anyhow::Result<()> {
         let shared = self.owner.store.clone();
         let command = self.command;

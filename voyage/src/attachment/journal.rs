@@ -28,8 +28,8 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 16 extends the Goal accounting ledger to bounded delegated runs.
-pub(crate) const SCHEMA_VERSION: i64 = 16;
+// Version 17 preserves parent allocation reservations and exact child accounting.
+pub(crate) const SCHEMA_VERSION: i64 = 17;
 mod goals;
 pub(crate) use goals::{GoalAuthority, GoalMeasurement, GoalTurnReservation};
 pub(super) mod checkpoint_wait;
@@ -268,7 +268,21 @@ impl Journal {
             ensure!(
                 matches!(
                     version,
-                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | SCHEMA_VERSION
+                    2 | 3
+                        | 4
+                        | 5
+                        | 6
+                        | 7
+                        | 8
+                        | 9
+                        | 10
+                        | 11
+                        | 12
+                        | 13
+                        | 14
+                        | 15
+                        | 16
+                        | SCHEMA_VERSION
                 ),
                 "unsupported attachment journal schema"
             );
@@ -1819,7 +1833,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=15),
+            matches!(self.opened_schema, 8..=16),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self

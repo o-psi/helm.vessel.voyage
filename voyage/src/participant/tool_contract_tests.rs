@@ -46,6 +46,7 @@ async fn offline_participant(root: &std::path::Path) -> ParticipantTool {
     let owner = ManagedSessionOwner::open(path, session.id).await.unwrap();
     ParticipantTool {
         parent: Arc::new(Parent {
+            meter: None,
             owner,
             run_id: Uuid::new_v4(),
             principal_id: Uuid::new_v4(),

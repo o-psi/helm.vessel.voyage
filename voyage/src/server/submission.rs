@@ -106,6 +106,10 @@ pub(super) async fn submit(
             json!({"command_id":command_id,"run_id":run.id,"status":"accepted","state":run.state,"duplicate":true}),
         );
     }
+    ensure!(
+        state.active.lock().await.is_none(),
+        "voyage run or terminal accounting is still active"
+    );
     let saved = state.owner.snapshot().await?;
     let mut config = state.config.read().await.clone();
     if bootstrap::workspace_recreated(&state.directory, &state.registration) {
@@ -306,10 +310,17 @@ pub(super) async fn submit(
             operator,
         );
         let result = if let Some(meter) = &config.goal_meter {
-            meter.finish_with_deadline(execution, cancel).await
+            meter.finish_with_deadline(execution, cancel.clone()).await
         } else {
             execution.await
         };
+        if let Some(meter) = &config.goal_meter {
+            if result.as_ref().is_ok_and(|result| {
+                result.actual.state == crate::attachment::journal::RunState::Completed
+            }) {
+                meter.wait_allocations(cancel.clone()).await;
+            }
+        }
         {
             // The active steering handle retains a run callback. Release it and the
             // RunOwner before observing final cleanup, while keeping new admission
@@ -332,11 +343,7 @@ pub(super) async fn submit(
                             input_tokens: measured.input_tokens,
                             output_tokens: measured.output_tokens,
                             elapsed_ms: measured.elapsed_ms,
-                            // Remote usage transport is still staged. A configured
-                            // remote route must not be certified by a local meter.
-                            complete: measured.complete
-                                && !config.vessel.enabled
-                                && config.participants.is_empty(),
+                            complete: measured.complete,
                         }
                     });
                     if let Err(error) = state

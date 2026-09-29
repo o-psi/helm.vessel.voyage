@@ -29,6 +29,8 @@ pub struct ParticipantBinding {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AssignmentRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<crate::execution_budget::ExecutionBudget>,
     pub assignment_id: Uuid,
     pub binding_id: Uuid,
     pub binding_revision: u64,

@@ -421,3 +421,169 @@ async fn deadline_requests_cancellation_then_waits_for_cleanup_completion() {
     );
     assert!(!cancel.is_cancelled());
 }
+
+#[derive(Debug)]
+struct Allocations {
+    parent: uuid::Uuid,
+    run: uuid::Uuid,
+    receipts: Mutex<Vec<ExecutionUsage>>,
+    fail: bool,
+}
+#[async_trait]
+impl Observer for Allocations {
+    async fn record(&self, _: RequestObservation) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn allocate(&self, request: AllocationRequest) -> anyhow::Result<ExecutionBudget> {
+        anyhow::ensure!(!self.fail, "fixture allocation checkpoint failure");
+        Ok(ExecutionBudget {
+            command_id: request.command_id,
+            session_id: request.session_id,
+            parent_session_id: self.parent,
+            parent_run_id: self.run,
+            tokens: request.tokens,
+            elapsed_ms: request.elapsed_ms,
+            expires_at_ms: request.expires_at_ms,
+        })
+    }
+    async fn settle_allocation(&self, _: uuid::Uuid, usage: ExecutionUsage) -> anyhow::Result<()> {
+        self.receipts.lock().unwrap().push(usage);
+        Ok(())
+    }
+}
+fn allocation_observer(fail: bool) -> Arc<Allocations> {
+    Arc::new(Allocations {
+        parent: uuid::Uuid::new_v4(),
+        run: uuid::Uuid::new_v4(),
+        receipts: Mutex::new(Vec::new()),
+        fail,
+    })
+}
+fn child_usage(budget: ExecutionBudget, input_tokens: u64, output_tokens: u64) -> ExecutionUsage {
+    ExecutionUsage {
+        session_id: budget.session_id,
+        budget,
+        run_id: uuid::Uuid::new_v4(),
+        input_tokens,
+        output_tokens,
+        elapsed_ms: 1,
+        complete: true,
+        cleanup_observed: true,
+    }
+}
+#[tokio::test]
+async fn concurrent_goal_allocations_share_allowance_and_receipts_are_once_only() {
+    let observer = allocation_observer(false);
+    let meter = GoalMeter::with_observer(100, Duration::from_secs(60), Some(observer.clone()));
+    let target = uuid::Uuid::new_v4();
+    let (first, second) = tokio::join!(
+        meter.allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4()),
+        meter.allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4())
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_eq!(first.tokens + second.tokens, 75);
+    assert!(!meter.measurement().complete);
+    let mut local_request = request();
+    let mut attempt = meter.begin(&mut local_request).unwrap();
+    assert_eq!(local_request.max_tokens, Some(25));
+    attempt
+        .observe(ReportedUsage {
+            input_tokens: Some(2),
+            output_tokens: Some(1),
+        })
+        .unwrap();
+    attempt.finish(&response(2, 1)).await.unwrap();
+    assert!(meter.observe_allocation_once(first.command_id));
+    assert!(!meter.observe_allocation_once(first.command_id));
+    let usage = child_usage(first.clone(), 10, 3);
+    meter
+        .settle_allocation(target, usage.clone())
+        .await
+        .unwrap();
+    meter
+        .settle_allocation(target, usage.clone())
+        .await
+        .unwrap();
+    assert_eq!(observer.receipts.lock().unwrap().len(), 1);
+    assert_eq!(
+        meter
+            .allocate(first.command_id, target, first.session_id)
+            .await
+            .unwrap(),
+        first
+    );
+    assert!(
+        meter
+            .allocate(first.command_id, uuid::Uuid::new_v4(), first.session_id)
+            .await
+            .is_err()
+    );
+    let mut conflict = usage;
+    conflict.input_tokens += 1;
+    assert!(meter.settle_allocation(target, conflict).await.is_err());
+    meter
+        .settle_allocation(target, child_usage(second, 7, 4))
+        .await
+        .unwrap();
+    let measured = meter.measurement();
+    assert!(measured.complete);
+    assert_eq!((measured.input_tokens, measured.output_tokens), (19, 8));
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        meter.wait_allocations(tokio_util::sync::CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn failed_or_unknown_goal_allocation_cannot_refund_an_allowance() {
+    let meter = GoalMeter::with_observer(
+        100,
+        Duration::from_secs(60),
+        Some(allocation_observer(true)),
+    );
+    assert!(
+        meter
+            .allocate(
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4(),
+                uuid::Uuid::new_v4()
+            )
+            .await
+            .is_err()
+    );
+    assert!(!meter.measurement().complete);
+    assert!(meter.check_budget().is_err());
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        meter.wait_allocations(tokio_util::sync::CancellationToken::new()),
+    )
+    .await
+    .unwrap();
+    let meter = GoalMeter::with_observer(
+        100,
+        Duration::from_secs(60),
+        Some(allocation_observer(false)),
+    );
+    let target = uuid::Uuid::new_v4();
+    let child = meter
+        .allocate(uuid::Uuid::new_v4(), target, uuid::Uuid::new_v4())
+        .await
+        .unwrap();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    meter.wait_allocations(cancel).await;
+    assert!(!meter.measurement().complete);
+    let mut usage = child_usage(child, 5, 2);
+    usage.complete = false;
+    meter.settle_allocation(target, usage).await.unwrap();
+    assert_eq!(
+        (
+            meter.measurement().input_tokens,
+            meter.measurement().output_tokens
+        ),
+        (5, 2)
+    );
+    assert!(meter.check_budget().is_err());
+}

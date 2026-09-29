@@ -104,6 +104,8 @@ impl Supervisor {
                     state,
                     "completed" | "cancelled" | "incomplete" | "failed" | "interrupted"
                 ) && snapshot["pending_cleanup_run"].is_null()
+                    && (assignment.request.budget.is_none()
+                        || !snapshot["execution_usage"].is_null())
                 {
                     assignment.observation.cleanup_observed = true;
                     if assignment.observation.result.is_none() {

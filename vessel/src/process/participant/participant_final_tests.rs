@@ -343,3 +343,96 @@ async fn active_cancellation_reuses_durable_command_and_revokes_child_before_rpc
     assert!(saved.cancellation_requested);
     assert!(saved.cancel.is_some());
 }
+
+#[tokio::test]
+async fn goal_participant_waits_for_exact_usage_before_freezing_terminal_snapshot() {
+    use tokio::net::UnixListener;
+    use voyage_protocol::execution_budget::{ExecutionBudget, ExecutionUsage};
+    let (f, s, g, b) = setup().await;
+    let mut req = request(&b);
+    let id = req.assignment_id;
+    let budget = ExecutionBudget {
+        command_id: id,
+        session_id: id,
+        parent_session_id: req.parent_session_id,
+        parent_run_id: req.parent_run_id,
+        tokens: 100,
+        elapsed_ms: 30_000,
+        expires_at_ms: req.expires_at_ms,
+    };
+    req.budget = Some(budget.clone());
+    s.fence_assignment(&g, req).await.unwrap();
+    let path = assignment_path(&f.0, id);
+    let mut a: Assignment = store::load_bounded(&path, 2 * 1024 * 1024).unwrap();
+    a.observation.cleanup_observed = false;
+    a.cancellation_requested = false;
+    a.observation.state = "accepted".into();
+    store::save_bounded(&path, &a, 2 * 1024 * 1024).unwrap();
+    let mut r = f.registration();
+    r.session_id = id;
+    r.state = ProcessState::Live;
+    database::save(&f.0, &r).await.unwrap();
+    let dir = registry::directory(&f.0, id);
+    registry::private_directory(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join("runtime.sock")).unwrap();
+    let run = Uuid::new_v4();
+    let inc = r.incarnation;
+    let usage = ExecutionUsage {
+        budget,
+        session_id: id,
+        run_id: run,
+        input_tokens: 9,
+        output_tokens: 3,
+        elapsed_ms: 100,
+        complete: true,
+        cleanup_observed: true,
+    };
+    let returned = usage.clone();
+    let server = tokio::spawn(async move {
+        for index in 0..3 {
+            let (mut stream, _) =
+                tokio::time::timeout(std::time::Duration::from_secs(3), listener.accept())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            let request: RuntimeRequest = read_frame(&mut stream).await.unwrap();
+            if index < 2 {
+                assert!(matches!(request.command, RuntimeCommand::Snapshot));
+            } else {
+                assert!(matches!(request.command, RuntimeCommand::Stop));
+            }
+            let mut result = json!({"revision":3,"run":{"run_id":run,"state":"completed"},"pending_cleanup_run":null});
+            if index == 1 {
+                result["execution_usage"] = serde_json::to_value(&returned).unwrap();
+            }
+            write_frame(
+                &mut stream,
+                &RuntimeResponse {
+                    protocol: PROCESS_PROTOCOL,
+                    session_id: id,
+                    incarnation: inc,
+                    resumed_from: None,
+                    outcome_unknown: false,
+                    result,
+                    error: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+    });
+    let pending = s.observe_assignment(&g, id, false).await.unwrap();
+    assert_eq!(pending["cleanup_observed"], false);
+    assert!(pending["result"].is_null());
+    let completed = s.observe_assignment(&g, id, false).await.unwrap();
+    assert_eq!(completed["cleanup_observed"], true);
+    assert_eq!(
+        completed["result"]["execution_usage"],
+        serde_json::to_value(usage).unwrap()
+    );
+    server.await.unwrap();
+    assert_eq!(
+        s.observe_assignment(&g, id, false).await.unwrap(),
+        completed
+    );
+}

@@ -19,6 +19,15 @@ impl Supervisor {
                 && request.parent_session_id == grant.session_id,
             "assignment parent scope mismatch"
         );
+        if let Some(budget) = &request.budget {
+            ensure!(
+                budget.valid_for(request.assignment_id)
+                    && budget.session_id == request.assignment_id
+                    && budget.parent_session_id == request.parent_session_id
+                    && budget.parent_run_id == request.parent_run_id,
+                "participant budget scope mismatch"
+            );
+        }
         let _serial = self.registrations.lock().await?;
         initialize(&self.directory)?;
         let path = assignment_path(&self.directory, request.assignment_id);
@@ -260,7 +269,7 @@ impl Supervisor {
                 child,
                 registration.incarnation,
                 RuntimeCommand::Submit {
-                    budget: None,
+                    budget: assignment.request.budget.clone(),
                     coordination: None,
                     command_id: assignment.request.assignment_id,
                     expected_revision: 0,

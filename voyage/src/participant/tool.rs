@@ -75,6 +75,7 @@ impl ParticipantTool {
                 principal_id,
                 vessel_id: identity.vessel_id,
                 endpoints: config.participants.clone(),
+                meter: config.goal_meter.clone(),
             }),
         })))
     }
@@ -119,8 +120,18 @@ impl ParticipantTool {
             .as_millis()
             .try_into()?;
         let rules = context.policy.effective().rules();
+        let assignment_id = id.unwrap_or_else(Uuid::new_v4);
+        let budget = match &self.parent.meter {
+            Some(meter) => Some(
+                meter
+                    .allocate(assignment_id, endpoint.participant_vessel_id, assignment_id)
+                    .await?,
+            ),
+            None => None,
+        };
         let mut request = AssignmentRequest {
-            assignment_id: id.unwrap_or_else(Uuid::new_v4),
+            budget,
+            assignment_id,
             binding_id: endpoint.binding_id,
             binding_revision: endpoint.binding_revision,
             parent_vessel_id: self.parent.vessel_id,
@@ -175,12 +186,19 @@ impl ParticipantTool {
         }
         // Start the cleanup observer before network admission so dropping this tool
         // future on parent cancellation cannot orphan the cancellation obligation.
-        super::monitor::spawn(
-            self.parent.clone(),
-            endpoint.clone(),
-            request.assignment_id,
-            context.cancellation.clone(),
-        );
+        if self
+            .parent
+            .meter
+            .as_ref()
+            .is_none_or(|meter| meter.observe_allocation_once(request.assignment_id))
+        {
+            super::monitor::spawn(
+                self.parent.clone(),
+                endpoint.clone(),
+                request.assignment_id,
+                context.cancellation.clone(),
+            );
+        }
         // The canonical parent obligation is durable before the participant can admit effects.
         let delivered = transport::request(
             &credential,
@@ -221,10 +239,7 @@ impl ParticipantTool {
                 && observation.child_session_id == request.assignment_id,
             "participant acceptance attribution mismatch"
         );
-        self.parent
-            .owner
-            .update_assignment(observation.clone())
-            .await?;
+        self.parent.record_observation(observation.clone()).await?;
         Ok(serde_json::to_value(observation)?)
     }
 }

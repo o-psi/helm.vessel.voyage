@@ -16,6 +16,7 @@ struct Parent {
     principal_id: Uuid,
     vessel_id: Uuid,
     endpoints: Vec<ParticipantEndpoint>,
+    meter: Option<Arc<crate::provider::goal_meter::GoalMeter>>,
 }
 impl Parent {
     fn endpoint(&self, name: &str) -> Result<&ParticipantEndpoint> {
@@ -37,7 +38,38 @@ impl Parent {
                     == Some(endpoint.participant_vessel_id.to_string().as_str()),
             "participant identity mismatch"
         );
+        if self.meter.is_some() {
+            ensure!(
+                response.result["features"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|item| item == "execution_budget")),
+                "participant does not support bounded execution; upgrade before delegating Goal work"
+            );
+        }
         Ok(credential)
+    }
+    async fn record_observation(&self, observation: AssignmentObservation) -> Result<()> {
+        if let Some(meter) = &self.meter
+            && let Some(value) = observation
+                .result
+                .as_ref()
+                .and_then(|result| result.get("execution_usage"))
+                .filter(|value| !value.is_null())
+        {
+            let usage: voyage_protocol::execution_budget::ExecutionUsage =
+                serde_json::from_value(value.clone())?;
+            ensure!(
+                usage.budget.command_id == observation.assignment_id
+                    && usage.session_id == observation.child_session_id
+                    && Some(usage.run_id) == observation.run_id,
+                "participant usage observation identity mismatch"
+            );
+            meter
+                .settle_allocation(observation.participant_vessel_id, usage)
+                .await?;
+        }
+        self.owner.update_assignment(observation).await?;
+        Ok(())
     }
     async fn observe(
         &self,
@@ -73,7 +105,7 @@ impl Parent {
                 && observation.participant_vessel_id == endpoint.participant_vessel_id,
             "participant result attribution mismatch"
         );
-        self.owner.update_assignment(observation.clone()).await?;
+        self.record_observation(observation.clone()).await?;
         Ok(observation)
     }
 }
@@ -107,6 +139,7 @@ pub async fn reconcile(
         principal_id: Uuid::nil(),
         vessel_id: request.parent_vessel_id,
         endpoints: vec![endpoint.clone()],
+        meter: None,
     };
     let prior = parent
         .owner

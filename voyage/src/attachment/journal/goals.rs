@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS process_goal_requests(request_id TEXT PRIMARY KEY,com
 
 mod continuation;
 pub(crate) use continuation::GoalTurnReservation;
+mod allocations;
 mod delegated;
 mod metering;
 mod settlement;
@@ -48,6 +49,7 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
         )? == 5,
         "unsupported Goal meter schema"
     );
+    db.execute_batch("CREATE TABLE IF NOT EXISTS process_goal_allocations(request_id TEXT PRIMARY KEY REFERENCES process_goal_requests(request_id),destination TEXT NOT NULL,budget TEXT NOT NULL,receipt TEXT,cleanup_observed INTEGER NOT NULL DEFAULT 0);")?;
     Ok(())
 }
 
@@ -349,6 +351,10 @@ fn ensure_idle(db: &Connection, session: Uuid) -> Result<()> {
 
 fn cleanup_ready(db: &Connection, session: Uuid) -> Result<bool> {
     for (table, query) in [
+        (
+            "process_goal_allocations",
+            "SELECT count(*) FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE r.session_id=?1 AND a.cleanup_observed=0",
+        ),
         (
             "local_cleanup_obligations",
             "SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND (confirmation IS NULL OR confirmation!='observed')",

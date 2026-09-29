@@ -182,3 +182,42 @@ async fn legacy_revoked_grant_recovers_cancellation_and_tombstone_stays_terminal
     assert_eq!(value["state"], "cancelled");
     assert_eq!(value["cleanup_observed"], true);
 }
+
+#[tokio::test]
+async fn goal_participant_budget_is_part_of_exact_assignment_identity() {
+    use voyage_protocol::execution_budget::ExecutionBudget;
+    let mut f = Fixture::new().await;
+    let request = &mut f.assignment.request;
+    let budget = ExecutionBudget {
+        command_id: request.assignment_id,
+        session_id: request.assignment_id,
+        parent_session_id: request.parent_session_id,
+        parent_run_id: request.parent_run_id,
+        tokens: 100,
+        elapsed_ms: 1000,
+        expires_at_ms: store::now().unwrap() + 1000,
+    };
+    request.budget = Some(budget);
+    f.assignment.observation.cleanup_observed = true;
+    f.assignment.observation.state = "completed".into();
+    f.save();
+    let original = f.assignment.request.clone();
+    assert_eq!(
+        f.supervisor
+            .assign(&f.grant, original.clone())
+            .await
+            .unwrap()["state"],
+        "completed"
+    );
+    for field in 0..4 {
+        let mut changed = original.clone();
+        let budget = changed.budget.as_mut().unwrap();
+        match field {
+            0 => budget.tokens += 1,
+            1 => budget.parent_run_id = Uuid::new_v4(),
+            2 => budget.session_id = Uuid::new_v4(),
+            _ => budget.command_id = Uuid::new_v4(),
+        }
+        assert!(f.supervisor.assign(&f.grant, changed).await.is_err());
+    }
+}

@@ -62,6 +62,7 @@ pub(super) fn private_read(_: &Path, _: u64) -> Result<Vec<u8>, ToolError> {
     ))
 }
 
+#[derive(Clone)]
 pub(super) struct Transport {
     client: reqwest::Client,
     endpoint: reqwest::Url,
