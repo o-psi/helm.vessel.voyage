@@ -263,7 +263,7 @@ fn allowed(command: &VesselCommand) -> bool {
         VesselCommand::Voyage(request) => match &request.command {
             VoyageCommand::HostBrowser { operation } => operation.valid(),
             VoyageCommand::Controls { section, .. } => {
-                matches!(section.as_str(), "tools" | "skills")
+                matches!(section.as_str(), "tools" | "skills" | "files")
             }
             VoyageCommand::GoalRead
             | VoyageCommand::WorkspaceChanges { .. }

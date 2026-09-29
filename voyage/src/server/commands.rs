@@ -288,6 +288,7 @@ pub(super) async fn dispatch_admitted(
                 "snapshot",
                 "workspace_changes",
                 "skills_catalog",
+                "workspace_file_catalog",
                 "read_artifact",
                 "history",
                 "provider_attempts",

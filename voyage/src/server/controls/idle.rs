@@ -28,6 +28,17 @@ pub(super) async fn inspect(
             .await
             .context("skill discovery timed out")???
         }
+        "files" => {
+            let policy = resolved.policy().clone();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(4),
+                tokio::task::spawn_blocking(move || {
+                    crate::server::workspace_file_catalog::read(&policy)
+                }),
+            )
+            .await
+            .context("file discovery timed out")???
+        }
         "policy" => serde_json::to_value(resolved.policy().effective())?,
         "models" => {
             let reservation =

@@ -213,6 +213,10 @@ advertised tool metadata and policy-checked filesystem skill names/descriptions,
 with a scoped WorkspaceRead grant and no skill-body disclosure. A composer menu must
 be tested against an old capability response, a stale connection and a partial
 catalogue, and selecting metadata must not submit a run automatically.
+The same process check also verifies the `files` control returns bounded workspace
+names without file contents, excludes symlinks and dependency directories, and
+reports incomplete traversal. The Web composer unit and production-bundle browser
+checks exercise filename insertion without an automatic submit.
 
 The offline [conversation and file-editing check](test-conversation-files.md)
 verifies a normal task through Vessel-supervised voyage processes: read and patch

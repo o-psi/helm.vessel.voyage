@@ -92,7 +92,9 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         RuntimeCommand::Resolve { .. } | RuntimeCommand::NotificationEvents { .. } => None,
         RuntimeCommand::Health | RuntimeCommand::Events { .. } => Some(ProcessRight::Observe),
         RuntimeCommand::Controls { section, .. } if section == "host_resources" => None,
-        RuntimeCommand::Controls { section, .. } if section == "skills" => {
+        RuntimeCommand::Controls { section, .. }
+            if matches!(section.as_str(), "skills" | "files") =>
+        {
             Some(ProcessRight::WorkspaceRead)
         }
         RuntimeCommand::Controls { section, .. }

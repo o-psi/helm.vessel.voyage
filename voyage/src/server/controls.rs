@@ -139,7 +139,7 @@ impl LiveControls {
         config: &crate::Config,
         workspace: &std::path::Path,
     ) -> Result<Value> {
-        if section == "skills" {
+        if matches!(section, "skills" | "files") {
             // The composer prepares a future prompt. Its skill catalogue must
             // use next-run policy, not an active agent's captured configuration.
             let mut result = idle::inspect(self, section, config, workspace).await?;

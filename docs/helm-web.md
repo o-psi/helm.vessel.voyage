@@ -67,6 +67,12 @@ run it describes the next-run catalogue, not the agent's already captured tools.
 The selected skill path is prompt context, rechecked by the Voyage's `read_file`
 tool when the agent uses it. The tool catalogue is likewise only discovery;
 presence does not grant execution or promise a tool call.
+When `workspace_file_catalog` and WorkspaceRead authority are available, the
+composer also reads up to 1,024 workspace-relative filenames from the executing
+Voyage. Discovery skips symlinks and generated/dependency directories and marks
+bounded or unreadable results as incomplete. It returns no contents. Selecting a
+name inserts a request into the unsent draft; any later file read uses current
+Voyage policy. The catalogue is an observation, not a durable file reference.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default

@@ -29,6 +29,11 @@ reviewed Vessel updates. **Create voyage** explicitly creates the voyage before
 its first message. Unsent text and pictures remain in page memory across voyage
 selection and are lost on reload. Existing conversations remain on their Vessels.
 Advanced actions, approvals and browser viewing preserve the backend's authority.
+The composer can show bounded executing-host tool, skill and workspace filename
+catalogues when the Voyage advertises them and the connection has workspace-read
+authority. Choosing an entry adds draft text without starting a run. File discovery
+omits symlinks, generated/dependency directories and contents; policy is checked
+again before a later read.
 The web console is disabled by default until configured. Native and live-provider
 certification remain separate from local offline tests and deployment checks.
 

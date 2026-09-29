@@ -1116,7 +1116,7 @@ fn browser_goal_controls_reach_the_runtime_authority_boundary() {
         scope: voyage_protocol::process::WorkspaceChangeScope::Status,
         path: None,
     })));
-    for section in ["tools", "skills"] {
+    for section in ["tools", "skills", "files"] {
         assert!(allowed(&command(VoyageCommand::Controls {
             run_id: None,
             section: section.into(),

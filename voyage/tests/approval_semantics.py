@@ -96,7 +96,7 @@ class Gateway:
             str(fixture.binaries / "vessel"), "--bind", f"127.0.0.1:{port}",
             "--database", str(fixture.root / "gateway.sqlite3"),
             "--process-directory", str(fixture.directory),
-            "--public-origin", self.origin, "--allow-insecure-loopback"],
+            "--allow-insecure-loopback", self.origin],
             env=fixture.env | {"VESSEL_OPERATOR_TOKEN": "x" * 32},
             cwd=fixture.workspace, stdin=subprocess.DEVNULL,
             stdout=fixture.log, stderr=fixture.log)

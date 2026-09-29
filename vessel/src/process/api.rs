@@ -658,7 +658,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         VoyageCommand::Resolve { .. } => None,
         VoyageCommand::Events { .. } => Some(ProcessRight::Observe),
         VoyageCommand::Controls { section, .. } if section == "host_resources" => None,
-        VoyageCommand::Controls { section, .. } if section == "skills" => {
+        VoyageCommand::Controls { section, .. }
+            if matches!(section.as_str(), "skills" | "files") =>
+        {
             Some(ProcessRight::WorkspaceRead)
         }
         VoyageCommand::Controls { section, .. }

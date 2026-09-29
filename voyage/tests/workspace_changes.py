@@ -35,6 +35,7 @@ def main():
         fixture.start()
         assert "workspace_changes" in fixture.request({"op": "capabilities"})["features"]
         assert "skills_catalog" in fixture.request({"op": "capabilities"})["features"]
+        assert "workspace_file_catalog" in fixture.request({"op": "capabilities"})["features"]
         session = fixture.session()
         fixture.suspended(session)
         skill_dir = fixture.workspace / ".agents" / "skills" / "fixture"
@@ -47,6 +48,16 @@ def main():
         assert catalog["value"]["can_read"] and catalog["value"]["skills"][0]["name"] == "fixture", catalog
         assert catalog["value"]["skills"][0]["path"] == str(skill_file)
         assert "PRIVATE SKILL BODY" not in str(catalog), "skill body leaked into catalogue"
+        dependency = fixture.workspace / "node_modules"
+        dependency.mkdir()
+        (dependency / "hidden.js").write_text("dependency content")
+        (fixture.workspace / "linked.txt").symlink_to(skill_file)
+        files = fixture.command(session, {"op": "controls", "run_id": None, "section": "files"})
+        assert "tracked.txt" in files["value"]["files"], files
+        assert ".agents/skills/fixture/SKILL.md" in files["value"]["files"], files
+        assert "linked.txt" not in files["value"]["files"] and "node_modules/hidden.js" not in files["value"]["files"], files
+        assert files["value"]["truncated"], "skipped symlink must mark incomplete catalogue"
+        assert "PRIVATE SKILL BODY" not in str(files), "file content leaked into catalogue"
         before = fixture.command(session, {"op": "snapshot"})
         identity = fixture.request({"op": "inspect", "session_id": session})
         requests = len(fixture.provider.bodies)
@@ -73,6 +84,9 @@ def main():
             denied_skills = gateway.call(history, session, {"op": "controls", "run_id": None,
                                                            "section": "skills"})
             assert denied_skills.get("error"), "History grant discovered executing-host skill paths"
+            denied_files = gateway.call(history, session, {"op": "controls", "run_id": None,
+                                                          "section": "files"})
+            assert denied_files.get("error"), "History grant discovered executing-host filenames"
             reader = gateway.grant(session, ["observe", "workspace_read"])
             allowed = gateway.call(reader, session, {"op": "workspace_changes", "scope": "status"})
             assert allowed.get("error") is None and "?? new.txt\0" in allowed["result"]["text"], allowed
@@ -81,6 +95,9 @@ def main():
             listed = gateway.call(reader, session, {"op": "controls", "run_id": None,
                                                     "section": "skills"})
             assert listed.get("error") is None and listed["result"]["value"]["skills"][0]["name"] == "fixture", listed
+            listed_files = gateway.call(reader, session, {"op": "controls", "run_id": None,
+                                                          "section": "files"})
+            assert listed_files.get("error") is None and "tracked.txt" in listed_files["result"]["value"]["files"], listed_files
         finally:
             gateway.close()
         after = fixture.command(session, {"op": "snapshot"})
@@ -94,6 +111,7 @@ def main():
             "conversation_unchanged": True, "provider_requests": 0,
             "history_grant_denied": True, "workspace_read_grant_admitted": True,
             "skill_metadata_only": True,
+            "file_names_only": True,
         })
         print("workspace changes process journey PASS", flush=True)
     finally:
