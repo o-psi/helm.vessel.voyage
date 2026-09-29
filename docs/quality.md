@@ -204,8 +204,25 @@ while advancing one event reader and leaving another behind. The fixture require
 actual 2,048-event retention overflow, explicit gap recovery, a bounded recent
 snapshot and lossless revision-fenced 17-message history pages. It records the
 largest event page and checks observation never repeats inference. This exercises
-retention and paging, not TCP congestion or client heap limits. Socket backpressure
-has separate focused tests; deployed TLS and browser rollout remain #372 gates.
+retention and paging, not TCP congestion or client heap limits. For actual socket backpressure, run:
+
+```sh
+python3 voyage/tests/socket_backpressure.py --bin-dir target/debug
+```
+
+This Linux fixture uses a real scoped gateway and two independent WebSockets.
+The slow peer advertises a small TCP receive window, stops reading, and keeps
+sending pings; sixteen authorized subscriptions exercise the output budget while
+one fast peer continues reading and issuing scoped snapshot requests. It requires
+an observed kernel transmit queue, bounded transport closure independently of
+heartbeat expiry, exact continued fast-peer text, retained-event overflow and
+explicit authorized snapshot recovery, one synthetic inference, bounded measured
+gateway RSS growth and observed fixture cleanup. Its narrow standard-library
+WebSocket client is test-only. Evidence includes actual timings and counts; this
+does not certify arbitrary network conditions, a browser client or production TLS.
+The browser rendering/heap fixture lives in WebHelm's
+[`tests/browser-conversation-browser.mjs`](https://github.com/o-psi/webhelm/blob/main/tests/browser-conversation-browser.mjs).
+Deployed authenticated rollout remains a separate #372 gate.
 
 ## Everyday workflow checks
 

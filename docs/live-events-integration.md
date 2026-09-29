@@ -81,7 +81,13 @@ See [quality commands](quality.md#ordered-event-replay-and-reconnect).
 
 These fixtures complement deterministic client reducer cases for malformed,
 duplicate, out-of-order, wrong-incarnation and missing-offset events, and the Vessel
-bounded-queue slow-consumer test. Retention overflow is not a measurement of socket
-congestion, browser memory, or rendering a large history. The deployed authenticated
-console and remaining adverse/large-history client journeys still need explicit
-results in #372; do not close the matrix from process or component evidence alone.
+bounded-queue slow-consumer test. Retention overflow alone is not a measurement of socket congestion or client
+memory. The separate `socket_backpressure.py` fixture now exercises actual Linux
+TCP queues with independent slow/fast scoped WebSockets, continuous liveness pings,
+bounded disconnect, continuing producer/fast-peer progress and explicit snapshot
+recovery. WebHelm's built-bundle `browser-conversation-browser.mjs` exercises
+large recent/paged history and bounded live text with retained-heap/DOM measurements
+at three widths in both themes. See the quality commands and actual results in
+#372; the existence of a fixture is not passing evidence. Deployed authenticated
+console verification remains separate. Do not close the matrix from process or
+component evidence alone.
