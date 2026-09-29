@@ -1660,3 +1660,237 @@ fn known_goal_child_usage_and_unobserved_cleanup_are_distinct_stop_conditions() 
     let resume = command(&j, session.id, GoalAction::Resume { goal_id: goal.id });
     assert!(j.update_goal(&guard, a, &resume, 1101).is_err());
 }
+
+#[test]
+fn goal_late_receipts_charge_once_without_rewriting_settlement_or_resuming() {
+    let (root, mut j, session, guard, a) = fixture();
+    let (run, inc) = allocated_goal(&mut j, session.id, &guard, a.clone());
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    let usage = allocation_usage(budget, 17, 9);
+    assert!(
+        j.reconcile_goal_allocation(&guard, request.destination, usage.clone(), None, 1500)
+            .is_err()
+    );
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture death"),
+        None,
+    )
+    .unwrap();
+    j.recover_goal_turn(&guard, 2000).unwrap();
+    let original: String = j
+        .connection
+        .query_row(
+            "SELECT receipt FROM process_goal_settlements WHERE command_id=?1",
+            [run.command_id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        j.reconcile_goal_allocation(&guard, Uuid::new_v4(), usage.clone(), None, 2100)
+            .is_err()
+    );
+    assert!(
+        j.reconcile_goal_allocation(&guard, request.destination, usage.clone(), None, 2100)
+            .unwrap()
+    );
+    assert!(
+        !j.reconcile_goal_allocation(&guard, request.destination, usage.clone(), None, 2200)
+            .unwrap()
+    );
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(
+        (
+            goal.usage.input_tokens,
+            goal.usage.output_tokens,
+            goal.usage.unmeasured_runs
+        ),
+        (17, 9, 1)
+    );
+    assert_eq!(goal.status, GoalStatus::NeedsAttention);
+    assert!(!goal.continuation_authorized);
+    let resume = command(&j, session.id, GoalAction::Resume { goal_id: goal.id });
+    assert!(j.update_goal(&guard, a.clone(), &resume, 2300).is_err());
+    assert_eq!(
+        j.connection
+            .query_row(
+                "SELECT receipt FROM process_goal_settlements WHERE command_id=?1",
+                [run.command_id.to_string()],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        original
+    );
+    let mut wrong = usage.clone();
+    wrong.output_tokens += 1;
+    assert!(
+        j.reconcile_goal_allocation(&guard, request.destination, wrong, None, 2400)
+            .is_err()
+    );
+    let saved_path = root.path().join("journal");
+    drop(guard);
+    drop(j);
+    // Reopen the canonical journal, retaining the exact late import across owner lifetimes.
+    let mut reopened = Journal::open(saved_path).unwrap();
+    let guard = reopened.acquire_execution(session.id).unwrap();
+    assert!(
+        !reopened
+            .reconcile_goal_allocation(&guard, request.destination, usage, None, 2500)
+            .unwrap()
+    );
+    assert_eq!(
+        reopened
+            .goal(session.id)
+            .unwrap()
+            .goal
+            .unwrap()
+            .usage
+            .input_tokens,
+        17
+    );
+}
+
+#[test]
+fn goal_nested_late_usage_has_separate_monotonic_view_and_original_receipt() {
+    let (_root, mut j, session, guard, _) = fixture();
+    let (run, _, inc) = delegated_run(&mut j, &guard);
+    let request = allocation_request();
+    let budget = j
+        .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
+        .unwrap();
+    let mut usage = allocation_usage(budget, 2, 1);
+    usage.complete = false;
+    usage.cleanup_observed = false;
+    j.settle_goal_allocation(
+        &guard,
+        run.command_id,
+        inc,
+        request.destination,
+        usage.clone(),
+    )
+    .unwrap();
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture death"),
+        None,
+    )
+    .unwrap();
+    j.settle_delegated_run(&guard, run.id, None, true, 2000)
+        .unwrap();
+    let original = j.delegated_usage(session.id).unwrap().unwrap();
+    assert_eq!((original.input_tokens, original.output_tokens), (2, 1));
+    assert!(!original.cleanup_observed);
+    let mut observed = usage.clone();
+    observed.input_tokens = 11;
+    observed.output_tokens = 6;
+    observed.cleanup_observed = true;
+    assert!(
+        j.reconcile_goal_allocation(
+            &guard,
+            request.destination,
+            usage.clone(),
+            Some(observed.clone()),
+            2200
+        )
+        .unwrap()
+    );
+    assert!(
+        !j.reconcile_goal_allocation(
+            &guard,
+            request.destination,
+            usage.clone(),
+            Some(observed.clone()),
+            2300
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        j.delegated_usage(session.id).unwrap(),
+        Some(original.clone())
+    );
+    let updated = j
+        .delegated_observed_usage(session.id, run.command_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!((updated.input_tokens, updated.output_tokens), (11, 6));
+    assert!(!updated.complete);
+    assert!(updated.cleanup_observed);
+    assert!(
+        j.reconcile_goal_allocation(&guard, request.destination, usage.clone(), None, 2400)
+            .is_err()
+    );
+    observed.complete = true;
+    assert!(
+        j.reconcile_goal_allocation(
+            &guard,
+            request.destination,
+            usage.clone(),
+            Some(observed),
+            2400
+        )
+        .is_err()
+    );
+    let receipt = j.process_receipt(run.command_id).unwrap().unwrap();
+    assert_eq!(
+        receipt["execution_usage"],
+        serde_json::to_value(original).unwrap()
+    );
+    assert_eq!(
+        receipt["execution_usage_observed"],
+        serde_json::to_value(updated).unwrap()
+    );
+    let tx = j.connection.transaction().unwrap();
+    super::super::deletion::scrub(&tx, session.id).unwrap();
+    assert_eq!(
+        tx.query_row(
+            "SELECT count(*) FROM process_goal_reconciliations",
+            [],
+            |r| r.get::<_, u64>(0)
+        )
+        .unwrap(),
+        0
+    );
+    assert!(
+        tx.prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn goal_late_observation_never_infers_local_cleanup_from_empty_tables() {
+    let (_root, mut j, session, guard, _) = fixture();
+    let (run, _, _) = delegated_run(&mut j, &guard);
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture lost cleanup"),
+        None,
+    )
+    .unwrap();
+    let original = j
+        .settle_delegated_run(&guard, run.id, None, false, 2000)
+        .unwrap()
+        .unwrap();
+    assert!(!original.cleanup_observed);
+    assert!(
+        !j.delegated_observed_usage(session.id, run.command_id)
+            .unwrap()
+            .unwrap()
+            .cleanup_observed
+    );
+    assert!(j.goal_allocations(session.id, 0, 128).unwrap().is_empty());
+    assert!(j.goal_allocations(session.id, 0, 129).is_err());
+}

@@ -16,6 +16,7 @@ pub(crate) mod schema;
 mod shell;
 mod todo;
 mod vessel;
+pub(crate) use vessel::reconcile_goal_allocations;
 pub use vessel::{VesselContext, VesselSettings, VesselTool};
 
 use async_trait::async_trait;

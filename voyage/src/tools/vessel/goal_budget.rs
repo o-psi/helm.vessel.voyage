@@ -103,3 +103,128 @@ pub(super) async fn prepare(
 
 #[cfg(all(test, unix))]
 mod tests;
+
+/// Explicit bounded recovery uses only current host-configured authenticated
+/// routes. Missing routes/rights remain pending; no original mutation is sent.
+pub(crate) async fn reconcile_goal_allocations(
+    owner: &crate::attachment::runtime::ManagedSessionOwner,
+    config: &crate::Config,
+    offset: u64,
+    limit: u32,
+) -> anyhow::Result<Value> {
+    let allocations = owner.goal_allocations(offset, limit).await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let local = config
+        .vessel_context
+        .as_ref()
+        .map(|c| c.directory.as_path())
+        .or(config.vessel.local_directory.as_deref())
+        .unwrap_or(Path::new(""));
+    let mut routes = Vec::new();
+    if config.vessel.enabled {
+        if let Ok(route) = transport::Transport::open(local, None) {
+            routes.push(route);
+        }
+        for path in config.vessel.remotes.values() {
+            if let Ok(route) = transport::Transport::open(local, Some(path)) {
+                routes.push(route);
+            }
+        }
+    }
+    let mut matched = Vec::new();
+    for route in routes {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        if let Ok(Ok(caps)) =
+            tokio::time::timeout_at(deadline, route.exchange(VesselCommand::Capabilities)).await
+            && let Ok(target) = serde_json::from_value::<Uuid>(caps["vessel_id"].clone())
+        {
+            matched.push((target, route));
+        }
+    }
+    let mut results = Vec::new();
+    for allocation in &allocations {
+        let mut changed = Some(false);
+        let mut observed = false;
+        for (target, route) in matched
+            .iter()
+            .filter(|(target, _)| *target == allocation.destination)
+        {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            if let Ok(Ok(result)) = tokio::time::timeout_at(
+                deadline,
+                voyage(
+                    route,
+                    allocation.budget.session_id,
+                    None,
+                    VoyageCommand::Receipt {
+                        command_id: allocation.budget.command_id,
+                    },
+                ),
+            )
+            .await
+                && let Ok(usage) =
+                    serde_json::from_value::<ExecutionUsage>(result["execution_usage"].clone())
+                && usage.budget == allocation.budget
+            {
+                let supplemental = match result
+                    .get("execution_usage_observed")
+                    .filter(|v| !v.is_null())
+                {
+                    Some(value) => match serde_json::from_value(value.clone()) {
+                        Ok(value) => Some(value),
+                        Err(_) => continue,
+                    },
+                    None => None,
+                };
+                if let Ok(updated) = owner
+                    .reconcile_goal_allocation(*target, usage, supplemental)
+                    .await
+                {
+                    observed = true;
+                    changed = Some(updated);
+                    break;
+                }
+            }
+        }
+        // Participant grants observe their exact parent assignment rather than
+        // acquiring child History rights through a generic Vessel route.
+        if !observed {
+            for endpoint in config
+                .participants
+                .iter()
+                .filter(|p| p.participant_vessel_id == allocation.destination)
+            {
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                if let Ok(Ok(result)) = tokio::time::timeout_at(
+                    deadline,
+                    crate::participant::reconcile(
+                        owner.clone(),
+                        allocation.budget.parent_run_id,
+                        allocation.budget.command_id,
+                        &endpoint.name,
+                        false,
+                        config,
+                    ),
+                )
+                .await
+                {
+                    observed = result["result"]["execution_usage"].is_object();
+                    if observed {
+                        changed = None; // Existing assignment API does not return an import delta.
+                        break;
+                    }
+                }
+            }
+        }
+        results.push(json!({"command_id":allocation.budget.command_id,"observed":observed,"usage_updated":changed}));
+    }
+    Ok(
+        json!({"allocations":results,"next_offset":(allocations.len()==limit as usize).then_some(offset.saturating_add(u64::from(limit))),"effects_replayed":false,"continuation_restored":false}),
+    )
+}

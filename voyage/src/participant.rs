@@ -68,6 +68,32 @@ impl Parent {
                 .settle_allocation(observation.participant_vessel_id, usage)
                 .await?;
         }
+        if self.meter.is_none()
+            && let Some(value) = observation
+                .result
+                .as_ref()
+                .and_then(|r| r.get("execution_usage"))
+                .filter(|v| !v.is_null())
+        {
+            let receipt: voyage_protocol::execution_budget::ExecutionUsage =
+                serde_json::from_value(value.clone())?;
+            ensure!(
+                receipt.budget.command_id == observation.assignment_id
+                    && receipt.session_id == observation.child_session_id
+                    && Some(receipt.run_id) == observation.run_id,
+                "participant late usage attribution mismatch"
+            );
+            let observed = observation
+                .result
+                .as_ref()
+                .and_then(|r| r.get("execution_usage_observed"))
+                .filter(|v| !v.is_null())
+                .map(|v| serde_json::from_value(v.clone()))
+                .transpose()?;
+            self.owner
+                .reconcile_goal_allocation(observation.participant_vessel_id, receipt, observed)
+                .await?;
+        }
         self.owner.update_assignment(observation).await?;
         Ok(())
     }
@@ -146,6 +172,9 @@ pub async fn reconcile(
         .assignment_result(run_id, assignment_id)
         .await?;
     if prior["cleanup_observed"] == true {
+        parent
+            .record_observation(serde_json::from_value(prior.clone())?)
+            .await?;
         return Ok(prior);
     }
     Ok(serde_json::to_value(

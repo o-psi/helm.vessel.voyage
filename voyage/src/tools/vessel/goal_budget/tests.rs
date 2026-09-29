@@ -9,6 +9,7 @@ struct Accounting {
     run: Uuid,
     allocated: Mutex<Vec<ExecutionBudget>>,
     settled: Mutex<Vec<ExecutionUsage>>,
+    late: Mutex<Option<ExecutionUsage>>,
 }
 #[async_trait]
 impl Observer for Accounting {
@@ -112,11 +113,16 @@ async fn peer(supports_budget: bool, history: bool, accounting: Arc<Accounting>)
                 }
                 "receipt" => {
                     let command: Uuid = serde_json::from_value(wire["command_id"].clone()).unwrap();
-                    match budgets.get(&command) {
-                        Some(budget) => {
-                            json!({"command_id":command,"run_id":child_run,"status":"accepted","state":"completed","execution_usage":ExecutionUsage {budget:budget.clone(),session_id:budget.session_id,run_id:child_run,input_tokens:9,output_tokens:3,elapsed_ms:10,complete:true,cleanup_observed:true}})
+                    let late = accounting.late.lock().unwrap().clone();
+                    if let Some(usage) = late {
+                        json!({"command_id":command,"run_id":usage.run_id,"status":"accepted","state":"completed","execution_usage":usage})
+                    } else {
+                        match budgets.get(&command) {
+                            Some(budget) => {
+                                json!({"command_id":command,"run_id":child_run,"status":"accepted","state":"completed","execution_usage":ExecutionUsage {budget:budget.clone(),session_id:budget.session_id,run_id:child_run,input_tokens:9,output_tokens:3,elapsed_ms:10,complete:true,cleanup_observed:true}})
+                            }
+                            None => json!({"command_id":command,"status":"unknown"}),
                         }
-                        None => json!({"command_id":command,"status":"unknown"}),
                     }
                 }
                 op => panic!("unexpected fixture operation: {op}"),
@@ -165,6 +171,7 @@ async fn peer(supports_budget: bool, history: bool, accounting: Arc<Accounting>)
 }
 fn accounting() -> Arc<Accounting> {
     Arc::new(Accounting {
+        late: Mutex::new(None),
         parent: Uuid::new_v4(),
         run: Uuid::new_v4(),
         allocated: Mutex::new(vec![]),
@@ -286,5 +293,153 @@ async fn goal_child_submission_requires_history_before_allocating_or_dispatching
             .unwrap()
             .iter()
             .all(|c| c["op"] == "capabilities" || c["op"] == "snapshot")
+    );
+}
+
+#[tokio::test]
+async fn goal_reconciliation_reopens_owner_and_reads_exact_receipt_without_replay() {
+    use crate::attachment::{
+        journal::{Journal, RunState, TurnAdmission},
+        runtime::ManagedSessionOwner,
+    };
+    let accounting = accounting();
+    let peer = peer(true, true, accounting.clone()).await;
+    let caps = peer
+        .transport
+        .exchange(VesselCommand::Capabilities)
+        .await
+        .unwrap();
+    let target: Uuid = serde_json::from_value(caps["vessel_id"].clone()).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("journal");
+    let mut j = Journal::open(directory.clone()).unwrap();
+    let session =
+        crate::session::Session::new(root.path().canonicalize().unwrap(), "fixture".into());
+    j.create_session(&session).unwrap();
+    let guard = j.acquire_execution(session.id).unwrap();
+    j.initialize_process_commands(&guard).unwrap();
+    j.initialize_lifecycle(&guard).unwrap();
+    let budget = ExecutionBudget {
+        command_id: Uuid::new_v4(),
+        session_id: session.id,
+        parent_session_id: Uuid::new_v4(),
+        parent_run_id: Uuid::new_v4(),
+        tokens: 100,
+        elapsed_ms: 10_000,
+        expires_at_ms: 11_000,
+    };
+    let run = j
+        .admit_turn(
+            &guard,
+            &TurnAdmission {
+                budget: Some(budget.clone()),
+                coordination: None,
+                operator_name: None,
+                command_id: budget.command_id,
+                machine_id: Uuid::new_v4(),
+                principal_id: Uuid::new_v4(),
+                session_id: session.id,
+                expected_revision: j.load_session(session.id).unwrap().revision,
+                expires_at_ms: 11_000,
+                prompt: "fixture".into(),
+                parts: vec![],
+            },
+            1000,
+        )
+        .unwrap()
+        .run;
+    let inc = Uuid::new_v4();
+    j.begin_delegated_meter(&guard, &budget, inc, 1000).unwrap();
+    let child = j
+        .allocate_goal_child(
+            &guard,
+            run.command_id,
+            inc,
+            AllocationRequest {
+                command_id: Uuid::new_v4(),
+                destination: target,
+                session_id: Uuid::new_v4(),
+                tokens: 20,
+                elapsed_ms: 1000,
+                expires_at_ms: 2000,
+            },
+            1000,
+        )
+        .unwrap();
+    j.finish(
+        &guard,
+        run.id,
+        RunState::Interrupted,
+        Some("fixture death"),
+        None,
+    )
+    .unwrap();
+    j.settle_delegated_run(&guard, run.id, None, true, 2000)
+        .unwrap();
+    drop(guard);
+    drop(j);
+    let owner = ManagedSessionOwner::open(directory, session.id)
+        .await
+        .unwrap();
+    let mut config = crate::Config::default();
+    config.vessel.local_directory = Some(peer.root.path().to_path_buf());
+    let original = owner
+        .process_receipt(run.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let pending = reconcile_goal_allocations(&owner, &config, 0, 16)
+        .await
+        .unwrap();
+    assert_eq!(pending["allocations"][0]["observed"], false);
+    let usage = ExecutionUsage {
+        budget: child.clone(),
+        session_id: child.session_id,
+        run_id: Uuid::new_v4(),
+        input_tokens: 9,
+        output_tokens: 3,
+        elapsed_ms: 100,
+        complete: true,
+        cleanup_observed: true,
+    };
+    let mut wrong = usage.clone();
+    wrong.session_id = Uuid::new_v4();
+    *accounting.late.lock().unwrap() = Some(wrong);
+    let pending = reconcile_goal_allocations(&owner, &config, 0, 16)
+        .await
+        .unwrap();
+    assert_eq!(pending["allocations"][0]["observed"], false);
+    *accounting.late.lock().unwrap() = Some(usage);
+    let observed = reconcile_goal_allocations(&owner, &config, 0, 16)
+        .await
+        .unwrap();
+    assert_eq!(observed["allocations"][0]["usage_updated"], true);
+    assert_eq!(observed["effects_replayed"], false);
+    assert_eq!(observed["continuation_restored"], false);
+    let replay = reconcile_goal_allocations(&owner, &config, 0, 16)
+        .await
+        .unwrap();
+    assert_eq!(replay["allocations"][0]["observed"], true);
+    assert_eq!(replay["allocations"][0]["usage_updated"], false);
+    let receipt = owner
+        .process_receipt(run.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt["execution_usage"], original["execution_usage"]);
+    assert_eq!(receipt["execution_usage_observed"]["input_tokens"], 9);
+    assert_eq!(receipt["execution_usage_observed"]["output_tokens"], 3);
+    assert_eq!(receipt["execution_usage_observed"]["complete"], false);
+    assert!(
+        peer.commands
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|c| c["op"] == "capabilities" || c["op"] == "receipt")
+    );
+    assert!(
+        reconcile_goal_allocations(&owner, &config, 0, 129)
+            .await
+            .is_err()
     );
 }

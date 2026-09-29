@@ -99,7 +99,8 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             Some(ProcessRight::History)
         }
         RuntimeCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
-        RuntimeCommand::GoalRead
+        RuntimeCommand::GoalReconcile { .. }
+        | RuntimeCommand::GoalRead
         | RuntimeCommand::Snapshot
         | RuntimeCommand::ProviderAttempts { .. }
         | RuntimeCommand::History { .. }

@@ -293,3 +293,20 @@ fn delegated_goal_budget_survives_public_private_mapping_without_extra_authority
     };
     assert_eq!(received, Some(budget));
 }
+
+#[test]
+fn goal_reconciliation_is_bounded_history_observation_without_execution_authority() {
+    let command = VoyageCommand::GoalReconcile {
+        offset: 64,
+        limit: 16,
+    };
+    assert_eq!(required_right(&command), Some(ProcessRight::History));
+    let public = serde_json::to_value(&command).unwrap();
+    let private = runtime(command).unwrap();
+    assert_eq!(
+        voyage_protocol::process::required_process_right(&private),
+        Some(ProcessRight::History)
+    );
+    assert!(private.mutation_id().is_none());
+    assert_eq!(serde_json::to_value(private).unwrap(), public);
+}

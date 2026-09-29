@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS process_goal_requests(request_id TEXT PRIMARY KEY,com
 mod continuation;
 pub(crate) use continuation::GoalTurnReservation;
 mod allocations;
+mod reconciliation;
+pub(crate) use reconciliation::GoalAllocation;
 mod delegated;
 mod metering;
 mod settlement;
@@ -50,6 +52,7 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
         "unsupported Goal meter schema"
     );
     db.execute_batch("CREATE TABLE IF NOT EXISTS process_goal_allocations(request_id TEXT PRIMARY KEY REFERENCES process_goal_requests(request_id),destination TEXT NOT NULL,budget TEXT NOT NULL,receipt TEXT,cleanup_observed INTEGER NOT NULL DEFAULT 0);")?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS process_goal_reconciliations(command_id TEXT PRIMARY KEY REFERENCES process_goal_meters(command_id),input_tokens INTEGER NOT NULL,output_tokens INTEGER NOT NULL,local_cleanup_observed INTEGER NOT NULL DEFAULT 0);")?;
     Ok(())
 }
 

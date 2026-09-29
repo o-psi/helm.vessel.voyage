@@ -108,6 +108,9 @@ impl Journal {
                 && usage.output_tokens >= output.max(run.usage.output_tokens),
             "delegated aggregate is below retained usage"
         );
+        if self.opened_schema >= 18 {
+            tx.execute("INSERT INTO process_goal_reconciliations(command_id,input_tokens,output_tokens,local_cleanup_observed) VALUES(?1,0,0,?2)",params![run.command_id.to_string(),cleanup_observed])?;
+        }
         let receipt = ExecutionUsage {
             budget,
             session_id: guard.session_id,

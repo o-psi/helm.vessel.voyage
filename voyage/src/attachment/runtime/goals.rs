@@ -43,7 +43,24 @@ impl Observer for UsageObserver {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
-            journal.settle_goal_allocation(guard, command, incarnation, destination, usage)
+            match journal.settle_goal_allocation(
+                guard,
+                command,
+                incarnation,
+                destination,
+                usage.clone(),
+            ) {
+                Ok(()) => Ok(()),
+                Err(_) => journal
+                    .reconcile_goal_allocation(
+                        guard,
+                        destination,
+                        usage,
+                        None,
+                        SystemClock.now_ms()?,
+                    )
+                    .map(|_| ()),
+            }
         })
         .await?
     }
@@ -162,6 +179,47 @@ impl ManagedSessionOwner {
             let Store { journal, guard, .. } = &mut *store;
             journal.recover_goal_turn(guard, SystemClock.now_ms()?)?;
             journal.recover_delegated_meter(guard, SystemClock.now_ms()?)
+        })
+        .await?
+    }
+}
+
+impl ManagedSessionOwner {
+    pub(crate) async fn goal_allocations(
+        &self,
+        offset: u64,
+        limit: u32,
+    ) -> anyhow::Result<Vec<super::super::journal::GoalAllocation>> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            store
+                .journal
+                .goal_allocations(store.session_id, offset, limit)
+        })
+        .await?
+    }
+    pub(crate) async fn reconcile_goal_allocation(
+        &self,
+        destination: Uuid,
+        receipt: ExecutionUsage,
+        observed: Option<ExecutionUsage>,
+    ) -> anyhow::Result<bool> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.reconcile_goal_allocation(
+                guard,
+                destination,
+                receipt,
+                observed,
+                SystemClock.now_ms()?,
+            )
         })
         .await?
     }

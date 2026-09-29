@@ -46,7 +46,7 @@ IDs, ordered revisions and terminal records prevent reset, reordering, decreasin
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;
 restart retains known child counts and marks open requests uncertain. The meter
 distinguishes explicit zero from missing counters and retains partial counts on
-cancellation. Schema 17 fences writers that cannot preserve these observations, child allocations and delegated-run receipts.
+cancellation. Schema 18 fences writers that cannot preserve these observations, child allocations, delegated-run receipts and late accounting.
 
 The meter refuses subsequent requests after uncertainty or observed token/time
 limits. It also adds a deny-only check to the existing execution authority, so
@@ -100,9 +100,31 @@ A completed parent waits for pending allocation accounting within its remaining
 deadline plus five seconds for cleanup observation. Cancellation ends that wait;
 it does not certify child cleanup. New submission cannot replace the active handle
 while terminal accounting is still finishing. Outstanding allocations survive parent
-failure/restart as unresolved records and known lower bounds. Reconciliation of late
-remote receipts after the originating meter has settled still needs implementation
-before Goal acceptance; do not reset or silently refund those obligations.
+failure/restart as unresolved records and known lower bounds.
+
+History-authorized `goal_reconcile` reads a bounded page of retained allocations
+(`offset`, `limit` in 1..128) from an idle owner and uses current trusted Vessel or
+participant routes. A pass has a 15-second network deadline. It authenticates the
+destination and exact child budget/command before importing a receipt. The response
+reports observed/pending entries and the next page. Missing routes, revoked History
+rights and unavailable peers retain pending obligations. It never submits child work,
+restores continuation or treats a timeout/unknown command as zero usage.
+
+Late receipt imports survive owner restart and add only previously uncounted token
+usage. The original terminal receipt remains immutable. An exact command receipt
+also exposes `execution_usage_observed`, a separately named current lower bound
+that can carry nested late usage and observed cleanup. Increasing counts are imported
+once; changed attribution, changed original receipts, decreasing counters and false
+completeness upgrades are rejected. Cleanup improvement additionally needs retained
+local cleanup evidence and resolved canonical obligations. Diagnostic progress text
+or an operator attestation is insufficient.
+
+The originating Goal receives the delta; a replacement Goal is never charged for
+old work. Unknown-run markers and stopped/paused status remain unchanged. If usage
+was interrupted, explicit replacement is still required to authorize a new budget.
+The ledger and transport recovery tests do not establish end-to-end recovery for
+all delegation outcomes: durable non-admission reconciliation and nested participant
+cleanup/result recovery still need completion before #378 acceptance.
 
 Requested output is capped to the remaining unreserved allowance; input/billing
 totals are known only after dispatch, so this is not a strict billing ceiling.

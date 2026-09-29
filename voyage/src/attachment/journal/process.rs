@@ -51,6 +51,8 @@ impl Journal {
             let mut receipt = json!({"run_id":run.id,"command_id":id,"status":if self.lifecycle_status(run.session_id)?["deleted"]==true {"deleted"}else{"accepted"},"state":run.state});
             if let Some(usage) = self.delegated_command_usage(run.session_id, id)? {
                 receipt["execution_usage"] = serde_json::to_value(usage)?;
+                receipt["execution_usage_observed"] =
+                    serde_json::to_value(self.delegated_observed_usage(run.session_id, id)?)?;
             }
             return Ok(Some(receipt));
         }

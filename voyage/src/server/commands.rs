@@ -35,6 +35,19 @@ pub(super) async fn dispatch_admitted(
 
     match command {
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
+        RuntimeCommand::GoalReconcile { offset, limit } => {
+            ensure!(
+                (1..=128).contains(&limit),
+                "invalid Goal reconciliation page"
+            );
+            let _admission = state.admission.lock().await;
+            ensure!(
+                state.active.lock().await.is_none(),
+                "Goal reconciliation requires idle runtime"
+            );
+            let config = state.config.read().await.clone();
+            crate::tools::reconcile_goal_allocations(&state.owner, &config, offset, limit).await
+        }
         command @ RuntimeCommand::GoalUpdate { .. } => {
             ensure!(
                 authorization.grant.is_none() || authorization.owner_connection,

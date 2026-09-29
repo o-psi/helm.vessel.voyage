@@ -105,6 +105,11 @@ pub struct VoyageReply {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
     GoalRead,
+    /// Import authenticated retained child usage, without replay or continuation.
+    GoalReconcile {
+        offset: u64,
+        limit: u32,
+    },
     GoalUpdate {
         command_id: Uuid,
         expected_revision: u64,

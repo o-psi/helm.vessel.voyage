@@ -1,6 +1,7 @@
 //! Native model-facing coordination over the public Vessel protocol.
 //! The trusted host supplies routes; the model never supplies credentials or URLs.
 mod goal_budget;
+pub(crate) use goal_budget::reconcile_goal_allocations;
 mod history;
 mod inspection;
 mod journal;

@@ -10,6 +10,9 @@ use voyage_protocol::{
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
         VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
+        VoyageCommand::GoalReconcile { offset, limit } => {
+            RuntimeCommand::GoalReconcile { offset, limit }
+        }
         VoyageCommand::GoalUpdate {
             command_id,
             expected_revision,
@@ -639,7 +642,8 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
             Some(ProcessRight::History)
         }
         VoyageCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
-        VoyageCommand::GoalRead
+        VoyageCommand::GoalReconcile { .. }
+        | VoyageCommand::GoalRead
         | VoyageCommand::Snapshot
         | VoyageCommand::ProviderAttempts { .. }
         | VoyageCommand::History { .. }
