@@ -704,6 +704,7 @@ mod subscription_tests {
                         session_id,
                         incarnation,
                         after: 0,
+                        projection: None,
                     }],
                 },
                 events,

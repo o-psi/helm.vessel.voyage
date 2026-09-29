@@ -185,7 +185,7 @@ pub(super) async fn run(
                         if offered && event_worker.is_none() {
                             let c=client.clone();let b=binding.clone();let notify=work_ready.clone();
                             event_worker=Some(tokio::spawn(async move {
-                                let mut events=c.events(vec![voyage_protocol::vessel::VesselEventSubscription {session_id:b.session_id,incarnation:b.incarnation,after:0}]).await?;
+                                let mut events=c.events(vec![voyage_protocol::vessel::VesselEventSubscription {session_id:b.session_id,incarnation:b.incarnation,after:0,projection:None}]).await?;
                                 // Initial recovery closes the race between Offer and subscription.
                                 notify.notify_one();
                                 while let Some(event)=events.next().await {

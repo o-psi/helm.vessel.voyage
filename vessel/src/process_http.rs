@@ -111,6 +111,7 @@ pub(super) async fn events(
                                 // Re-enter the grant gateway between waits so expiry
                                 // and revocation stop publication at a bounded point.
                                 wait_ms: 0,
+                                projection: subscription.projection.clone(),
                             },
                         })),
                     },

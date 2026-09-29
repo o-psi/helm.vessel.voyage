@@ -127,7 +127,8 @@ fn browser_allowlist_excludes_executor_and_native_management() {
     assert!(!allowed(&command(VoyageCommand::Events {
         after: 0,
         limit: 1,
-        wait_ms: 10001
+        wait_ms: 10001,
+        projection: None
     })));
 }
 #[tokio::test]

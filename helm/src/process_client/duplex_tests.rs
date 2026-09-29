@@ -173,6 +173,7 @@ async fn event_stream_checks_identity_and_drop_unsubscribes_without_losing_comma
                 session_id: session,
                 incarnation,
                 after: 4,
+                projection: None,
             }])
             .await
     });
@@ -219,6 +220,7 @@ async fn subscription_refusal_and_invalid_admission_are_explicit() {
                 session_id: Uuid::new_v4(),
                 incarnation: Uuid::new_v4(),
                 after: 0,
+                projection: None,
             }])
             .await
     });
@@ -234,11 +236,13 @@ async fn subscription_refusal_and_invalid_admission_are_explicit() {
             session_id: Uuid::nil(),
             incarnation: Uuid::new_v4(),
             after: 0,
+            projection: None,
         }],
         vec![VesselEventSubscription {
             session_id: Uuid::new_v4(),
             incarnation: Uuid::nil(),
             after: 0,
+            projection: None,
         }],
     ] {
         assert!(
@@ -258,6 +262,7 @@ async fn subscription_refusal_and_invalid_admission_are_explicit() {
         session_id: Uuid::new_v4(),
         incarnation: Uuid::new_v4(),
         after: 0,
+        projection: None,
     };
     assert!(
         socket

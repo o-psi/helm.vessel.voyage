@@ -22,6 +22,8 @@ pub struct VesselEventSubscription {
     pub session_id: Uuid,
     pub incarnation: Uuid,
     pub after: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -322,6 +324,8 @@ pub enum VoyageCommand {
         after: u64,
         limit: u32,
         wait_ms: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projection: Option<String>,
     },
     Decisions,
     Respond {

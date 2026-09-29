@@ -87,6 +87,7 @@ async fn event_gateway_validates_subscription_identity_and_auth_shape() {
         session_id: Uuid::new_v4(),
         incarnation: Uuid::new_v4(),
         after: 0,
+        projection: None,
     };
     for subscriptions in [vec![], vec![subscription.clone(), subscription.clone()]] {
         let response = events(

@@ -335,6 +335,7 @@ async fn observe_local(
                     after: subscription.after,
                     limit: 128,
                     wait_ms: 10_000,
+                    projection: subscription.projection.clone(),
                 },
             },
             None,

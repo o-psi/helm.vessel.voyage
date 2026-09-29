@@ -63,6 +63,7 @@ impl<'a> Connection<'a> {
                     session_id: self.process.session_id,
                     incarnation: self.observed_incarnation.get(),
                     after,
+                    projection: None,
                 }])
                 .await?,
         ))

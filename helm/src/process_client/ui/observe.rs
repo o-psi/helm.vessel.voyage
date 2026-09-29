@@ -261,6 +261,7 @@ pub fn spawn(
                                 session_id: process.session_id,
                                 incarnation: process.incarnation,
                                 after: *after,
+                                projection: None,
                             })
                         })
                         .collect::<Vec<_>>();

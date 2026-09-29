@@ -214,6 +214,7 @@ async fn event_subscription_validation_capacity_and_missing_owner_are_bounded() 
         session_id: Uuid::new_v4(),
         incarnation: Uuid::new_v4(),
         after: 17,
+        projection: None,
     };
     for (protocol, subscriptions) in [
         (VESSEL_API_VERSION + 1, vec![subscription.clone()]),
@@ -471,6 +472,7 @@ async fn local_event_observation_forwards_cursor_and_continues_only_known_succes
             session_id: r.session_id,
             incarnation: r.incarnation,
             after: 37,
+            projection: None,
         };
         let (returned, event, keep) = observe_local(state.supervisor, subscription).await;
         peer.await.unwrap();

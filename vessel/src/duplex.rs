@@ -373,6 +373,7 @@ async fn observe(
                         after: subscription.after,
                         limit: 128,
                         wait_ms: 0,
+                        projection: subscription.projection.clone(),
                     },
                 }),
             }),

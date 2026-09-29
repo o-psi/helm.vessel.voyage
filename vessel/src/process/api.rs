@@ -371,10 +371,12 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             after,
             limit,
             wait_ms,
+            projection,
         } => RuntimeCommand::Events {
             after,
             limit,
             wait_ms,
+            projection,
         },
         VoyageCommand::Decisions => RuntimeCommand::Decisions,
         VoyageCommand::Respond {

@@ -54,6 +54,7 @@ async fn subscription_tracks_current_owner_and_marks_replay_gap_only_on_change()
                     session_id,
                     incarnation: old,
                     after: 7,
+                    projection: None,
                 },
             ),
         )
@@ -87,6 +88,7 @@ async fn missing_subscription_owner_is_terminal_error_not_empty_success() {
             session_id: id,
             incarnation: inc,
             after: 99,
+            projection: None,
         },
     )
     .await;
