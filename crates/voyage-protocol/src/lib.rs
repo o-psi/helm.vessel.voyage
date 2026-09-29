@@ -19,6 +19,9 @@ pub mod process;
 /// Public client-to-Vessel service contract.
 pub mod vessel;
 
+/// Opt-in ordered, bounded public client observations.
+pub mod live_events;
+
 /// Ordered turn content metadata. Not yet accepted by submission transports.
 pub mod content;
 
