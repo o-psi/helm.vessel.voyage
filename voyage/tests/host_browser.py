@@ -45,6 +45,34 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.visits.append(self.path)
+        if self.path == '/site-classes':
+            data = ('''<!doctype html><title>Site classes</title>
+<link rel="stylesheet" href="/site.css"><h1>Synthetic voyage browser</h1>
+<button id="dynamic" onclick="document.querySelector('#result').textContent='Changed in task browser'">Change page</button>
+<p id="result">Waiting for task action</p><div id="shadow"></div>
+<iframe title="Cross-origin fixture" src="''' + self.server.child_site + '''/frame"></iframe>
+<script>let root=document.querySelector('#shadow').attachShadow({mode:'open'});
+root.innerHTML='<style>span{color:rgb(12,34,56)}</style><span>Open shadow content</span>';
+document.cookie='fixture_asset=allowed; SameSite=Lax';</script>
+<img id="authenticated-asset" src="/authenticated.svg"></img>''').encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Set-Cookie', 'fixture_asset=allowed; SameSite=Lax; Path=/')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
+        if self.path in ('/frame', '/site.css', '/authenticated.svg'):
+            if self.path == '/frame':
+                data, kind = b'<!doctype html><h1>Cross-origin child content</h1><button onclick="this.textContent=\'Child action observed\'">Child action</button>', 'text/html'
+            elif self.path == '/site.css':
+                data, kind = b'body{background:rgb(17,51,85)} #result{color:rgb(90,80,70)} iframe{width:500px;height:160px}', 'text/css'
+            else:
+                if 'fixture_asset=allowed' not in self.headers.get('Cookie', ''):
+                    self.send_error(403); return
+                data, kind = b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="green"/></svg>', 'image/svg+xml'
+            self.send_response(200)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
         if self.path in self.server.modules or self.path == '/receiver':
             data = (self.server.modules[self.path].read_bytes() if self.path in self.server.modules else
                     b'<!doctype html><meta name=viewport content="width=device-width, initial-scale=1"><link rel=stylesheet href=/viewer.css><script src=/rrweb-vendor.mjs></script><style>html,body{margin:0;height:100%;overflow:hidden}main{box-sizing:border-box;height:100dvh!important}</style><main id=viewer></main>')
@@ -77,7 +105,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                              'action': 'navigate', 'url': self.server.site+'/'+label})}}]}
             else:
                 self.server.arrived[label] = tools[-1]
-                assert self.server.release.wait(240), 'human journey barrier timeout'
+                assert self.server.release.wait(300), 'human journey barrier timeout'
                 delta = {'content': 'Synthetic browser journey finished.'}
             events = [{'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
                       {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls' if 'tool_calls' in delta else 'stop'}]}]
@@ -100,12 +128,14 @@ def main():
     parser.add_argument('--binaries', type=Path, required=True)
     parser.add_argument('--web-resources', type=Path, required=True,
                         help='resources/js directory from the matching o-psi/webhelm checkout')
-    parser.add_argument('--ws', type=Path, default=Path('/home/psi/voyage/web/gateway/node_modules/ws'))
+    parser.add_argument('--ws', type=Path, help='Existing ws package; defaults to the matching Web checkout node_modules/ws')
     parser.add_argument('--chromium', type=Path, default=Path('/usr/bin/chromium'))
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[2]
     binaries = args.binaries.resolve()
     web_resources = args.web_resources.resolve()
+    if args.ws is None:
+        args.ws = web_resources.parents[1]/'node_modules/ws'
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
         if not (web_resources/name).is_file():
             parser.error(f'--web-resources is missing {name}')
@@ -138,6 +168,11 @@ def main():
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
         server.modules['/web/resources/js/'+name] = web_resources/name
     server.site = f'http://127.0.0.1:{server.server_port}'
+    child_server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
+    child_server.modules, child_server.visits = {}, []
+    child_server.site = f'http://127.0.0.1:{child_server.server_port}'
+    server.child_site = child_server.site
+    child_thread = threading.Thread(target=child_server.serve_forever, daemon=True); child_thread.start()
     server.requests, server.errors, server.visits, server.arrived = [], [], [], {}
     server.release = threading.Event()
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
@@ -198,7 +233,7 @@ def main():
         endpoint = f'http://127.0.0.1:{port}'
         gateway = subprocess.Popen([str(binaries/'vessel'), '--bind', f'127.0.0.1:{port}',
             '--database', str(root/'gateway.db'), '--process-directory', str(directory),
-            '--public-origin', endpoint, '--allow-insecure-loopback'], env=env, cwd=workspace, stdout=log, stderr=log)
+            '--allow-insecure-loopback', endpoint], env=env, cwd=workspace, stdout=log, stderr=log)
         time.sleep(1)
         assert gateway.poll() is None, 'gateway exited'
         connection = json.loads(cli('auth', 'accounts', 'connect', '--label', 'synthetic', '--endpoint',
@@ -214,7 +249,7 @@ def main():
                   'base_url': server.site+'/v1', 'provider_retry_attempts': 1,
                   'access': 'unrestricted', 'context_window': 0, 'account': binding,
                   'host_browser_launch': {'node': str(args.node.resolve()), 'worker': str(repo/'voyage/browser/worker.mjs'),
-                      'chromium': str(args.chromium), 'config': {'public_web': True, 'origins': [{'origin': server.site, 'private_network': True}],
+                      'chromium': str(args.chromium), 'config': {'public_web': True, 'origins': [{'origin': origin, 'private_network': True} for origin in (server.site, child_server.site)],
                        'width': 1280, 'height': 720}}}
         config_path = root/'config.json'
         config_path.write_text(json.dumps({'version': 1, 'workspace': str(workspace), 'config': config,
@@ -256,9 +291,11 @@ def main():
             'site': server.site, 'screenshots': str(screenshots), 'evidence': str(root/'viewer-evidence.json')}))
         with (root/'viewer.log').open('wb') as output:
             result = subprocess.run([str(args.node.resolve()), str(Path(__file__).with_name('host_browser_viewer.mjs')), str(viewer)],
-                env=env, cwd=workspace, stdout=output, stderr=output, timeout=200)
+                env=env, cwd=workspace, stdout=output, stderr=output, timeout=260)
         assert result.returncode == 0, f'viewer failed ({result.returncode}); see viewer-evidence.json/viewer.log'
         assert all(path in server.visits for path in ('/history-one', '/history-two', '/modal', '/private', '/native-local-owner', '/native-access-file')), server.visits
+        assert all(path in server.visits for path in ('/site-classes', '/site.css', '/authenticated.svg')), server.visits
+        assert '/frame' in child_server.visits, child_server.visits
         for launch in launchers:
             launch.send_signal(signal.SIGINT)
             assert launch.wait(timeout=15) == 0, 'native viewer cleanup failed'
@@ -348,9 +385,11 @@ def main():
         if supervisor: supervisor.wait(timeout=10)
         if gateway: gateway.wait(timeout=10)
         server.shutdown(); server.server_close(); thread.join(timeout=5); log.close()
+        child_server.shutdown(); child_server.server_close(); child_thread.join(timeout=5)
         report['cleanup'].update(remaining_owned_pids=owned(), server_thread_alive=thread.is_alive())
+        report['cleanup']['child_server_thread_alive'] = child_thread.is_alive()
         (root/'provider.json').write_text(json.dumps({'requests': server.requests, 'errors': server.errors, 'arrived': server.arrived, 'visits': server.visits}, indent=2))
-        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive():
+        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive() and not child_thread.is_alive():
             report['journey'] = 'passed'
         (root/'report.json').write_text(json.dumps(report, indent=2))
     assert report.get('journey') == 'passed' and not report['cleanup'].get('forced_pids') and not owned(), str(root)
