@@ -326,7 +326,7 @@ async fn observe_local(
     subscription: VesselEventSubscription,
 ) -> (VesselEventSubscription, VesselEvent, bool) {
     let session_id = subscription.session_id;
-    let response = supervisor
+    let mut response = supervisor
         .voyage(
             VoyageRequest {
                 session_id,
@@ -341,8 +341,38 @@ async fn observe_local(
             None,
         )
         .await;
-    let response = super::api::response(response);
     let mut subscription = subscription;
+    if subscription.projection.as_deref() == Some(voyage_protocol::live_events::PROJECTION)
+        && response
+            .as_ref()
+            .is_err_and(|error| error.downcast_ref::<routing::OutcomeUnknown>().is_some())
+    {
+        // A Voyage launched before public-v2 rejects the added projection field
+        // at its strict private decoder and closes the socket. This is a read:
+        // retry only the legacy event projection, and expose that downgrade in
+        // the returned page so clients hydrate instead of treating it as v2.
+        if let Ok(legacy) = supervisor
+            .voyage(
+                VoyageRequest {
+                    session_id,
+                    incarnation: None,
+                    command: VoyageCommand::Events {
+                        after: subscription.after,
+                        limit: 128,
+                        wait_ms: 0,
+                        projection: None,
+                    },
+                },
+                None,
+            )
+            .await
+            && legacy["result"]["projection"] == "public-v1"
+        {
+            response = Ok(legacy);
+            subscription.projection = None;
+        }
+    }
+    let response = super::api::response(response);
     let old_incarnation = subscription.incarnation;
     let (result, error, outcome_unknown, keep) = if let Some(error) = response.error {
         (

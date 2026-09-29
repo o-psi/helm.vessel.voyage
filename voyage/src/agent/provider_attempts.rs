@@ -199,9 +199,7 @@ impl Agent {
                 decision: RetryDecision::InFlight,
             };
             // Durable intent precedes the external request; failure here never dispatches.
-            if let Err(error) = self.record_provider_attempt(checkpoint, &record).await {
-                return Err(error);
-            }
+            self.record_provider_attempt(checkpoint, &record).await?;
             recovery.pending = None;
             if attempt > 1 && recovery.elapsed() >= self.retry.max_elapsed {
                 record.decision = RetryDecision::ElapsedBudget;

@@ -77,6 +77,81 @@ async fn subscription_tracks_current_owner_and_marks_replay_gap_only_on_change()
 }
 
 #[tokio::test]
+async fn old_runtime_rejecting_v2_field_downgrades_subscription_to_explicit_v1() {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacyEvents {
+        op: String,
+        after: u64,
+        limit: u32,
+        wait_ms: u32,
+    }
+
+    let f = Fixture::new();
+    let supervisor = Arc::new(f.supervisor().await);
+    let mut registration = f.registration();
+    registration.state = ProcessState::Live;
+    database::save(&f.0, &registration).await.unwrap();
+    let directory = registry::directory(&f.0, registration.session_id);
+    registry::private_directory(&directory).unwrap();
+    let listener = UnixListener::bind(directory.join("runtime.sock")).unwrap();
+    let session_id = registration.session_id;
+    let incarnation = registration.incarnation;
+    let token = registration.token.clone();
+    let server = tokio::spawn(async move {
+        let (mut first, _) = listener.accept().await.unwrap();
+        let envelope: serde_json::Value = read_frame(&mut first).await.unwrap();
+        assert_eq!(envelope["token"], token);
+        assert_eq!(envelope["command"]["projection"], "public-v2");
+        assert!(serde_json::from_value::<LegacyEvents>(envelope["command"].clone()).is_err());
+        drop(first); // The old strict decoder closes without a response.
+
+        let (mut second, _) = listener.accept().await.unwrap();
+        let request: RuntimeRequest = read_frame(&mut second).await.unwrap();
+        let command = serde_json::to_value(request.command).unwrap();
+        let legacy: LegacyEvents = serde_json::from_value(command).unwrap();
+        assert_eq!(legacy.op, "events");
+        assert_eq!((legacy.after, legacy.limit, legacy.wait_ms), (7, 128, 0));
+        write_frame(
+            &mut second,
+            &RuntimeResponse {
+                protocol: PROCESS_PROTOCOL,
+                session_id,
+                incarnation,
+                resumed_from: None,
+                result: serde_json::json!({"projection":"public-v1","replay_gap":false,"cursor":8,"latest_cursor":8,"has_more":false,"events":[{"cursor":8,"kind":"run"}]}),
+                error: None,
+                outcome_unknown: false,
+            },
+        )
+        .await
+        .unwrap();
+    });
+    let (subscription, event, keep) = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        observe_local(
+            supervisor,
+            VesselEventSubscription {
+                session_id,
+                incarnation,
+                after: 7,
+                projection: Some("public-v2".into()),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    server.await.unwrap();
+    assert!(keep);
+    assert_eq!(subscription.projection, None);
+    assert_eq!(subscription.after, 7);
+    assert_eq!(event.result["projection"], "public-v1");
+    assert_eq!(event.result["events"][0]["cursor"], 8);
+    assert_eq!(event.error, None);
+    assert!(!event.outcome_unknown);
+}
+
+#[tokio::test]
 async fn missing_subscription_owner_is_terminal_error_not_empty_success() {
     let f = Fixture::new();
     let supervisor = Arc::new(f.supervisor().await);

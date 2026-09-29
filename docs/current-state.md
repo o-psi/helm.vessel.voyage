@@ -652,6 +652,12 @@ Replay gaps lead to an authorized snapshot. History and output use revision-boun
 pages and UTF-8 byte chunks within 4 MiB frames. Exports retrieve a complete public
 history revision before atomically publishing a new local Markdown file. Provider
 continuation, unsent drafts and private terminal input are excluded.
+An opted-in `public-v2` subscription against a Voyage process launched before the
+v2 private command field may fail at that process's strict decoder. Vessel retries
+that read once as `public-v1` and returns the explicit v1 projection, retaining the
+cursor so Helm can use its compatibility hydration path. The downgrade applies
+only to event observation, never to a command with effects; a failed v1 read
+retains the original uncertain result.
 
 ## Interfaces and controls
 
