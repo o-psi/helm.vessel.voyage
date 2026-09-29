@@ -184,6 +184,22 @@ Publication to GitHub main is not publication of a downloadable release.
 
 ## The local service
 
+### Read-only system host assessment
+
+`voyage-installer system-assess --execution-user USER` reports Linux systemd,
+effective UID/capabilities and UID/GID mapping, an explicitly named execution
+account and its groups, the selected system paths and mount writability, and
+existing user/system installation markers. It prints bounded JSON with a
+`ready_to_install: false` result and specific blockers. This command makes no
+filesystem or service changes and can run without root to identify prerequisites.
+It does not prove the account can access a workspace or that namespace root has
+host authority. A system installation, unprivileged gateway, scope-aware updater
+and adoption procedure are still being implemented under
+[#344](https://github.com/o-psi/helm.vessel.voyage/issues/344); do not run the
+ordinary user installer with sudo to approximate one.
+
+### User service
+
 The installer provisions `voyage-vessel.service` as a systemd user service. Its
 unit uses an immutable release and the private Vessel state directory used by
 Helm (`$XDG_STATE_HOME/voyage/vessel`, default `~/.local/state/voyage/vessel`).

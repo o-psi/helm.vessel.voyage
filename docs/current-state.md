@@ -463,6 +463,9 @@ verified public nightly prerelease, while `--bin-dir` selects local binaries. Pr
 one verified artifact through review/apply and bounds network work and
 cancellation cleanup. Missing published releases never fall back to main. See
 [installation](../installer/README.md) for prerequisites, trust and restart limits.
+The read-only `system-assess --execution-user USER` command reports host and
+account prerequisites; it never enables a privileged service. System-scope
+installation and its separate unprivileged gateway remain unavailable.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
 including admission refused by older Vessels, so existing voyages remain reachable.

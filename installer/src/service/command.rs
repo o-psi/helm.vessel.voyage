@@ -7,7 +7,7 @@ use std::{
     sync::mpsc,
     time::{Duration, Instant},
 };
-pub(super) fn run(program: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
+pub(crate) fn run(program: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(if input.is_some() {

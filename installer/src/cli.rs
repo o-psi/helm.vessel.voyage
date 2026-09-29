@@ -139,6 +139,7 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer upgrade [--dev | --bin-dir DIRECTORY] [--replace-existing] [--start | --no-start] [--dry-run]
   voyage-installer rollback [--start | --no-start] [--dry-run]
   voyage-installer status
+  voyage-installer system-assess --execution-user USER
 
 upgrade defaults to the latest published GitHub release, downloaded and verified.
 --dev selects the latest public nightly prerelease; no source build is performed.
@@ -159,6 +160,8 @@ No provider login is performed. Missing releases never trigger a source build.
 
 Service commands: install-user-service --bin-dir ABS [--start] [--dry-run],
 service-status, service-stop, service-uninstall
+system-assess is a read-only Linux host assessment. It never installs or enables
+the privileged Vessel; an explicit system installation is not available yet.
 --help, --version");
 }
 

@@ -245,6 +245,13 @@ claim the account is unprivileged from a nonzero UID or remove its rights silent
 
 ## 4. System installer and host discovery
 
+The installer now has a **read-only** `system-assess --execution-user USER`
+diagnostic. It reports the explicit account, host identity/mappings/capabilities,
+systemd state, protected path ancestry and existing-installation markers without
+changing a service. Its `ready_to_install` value remains false while the gateway,
+scope-aware update/rollback and full adoption checks are unavailable. It is a
+preflight input, not the supported system installer or an activation gate.
+
 Introduce an explicit installation-scope abstraction consumed by every layout,
 service, status, update, rollback and uninstall operation. Proposed CLI shape:
 `install --scope system --execution-user USER`, with administrator enablement as a

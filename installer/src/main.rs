@@ -5,6 +5,8 @@ mod planning;
 mod remote;
 mod service;
 mod source;
+#[cfg(target_os = "linux")]
+mod system_preflight;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -16,6 +18,11 @@ fn run() -> Result<bool> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().is_some_and(|s| s == "remote-update") {
         remote::run(&args[1..])?;
+        return Ok(false);
+    }
+    #[cfg(target_os = "linux")]
+    if args.first().is_some_and(|s| s == "system-assess") {
+        system_preflight::run(&args[1..])?;
         return Ok(false);
     }
     match args.first().map(String::as_str) {

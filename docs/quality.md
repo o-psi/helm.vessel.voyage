@@ -488,6 +488,19 @@ executables: they do not establish real service activation or hosted downloads.
 See the [installer guide](../installer/README.md)
 for bootstrap prerequisites and the distinction from the Rust wizard.
 
+The read-only Linux system-host assessment has focused argument and protected
+path checks:
+
+```sh
+cargo test -p voyage-installer --locked system_preflight -j 8
+voyage-installer system-assess --execution-user USER
+```
+
+The second command observes the selected host but does not establish a supported
+system installation, native root authority, workspace access, service startup or
+gateway readiness. Run it as an ordinary user first; any root inspection belongs
+in the designated disposable native Linux fixture.
+
 ## Host-browser packaging (#333)
 
 The browser asset inventory extends the Linux release contract. Focused local
