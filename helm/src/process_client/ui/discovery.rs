@@ -3,6 +3,11 @@ use super::{App, inference::Destination};
 use anyhow::Result;
 
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
+    (
+        "goal",
+        "Review persistent Goal, usage and continuation",
+        "set OBJECTIVE | edit OBJECTIVE | limits RUNS TOKENS SECONDS NO_PROGRESS_TURNS | pause | resume | clear",
+    ),
     ("help", "Show focus-specific help", ""),
     ("actions", "Search all actions", ""),
     ("settings", "Effective settings, sources and gates", ""),
@@ -217,6 +222,7 @@ fn opens_directly(name: &str) -> bool {
     matches!(
         name,
         "help"
+            | "goal"
             | "actions"
             | "preferences"
             | "settings"
@@ -576,6 +582,7 @@ mod tests {
             include_str!("inference.rs"),
             include_str!("lifecycle.rs"),
             include_str!("inbox.rs"),
+            include_str!("goals.rs"),
             include_str!("browser.rs"),
             include_str!("operator.rs"),
             include_str!("controls.rs")

@@ -1,9 +1,10 @@
 # Persistent Goals (#378)
 
-This is an implementation checkpoint for the v1.0.3 Goal feature. The protocol
-and canonical runtime are under development. Automatic continuation and model
-reporting are implemented in Voyage, but the feature is not yet advertised as a
-capability and Helm controls remain unfinished. The release gate remains [#378](https://github.com/o-psi/helm.vessel.voyage/issues/378).
+This is an implementation checkpoint for the v1.0.3 Goal feature. Automatic continuation and model
+reporting are implemented in Voyage, with Helm Web and TUI controls. Vessel
+advertises `goals` and `execution_budget`; capabilities do not grant authority.
+Release qualification remains in progress.
+The release gate remains [#378](https://github.com/o-psi/helm.vessel.voyage/issues/378).
 
 Voyage owns one Goal per session UUID in its canonical journal. The public record
 contains its objective, status, finite limits, usage, timestamps and explicit
@@ -17,7 +18,10 @@ and Execute; an ordinary scoped Execute grant cannot set, resume, clear or
 increase a Goal's limits. The private Voyage boundary independently enforces
 the same distinction. Updates use existing command IDs, session revisions,
 deadlines, durable reservations and exact receipts. Configured secrets are
-rejected by the public mutation validator.
+rejected by the public mutation validator. Human Goal updates use the existing
+two-second SQLite contention budget on a blocking worker, rechecking live grant
+authority while waiting. Only pending storage statements wait; the mutation is
+dispatched once. Exhaustion or revoked authority remains a refusal.
 
 Set uses the command ID as the new Goal ID. Replacing a current Goal requires
 its exact ID. Edit preserves accumulated usage and pauses continuation; Resume
@@ -72,7 +76,7 @@ Recovery retains known counters and marks interrupted
 accounting incomplete; it never redispatches a request. Schema 16 migrates the
 existing request ledger and scrubs both ordinary Goal and delegated meter records
 when deleting a session. The `execution_budget` capability advertises this bounded
-single-command contract; Goal continuation remains unadvertised.
+single-command contract on both local and authenticated remote routes.
 
 Parent allocation records precede remote process creation or submission. Each
 allocation binds the destination Vessel, child session, command and parent run.
@@ -145,15 +149,16 @@ Counters survive incomplete cleanup. Both the original result and original usage
 remain immutable. Final parent measurement and settlement share a serialization
 lock with asynchronous allocation imports, including cancellation paths.
 
-These ledger and scripted transport checks still require separate-process restart,
-cancellation and nested delegation journeys before #378 acceptance.
+The ledger checks are supplemented by the separate-process journeys below.
+Participant-specific transport fixtures remain synthetic; they do not establish
+remote deployment or native-platform behavior.
 
 Requested output is capped to the remaining unreserved allowance; input/billing
 totals are known only after dispatch, so this is not a strict billing ceiling.
 The meter is not serializable authority. Merely configuring a remote route no longer
 marks otherwise complete usage unknown: actual durable allocations determine
-aggregate completeness. Separate-process interruption, nested delegation and both
-client journeys remain release verification obligations.
+aggregate completeness. The offline process journeys exercise interruption and nested delegation;
+production deployment, final coverage and packaged-build evidence remain separate.
 
 Empty turns and previously seen successful tool-result batches increase the
 consecutive no-progress counter. Novel batches reset it. This is a bounded
@@ -192,8 +197,9 @@ The continuation prompt contains bounded Goal state as user task data.
 
 Snapshots expose the History-authorized objective. Ordered `goal` observations
 carry only identity, revision, status, usage and a fixed stop reason; they omit
-objective text and private authority. Client reducers and controls still need
-integration. The root of a metered Goal run receives a `goal` model tool with
+objective text and private authority. Clients refresh the authenticated canonical
+snapshot after Goal metadata events; they do not reconstruct objectives or
+assessments from metadata. The root of a metered Goal run receives a `goal` model tool with
 `read` and `report` actions. Local children and independently budgeted child
 Voyages do not receive authority to report the parent's Goal. The owner mutation
 API cannot claim completion, and the model tool cannot create, resume, clear or
@@ -218,10 +224,84 @@ events omit its text. Evidence validation establishes provenance and freshness;
 it does not mechanically prove that the model's interpretation of an arbitrary
 objective is correct. Goal-tool reads/reports do not count as automatic progress.
 
-Before delivery, qualify runtime continuation and usage/evidence enforcement,
-restart/cancellation/approval handling, complete both Helm clients and offline process
-journeys, full workspace coverage and hosted build/artifact verification. The
-state-layer tests alone do not establish #378 acceptance.
+## Helm controls
+
+Both clients read the canonical Goal snapshot and pin the Goal revision, identity
+and process incarnation during review. An unrelated conversation checkpoint can
+advance; a changed Goal or owner requires fresh review. Owner-only mutations use
+the usual exact command and durable receipt path. Unknown or mismatched positive
+receipts retain their pending identity; recovery observes/resolves that identity
+without replaying the mutation. Runtime authority remains authoritative.
+
+Helm Web's Goal panel shows status, usage, limits, stopped reasons and the recorded
+model assessment. Set/replacement has an unchecked continuation option; replacing
+or clearing requires explicit confirmation. Goal form drafts remain in memory.
+The browser stores only the command identity for receipt recovery.
+
+Helm TUI shows compact Goal status above the conversation. `/goal` reviews its
+objective, limits, usage and assessment. These commands open an Enter-to-confirm
+review; Esc cancels and PageUp/PageDown scroll even on small terminals:
+
+```text
+/goal set OBJECTIVE
+/goal edit OBJECTIVE
+/goal limits RUNS TOKENS SECONDS NO_PROGRESS_TURNS
+/goal pause
+/goal resume
+/goal clear
+```
+
+Set creates/replaces a paused Goal with default limits; Resume is a separate
+explicit authorization for automatic continuation while Helm is disconnected.
+Edit/limits retain usage and pause continuation. Replacement and Clear name the
+existing Goal in the confirmation. Pause can stop future continuation during a
+run; `/stop` separately requests current-run cancellation. Other mutations wait
+for idle and observed cleanup. History-only connections can read the review but
+cannot mutate. TUI recovery retains the exact public command in its existing
+private receipt store; it never persists unsent form/composer drafts.
+
+## Offline process verification
+
+`voyage/tests/goals.py` uses synthetic named accounts, loopback scripted inference
+and actual Vessel-supervised independent Voyage processes. It covers continuation,
+current-tool-result completion and impasse, false evidence, finite run/token/time
+limits, missing usage, provider failure, approval-required work, human steering,
+Pause, cancellation, suspension and killed-owner recovery without replay. A real
+Helm PTY checks stale reviews against another authenticated client. Authenticated
+remote owner/scoped grants check secret rejection and revocation during a run.
+
+Nested journeys use both existing child voyages and model-requested creation,
+with a separate grandchild. Local and explicitly paired remote routes check
+finite allocations, identity pinning and exact aggregate usage. A parent cancelled while awaiting its children retains unknown usage;
+late authenticated reconciliation adds counts once and never restores authority.
+Normal control cleanup uses a child cancellation token so it cannot accidentally
+cancel terminal accounting. Positive, exact suspension evidence can settle a
+creation receipt even if a healthy owner retired before the first health probe.
+Browser-state initialization uses a blocking checkpoint with the same bounded
+SQLite statement wait, so a brief catalogue reader does not abort a fresh owner.
+A separate regression holds an actual SQLite reader while the runtime initializer
+waits; no browser or provider effect is dispatched by that storage operation.
+
+The optional Web journey loads the separate Web repository's built production
+bundle and pairs an isolated owner connection. Real browser socket credentials,
+commands, snapshots and receipts cross a fixture TLS proxy; only the destination
+address is redirected. Web creates a paused Goal, TUI observes and edits it, stale
+Web review is refused, reconnect reads canonical limits, and confirmed Clear is
+observed by the runtime. No provider inference is sent by these controls. This
+does not test production OAuth, external TLS or public provider behavior.
+
+From the runtime checkout, after building `helm`, `vessel` and `voyage`:
+
+```sh
+python3 voyage/tests/goals.py --bin-dir target/debug
+python3 voyage/tests/goals.py --bin-dir target/debug --only web --web-root /absolute/path/to/webhelm
+```
+
+The Web checkout needs its existing production build, Playwright and Chromium;
+these commands do not install dependencies. Private fixture records and logs stay
+outside publication. Runtime source delivery still requires final workspace
+coverage and hosted build/artifact verification. Passing state-layer tests alone
+does not establish #378 acceptance.
 
 Focused offline checks during implementation (from the repository root, with
 private test fixtures) are:

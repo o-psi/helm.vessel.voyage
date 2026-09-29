@@ -2,6 +2,16 @@
 use super::*;
 use crate::provider::goal_meter::{AllocationDispatch, RequestObservation};
 
+type GoalDispatchRow = (String, Option<String>, Option<String>, Option<String>, bool);
+type GoalClosureRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    bool,
+    String,
+);
+
 impl Journal {
     pub(crate) fn dispatch_goal_child(
         &mut self,
@@ -29,7 +39,7 @@ impl Journal {
             ),
             "Goal dispatch parent is terminal"
         );
-        let row:Option<(String,Option<String>,Option<String>,Option<String>,bool)>=tx.query_row("SELECT a.budget,a.dispatch,a.closure,a.receipt,a.dispatch_gated FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) WHERE a.request_id=?1 AND q.command_id=?2",params![budget.command_id.to_string(),command.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+        let row:Option<GoalDispatchRow>=tx.query_row("SELECT a.budget,a.dispatch,a.closure,a.receipt,a.dispatch_gated FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) WHERE a.request_id=?1 AND q.command_id=?2",params![budget.command_id.to_string(),command.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
         let (saved, prior, closure, receipt, gated) =
             row.context("unknown Goal dispatch allocation")?;
         ensure!(
@@ -68,7 +78,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let row:Option<(String,Option<String>,Option<String>,Option<String>,bool,String)>=tx.query_row("SELECT a.destination,a.dispatch,a.closure,a.receipt,a.dispatch_gated,q.observation FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE a.request_id=?1 AND r.session_id=?2 AND (r.active=0 OR ?3=1)",params![id.to_string(),guard.session_id.to_string(),negative.is_some()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+        let row:Option<GoalClosureRow>=tx.query_row("SELECT a.destination,a.dispatch,a.closure,a.receipt,a.dispatch_gated,q.observation FROM process_goal_allocations a JOIN process_goal_requests q USING(request_id) JOIN commands c ON c.id=q.command_id JOIN runs r ON r.id=c.run_id WHERE a.request_id=?1 AND r.session_id=?2 AND (r.active=0 OR ?3=1)",params![id.to_string(),guard.session_id.to_string(),negative.is_some()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
         let (target, dispatch, prior, receipt, gated, observation) =
             row.context("no terminal Goal allocation to close")?;
         ensure!(

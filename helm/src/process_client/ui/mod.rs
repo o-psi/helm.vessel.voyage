@@ -11,6 +11,7 @@ mod controls;
 mod discovery;
 mod explore;
 mod export;
+mod goals;
 mod history_review;
 mod inbox;
 mod inference;
@@ -69,6 +70,7 @@ use tokio::sync::mpsc;
 pub(super) struct App {
     workspace: workspace::Navigation,
     stop_review: Option<run_controls::StopReview>,
+    goal_review: Option<goals::Review>,
     viewport: std::cell::Cell<Option<(u16, u16)>>,
     observation_target: tokio::sync::watch::Sender<Option<Target>>,
     browsers: BTreeMap<Target, crate::process_client::host_browser::Handle>,
@@ -203,6 +205,7 @@ pub async fn run_with_notice(
     let mut app = App {
         workspace: Default::default(),
         stop_review: None,
+        goal_review: None,
         viewport: Default::default(),
         observation_target: tokio::sync::watch::channel(selected).0,
         browsers: BTreeMap::new(),

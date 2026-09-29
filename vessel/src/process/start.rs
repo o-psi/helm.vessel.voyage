@@ -172,7 +172,10 @@ impl Supervisor {
         let observed = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let info = routing::inspect(&directory, &registration).await;
-                if info.state == ProcessState::Live {
+                // A new idle owner can retire before the first health probe.
+                // Exact observed suspension proves creation too; it does not
+                // claim that the exited process is still running.
+                if matches!(info.state, ProcessState::Live | ProcessState::Suspended) {
                     return info;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;

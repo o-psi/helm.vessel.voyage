@@ -408,3 +408,31 @@ fn observation_identifiers_and_cancelled_context_are_checked_before_enqueue() {
     );
     assert!(f.broker.inner.lock().unwrap().durable.entries.is_empty());
 }
+
+#[tokio::test]
+async fn startup_browser_checkpoint_waits_for_catalogue_reader_without_blocking_reactor() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("journal");
+    let mut journal = Journal::open(directory.clone()).unwrap();
+    let session = crate::session::Session::new(root.path().into(), "fixture".into());
+    journal.create_session(&session).unwrap();
+    let reader = rusqlite::Connection::open(directory.join("journal.sqlite3")).unwrap();
+    reader
+        .execute_batch("BEGIN; SELECT version FROM attachment_schema;")
+        .unwrap();
+    let session_id = session.id;
+    let task = tokio::spawn(Journal::blocking_checkpoint(move || {
+        BrowserBroker::open(directory, session_id, Uuid::new_v4())
+    }));
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+    assert!(!task.is_finished(), "storage must wait for the reader");
+    reader.execute_batch("ROLLBACK").unwrap();
+    let broker = tokio::time::timeout(std::time::Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(broker.session, session.id);
+    assert!(broker.inner.lock().unwrap().durable.entries.is_empty());
+    assert!(journal.browser_load(session.id).unwrap().is_some());
+}

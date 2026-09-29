@@ -981,3 +981,6 @@ mod cleanup;
 
 #[cfg(test)]
 mod process_coverage_tests;
+
+#[cfg(test)]
+mod goal_control_tests;

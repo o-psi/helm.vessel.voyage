@@ -11,6 +11,11 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    GoalOwner {
+        target: Target,
+        id: uuid::Uuid,
+        owner: bool,
+    },
     Inspection(Box<super::inspection_bridge::Loaded>),
     InboxAttention {
         route: Route,

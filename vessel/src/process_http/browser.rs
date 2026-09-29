@@ -229,7 +229,7 @@ impl Backend for BrowserBackend {
         })
     }
 }
-// Deliberately mirror web/gateway/protocol.js, not the full native command surface.
+// Deliberately mirror o-psi/webhelm gateway/protocol.js, not the full native command surface.
 fn allowed(command: &VesselCommand) -> bool {
     match command {
         VesselCommand::Capabilities
@@ -261,7 +261,9 @@ fn allowed(command: &VesselCommand) -> bool {
         } => true,
         VesselCommand::Voyage(request) => match &request.command {
             VoyageCommand::HostBrowser { operation } => operation.valid(),
-            VoyageCommand::Snapshot
+            VoyageCommand::GoalRead
+            | VoyageCommand::GoalUpdate { .. }
+            | VoyageCommand::Snapshot
             | VoyageCommand::Decisions
             | VoyageCommand::Receipt { .. }
             | VoyageCommand::UploadImage { .. }

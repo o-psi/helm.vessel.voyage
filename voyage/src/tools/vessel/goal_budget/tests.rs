@@ -110,7 +110,7 @@ async fn peer(supports_budget: bool, history: bool, accounting: Arc<Accounting>)
                         serde_json::from_value(wire["budget"].clone()).unwrap();
                     assert_eq!(
                         accounting.allocated.lock().unwrap().as_slice(),
-                        &[budget.clone()],
+                        std::slice::from_ref(&budget),
                         "intent must precede child submission"
                     );
                     assert_eq!(

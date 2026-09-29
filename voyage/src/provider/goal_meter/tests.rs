@@ -206,8 +206,10 @@ async fn token_and_time_limits_refuse_before_dispatch() {
 
 #[test]
 fn configuration_cannot_serialize_or_forge_continuation_budget() {
-    let mut config = Config::default();
-    config.goal_meter = Some(meter());
+    let mut config = Config {
+        goal_meter: Some(meter()),
+        ..Config::default()
+    };
     let serialized = serde_json::to_value(&config).unwrap();
     assert!(serialized.get("goal_meter").is_none());
     let mut forged = serialized;

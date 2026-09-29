@@ -1098,3 +1098,41 @@ async fn host_browser_requires_registered_live_socket_and_public_envelopes_are_r
     assert!(!allowed(&private));
     assert!(backend.exchange(private).await.error.is_some());
 }
+
+#[test]
+fn browser_goal_controls_reach_the_runtime_authority_boundary() {
+    use voyage_protocol::goals::{GoalAction, GoalLimits};
+    let session = Uuid::new_v4();
+    let goal = Uuid::new_v4();
+    let command = |command| {
+        VesselCommand::Voyage(VoyageRequest {
+            session_id: session,
+            incarnation: None,
+            command,
+        })
+    };
+    assert!(allowed(&command(VoyageCommand::GoalRead)));
+    for action in [
+        GoalAction::Set {
+            objective: "Verify output".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: false,
+        },
+        GoalAction::Edit {
+            goal_id: goal,
+            objective: "Revised output".into(),
+            limits: GoalLimits::default(),
+        },
+        GoalAction::Pause { goal_id: goal },
+        GoalAction::Resume { goal_id: goal },
+        GoalAction::Clear { goal_id: goal },
+    ] {
+        assert!(allowed(&command(VoyageCommand::GoalUpdate {
+            command_id: Uuid::new_v4(),
+            expected_revision: 1,
+            expires_at_ms: 1000,
+            action,
+        })));
+    }
+}

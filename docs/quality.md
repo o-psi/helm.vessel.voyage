@@ -402,6 +402,34 @@ and `npm run build` (in `o-psi/webhelm`) check the client. The browser journeys 
 certify arbitrary public websites, native macOS/Windows behavior or resource
 budgets on a deployed host.
 
+## Persistent Goal controls (#378)
+
+`cargo test -p helm --locked --lib process_client::ui::goals -j 4` exercises
+the TUI command review, explicit Resume, owner/Goal/incarnation fences, idle and
+cleanup checks, unknown/mismatched receipts, plain-text rendering and scrollable
+small-terminal review. Runtime Goal tests are described in [goals.md](goals.md).
+These focused checks are part of the final workspace coverage obligation.
+
+In the separate Web repository, `tests/react-goals.test.ts` and
+`tests/react-goal-panel.test.ts` cover canonical review, owner-only mutations,
+finite limits, replacement consent, stale drafts, safe text, keyboard focus and
+ID-only receipt recovery. `node tests/browser-layout-browser.mjs` exercises the
+built production bundle at desktop/mobile sizes with synthetic transport. Its
+Goal checks verify explicit continuation consent, exact single submission,
+canonical state and focus restoration; it neither contacts a provider nor proves
+a separate Voyage process survived restart. Cross-client/process and restart
+journeys remain separate required evidence before #378 closes.
+
+With the three debug binaries built, run
+`python3 voyage/tests/goals.py --bin-dir target/debug` for real separate-process
+continuation, limits, approval, input/cancel/restart, authenticated scope/revocation
+and three-level delegated usage. The `--only` option selects a focused journey
+when investigating a failure. Use `--only web --web-root /absolute/path/to/webhelm`
+to exercise the built Web bundle and TUI against one real canonical Voyage over
+paired browser sockets through fixture TLS. These local, synthetic-provider checks
+are separate from Rust coverage and production OAuth/TLS verification. See
+[Goals](goals.md#offline-process-verification) for evidence boundaries.
+
 ## Execution profiles
 
 `cargo test -p helm -p vessel --locked profiles -j 8` covers profile storage,

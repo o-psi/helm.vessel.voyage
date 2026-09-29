@@ -161,8 +161,10 @@ mod tests {
     #[test]
     fn limits_and_objectives_are_finite_and_bounded() {
         assert!(GoalLimits::default().valid());
-        let mut limits = GoalLimits::default();
-        limits.tokens = 0;
+        let limits = GoalLimits {
+            tokens: 0,
+            ..GoalLimits::default()
+        };
         assert!(!limits.valid());
         assert!(!valid_objective("\n\t"));
         assert!(!valid_objective("task\u{1b}[31m"));

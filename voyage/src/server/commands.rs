@@ -77,13 +77,14 @@ pub(super) async fn dispatch_admitted(
             let _admission = state.admission.lock().await;
             let receipt = state
                 .owner
-                .update_goal(
+                .update_goal_authorized(
                     crate::attachment::journal::GoalAuthority {
                         installation_id: authorization.actor.installation_id,
                         principal_id: authorization.actor.principal_id,
                         grant: authorization.grant,
                     },
                     command,
+                    authorization.authority.clone(),
                 )
                 .await?;
             state.goal_wake.notify_one();

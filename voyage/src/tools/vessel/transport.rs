@@ -68,14 +68,41 @@ pub(super) struct Transport {
     endpoint: reqwest::Url,
     token: String,
     grant: Option<Uuid>,
+    vessel_id: Option<Uuid>,
     journal: Option<PathBuf>,
 }
 impl Transport {
     pub(super) fn open(local: &Path, access: Option<&Path>) -> Result<Self, ToolError> {
-        let (address, token, grant) = if let Some(path) = access {
-            let c: AccessCredential = serde_json::from_slice(&private_read(path, 16384)?)
+        let (address, token, grant, vessel_id) = if let Some(path) = access {
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum Credential {
+                Workspace(voyage_protocol::process::WorkspaceCredential),
+                Session(AccessCredential),
+            }
+            let credential: Credential = serde_json::from_slice(&private_read(path, 16384)?)
                 .map_err(|_| failed("invalid Vessel grant credential"))?;
-            (c.endpoint, c.token, Some(c.grant_id))
+            let (address, token, grant, vessel_id) = match credential {
+                Credential::Workspace(c) => {
+                    if c.schema_version != 1
+                        || c.kind != "workspace"
+                        || c.vessel_id.is_nil()
+                        || c.principal_id.is_nil()
+                    {
+                        return Err(failed("invalid Vessel connection identity"));
+                    }
+                    (c.endpoint, c.token, c.grant_id, Some(c.vessel_id))
+                }
+                Credential::Session(c) => (c.endpoint, c.token, c.grant_id, None),
+            };
+            if grant.is_nil()
+                || token.is_empty()
+                || token.len() > 4096
+                || !token.bytes().all(|byte| byte.is_ascii_graphic())
+            {
+                return Err(failed("invalid Vessel grant credential"));
+            }
+            (address, token, Some(grant), vessel_id)
         } else {
             private_directory(local)?;
             let c: LocalAccessCredential =
@@ -84,7 +111,7 @@ impl Transport {
             if c.token.len() != 64 || !c.token.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(failed("invalid local Vessel credential"));
             }
-            (c.endpoint, c.token, None)
+            (c.endpoint, c.token, None, None)
         };
         let mut endpoint =
             reqwest::Url::parse(&address).map_err(|_| failed("invalid Vessel endpoint"))?;
@@ -117,6 +144,7 @@ impl Transport {
             endpoint,
             token,
             grant,
+            vessel_id,
             journal: None,
         })
     }
@@ -124,8 +152,13 @@ impl Transport {
         base.with_additional([self.token.clone()])
     }
     pub(super) fn page_identity(&self) -> Vec<u8> {
-        serde_json::to_vec(&(self.endpoint.as_str(), self.grant, &self.token))
-            .expect("route identity")
+        serde_json::to_vec(&(
+            self.endpoint.as_str(),
+            self.grant,
+            self.vessel_id,
+            &self.token,
+        ))
+        .expect("route identity")
     }
     pub(super) fn redact_complete(&self, value: Value) -> Value {
         fn scrub(value: Value, token: &str) -> Value {
@@ -188,6 +221,9 @@ impl Transport {
             .body(encoded);
         if let Some(grant) = self.grant {
             builder = builder.header("x-voyage-grant", grant.to_string());
+        }
+        if let Some(vessel) = self.vessel_id {
+            builder = builder.header("x-voyage-vessel", vessel.to_string());
         }
         let mut response = builder.send().await.map_err(|_| {
             failed("Vessel connection failed; outcome unknown, never replay mutations")

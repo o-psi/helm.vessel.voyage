@@ -22,6 +22,9 @@ impl App {
         if self.stop_input(&event) {
             return Ok(());
         }
+        if self.goal_input(&event) {
+            return Ok(());
+        }
         // Private connection input (especially paste) precedes every composer path.
         if self.vessel_input(&event)? {
             return Ok(());

@@ -214,7 +214,10 @@ pub async fn execute_admitted_with_controls(
                 run_id,
                 resources.agent.clone(),
                 resources.subagents.clone(),
-                cancel.clone(),
+                // Closing runtime controls cancels their in-flight operations,
+                // not the parent run's terminal child-accounting wait. Explicit
+                // run cancellation still propagates down to every control.
+                cancel.child_token(),
             )
             .await;
     }

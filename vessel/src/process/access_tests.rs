@@ -133,6 +133,14 @@ async fn session_scope_enforces_command_rights_and_target_before_owner_contact()
         .unwrap();
     assert_eq!(caps["scope"], "session");
     assert_eq!(caps["grant_revision"], g.revision);
+    for feature in ["execution_budget", "goals"] {
+        assert!(
+            caps["features"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(feature))
+        );
+    }
     assert!(
         !caps["features"]
             .as_array()
@@ -293,6 +301,14 @@ async fn workspace_catalogue_filters_unapproved_sessions_and_rechecks_revocation
         .await
         .unwrap();
     assert_eq!(caps["scope"], "workspaces");
+    for feature in ["execution_budget", "goals", "start_settings"] {
+        assert!(
+            caps["features"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(feature))
+        );
+    }
     let catalogue = s
         .connected(g.grant_id, TOKEN, VesselCommand::Catalogue)
         .await

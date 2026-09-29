@@ -315,12 +315,12 @@ pub(super) async fn submit(
         } else {
             execution.await
         };
-        if let Some(meter) = &config.goal_meter {
-            if result.as_ref().is_ok_and(|result| {
+        if let Some(meter) = &config.goal_meter
+            && result.as_ref().is_ok_and(|result| {
                 result.actual.state == crate::attachment::journal::RunState::Completed
-            }) {
-                meter.wait_allocations(cancel.clone()).await;
-            }
+            })
+        {
+            meter.wait_allocations(cancel.clone()).await;
         }
         {
             // The active steering handle retains a run callback. Release it and the

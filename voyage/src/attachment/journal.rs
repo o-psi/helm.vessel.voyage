@@ -227,6 +227,18 @@ fn check_transaction_schema(tx: &Transaction<'_>, expected: i64) -> Result<()> {
 }
 
 impl Journal {
+    /// Pure storage setup on a blocking worker. The closure runs once; only
+    /// pending SQLite statements may wait within one two-second total budget.
+    pub(crate) async fn blocking_checkpoint<T: Send + 'static>(
+        operation: impl FnOnce() -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        tokio::task::spawn_blocking(move || {
+            let _wait = checkpoint_wait::Wait::new(None, None);
+            operation()
+        })
+        .await?
+    }
+
     /// Dedicated local store under a trusted private parent. Network filesystems
     /// and hostile same-OS-user processes are outside the OS-lock trust boundary.
     pub fn open(directory: PathBuf) -> Result<Self> {
@@ -253,7 +265,9 @@ impl Journal {
                 "outbound worker journals are retired and cannot be opened"
             );
         }
-        connection.busy_timeout(Duration::ZERO)?; // fail boundedly, never stall an async reactor
+        // No thread-local wait budget means immediate refusal. Only explicit
+        // blocking checkpoint workers enable bounded statement contention waits.
+        connection.busy_handler(Some(checkpoint_wait::wait_for_lock))?;
         #[cfg(windows)]
         storage::configure(&connection)?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;

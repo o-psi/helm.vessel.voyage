@@ -32,7 +32,7 @@ pub struct VesselSettings {
     pub enabled: bool,
     /// Used outside a supervised voyage. No service is started implicitly.
     pub local_directory: Option<PathBuf>,
-    /// Operator-configured aliases to private AccessCredential files.
+    /// Operator-configured aliases to private session or paired workspace credentials.
     pub remotes: BTreeMap<String, PathBuf>,
 }
 impl Default for VesselSettings {

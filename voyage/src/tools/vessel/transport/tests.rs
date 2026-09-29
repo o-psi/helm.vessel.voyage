@@ -95,3 +95,62 @@ async fn remote_diagnostics_are_classified_not_disclosed_or_replayed() {
         task.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn paired_routes_pin_identity_and_reject_malformed_credentials() {
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("paired.json");
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let vessel = Uuid::new_v4();
+    let grant = Uuid::new_v4();
+    let credential = json!({"schema_version":1,"kind":"workspace",
+        "endpoint":format!("http://{}", listener.local_addr().unwrap()),
+        "vessel_id":vessel,"principal_id":Uuid::new_v4(),"grant_id":grant,"token":"fixture-token"});
+    std::fs::write(&path, credential.to_string()).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let transport = Transport::open(root.path(), Some(&path)).unwrap();
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buffer = [0; 4096];
+        let count = socket.read(&mut buffer).await.unwrap();
+        let request = std::str::from_utf8(&buffer[..count]).unwrap();
+        assert!(request.contains(&format!("x-voyage-vessel: {vessel}")));
+        assert!(request.contains(&format!("x-voyage-grant: {grant}")));
+        let body = json!({"protocol":1,"result":{"vessel_id":vessel},"error":null,"outcome_unknown":false}).to_string();
+        socket
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    });
+    assert_eq!(
+        transport
+            .exchange(VesselCommand::Capabilities)
+            .await
+            .unwrap()["vessel_id"],
+        json!(vessel)
+    );
+    task.await.unwrap();
+    for (key, bad) in [
+        ("schema_version", json!(2)),
+        ("kind", json!("session")),
+        ("vessel_id", json!(Uuid::nil())),
+        ("principal_id", json!(Uuid::nil())),
+        ("grant_id", json!(Uuid::nil())),
+        ("token", json!("bad\nheader")),
+    ] {
+        let mut changed = credential.clone();
+        changed[key] = bad;
+        std::fs::write(&path, changed.to_string()).unwrap();
+        assert!(Transport::open(root.path(), Some(&path)).is_err(), "{key}");
+    }
+}

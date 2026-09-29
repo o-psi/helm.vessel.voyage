@@ -20,6 +20,7 @@ impl App {
         if let Some((target, draft)) = original
             && super::inference::parse(draft.trim()).is_none()
             && !super::inbox::is_command(draft.trim())
+            && !super::goals::is_command(draft.trim())
             && !matches!(draft.trim(), "/stop" | "/cancel" | "/compact" | "/branch")
             && !draft.trim().starts_with("/compact ")
             && !draft.trim().starts_with("/branch ")
@@ -38,6 +39,14 @@ impl App {
     fn send_command(&mut self) -> Result<()> {
         let target = self.selected.context("create or select a voyage first")?;
         self.ensure_paste_finished(super::paste::Destination::Live(target))?;
+        if let Some(text) = self
+            .views
+            .get(&target)
+            .map(|view| view.draft.text.trim().to_owned())
+            .filter(|text| super::goals::is_command(text))
+        {
+            return self.review_goal(target, &text, false);
+        }
         if let Some(text) = self
             .views
             .get(&target)
@@ -113,6 +122,9 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if super::goals::is_command(command_text) {
+            return self.review_goal(target, command_text, preserve_draft);
+        }
         if matches!(command_text, "/stop" | "/cancel") {
             return self.review_stop(target);
         }

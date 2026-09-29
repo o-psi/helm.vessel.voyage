@@ -16,18 +16,39 @@ impl ManagedSessionOwner {
         .await?
     }
 
+    #[cfg(test)]
     pub(crate) async fn update_goal(
         &self,
         authority: super::super::journal::GoalAuthority,
         command: RuntimeCommand,
+    ) -> anyhow::Result<Value> {
+        self.update_goal_authorized(authority, command, None).await
+    }
+
+    pub(crate) async fn update_goal_authorized(
+        &self,
+        authority: super::super::journal::GoalAuthority,
+        command: RuntimeCommand,
+        live_authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     ) -> anyhow::Result<Value> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            // Brief catalogue readers must not reject human Goal controls. Only
+            // this blocking worker waits for SQLite; dispatch executes once and
+            // the existing busy handler stops on revocation or after two seconds.
+            if let Some(check) = &live_authority {
+                check.check()?;
+            }
+            let _wait = super::super::journal::checkpoint_wait::Wait::new(None, live_authority);
             let Store { journal, guard, .. } = &mut *store;
-            journal.update_goal(guard, authority, &command, SystemClock.now_ms()?)
+            let now = SystemClock.now_ms()?;
+            journal.begin_checkpoint_wait()?;
+            let result = journal.update_goal(guard, authority, &command, now);
+            let reset = journal.end_checkpoint_wait();
+            result.and_then(|value| reset.map(|_| value))
         })
         .await?
     }

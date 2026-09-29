@@ -131,6 +131,14 @@ async fn authenticated_http_boundary_rejects_ambiguous_browser_and_invalid_crede
     let response: VesselResponse = response.json().await.unwrap();
     assert!(response.error.is_none());
     assert_eq!(response.result["protocol"], VESSEL_API_VERSION);
+    for feature in ["execution_budget", "goals"] {
+        assert!(
+            response.result["features"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(feature))
+        );
+    }
     assert!(
         response.result["features"]
             .as_array()

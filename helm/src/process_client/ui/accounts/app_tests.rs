@@ -16,6 +16,7 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     App {
         workspace: Default::default(),
         stop_review: None,
+        goal_review: None,
         viewport: Default::default(),
         observation_target: tokio::sync::watch::channel(None).0,
         browsers: BTreeMap::new(),

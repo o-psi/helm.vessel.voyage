@@ -225,8 +225,10 @@ fn bounds_reject_without_changing_canonical_state() {
         );
         assert!(j.update_goal(&guard, a.clone(), &c, 1000).is_err());
     }
-    let mut limits = GoalLimits::default();
-    limits.runs = 0;
+    let limits = GoalLimits {
+        runs: 0,
+        ..GoalLimits::default()
+    };
     let c = command(
         &j,
         session.id,
@@ -975,6 +977,20 @@ fn pause_wins_over_automatic_settlement_and_usage_still_accumulates() {
     assert_eq!(g.stop_reason, Some(GoalStopReason::UserPaused));
     assert_eq!(g.usage.input_tokens, 20);
     assert!(!g.continuation_authorized);
+}
+
+#[test]
+fn metering_cancellation_with_missing_usage_reports_the_accounting_obstruction() {
+    let (_root, mut j, session, guard, a) = fixture();
+    let c = command(&j, session.id, set(None, true));
+    j.update_goal(&guard, a, &c, 1000).unwrap();
+    let run = finish_reserved(&mut j, &guard, 1100, None, RunState::Cancelled);
+    j.settle_goal_run(&guard, run.id, None, true, 1200).unwrap();
+    let goal = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(goal.status, GoalStatus::NeedsAttention);
+    assert_eq!(goal.stop_reason, Some(GoalStopReason::UsageUnknown));
+    assert_eq!(goal.usage.unmeasured_runs, 1);
+    assert!(!goal.continuation_authorized);
 }
 
 #[test]

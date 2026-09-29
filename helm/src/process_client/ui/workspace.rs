@@ -143,6 +143,7 @@ impl App {
             && !self.vessels_open()
             && self.workspace_picker.is_none()
             && self.stop_review.is_none()
+            && self.goal_review.is_none()
             && !self.help
             && self.explore.is_none()
             && !self.workflows_open()

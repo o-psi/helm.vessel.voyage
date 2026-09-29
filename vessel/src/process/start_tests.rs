@@ -653,3 +653,68 @@ async fn admitted_uninitialized_registration_resolution_requires_canonical_works
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn creation_receipt_survives_owner_suspension_before_first_health_probe() {
+    let f = Fixture::new();
+    let mut s = f.supervisor().await;
+    s.binary = executable(&f);
+    let suspended = CHILD.replace(
+        "sock = socket.socket(socket.AF_UNIX)",
+        r#"os.umask(0o077)
+with open(os.path.join(root, 'stopped.json'), 'w') as f:
+    json.dump(dict(session_id=reg['session_id'], incarnation=reg['incarnation'],
+                   cleanup_observed=True, suspended=True), f)
+with open(os.path.join(root, 'fixture-stopped'), 'w') as f:
+    f.write('done')
+sys.exit(0)
+sock = socket.socket(socket.AF_UNIX)"#,
+    );
+    std::fs::write(&s.binary, suspended).unwrap();
+    let session = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    let init = initialization(&f);
+    let request = original(&f, command, session);
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        s.start_initialized(
+            command,
+            session,
+            f.0.clone(),
+            None,
+            Some(init.clone()),
+            request.clone(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(response["state"], "suspended");
+    let receipt = database::creation_receipt(&f.0, command)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.state, ProcessState::Suspended);
+    assert_eq!(
+        s.start_initialized(command, session, f.0.clone(), None, Some(init), request)
+            .await
+            .unwrap(),
+        response
+    );
+    let resolved = s
+        .resolve_start(command, session, f.0.clone(), None)
+        .await
+        .unwrap();
+    assert_eq!(resolved["status"], "created");
+    assert_eq!(resolved["process"], response);
+    let directory = registry::directory(&f.0, session);
+    assert!(directory.join("fixture-stopped").is_file());
+    assert!(!directory.join("fixture-requests.jsonl").exists());
+    assert_eq!(
+        database::registration(&f.0, session)
+            .await
+            .unwrap()
+            .incarnation,
+        receipt.incarnation
+    );
+}

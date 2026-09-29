@@ -217,6 +217,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         manager.borrow_mut().render(frame, frame.area());
     }
     app.draw_stop(frame, frame.area());
+    app.draw_goal(frame, frame.area());
     app.draw_workspace_menu(frame);
     if app.help {
         frame.render_widget(ratatui::widgets::Clear, frame.area());
@@ -335,9 +336,13 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
     };
     let preview_rows = app.preview_rows(main.width.saturating_sub(2), main.height);
     let footer = footer(app, main.width, reviewing, overlay, &status);
+    let goal = view
+        .and_then(|v| v.snapshot.as_ref())
+        .and_then(|s| s.goal.as_ref())
+        .and_then(|s| s.goal.as_ref());
     let rows = Layout::vertical([
         // rows[0]: title and bottom divider.
-        Constraint::Length(2),
+        Constraint::Length(if goal.is_some() { 3 } else { 2 }),
         Constraint::Min(4),
         Constraint::Length(if reviewing {
             0
@@ -365,7 +370,31 @@ Ctrl+C detaches; voyages continue."), area.width)), area);
         Line::styled(title, Style::default().add_modifier(Modifier::BOLD))
     };
     frame.render_widget(
-        Paragraph::new(heading).block(
+        Paragraph::new(Text::from(if let Some(goal) = goal {
+            vec![
+                heading,
+                Line::styled(
+                    format!(
+                        "Goal · {} · {} / {} runs · {}{} tokens · /goal",
+                        super::goals::label(goal.status),
+                        goal.usage.runs,
+                        goal.limits.runs,
+                        if goal.usage.unmeasured_runs > 0 {
+                            "at least "
+                        } else {
+                            ""
+                        },
+                        goal.usage
+                            .input_tokens
+                            .saturating_add(goal.usage.output_tokens)
+                    ),
+                    muted(),
+                ),
+            ]
+        } else {
+            vec![heading]
+        }))
+        .block(
             Block::default()
                 .borders(Borders::BOTTOM)
                 .border_style(muted()),

@@ -248,11 +248,17 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
                 .access_mode(),
         )));
         crate::build::set_resource_root(directory.join("resources"))?;
-        let browser = crate::browser::BrowserBroker::open(
-            directory.join("journal"),
-            registration.session_id,
-            registration.incarnation,
-        )?;
+        let browser_directory = directory.join("journal");
+        let browser_session = registration.session_id;
+        let browser_incarnation = registration.incarnation;
+        let browser = Journal::blocking_checkpoint(move || {
+            crate::browser::BrowserBroker::open(
+                browser_directory,
+                browser_session,
+                browser_incarnation,
+            )
+        })
+        .await?;
         let host_browser_launch = if config.sandbox.mode == crate::sandbox::Mode::Required {
             None // Never silently bypass a host-required OS execution sandbox.
         } else {

@@ -140,6 +140,11 @@ impl Journal {
                 Some((GoalStatus::Limited, GoalStopReason::TokenLimit))
             } else if goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
                 Some((GoalStatus::Limited, GoalStopReason::TimeLimit))
+            } else if !measured {
+                // Missing provider usage can cancel the metered execution itself.
+                // Expose the unresolved accounting rather than suggesting a human
+                // cancelled a fully measured run that can safely resume.
+                Some((GoalStatus::NeedsAttention, GoalStopReason::UsageUnknown))
             } else {
                 Some((GoalStatus::NeedsAttention, GoalStopReason::Cancelled))
             }

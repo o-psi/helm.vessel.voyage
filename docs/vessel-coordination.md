@@ -24,6 +24,12 @@ Configured routes are not implicit machine enrollment and do not extend a remote
 grant. Provider credentials stay on the execution host. Tool output never includes
 Vessel bearer credentials or a private terminal channel.
 
+Host-configured remote files may contain the existing scoped session credential
+or schema-1 `workspace` paired credential. Paired routes preserve the pinned
+Vessel identity on every request; malformed identities or credential versions
+are refused. Configuration does not pair automatically or broaden grant rights.
+The model receives an alias, never the credential file or its contents.
+
 ## Tool interface
 
 `target` selects a configured alias and defaults to `local`. Every action rejects

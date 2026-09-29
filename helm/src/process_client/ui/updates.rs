@@ -18,6 +18,7 @@ impl App {
         let route = match &update {
             Update::Inspection(_) => unreachable!(),
             Update::Browser { target, .. }
+            | Update::GoalOwner { target, .. }
             | Update::Live { target, .. }
             | Update::History { target, .. }
             | Update::Completion { target, .. }
@@ -57,6 +58,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::GoalOwner { target, id, owner } => self.goal_owner(target, id, owner),
             Update::Inspection(_) => unreachable!(),
             Update::InboxAttention { route: _, count } => {
                 // Passive footer only: no modal, voyage switch, composer edit or decision.
@@ -500,6 +502,14 @@ impl App {
                         } else {
                             value["status"].as_str()
                         };
+                        if pending
+                            .original
+                            .as_deref()
+                            .is_some_and(|command| !super::goals::receipt_valid(command, &value))
+                        {
+                            self.status = "Goal change not confirmed; the exact receipt remains pending. Helm checks without resending.".into();
+                            return;
+                        }
                         if inference
                             && !matches!(
                                 inference_status,
@@ -520,7 +530,7 @@ impl App {
                         let rejected = (inference && inference_status == Some("failed"))
                             || matches!(
                                 value["status"].as_str(),
-                                Some("rejected" | "not_admitted")
+                                Some("rejected" | "not_admitted" | "not_applied")
                             )
                             || (value["status"] == "transferred"
                                 && matches!(

@@ -41,7 +41,7 @@ impl Drop for Wait {
     }
 }
 
-fn wait_for_lock(_: i32) -> bool {
+pub(super) fn wait_for_lock(_: i32) -> bool {
     BUDGET.with_borrow(|budget| {
         let Some(budget) = budget else { return false };
         if budget

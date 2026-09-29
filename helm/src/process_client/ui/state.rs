@@ -142,6 +142,8 @@ pub struct Cleanup {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
     #[serde(default)]
+    pub goal: Option<voyage_protocol::goals::GoalSnapshot>,
+    #[serde(default)]
     pub catalogue_only: bool,
     #[serde(default)]
     pub recovery_pending: bool,
