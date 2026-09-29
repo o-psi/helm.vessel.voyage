@@ -1112,6 +1112,10 @@ fn browser_goal_controls_reach_the_runtime_authority_boundary() {
         })
     };
     assert!(allowed(&command(VoyageCommand::GoalRead)));
+    assert!(allowed(&command(VoyageCommand::WorkspaceChanges {
+        scope: voyage_protocol::process::WorkspaceChangeScope::Status,
+        path: None,
+    })));
     for action in [
         GoalAction::Set {
             objective: "Verify output".into(),

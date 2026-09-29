@@ -11,6 +11,7 @@ impl RuntimeCommand {
         matches!(
             self,
             Self::Snapshot
+                | Self::WorkspaceChanges { .. }
                 | Self::History { .. }
                 | Self::MessageChunk { .. }
                 | Self::RunOutput { .. }

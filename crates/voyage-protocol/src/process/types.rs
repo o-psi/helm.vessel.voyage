@@ -8,10 +8,24 @@ use uuid::Uuid;
 pub const PROCESS_PROTOCOL: u32 = 1;
 pub const MAX_PROCESS_FRAME: usize = 8 * 1024 * 1024;
 
+/// Fixed, read-only views of the executing workspace. No arbitrary program or
+/// argument is carried by this operation.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceChangeScope {
+    Status,
+    Unstaged,
+    Staged,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
     GoalRead,
+    WorkspaceChanges {
+        scope: WorkspaceChangeScope,
+        path: Option<String>,
+    },
     /// Import authenticated retained child usage, without replay or continuation.
     GoalReconcile {
         offset: u64,
@@ -349,6 +363,7 @@ impl RuntimeCommand {
                 | Self::Stop
                 | Self::Snapshot
                 | Self::GoalRead
+                | Self::WorkspaceChanges { .. }
                 | Self::ProviderAttempts { .. }
                 | Self::History { .. }
                 | Self::MessageChunk { .. }

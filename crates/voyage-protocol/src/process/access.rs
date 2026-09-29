@@ -15,6 +15,8 @@ pub enum ProcessRight {
     Create,
     Observe,
     History,
+    /// Read bounded changes in this session's executing workspace.
+    WorkspaceRead,
     Execute,
     Steer,
     Decide,
@@ -103,6 +105,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             fence_children: true,
             ..
         } => None,
+        RuntimeCommand::WorkspaceChanges { .. } => Some(ProcessRight::WorkspaceRead),
         RuntimeCommand::GoalReconcile { .. }
         | RuntimeCommand::GoalRead
         | RuntimeCommand::Snapshot
@@ -202,6 +205,7 @@ impl ProcessRight {
             Self::Create,
             Self::Observe,
             Self::History,
+            Self::WorkspaceRead,
             Self::Execute,
             Self::Steer,
             Self::Decide,

@@ -118,6 +118,10 @@ pub struct VoyageReply {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
     GoalRead,
+    WorkspaceChanges {
+        scope: crate::process::WorkspaceChangeScope,
+        path: Option<String>,
+    },
     /// Import authenticated retained child usage, without replay or continuation.
     GoalReconcile {
         offset: u64,

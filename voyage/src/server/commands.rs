@@ -35,6 +35,24 @@ pub(super) async fn dispatch_admitted(
 
     match command {
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
+        RuntimeCommand::WorkspaceChanges { scope, path } => {
+            let config = state.config.read().await.clone();
+            let policy = crate::runtime_policy::RuntimePolicy::resolve(
+                &config,
+                &state.registration.workspace,
+            )?;
+            let result = super::workspace_changes::read(
+                &state.registration.workspace,
+                policy.policy(),
+                scope,
+                path.as_deref(),
+            )
+            .await?;
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            Ok(result)
+        }
         RuntimeCommand::GoalReconcile {
             offset,
             limit,
@@ -268,6 +286,7 @@ pub(super) async fn dispatch_admitted(
             let capabilities = vec![
                 "notification_events",
                 "snapshot",
+                "workspace_changes",
                 "read_artifact",
                 "history",
                 "provider_attempts",

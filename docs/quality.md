@@ -176,6 +176,21 @@ automated offline Linux checks, not live-provider or native macOS/Windows eviden
 
 ## Conversation and account-limit checks
 
+The bounded Changes observation has a real-process offline check after building
+`vessel` and `voyage` from the changed source:
+
+```sh
+python3 voyage/tests/workspace_changes.py --bin-dir target/debug
+```
+
+It reads unstaged/staged Git changes from a suspended executing Voyage, rejects
+parent traversal and verifies the same incarnation, conversation revision and
+provider-request count. Rust unit tests separately cover the byte limit and
+public/private permission mapping. The Web production-bundle layout fixture
+checks the panel's file navigation on desktop/mobile and confirms that opening it
+does not dispatch `operator_tool`. This is local synthetic evidence, not an
+authenticated production-console or external Git repository claim.
+
 The offline [conversation and file-editing check](test-conversation-files.md)
 verifies a normal task through Vessel-supervised voyage processes: read and patch
 a file, save the reply, then continue with retained context and read the edited

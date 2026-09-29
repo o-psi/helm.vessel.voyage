@@ -31,6 +31,7 @@ mod transfer;
 #[cfg(unix)]
 mod transport;
 mod workflows;
+mod workspace_changes;
 
 #[derive(clap::Args)]
 pub struct ServeArgs {

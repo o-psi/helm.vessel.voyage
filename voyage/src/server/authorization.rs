@@ -45,18 +45,18 @@ impl crate::policy::ExecutionAuthority for GrantAuthority {
 }
 
 #[derive(Debug)]
-struct BrowserAuthority {
+struct ScopedRightAuthority {
     path: PathBuf,
     binding: GrantBinding,
     session: Uuid,
     right: ProcessRight,
 }
-impl crate::policy::ExecutionAuthority for BrowserAuthority {
+impl crate::policy::ExecutionAuthority for ScopedRightAuthority {
     fn check(&self) -> Result<()> {
         let grant = read_current(&self.path, &self.binding, self.session)?;
         ensure!(
             grant.rights.contains(&self.right),
-            "browser grant withdrawn"
+            "scoped operation grant withdrawn"
         );
         Ok(())
     }
@@ -165,8 +165,9 @@ pub(super) fn authorize_parts(
             if matches!(
                 &request.command,
                 voyage_protocol::process::RuntimeCommand::HostBrowser { .. }
+                    | voyage_protocol::process::RuntimeCommand::WorkspaceChanges { .. }
             ) {
-                Arc::new(BrowserAuthority {
+                Arc::new(ScopedRightAuthority {
                     path: path.clone(),
                     binding: binding.clone(),
                     session: registration.session_id,

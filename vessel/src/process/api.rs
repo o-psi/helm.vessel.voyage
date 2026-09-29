@@ -10,6 +10,9 @@ use voyage_protocol::{
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
         VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
+        VoyageCommand::WorkspaceChanges { scope, path } => {
+            RuntimeCommand::WorkspaceChanges { scope, path }
+        }
         VoyageCommand::GoalReconcile {
             offset,
             limit,
@@ -673,6 +676,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::RunOutput { .. }
         | VoyageCommand::ReadArtifact { .. }
         | VoyageCommand::Receipt { .. } => Some(ProcessRight::History),
+        VoyageCommand::WorkspaceChanges { .. } => Some(ProcessRight::WorkspaceRead),
         VoyageCommand::Decisions => Some(ProcessRight::Decide),
         VoyageCommand::UploadImage { .. }
         | VoyageCommand::SubmitContent { .. }

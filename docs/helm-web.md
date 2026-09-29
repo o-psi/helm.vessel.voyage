@@ -24,7 +24,8 @@ the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository’s `
   checks and CSRF. Successful changes and errors return to `/?manage-vessels=1`.
 - `/console/ticket`: temporary tenant-authorized Vessel credential bootstrap.
 
-React retains each open voyage's in-memory draft, renders canonical history and
+React saves each account- and voyage-scoped message draft with prepared pictures
+in browser IndexedDB, and renders canonical history and
 live observations, and shows Starting, Working and Waiting for you in the
 conversation pane. Earlier history loads automatically near the top of the scrollable
 transcript (and for short transcripts), maintaining the reader’s scroll position.
@@ -45,8 +46,19 @@ per-message limit remains four pictures and 4 MiB after conversion; errors appea
 by the picker. During an active run, Send queues an image-bearing follow-up locally
 until the run finishes; the draft is frozen and a Cancel queued send control is
 shown. Keep the page open: this is not a durable server queue. Failed or uncertain
-submissions are never automatically retried. Reloading loses unsent text/pictures,
-not server-side conversations.
+submissions are never automatically retried. Reload restores saved unsent
+text/pictures for review, with an explicit warning when a send may already have
+happened. Storage errors keep the current text on screen for copying; drafts do
+not synchronize between browsers. The executing Voyage retains server-side
+conversation and receipt ownership.
+
+When the Vessel advertises `workspace_changes` and the connection has the
+`workspace_read` right, Changes reads bounded Git status and selected staged or
+unstaged diffs directly from the executing Voyage's workspace. The read uses the
+Voyage's local read policy and execution identity, including when the owner is
+suspended. The panel stops observation when hidden or disconnected, displays
+truncation and errors, and never interprets an unavailable read as a clean tree.
+Existing explicit Inspect still admits one operator run and remains separate.
 
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default

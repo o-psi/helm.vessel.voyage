@@ -262,6 +262,15 @@ fn goal_command_mapping_preserves_exact_owner_mutation_and_read_rights() {
         required_right(&VoyageCommand::GoalRead),
         Some(ProcessRight::History)
     );
+    let changes = VoyageCommand::WorkspaceChanges {
+        scope: voyage_protocol::process::WorkspaceChangeScope::Status,
+        path: None,
+    };
+    assert_eq!(required_right(&changes), Some(ProcessRight::WorkspaceRead));
+    assert_eq!(
+        serde_json::to_value(runtime(changes.clone()).unwrap()).unwrap(),
+        serde_json::to_value(changes).unwrap()
+    );
 }
 
 #[test]
