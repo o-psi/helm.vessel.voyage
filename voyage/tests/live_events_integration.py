@@ -1,4 +1,4 @@
-"""Offline public-v2 process replay/privacy acceptance against supervised binaries.
+"""Offline public-v2 replay, restart and delayed-page checks against supervised binaries.
 
 Run only after #367/#368 are integrated and the affected debug binaries rebuilt:
     python3 voyage/tests/live_events_integration.py --bin-dir target/debug
@@ -115,6 +115,60 @@ def run(fixture):
         "kinds": sorted({event["kind"] for event in v2}), "count": len(v2),
         "revision": finished["revision"], "v1_count": len(v1),
         "other_session_count": len(collect(fixture, second)[0])})
+
+    # Replay survives supervisor restart without waking the suspended owner or
+    # replaying inference. Retain the exact journal prefix before the restart.
+    fixture.suspended(first)
+    fixture.suspended(second)
+    before_owner = fixture.request({"op": "inspect", "session_id": first})
+    retained, retained_cursor = collect(fixture, first)
+    requests_before = len(fixture.provider.bodies)
+    fixture.supervisor.terminate()
+    assert fixture.supervisor.wait(timeout=10) == 0
+    fixture.start()
+    restarted_owner = fixture.request({"op": "inspect", "session_id": first})
+    assert restarted_owner["state"] == "suspended", restarted_owner
+    assert restarted_owner["incarnation"] == before_owner["incarnation"]
+    assert collect(fixture, first) == (retained, retained_cursor)
+    assert len(fixture.provider.bodies) == requests_before
+    fixture.record("public-v2-replay-after-supervisor-restart", {
+        "cursor": retained_cursor, "count": len(retained), "inference_replayed": False})
+
+    # A genuinely fresh Voyage incarnation appends to the same journal. Delayed
+    # one-event pages and repeated older pages must not lose or duplicate content.
+    follow_up = fixture.submit(first, "public live event explicit follow-up " + marker)
+    fixture.command(first, follow_up)
+    next_finished = fixture.finished(first)
+    assert next_finished["run"]["state"] == "completed", next_finished["run"]
+    assert len(fixture.provider.bodies) == requests_before + 1
+    new_owner = fixture.request({"op": "inspect", "session_id": first})
+    assert new_owner["incarnation"] != before_owner["incarnation"]
+    all_events, next_cursor = collect(fixture, first)
+    assert all_events[:len(retained)] == retained
+    assert next_cursor > retained_cursor
+    slow_events, slow_cursor = [], retained_cursor
+    for _ in range(256):
+        response = page(fixture, first, slow_cursor, limit=1)
+        assert response["replay_gap"] is False
+        assert len(response["events"]) <= 1
+        if not response["events"]:
+            assert response["has_more"] is False
+            break
+        assert page(fixture, first, slow_cursor, limit=1)["events"] == response["events"]
+        slow_events.extend(response["events"])
+        assert response["cursor"] > slow_cursor
+        slow_cursor = response["cursor"]
+        time.sleep(0.02)
+        if not response["has_more"]:
+            break
+    else:
+        raise AssertionError("delayed one-event paging did not terminate")
+    assert slow_events == all_events[len(retained):]
+    assert slow_cursor == next_cursor
+    assert len(fixture.provider.bodies) == requests_before + 1
+    fixture.record("public-v2-fresh-owner-delayed-page-replay", {
+        "previous_cursor": retained_cursor, "cursor": slow_cursor,
+        "additional_events": len(slow_events), "fresh_incarnation": True})
 
 
 def main():

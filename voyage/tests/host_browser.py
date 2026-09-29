@@ -155,13 +155,15 @@ def main():
         assert p.returncode == 0, p.stderr
         return p.stdout
 
-    def request(command):
+    def request(command, allow_error=False):
         cred = json.loads((directory/'process-http.json').read_text())
         req = urllib.request.Request(cred['endpoint']+'/v1/vessel/command',
             data=json.dumps({'protocol': 1, 'command': command}).encode(),
             headers={'Authorization': 'Bearer '+cred['token'], 'Content-Type': 'application/json'})
         with urllib.request.urlopen(req, timeout=35) as response:
             result = json.load(response)
+        if allow_error:
+            return result
         assert result.get('error') is None, result
         return result['result']
 
@@ -262,7 +264,14 @@ def main():
             assert launch.wait(timeout=15) == 0, 'native viewer cleanup failed'
         server.release.set()
         for item in report['sessions']:
-            snap = wait(lambda: (s if (s := voyage(item['session'], op='snapshot')).get('run', {}).get('state') == 'completed' and s.get('pending_cleanup_run') is None else None))
+            def completed():
+                reply = request({'session_id': item['session'], 'op': 'snapshot'}, allow_error=True)
+                if reply.get('error') == 'suspended observation unavailable' and not reply.get('outcome_unknown'):
+                    return None
+                assert reply.get('error') is None, reply
+                saved = reply['result']['result']
+                return saved if saved.get('run', {}).get('state') == 'completed' and saved.get('pending_cleanup_run') is None else None
+            snap = wait(completed)
             assert snap.get('pending_cleanup_run') is None, snap
             assert '/private' not in json.dumps(snap['messages']), 'private human URL leaked into conversation'
             assert 'SYNTHETIC_PRIVATE_INPUT_333' not in json.dumps(snap['messages']), 'private input leaked into conversation'

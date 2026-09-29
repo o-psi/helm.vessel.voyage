@@ -56,7 +56,8 @@ class Fixture:
         self.directory = self.root / "vessel"
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
-        self.env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+        self.env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+                    "RECOVERY_FIXTURE_KEY": "synthetic-fixture-key"}
         for key in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
             path = self.root / key.lower()
             path.mkdir(mode=0o700)
@@ -116,14 +117,31 @@ class Fixture:
     def session(self, approval=False):
         session = str(uuid.uuid4())
         self.sessions.append(session)
-        config = self.root / (session + ".toml")
-        config.write_text('provider = "chatgpt-oauth"\nmodel = "fixture-model"\n'
-            f'chatgpt_base_url = "http://127.0.0.1:{self.provider.server_port}"\n'
-            'provider_retry_attempts = 1\ncontext_window = 0\ncommand_timeout_secs = 2\n'
-            f'access = "{"approval" if approval else "read-only"}"\n')
+        endpoint = f"http://127.0.0.1:{self.provider.server_port}/v1"
+        def account_cli(*arguments):
+            result = subprocess.run([str(self.binaries / "vessel"), "auth", "accounts", *arguments],
+                env=self.env, cwd=self.workspace, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+        connection = account_cli("connect", "--label", session, "--endpoint", endpoint,
+            "--transports", "openai-responses")
+        account = account_cli("add", "--connection", connection["id"], "--account", session,
+            "--env", "RECOVERY_FIXTURE_KEY")
+        binding = {"account_id": account["id"], "connection_id": connection["id"],
+            "identity_generation": account["identity_generation"],
+            "connection_revision": connection["revision"], "transport": "openai_responses"}
+        access = "approval" if approval else "read-only"
+        config = self.root / (session + ".json")
+        config.write_text(json.dumps({"version": 1, "workspace": str(self.workspace),
+            "config": {"provider": "openai-responses", "model": "fixture-model",
+                "account": binding, "base_url": endpoint, "api_key_required": False,
+                "provider_retry_attempts": 1, "context_window": 0,
+                "command_timeout_secs": 2, "access": access},
+            "explicit": {"access": access}, "selection": None, "confirmation": None}))
         config.chmod(0o600)
-        self.request({"op": "start_configured", "session_id": session, "command_id": str(uuid.uuid4()),
-            "workspace": str(self.workspace), "config_path": str(config)})
+        self.request({"op": "start_settings", "session_id": session, "command_id": str(uuid.uuid4()),
+            "workspace": str(self.workspace), "config_path": str(config),
+            "binding": binding, "settings": {}})
         return session
 
     def submit(self, session, prompt):
@@ -133,7 +151,13 @@ class Fixture:
 
     def finished(self, session):
         def observe():
-            snapshot = self.command(session, {"op": "snapshot"})
+            reply = self.command(session, {"op": "snapshot"}, allow_error=True)
+            # Suspension hands observation to a bounded helper. Its transient
+            # unavailable read is pending evidence, not a reason to replay work.
+            if reply.get("error") == "suspended observation unavailable" and not reply.get("outcome_unknown"):
+                return None
+            assert reply.get("error") is None, reply
+            snapshot = reply["result"]
             run = snapshot.get("run")
             return snapshot if run and run["state"] in ("completed", "failed", "cancelled") and snapshot["pending_cleanup_run"] is None else None
         return wait_for(observe)
@@ -368,15 +392,23 @@ def main():
                     command.update(decision_id=decision["decision_id"], response="denied")
                 fixture.command(session, command)
             snapshot = fixture.finished(session)
-            serialized = json.dumps(snapshot)
-            if mode == "expired":
-                assert "approval expired without a response" in serialized, serialized
-                assert "user declined approval" not in serialized
-            elif mode == "denied":
-                assert "user declined approval" in serialized, serialized
+            outcomes = [message for message in snapshot["messages"]
+                        if message["role"] == "tool" and message.get("tool_call_id") == "fixture-write"]
+            assert not snapshot["decisions"], snapshot["decisions"]
+            if mode == "cancelled":
+                # Cancellation can end the run before a tool result is appended;
+                # the canonical terminal run is the evidence in that case.
+                assert snapshot["run"]["state"] == "cancelled", snapshot["run"]
+                assert snapshot["run"]["run_id"] == decision["run_id"]
+                assert all(message["tool_success"] is False
+                    and message["tool_outcome"]["execution"] == "cancelled"
+                    for message in outcomes), outcomes
             else:
-                assert snapshot["run"]["state"] == "cancelled", snapshot
-                assert "user declined approval" not in serialized
+                assert len(outcomes) == 1, outcomes
+                outcome = outcomes[0]
+                assert outcome["tool_success"] is False, outcome
+                expected = "approval_expired" if mode == "expired" else "approval_denied"
+                assert outcome["tool_outcome"]["execution"] == expected, outcome
             assert not (fixture.workspace / "approval-output.txt").exists()
             fixture.record("approval-" + mode, snapshot)
     finally:

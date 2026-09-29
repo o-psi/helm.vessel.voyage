@@ -13,6 +13,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import tomllib
 import time
 import urllib.request
 import uuid
@@ -87,7 +88,8 @@ def main():
     directory = root / "vessel"
     workspace = root / "workspace"
     workspace.mkdir()
-    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+    env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+           "RECONNECT_FIXTURE_KEY": "synthetic-fixture-key"}
     for key in ("HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"):
         path = root / key.lower()
         path.mkdir(mode=0o700)
@@ -194,8 +196,28 @@ def main():
             str(directory), "--voyage-binary", str(binaries / "voyage")], env=env,
             cwd=workspace, stdin=subprocess.DEVNULL, stdout=log_file("vessel.log"), stderr=subprocess.STDOUT)
         wait_for(lambda: (directory / "process-http.json").exists(), "Vessel discovery")
-        request({"op": "start_configured", "session_id": session, "command_id": str(uuid.uuid4()),
-                 "workspace": str(workspace), "config_path": str(config)})
+        # Bind an explicit fixture account; the removed implicit default is not
+        # a valid way to qualify detach/reconnect on the current runtime.
+        def account_cli(*arguments):
+            result = subprocess.run([str(binaries / "vessel"), "auth", "accounts", *arguments],
+                env=env, cwd=workspace, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+        connection = account_cli("connect", "--label", "reconnect-fixture", "--endpoint",
+            f"http://127.0.0.1:{server.server_port}/v1", "--transports", "openai-chat")
+        account = account_cli("add", "--connection", connection["id"], "--account", "fixture",
+            "--env", "RECONNECT_FIXTURE_KEY")
+        binding = {"account_id": account["id"], "connection_id": connection["id"],
+            "identity_generation": account["identity_generation"],
+            "connection_revision": connection["revision"], "transport": "openai_chat"}
+        settings = tomllib.loads(config.read_text())
+        settings["account"] = binding
+        config.write_text(json.dumps({"version": 1, "workspace": str(workspace),
+            "config": settings, "explicit": {"access": "unrestricted"},
+            "selection": None, "confirmation": None}))
+        request({"op": "start_settings", "session_id": session, "command_id": str(uuid.uuid4()),
+                 "workspace": str(workspace), "config_path": str(config),
+                 "binding": binding, "settings": {}})
         first = helm("first", "run", session, server.prompts[0])
         wait_for(lambda: saw_output(first, "first", server.prefix), "real Helm receives partial output")
         assert server.waiting.is_set() and not server.release.is_set()

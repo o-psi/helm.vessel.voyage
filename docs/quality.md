@@ -166,6 +166,23 @@ cargo test -p voyage --locked --lib provider::failure_tests
 These focused checks do not restore the removed general test suite. No live success
 is implied by the offline failure regression.
 
+## Ordered event replay and reconnect
+
+`python3 voyage/tests/live_events_integration.py --bin-dir target/debug` uses an
+explicit synthetic named account and real supervised processes. It checks bounded
+public-v2 pagination, duplicate reads, session isolation, public-v1 compatibility,
+unsupported-projection refusal, retained replay after Vessel restart, and append-only
+history across a fresh Voyage incarnation. Delayed one-event pages verify replay
+continuity; they do not simulate browser-socket backpressure or full client rendering.
+
+The reconnect and delivery-recovery journeys above/below also configure explicit
+synthetic accounts. They do not rely on the removed implicit provider-account
+selection. The recovery check asserts canonical tool outcomes for approval expiry,
+denial and cancellation, plus absent filesystem effects. All three journeys retain
+private evidence and must observe fixture cleanup before reporting overall success.
+Simultaneous TUI/Web event display, transport congestion and production TLS remain
+separate acceptance evidence under #372.
+
 ## Everyday workflow checks
 
 These focused offline Linux checks exercise normal product behavior using real
