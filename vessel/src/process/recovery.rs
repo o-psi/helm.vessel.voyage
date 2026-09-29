@@ -124,10 +124,12 @@ impl Supervisor {
         incarnation: Uuid,
     ) -> Result<serde_json::Value> {
         ensure!(!command_id.is_nil(), "command ID must be nonnil");
-        ensure!(
-            self.registration(session_id).await?.peer_uids.is_none(),
-            "bound restart requires protected process cleanup evidence"
-        );
+        #[cfg(target_os = "linux")]
+        if self.registration(session_id).await?.peer_uids.is_some() {
+            return self
+                .restart_bound(command_id, session_id, incarnation)
+                .await;
+        }
         let directory = registry::directory(&self.directory, session_id);
         let startup = startup_gate(&directory).await?;
         let mut registrations = self.registrations.lock().await?;

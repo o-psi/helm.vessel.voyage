@@ -504,6 +504,135 @@ pub async fn command(
     })
     .await
 }
+fn validate_binding_tx(tx: &Transaction<'_>, binding: &ExecutionBinding) -> Result<()> {
+    let latest: u64 = tx.query_row(
+        "SELECT max(revision) FROM execution_identities WHERE identity_id=?1",
+        [binding.identity.id.to_string()],
+        |row| row.get(0),
+    )?;
+    ensure!(
+        latest == binding.identity.revision.get(),
+        "execution identity revision changed"
+    );
+    let identity: String = tx.query_row(
+        "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+        params![
+            binding.identity.id.to_string(),
+            binding.identity.revision.get()
+        ],
+        |row| row.get(0),
+    )?;
+    let identity: ConfiguredExecutionIdentity = serde_json::from_str(&identity)?;
+    ensure!(
+        identity.enabled
+            && identity.identity == binding.identity
+            && identity.account_context == binding.account_context
+            && identity.uid == binding.peer_uids.runtime
+            && binding.peer_uids.supervisor == unsafe { libc::geteuid() }
+            && binding.administrator_grant_id.is_some()
+                == (identity.authority == AuthorityClass::Administrator)
+            && [&binding.host_identity_digest, &binding.policy_digest]
+                .into_iter()
+                .all(|value| {
+                    value.len() == 64
+                        && value
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }),
+        "execution binding fails protected identity or authority checks"
+    );
+    if let Some(grant_id) = binding.administrator_grant_id {
+        let (saved, revoked): (String, Option<u64>) = tx.query_row(
+                    "SELECT g.record,r.revoked_at_ms FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.grant_id=?1",
+                    [grant_id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+        let mut grant: AdministratorGrant = serde_json::from_str(&saved)?;
+        grant.revoked_at_ms = revoked;
+        ensure!(
+            grant.check_current(&grant).is_ok()
+                && grant.grant_id == grant_id
+                && grant.session_id == binding.session_id
+                && grant.identity == binding.identity
+                && grant.account_context == binding.account_context
+                && grant.host_identity_digest == binding.host_identity_digest
+                && grant.policy_digest == binding.policy_digest,
+            "administrator grant does not authorize this execution binding"
+        );
+    }
+    Ok(())
+}
+
+/// The exact receipt, new incarnation and binding become visible together.
+/// Callers must prove previous local cleanup before requesting this transition.
+#[cfg(target_os = "linux")]
+pub async fn restart_bound(
+    root: &Path,
+    previous: &ProcessRegistration,
+    next: &ProcessRegistration,
+    bytes: Vec<u8>,
+) -> Result<()> {
+    let previous = previous.clone();
+    let next = next.clone();
+    blocking(root, move |db| {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: String = tx.query_row(
+            "SELECT registration FROM voyages WHERE session_id=?1",
+            [previous.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            current == serde_json::to_string(&previous)?,
+            "restart admission changed"
+        );
+        ensure!(
+            next.session_id == previous.session_id
+                && next.incarnation != previous.incarnation
+                && next.restart_from == Some(previous.incarnation)
+                && next.peer_uids == previous.peer_uids
+                && next.state == voyage_protocol::process::ProcessState::Starting,
+            "invalid bound restart transition"
+        );
+        ensure!(
+            !record_tx(&tx, "commands", next.command_id, &bytes, true)?,
+            "restart already reserved"
+        );
+        let record: String = tx.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [previous.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let mut binding: ExecutionBinding = serde_json::from_str(&record)?;
+        ensure!(
+            binding.incarnation == previous.incarnation
+                && previous.peer_uids.as_ref() == Some(&binding.peer_uids),
+            "restart binding changed"
+        );
+        validate_binding_tx(&tx, &binding)?;
+        binding.incarnation = next.incarnation;
+        // This removal is transaction-local. Foreign keys require the new
+        // incarnation to exist before its binding can be inserted.
+        tx.execute(
+            "DELETE FROM execution_bindings WHERE session_id=?1",
+            [previous.session_id.to_string()],
+        )?;
+        save_tx(&tx, &next, Some(&binding))?;
+        tx.execute(
+            "INSERT INTO execution_bindings VALUES(?1,?2,?3,?4,?5)",
+            params![
+                binding.session_id.to_string(),
+                binding.incarnation.to_string(),
+                binding.identity.id.to_string(),
+                binding.identity.revision.get(),
+                serde_json::to_string(&binding)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await
+}
+
 pub async fn admit(root: &Path, registration: &ProcessRegistration, bytes: Vec<u8>) -> Result<()> {
     admit_with_binding(root, registration, bytes, None).await
 }
@@ -546,52 +675,7 @@ pub async fn admit_with_binding(
         ensure!(!exists, "voyage already reserved");
         save_tx(&tx, &r, binding.as_ref())?;
         if let Some(binding) = binding {
-            let identity: String = tx.query_row(
-                "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
-                params![
-                    binding.identity.id.to_string(),
-                    binding.identity.revision.get()
-                ],
-                |row| row.get(0),
-            )?;
-            let identity: ConfiguredExecutionIdentity = serde_json::from_str(&identity)?;
-            ensure!(
-                identity.enabled
-                    && identity.identity == binding.identity
-                    && identity.account_context == binding.account_context
-                    && identity.uid == binding.peer_uids.runtime
-                    && binding.peer_uids.supervisor == unsafe { libc::geteuid() }
-                    && binding.administrator_grant_id.is_some()
-                        == (identity.authority == AuthorityClass::Administrator)
-                    && [&binding.host_identity_digest, &binding.policy_digest]
-                        .into_iter()
-                        .all(|value| {
-                            value.len() == 64
-                                && value.bytes().all(|byte| {
-                                    byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)
-                                })
-                        }),
-                "execution binding fails protected identity or authority checks"
-            );
-            if let Some(grant_id) = binding.administrator_grant_id {
-                let (saved, revoked): (String, Option<u64>) = tx.query_row(
-                    "SELECT g.record,r.revoked_at_ms FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.grant_id=?1",
-                    [grant_id.to_string()],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
-                let mut grant: AdministratorGrant = serde_json::from_str(&saved)?;
-                grant.revoked_at_ms = revoked;
-                ensure!(
-                    grant.check_current(&grant).is_ok()
-                        && grant.grant_id == grant_id
-                        && grant.session_id == binding.session_id
-                        && grant.identity == binding.identity
-                        && grant.account_context == binding.account_context
-                        && grant.host_identity_digest == binding.host_identity_digest
-                        && grant.policy_digest == binding.policy_digest,
-                    "administrator grant does not authorize this execution binding"
-                );
-            }
+            validate_binding_tx(&tx, &binding)?;
             let record = serde_json::to_string(&binding)?;
             ensure!(record.len() <= 16384, "execution binding exceeds limit");
             tx.execute(

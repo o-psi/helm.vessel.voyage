@@ -57,6 +57,11 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
     registry::private_directory(&sessions)?;
     let registrations = super::database::initialize(&directory).await?;
     for registration in registrations.values() {
+        if registration.peer_uids.is_some() {
+            // The independent bound runtime owns its projection. Reopening the
+            // supervisor must not write through child-controlled paths.
+            continue;
+        }
         registry::publish(
             &registry::directory(&directory, registration.session_id),
             registration,
@@ -662,11 +667,7 @@ impl Supervisor {
             VesselCommand::Inspect { session_id } => {
                 let registration = self.registration(session_id).await?;
                 Ok(serde_json::to_value(
-                    routing::inspect(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                    )
-                    .await,
+                    self.inspect_registration(&registration).await,
                 )?)
             }
             VesselCommand::Voyage(request) => self.voyage(request, None).await,
@@ -679,6 +680,21 @@ impl Supervisor {
 
     pub(super) async fn registration(&self, session_id: Uuid) -> Result<ProcessRegistration> {
         super::database::registration(&self.directory, session_id).await
+    }
+
+    pub(super) async fn inspect_registration(
+        &self,
+        registration: &ProcessRegistration,
+    ) -> ProcessInfo {
+        #[cfg(target_os = "linux")]
+        if registration.peer_uids.is_some() {
+            return super::bound_lifecycle::inspect(&self.directory, registration).await;
+        }
+        routing::inspect(
+            &registry::directory(&self.directory, registration.session_id),
+            registration,
+        )
+        .await
     }
 }
 

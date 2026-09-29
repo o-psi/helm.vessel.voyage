@@ -55,6 +55,10 @@ impl Supervisor {
         initialize: Option<RuntimeInitialization>,
         command: VesselCommand,
     ) -> Result<Value> {
+        ensure!(
+            !super::runtime_storage::has_bound_layout(&self.directory),
+            "system voyage creation requires an explicit execution identity"
+        );
         let endpoint = registry::directory(&self.directory, session_id).join("runtime.sock");
         ensure!(
             endpoint.as_os_str().as_encoded_bytes().len() < 108,

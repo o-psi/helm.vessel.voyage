@@ -30,21 +30,26 @@ impl Supervisor {
         observer
     }
 
-    async fn observe_current(
+    pub(super) async fn observe_current(
         &self,
         directory: &Path,
         registration: &ProcessRegistration,
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
-        observe(
+        let response = observe(
             Some(&self.directory),
             directory,
             &self.current_observer_registration(registration),
             command,
             authorization,
         )
-        .await
+        .await?;
+        #[cfg(target_os = "linux")]
+        if registration.peer_uids.is_some() {
+            super::database::bound_observer_identity(&self.directory, registration).await?;
+        }
+        Ok(response)
     }
 
     pub(super) async fn forward_current(
@@ -90,6 +95,10 @@ impl Supervisor {
             registration.incarnation == incarnation,
             "stale runtime incarnation"
         );
+        #[cfg(target_os = "linux")]
+        if registration.peer_uids.is_some() {
+            return self.bound_stop(&registration, authorization).await;
+        }
         ensure!(
             registration.state != ProcessState::Relinquished,
             "source ownership has been permanently relinquished"
@@ -151,7 +160,7 @@ impl Supervisor {
         )
         .await
     }
-    async fn lifecycle_lock(&self, session: Uuid) -> Result<Arc<Mutex<()>>> {
+    pub(super) async fn lifecycle_lock(&self, session: Uuid) -> Result<Arc<Mutex<()>>> {
         self.registration(session).await?;
         Ok(self
             .lifecycle_locks
@@ -180,6 +189,20 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        #[cfg(target_os = "linux")]
+        {
+            let registration = self.registration(session).await?;
+            if registration.peer_uids.is_some() {
+                ensure!(
+                    expected_incarnation
+                        .is_none_or(|expected| expected == registration.incarnation),
+                    "stale runtime incarnation"
+                );
+                return self
+                    .dispatch_bound(registration, command, authorization)
+                    .await;
+            }
+        }
         // Browser effects and transport cleanup must not queue behind a long
         // lifecycle operation. Private IPC authenticates the exact registration;
         // a replacement owner cannot accept its token/incarnation. Never recover

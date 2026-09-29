@@ -250,6 +250,14 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             .await?;
         // Recovery commits interrupted evidence; it never claims descendants stopped.
         owner.recover_interrupted().await?;
+        if let Some(previous) = admitted.as_ref().and_then(|r| r.restart_from) {
+            // Only the authenticated root pipe carries this local cleanup proof.
+            // Remote effects and unresolved receipts are retained, never replayed.
+            crate::host_resources::recover_process_scope(args.session, previous)?;
+            owner.recover_process_cleanup().await?;
+            owner.retain_interrupted_cleanup().await?;
+            owner.recover_tool_outcomes().await?;
+        }
         owner.recover_goal_turn().await?;
         let mut config = match owner.saved_configuration().await? {
             Some(settings) => {

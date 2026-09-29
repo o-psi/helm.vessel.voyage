@@ -195,6 +195,116 @@ async fn identity_binding_is_atomic_with_admission_and_requires_exact_identity()
     unbound.peer_uids = registration.peer_uids.clone();
     assert!(save(&fixture.0, &unbound).await.is_err());
     assert!(admit(&fixture.0, &unbound, bytes(&unbound)).await.is_err());
+    #[cfg(target_os = "linux")]
+    {
+        next.command_id = Uuid::new_v4();
+        next.token = "new-exact-runtime-token".into();
+        let command = VesselCommand::Restart {
+            command_id: next.command_id,
+            session_id: registration.session_id,
+            incarnation: registration.incarnation,
+        };
+        let request = serde_json::to_vec(&command).unwrap();
+        let mut wrong = registration.clone();
+        wrong.name = Some("concurrent metadata".into());
+        assert!(
+            restart_bound(&fixture.0, &wrong, &next, request.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            !super::command(
+                &fixture.0,
+                "commands",
+                next.command_id,
+                request.clone(),
+                false
+            )
+            .await
+            .unwrap()
+        );
+        restart_bound(&fixture.0, &registration, &next, request.clone())
+            .await
+            .unwrap();
+        assert!(
+            super::command(
+                &fixture.0,
+                "commands",
+                next.command_id,
+                request.clone(),
+                false
+            )
+            .await
+            .unwrap()
+        );
+        assert!(
+            super::command(
+                &fixture.0,
+                "commands",
+                next.command_id,
+                b"conflicting request".to_vec(),
+                false
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            super::registration(&fixture.0, registration.session_id)
+                .await
+                .unwrap()
+                .incarnation,
+            next.incarnation
+        );
+        assert_eq!(
+            execution_binding(&fixture.0, registration.session_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .incarnation,
+            next.incarnation
+        );
+        assert!(
+            restart_bound(&fixture.0, &registration, &next, request)
+                .await
+                .is_err()
+        );
+        assert!(save(&fixture.0, &registration).await.is_err());
+        assert_eq!(
+            bound_observer_identity(&fixture.0, &next).await.unwrap(),
+            identity
+        );
+        let mut obsolete = identity.clone();
+        obsolete.identity.revision = NonZeroU64::new(2).unwrap();
+        store_identity(&fixture.0, &obsolete).await.unwrap();
+        let mut denied = next.clone();
+        denied.command_id = Uuid::new_v4();
+        denied.restart_from = Some(next.incarnation);
+        denied.incarnation = Uuid::new_v4();
+        let bytes = serde_json::to_vec(&VesselCommand::Restart {
+            command_id: denied.command_id,
+            session_id: next.session_id,
+            incarnation: next.incarnation,
+        })
+        .unwrap();
+        assert!(
+            restart_bound(&fixture.0, &next, &denied, bytes.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            !super::command(&fixture.0, "commands", denied.command_id, bytes, false)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            execution_binding(&fixture.0, registration.session_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .incarnation,
+            next.incarnation
+        );
+    }
     let mut superseded = identity;
     superseded.identity.revision = NonZeroU64::new(2).unwrap();
     store_identity(&fixture.0, &superseded).await.unwrap();

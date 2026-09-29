@@ -42,6 +42,145 @@ struct Completion {
     handoff_completed: bool,
     child_exit_code: Option<i32>,
     child_exited_successfully: bool,
+    #[serde(default)]
+    stop_reason: Option<StopReason>,
+}
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum StopReason {
+    Requested,
+    AuthorityChanged,
+    HandoffFailed,
+}
+
+/// A durable request is not proof of completion. Only the independent guardian
+/// may publish completion after observing the entire owned child tree retire.
+pub(super) fn request_stop(root: &Path, session: Uuid, incarnation: Uuid) -> Result<()> {
+    let record = RootDirectory::open(root)?
+        .child("guardians".as_ref())?
+        .child(session.to_string().as_ref())?
+        .child(incarnation.to_string().as_ref())?;
+    let admission: Admission =
+        serde_json::from_slice(&record.read("admission.json".as_ref(), 4096)?)?;
+    ensure!(
+        admission.session_id == session && admission.incarnation == incarnation,
+        "guardian admission identity mismatch"
+    );
+    let bytes = serde_json::to_vec(&admission)?;
+    match record.publish_new("stop.json".as_ref(), &bytes, 4096) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if record
+                .read("stop.json".as_ref(), 4096)
+                .is_ok_and(|saved| saved == bytes)
+            {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn stop_requested(
+    record: &RootDirectory,
+    session: Uuid,
+    incarnation: Uuid,
+    boot_id: Uuid,
+) -> Result<bool> {
+    let bytes = match record.read("stop.json".as_ref(), 4096) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    let stop: Admission = serde_json::from_slice(&bytes)?;
+    ensure!(
+        stop.session_id == session && stop.incarnation == incarnation && stop.boot_id == boot_id,
+        "guardian stop request identity mismatch"
+    );
+    Ok(true)
+}
+
+fn continuing_authority(
+    root: &Path,
+    registration: &ProcessRegistration,
+    identity: &ConfiguredExecutionIdentity,
+) -> Result<()> {
+    let latest = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(super::database::bound_observer_identity(root, registration))?;
+    ensure!(&latest == identity, "execution authority changed");
+    super::launch::validate_identity(&latest)
+}
+
+fn wait_owned(
+    child: &mut std::process::Child,
+    root: &Path,
+    record: &RootDirectory,
+    registration: &ProcessRegistration,
+    identity: &ConfiguredExecutionIdentity,
+    boot_id: Uuid,
+    stop_reason: &mut Option<StopReason>,
+) -> Result<std::process::ExitStatus> {
+    let mut authority_at = Instant::now();
+    let mut kill_at = None;
+    let mut stop_deadline = None;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if stop_reason.is_none() {
+            // Corrupt or unreadable protected stop state also fails closed.
+            if stop_requested(
+                record,
+                registration.session_id,
+                registration.incarnation,
+                boot_id,
+            )
+            .unwrap_or(true)
+            {
+                *stop_reason = Some(StopReason::Requested);
+            }
+        }
+        if !matches!(
+            stop_reason,
+            Some(StopReason::HandoffFailed | StopReason::AuthorityChanged)
+        ) && Instant::now() >= authority_at
+        {
+            if continuing_authority(root, registration, identity).is_err() {
+                *stop_reason = Some(StopReason::AuthorityChanged);
+                kill_at = Some(Instant::now());
+            }
+            authority_at = Instant::now() + Duration::from_secs(1);
+        }
+        if stop_reason.is_some() && kill_at.is_none() {
+            kill_at = Some(
+                Instant::now()
+                    + if matches!(stop_reason, Some(StopReason::Requested)) {
+                        Duration::from_secs(10)
+                    } else {
+                        Duration::ZERO
+                    },
+            );
+        }
+        if kill_at.is_some_and(|at| Instant::now() >= at) && stop_deadline.is_none() {
+            // This Child is unreaped and cannot be replaced by PID reuse.
+            let _ = child.kill();
+            stop_deadline = Some(Instant::now() + Duration::from_secs(10));
+        }
+        ensure!(
+            stop_deadline.is_none_or(|deadline| Instant::now() < deadline),
+            "owned runtime stop remains unconfirmed"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 fn boot() -> Result<Uuid> {
     Ok(std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?
@@ -192,6 +331,7 @@ pub fn run(args: Args) -> Result<()> {
     )?;
     let mut child_exit_code = None;
     let mut child_exited_successfully = false;
+    let mut stop_reason = None;
     let spawned = command.spawn();
     let handoff = if let Ok(mut child) = spawned {
         let result = (|| -> Result<()> {
@@ -219,10 +359,18 @@ pub fn run(args: Args) -> Result<()> {
             )
         })();
         if result.is_err() {
-            let _ = child.kill();
+            stop_reason = Some(StopReason::HandoffFailed);
         }
         // Even failed handoffs retain ownership until all descendants are reaped.
-        let waited = child.wait();
+        let waited = wait_owned(
+            &mut child,
+            &args.directory,
+            &record,
+            &registration,
+            &identity,
+            boot_id,
+            &mut stop_reason,
+        );
         if let Ok(status) = &waited {
             child_exit_code = status.code();
             child_exited_successfully = status.success();
@@ -245,6 +393,7 @@ pub fn run(args: Args) -> Result<()> {
             handoff_completed: handoff.is_ok(),
             child_exit_code,
             child_exited_successfully,
+            stop_reason,
         })?,
         4096,
     )?;

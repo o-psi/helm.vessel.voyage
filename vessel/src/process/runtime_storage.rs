@@ -3,6 +3,13 @@ use anyhow::{Result, ensure};
 use std::path::{Path, PathBuf};
 use voyage_protocol::process::ProcessRegistration;
 
+pub(super) fn has_bound_layout(root: &Path) -> bool {
+    match std::fs::symlink_metadata(root.join("runtime-layout.json")) {
+        Ok(_) => true,
+        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
 /// Legacy user scope keeps its original location. Bound observations use only
 /// administrator-provisioned layout metadata, never runtime-supplied paths.
 pub(super) async fn directory(root: &Path, registration: &ProcessRegistration) -> Result<PathBuf> {

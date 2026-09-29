@@ -12,6 +12,10 @@ impl Supervisor {
         workspace: PathBuf,
         configuration: Value,
     ) -> Result<Value> {
+        ensure!(
+            !super::runtime_storage::has_bound_layout(&self.directory),
+            "system model discovery requires an explicit execution identity"
+        );
         ensure!(workspace.is_absolute(), "model workspace must be absolute");
         ensure!(
             serde_json::to_vec(&configuration)?.len() <= 1024 * 1024,

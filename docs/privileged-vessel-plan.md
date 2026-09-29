@@ -37,9 +37,9 @@ administrator grant from the protected catalogue, then configures the helper to
 run under that identity before reading runtime state. The bound path remains
 unreachable through a supported system installation; account helpers and complete
 control/runtime lifecycle integration are still incomplete.
-Bound registrations also refuse legacy stopped/recovered markers and restart or
-recovery helpers as proof of cleanup. Those paths require protected process
-observation before administrator launches can be enabled.
+Bound registrations refuse legacy stopped/recovered markers and recovery helpers
+as proof of cleanup. Explicit bound restart uses protected guardian completion;
+administrator identity selection and supported system installation remain staged.
 
 A storage increment stages `voyage-storage::protected_linux::RootDirectory`:
 root-owned private control directories reached through checked non-writable
@@ -550,3 +550,35 @@ Implementation uses a revocable administrator grant for one voyage and separate
 authorized account contexts. These are explicit product choices, not assumptions
 about any host. The grant is checked on every process replacement; changed facts
 require renewed owner review.
+
+### Bound service lifecycle integration
+
+For an already admitted bound Voyage, service startup leaves the runtime-owned
+projection alone. Inspect and live commands resolve the protected layout and
+binding; catalogue liveness has a 500 ms observation bound. Saved-state helpers
+run under the bound identity and recheck authority after returning. Their output
+never substitutes for protected cleanup evidence.
+
+The independent guardian revalidates configured identity, current account and
+administrator grant every second. Invalid authority stops the owned process;
+exact root-owned stop requests allow up to ten seconds for graceful runtime Stop
+before forced retirement. Remaining descendant cleanup is separately bounded.
+Stop requested, process unavailable, and observed cleanup remain distinct states.
+
+Explicit Restart requires positive protected cleanup, then atomically records
+its exact command receipt, fresh incarnation/token and new binding in SQLite.
+Vessel launches the protected sibling `vessel` executable beside its configured
+`voyage` binary as an independent guardian. Both binaries must belong to the
+same protected release directory. A repeated exact Restart observes the retained
+incarnation and never spawns again. A crash between transaction commit and launch
+therefore leaves an unavailable admitted incarnation, not permission to replay;
+automatic reconciliation of that gap remains unfinished.
+
+Authenticated restart handoff allows Voyage to retire the prior local process
+resource scope while retaining unresolved external cleanup and tool outcomes.
+No uncertain tool effect is replayed. User-facing automatic bound resume,
+identity-scoped account operations, scoped grant propagation, and supported system
+installation remain outstanding. An explicit system layout refuses account,
+model and implicit-identity start operations that would otherwise use root's
+login namespace. Enrollment bookkeeping uses a separate control-root account
+registry; this does not implement administrator account selection.

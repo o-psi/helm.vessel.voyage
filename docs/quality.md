@@ -125,7 +125,11 @@ separate session; protected completion requires its observed death and reaping.
 Killing a guardian leaves cleanup unresolved even after test teardown removes its
 pinned child. Account state is synthetic and local to the fixture; no provider is
 contacted. The fixture runs no system installation and establishes no client,
-owner-review, restart or adoption acceptance. Its ignored native execution is
+owner-review or adoption acceptance. It also exercises actual service detachment
+and restart, protected Stop, a fresh bound incarnation, duplicate and conflicting
+restart requests, stale Stop refusal, owner exclusion and continuing identity
+invalidation. Both supplied executable wrappers must be named `vessel`/`voyage`
+in the same protected directory. Its ignored native execution is
 separate from default workspace coverage.
 
 `cargo test -p voyage --locked --lib server::bound -j 8` checks bounded framed

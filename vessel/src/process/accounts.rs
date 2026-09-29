@@ -289,7 +289,12 @@ fn enrollment_authorized(root: &Path, actor: &EnrollmentActor, connection: Uuid)
 }
 
 pub(super) fn device_service(root: PathBuf) -> Result<DeviceService> {
-    let registry = Registry::default_host()?;
+    let registry = if super::runtime_storage::has_bound_layout(&root) {
+        // Explicitly separate administrator account state from root's login.
+        Registry::new(root.join("administrator-accounts"))
+    } else {
+        Registry::default_host()?
+    };
     registry.ensure_chatgpt_connection()?;
     Ok(DeviceService::new(
         registry,
@@ -338,6 +343,18 @@ impl Supervisor {
         command: VesselCommand,
         scope: Scope,
     ) -> Result<Value> {
+        ensure!(
+            !super::runtime_storage::has_bound_layout(&self.directory),
+            "system account operations require an explicit execution identity"
+        );
+        if let Scope::Session(grant) = &scope {
+            ensure!(
+                super::database::execution_binding(&self.directory, grant.session_id)
+                    .await?
+                    .is_none(),
+                "bound account operations require identity-scoped account helpers"
+            );
+        }
         match command {
             command @ (VesselCommand::Profiles { .. }
             | VesselCommand::SaveProfile { .. }

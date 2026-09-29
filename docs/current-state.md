@@ -413,9 +413,11 @@ A staged Linux privileged guardian separately accepts protected bound launch
 records, passes startup authority through a root-private pipe, observes the child's
 kernel execution identity and records descendant cleanup in root-controlled
 storage. Runtime projections and stopped markers cannot create that evidence.
-This internal entry point is verified in a disposable native Linux fixture;
-supported service launch, owner identity controls, system installation and full
-bound recovery remain incomplete. Bound startup does not derive scoped Vessel
+The service routes existing bound voyages, supports protected Stop and explicit
+Restart, and keeps the independent guardian alive across service detachment.
+Continuing identity/grant invalidation retires the owned process. Exact restart
+receipts never re-launch on retry. Supported initial service launch, owner identity
+controls, system installation and automatic bound recovery remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
 

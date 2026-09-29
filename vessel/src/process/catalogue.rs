@@ -46,6 +46,21 @@ impl Supervisor {
                     let root = supervisor.directory.clone();
                     work.spawn(async move {
                         let _ = database::refresh(&root, &registration).await;
+                        #[cfg(target_os = "linux")]
+                        if registration.peer_uids.is_some() {
+                            let info = tokio::time::timeout(
+                                Duration::from_millis(500),
+                                super::bound_lifecycle::inspect(&root, &registration),
+                            )
+                            .await
+                            .unwrap_or_else(|_| {
+                                let mut info = ProcessInfo::from(&registration);
+                                info.state = voyage_protocol::process::ProcessState::Unavailable;
+                                info
+                            });
+                            let _ = database::observe_process(&root, &registration, &info).await;
+                            return;
+                        }
                         let directory = registry::directory(&root, registration.session_id);
                         if directory.join("runtime.sock").exists() {
                             let info = tokio::time::timeout(

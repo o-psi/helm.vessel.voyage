@@ -222,7 +222,7 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         command.spawn().unwrap()
     };
     async fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
-        for _ in 0..200 {
+        for _ in 0..500 {
             if let Some(status) = child.try_wait().unwrap() {
                 return status;
             }
@@ -299,6 +299,126 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
     );
     assert!(cleanup_observed(&control, r.session_id, r.incarnation).is_err());
     assert!(!wait(&mut spawn(&r)).await.success());
+    let guardian_record = RootDirectory::open(&control)
+        .unwrap()
+        .child("guardians".as_ref())
+        .unwrap()
+        .child(r.session_id.to_string().as_ref())
+        .unwrap()
+        .child(r.incarnation.to_string().as_ref())
+        .unwrap();
+    assert!(
+        !stop_requested(
+            &guardian_record,
+            r.session_id,
+            r.incarnation,
+            boot().unwrap()
+        )
+        .unwrap()
+    );
+    let spawn_service = || {
+        Command::new(&vessel)
+            .arg("local-serve")
+            .arg("--directory")
+            .arg(&control)
+            .arg("--voyage-binary")
+            .arg(&voyage)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(
+                fs::File::create(control.join("service.stderr")).unwrap(),
+            ))
+            .spawn()
+            .unwrap()
+    };
+    async fn service_request(
+        control: &Path,
+        command: VesselCommand,
+    ) -> voyage_protocol::vessel::VesselResponse {
+        crate::process::exchange::exchange(
+            control,
+            &voyage_protocol::vessel::VesselRequest {
+                protocol: voyage_protocol::vessel::VESSEL_API_VERSION,
+                command,
+            },
+        )
+        .await
+        .unwrap()
+    }
+    async fn service_ready(control: &Path, session: Uuid, service: &mut std::process::Child) {
+        for _ in 0..100 {
+            assert!(
+                service.try_wait().unwrap().is_none(),
+                "service exited: {}",
+                fs::read_to_string(control.join("service.stderr")).unwrap_or_default()
+            );
+            let result = crate::process::exchange::exchange(
+                control,
+                &voyage_protocol::vessel::VesselRequest {
+                    protocol: voyage_protocol::vessel::VESSEL_API_VERSION,
+                    command: VesselCommand::Inspect {
+                        session_id: session,
+                    },
+                },
+            )
+            .await;
+            if result.is_ok_and(|reply| reply.error.is_none() && reply.result["state"] == "live") {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("bound service did not become ready");
+    }
+    let mut service = spawn_service();
+    service_ready(&control, r.session_id, &mut service).await;
+    assert!(
+        !control
+            .join("sessions")
+            .join(r.session_id.to_string())
+            .join("registration.json")
+            .exists()
+    );
+    let blocked = service_request(
+        &control,
+        VesselCommand::Accounts {
+            workspace: workspace.clone(),
+            transport: None,
+        },
+    )
+    .await;
+    assert!(
+        blocked
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("explicit execution identity"))
+    );
+    let blocked = service_request(
+        &control,
+        VesselCommand::Start {
+            command_id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            workspace: workspace.clone(),
+        },
+    )
+    .await;
+    assert!(
+        blocked
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("explicit execution identity"))
+    );
+    service.kill().unwrap();
+    service.wait().unwrap();
+    assert!(guardian.try_wait().unwrap().is_none());
+    assert!(
+        routing::forward(&directory, &r, RuntimeCommand::Health)
+            .await
+            .unwrap()
+            .error
+            .is_none()
+    );
+    let mut service = spawn_service();
+    service_ready(&control, r.session_id, &mut service).await;
     // Tampering with the runtime projection and stop marker cannot change either
     // the in-memory launch authority or the protected cleanup decision.
     let mut attack = Command::new("/usr/bin/python3");
@@ -313,15 +433,199 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
             .is_none()
     );
     assert!(cleanup_observed(&control, r.session_id, r.incarnation).is_err());
-    assert!(
-        routing::forward(&directory, &r, RuntimeCommand::Stop)
-            .await
-            .unwrap()
-            .error
-            .is_none()
+    let snapshot = service_request(
+        &control,
+        VesselCommand::Voyage(voyage_protocol::vessel::VoyageRequest {
+            session_id: r.session_id,
+            incarnation: Some(r.incarnation),
+            command: voyage_protocol::vessel::VoyageCommand::Snapshot,
+        }),
+    )
+    .await;
+    assert!(snapshot.error.is_none(), "{:?}", snapshot.error);
+    assert_eq!(
+        snapshot.result["result"]["session_id"],
+        r.session_id.to_string()
     );
+    let renamed = routing::forward(
+        &directory,
+        &r,
+        RuntimeCommand::Rename {
+            command_id: Uuid::new_v4(),
+            expected_revision: snapshot.result["result"]["revision"].as_u64().unwrap(),
+            expires_at_ms: (chrono::Utc::now().timestamp_millis() + 60_000) as u64,
+            name: "Retained bound conversation".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(renamed.error.is_none());
+    assert_ne!(renamed.result["status"], "rejected");
+    let stopped = service_request(
+        &control,
+        VesselCommand::Stop {
+            session_id: r.session_id,
+            incarnation: r.incarnation,
+        },
+    )
+    .await;
+    assert!(stopped.error.is_none(), "{:?}", stopped.error);
+    assert!(guardian_record.read("stop.json".as_ref(), 4096).is_ok());
     assert!(wait(&mut guardian).await.success());
     assert!(cleanup_observed(&control, r.session_id, r.incarnation).unwrap());
+    assert_eq!(
+        service_request(
+            &control,
+            VesselCommand::Inspect {
+                session_id: r.session_id
+            }
+        )
+        .await
+        .result["state"],
+        "stopped"
+    );
+    let restart_id = Uuid::new_v4();
+    let restart = VesselCommand::Restart {
+        command_id: restart_id,
+        session_id: r.session_id,
+        incarnation: r.incarnation,
+    };
+    let restarted = service_request(&control, restart.clone()).await;
+    assert!(restarted.error.is_none(), "{:?}", restarted.error);
+    assert_eq!(restarted.result["state"], "live");
+    let next = database::registration(&control, r.session_id)
+        .await
+        .unwrap();
+    assert_ne!(next.incarnation, r.incarnation);
+    assert_ne!(next.token, r.token);
+    assert_eq!(next.restart_from, Some(r.incarnation));
+    assert_eq!(
+        database::execution_binding(&control, r.session_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .incarnation,
+        next.incarnation
+    );
+    let duplicate = service_request(&control, restart.clone()).await;
+    assert!(duplicate.error.is_none());
+    assert_eq!(
+        duplicate.result["incarnation"],
+        next.incarnation.to_string()
+    );
+    let conflict = service_request(
+        &control,
+        VesselCommand::Restart {
+            command_id: restart_id,
+            session_id: r.session_id,
+            incarnation: next.incarnation,
+        },
+    )
+    .await;
+    assert!(conflict.error.is_some());
+    let stale = service_request(
+        &control,
+        VesselCommand::Stop {
+            session_id: r.session_id,
+            incarnation: r.incarnation,
+        },
+    )
+    .await;
+    assert!(stale.error.is_some());
+    let overlap = service_request(
+        &control,
+        VesselCommand::Restart {
+            command_id: Uuid::new_v4(),
+            session_id: r.session_id,
+            incarnation: next.incarnation,
+        },
+    )
+    .await;
+    assert!(overlap.error.is_some());
+    service.kill().unwrap();
+    service.wait().unwrap();
+    let mut service = spawn_service();
+    service_ready(&control, r.session_id, &mut service).await;
+    let duplicate = service_request(&control, restart).await;
+    assert!(duplicate.error.is_none());
+    assert_eq!(
+        duplicate.result["incarnation"],
+        next.incarnation.to_string()
+    );
+    assert!(
+        routing::forward(&directory, &r, RuntimeCommand::Health)
+            .await
+            .is_err()
+    );
+    let snapshot_after = routing::forward(&directory, &next, RuntimeCommand::Snapshot)
+        .await
+        .unwrap();
+    assert!(snapshot_after.error.is_none());
+    assert_eq!(snapshot_after.result["name"], "Retained bound conversation");
+    assert_eq!(
+        snapshot_after.result["session_id"],
+        snapshot.result["result"]["session_id"]
+    );
+    let stopped = service_request(
+        &control,
+        VesselCommand::Stop {
+            session_id: next.session_id,
+            incarnation: next.incarnation,
+        },
+    )
+    .await;
+    assert!(stopped.error.is_none());
+    let mut cleaned = false;
+    for _ in 0..500 {
+        if cleanup_observed(&control, next.session_id, next.incarnation).unwrap_or(false) {
+            cleaned = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(cleaned, "service-started guardian did not confirm cleanup");
+    // Simulate a crash after atomic admission but before the launch effect.
+    // Retrying its receipt must not invent a live owner or spawn again.
+    let previous = database::registration(&control, next.session_id)
+        .await
+        .unwrap();
+    let mut pending = previous.clone();
+    pending.command_id = Uuid::new_v4();
+    pending.restart_from = Some(previous.incarnation);
+    pending.incarnation = Uuid::new_v4();
+    pending.token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    pending.state = ProcessState::Starting;
+    let pending_command = VesselCommand::Restart {
+        command_id: pending.command_id,
+        session_id: pending.session_id,
+        incarnation: previous.incarnation,
+    };
+    database::restart_bound(
+        &control,
+        &previous,
+        &pending,
+        serde_json::to_vec(&pending_command).unwrap(),
+    )
+    .await
+    .unwrap();
+    let uncertain = service_request(&control, pending_command).await;
+    assert!(uncertain.error.is_none());
+    assert_eq!(
+        uncertain.result["incarnation"],
+        pending.incarnation.to_string()
+    );
+    assert_eq!(uncertain.result["state"], "unavailable");
+    assert!(
+        !control
+            .join("guardians")
+            .join(pending.session_id.to_string())
+            .join(pending.incarnation.to_string())
+            .exists()
+    );
+    assert!(cleanup_observed(&control, pending.session_id, pending.incarnation).is_err());
+
+    service.kill().unwrap();
+    service.wait().unwrap();
     assert!(!wait(&mut spawn(&r)).await.success());
     // An ordinary pipe cannot impersonate the privileged launch handoff.
     let mut wrong = Command::new("/usr/bin/python3");
@@ -462,9 +766,47 @@ os._exit(0)
     database::admit_with_binding(&control, &stale, vec![4], Some(&binding(&stale)))
         .await
         .unwrap();
+    let live = registration(voyage.clone());
+    database::admit_with_binding(&control, &live, vec![5], Some(&binding(&live)))
+        .await
+        .unwrap();
+    let live_directory = runtime.join(live.session_id.to_string());
+    let mut revoked_guardian = spawn(&live);
+    let mut ready = false;
+    for _ in 0..100 {
+        if routing::forward(&live_directory, &live, RuntimeCommand::Health)
+            .await
+            .is_ok_and(|reply| reply.error.is_none())
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(ready);
     let mut revised = identity.clone();
     revised.identity.revision = NonZeroU64::new(2).unwrap();
     database::store_identity(&control, &revised).await.unwrap();
+    assert!(wait(&mut revoked_guardian).await.success());
+    assert!(cleanup_observed(&control, live.session_id, live.incarnation).unwrap());
+    assert!(
+        routing::forward(&live_directory, &live, RuntimeCommand::Health)
+            .await
+            .is_err()
+    );
+    let completion = RootDirectory::open(&control)
+        .unwrap()
+        .child("guardians".as_ref())
+        .unwrap()
+        .child(live.session_id.to_string().as_ref())
+        .unwrap()
+        .child(live.incarnation.to_string().as_ref())
+        .unwrap()
+        .read("completion.json".as_ref(), 4096)
+        .unwrap();
+    let completion: serde_json::Value = serde_json::from_slice(&completion).unwrap();
+    assert_eq!(completion["stop_reason"], "authority_changed");
+
     assert!(!wait(&mut spawn(&stale)).await.success());
     assert!(!runtime.join(stale.session_id.to_string()).exists());
     let _ = ordinary(&[

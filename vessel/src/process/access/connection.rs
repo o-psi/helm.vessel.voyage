@@ -1,6 +1,6 @@
 //! Workspace routing derives session authority without changing local policy.
 use super::{Supervisor, store};
-use crate::process::{registry, routing};
+use crate::process::registry;
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -188,11 +188,7 @@ impl Supervisor {
                 let registration = self.registration(session_id).await?;
                 ordinary(&registration)?;
                 approved(&grant, &registration.workspace)?;
-                let info = routing::inspect(
-                    &registry::directory(&self.directory, session_id),
-                    &registration,
-                )
-                .await;
+                let info = self.inspect_registration(&registration).await;
                 store::current_connection(&self.directory, &grant)?;
                 Ok(serde_json::to_value(info)?)
             }

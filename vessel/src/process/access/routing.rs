@@ -1,5 +1,4 @@
 use super::{Supervisor, store};
-use crate::process::{registry, routing};
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -149,11 +148,7 @@ impl Supervisor {
                 ensure!(session_id == grant.session_id, "session grant denied");
                 let registration = self.registration(session_id).await?;
                 Ok(serde_json::to_value(
-                    routing::inspect(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                    )
-                    .await,
+                    self.inspect_registration(&registration).await,
                 )?)
             }
             VesselCommand::Voyage(request) => {

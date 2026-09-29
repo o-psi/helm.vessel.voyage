@@ -496,6 +496,18 @@ impl Supervisor {
         request: VoyageRequest,
         authorization: Option<GrantBinding>,
     ) -> Result<Value> {
+        if matches!(&request.command, VoyageCommand::SetAccountInference { .. })
+            || matches!(&request.command, VoyageCommand::Resolve { original: Some(original), .. }
+                if matches!(original.as_ref(), VoyageCommand::SetAccountInference { .. }))
+        {
+            ensure!(
+                self.registration(request.session_id)
+                    .await?
+                    .peer_uids
+                    .is_none(),
+                "bound account selection requires identity-scoped account helpers"
+            );
+        }
         // Owner selection is a service responsibility. Live-resource commands
         // carry a fence; ordinary session operations always select the current owner.
         let exact = request.command.requires_incarnation();
