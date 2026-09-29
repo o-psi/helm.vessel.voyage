@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-09-29T02:20:55.729573+00:00",
-  "source_commit": "930c32598049636b6d32b5ace24e7cdd2c949765",
+  "measured_at_utc": "2026-09-29T02:48:04.515297+00:00",
+  "source_commit": "21a0afdf793f691ed8f4e850fc68ddaf7002307f",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 1899,
+    "passed": 1900,
     "failed": 0,
     "ignored": 4
   },
   "totals": {
     "lines": {
-      "count": 107866,
-      "covered": 83130,
-      "percent": 77.06784343537352
+      "count": 107882,
+      "covered": 83159,
+      "percent": 77.08329471088781
     },
     "functions": {
-      "count": 10247,
-      "covered": 7592,
-      "percent": 74.08997755440618
+      "count": 10250,
+      "covered": 7596,
+      "percent": 74.10731707317073
     },
     "regions": {
-      "count": 177140,
-      "covered": 130633,
-      "notcovered": 46507,
-      "percent": 73.74562492943436
+      "count": 177172,
+      "covered": 130684,
+      "notcovered": 46488,
+      "percent": 73.76109091730069
     }
   },
-  "command": "umask 077; export USER=$(id -un); LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov clean --profraw-only; LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $SHARED_TARGET/coverage-report/930c325-instrumented -j 8 > $SHARED_TARGET/coverage-report/930c325-instrumented/run.log 2>&1",
-  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov report --json --summary-only --output-path $SHARED_TARGET/coverage-report/930c325-instrumented/summary.json -v",
+  "command": "umask 077; RUST_TEST_THREADS=2 LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $SHARED_TARGET/coverage-report/v103-21a0afd-retry -j 4 > $SHARED_TARGET/coverage-report/v103-21a0afd-retry/run.log 2>&1",
+  "report_command": "LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata CARGO_LLVM_COV_TARGET_DIR=$SHARED_TARGET cargo llvm-cov report --json --summary-only --output-path $SHARED_TARGET/coverage-report/v103-21a0afd-retry/summary.json -v",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,10 +40,9 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full workspace default-feature Rust tests, owner-only umask and USER set; source clean and frozen at the recorded commit. SHARED_TARGET denotes the existing checkout target directory.",
-    "Initial run exposed two obsolete removed-allowance CLI expectations; corrected before this measurement. A subsequent passing run reused noninstrumented ordinary binaries and discovered historical objects; those invalid totals were retained locally and not published.",
-    "Before this final measurement, a scoped cargo clean --profile dev of the six workspace packages removed stale/uninstrumented workspace artifacts while preserving dependencies and release artifacts. Raw profiles were then cleared. cargo-llvm-cov 0.9.1 injects instrumentation through its rustc wrapper, so ordinary --no-clean artifacts must not be assumed instrumented.",
-    "Final export includes all 13 executed test binaries and three current production entry-point binaries (19 paths, 16 unique objects because three are hardlink aliases). All 471 source entries belong to the measured checkout except one unavailable distribution Rust standard-library source. No historical checkout source or mixed totals remain.",
-    "Compared with the prior record: lines -0.166 percentage points, functions -0.193, regions -0.098. The removed allowance subsystem and integrated event changes alter the source denominator; no exclusions were narrowed."
+    "Full workspace default-feature Rust tests on clean source 21a0afd, owner-only umask; current shared target and no narrowed exclusions. SHARED_TARGET denotes the existing checkout target directory.",
+    "First instrumented run had two transient SQLite database-lock test failures; raw profiles were cleared, and the unchanged source passed with RUST_TEST_THREADS=2 and -j 4. The failed-run log remains locally in the ignored target directory.",
+    "Before measurement, a scoped cargo clean --profile dev of the six workspace packages removed historical workspace artifacts while preserving dependencies. Final export includes 13 executed test binaries and three production entry-point binaries (19 paths, 16 unique objects including hardlink aliases). All 471 source entries belong to this checkout except one unavailable distribution Rust standard-library source.",
+    "Versus previous record: lines +0.015 percentage points, functions +0.017, regions +0.015; changes reflect TUI heading and tests, with standard exclusions unchanged."
   ]
 }
