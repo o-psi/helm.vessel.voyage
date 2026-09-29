@@ -8,6 +8,7 @@ explicitly configured execution identity** (option 2).
 Tracking: [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344).
 Foundations: [#345](https://github.com/o-psi/helm.vessel.voyage/issues/345).
 Control/runtime separation: [#346](https://github.com/o-psi/helm.vessel.voyage/issues/346).
+System gateway and installer: [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380).
 Related: [filesystem consent #327](https://github.com/o-psi/helm.vessel.voyage/issues/327),
 [remote updates #343](https://github.com/o-psi/helm.vessel.voyage/issues/343),
 [browser ownership #333](https://github.com/o-psi/helm.vessel.voyage/issues/333),
@@ -105,6 +106,16 @@ control root from its runtime directory; nested Vessel routing still needs an
 explicit scoped connection. Account helpers, owner approval/revocation, complete
 bound lifecycle/restart routing, system installation/update, client controls and
 adoption remain required before advertising the capability.
+
+The staged Linux system-gateway transport uses an abstract Unix socket name with
+kernel peer-UID checks in both directions. It bounds JSON frame size and read/write
+time, rejects partial frames, and checks the root peer before a future gateway
+sends connection grants or invitation codes. This is a transport primitive only:
+there is no listener wired to the supervisor, no public gateway route, no browser
+disconnect handler and no system service or installer activation. The bound
+`Start` path still refuses initial system voyage creation. #380 tracks the
+remaining command, event, pairing and browser route, installation, updater and
+native disposable-Linux acceptance.
 
 The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains

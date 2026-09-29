@@ -6,6 +6,10 @@ mod routing;
 mod service;
 pub use service::serve;
 
+#[cfg(target_os = "linux")]
+#[allow(dead_code)] // Staged for the explicitly disabled system gateway in #380.
+mod gateway_ipc;
+
 mod recovery;
 mod suspension;
 

@@ -60,6 +60,16 @@ a pass.
 
 ## Privileged control storage fixtures
 
+The staged system-gateway transport has ordinary-UID tests for bounded frames,
+partial/malformed input and both kernel peer-credential checks:
+
+```sh
+cargo test -p vessel --locked gateway_ipc -j 8
+```
+
+These tests do not run a root supervisor or unprivileged network gateway and do
+not establish a working system installation; see [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380).
+
 The staged Linux control and runtime-directory primitives have focused
 ordinary-UID checks. The runtime fixture verifies a trusted execute-only parent,
 private session ownership, invalid names, symlinks and changed permissions:
