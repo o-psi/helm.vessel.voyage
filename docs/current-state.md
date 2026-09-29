@@ -1,5 +1,10 @@
 # Current implementation
 
+Legacy Helm–Vessel snapshot observation is deprecated for the v1.0.3 transition.
+Its complete removal is a [v1.1.0 release requirement](event-only-v1.1.0.md);
+current snapshot and compatibility behavior described below remains implemented
+until that cutover is delivered.
+
 This inventory describes implemented source, not live-provider certification or
 native-platform validation. Focused regression and explicitly enabled live checks
 are described in [quality](quality.md). The [implementation ledger](implementation.md)

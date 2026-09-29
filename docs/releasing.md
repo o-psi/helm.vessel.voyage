@@ -6,6 +6,14 @@ The current binary release is v1.0.2 for Linux x86-64 only. See the
 Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
 
+## Planned release sequence
+
+The next planned releases are **v1.0.3**, then **v1.1.0**. The latter requires
+[complete removal of legacy Helm–Vessel snapshot transport](event-only-v1.1.0.md)
+in both Helm clients. Keep the nightly target on v1.0.3 until that stable release
+is published, then advance it to v1.1.0. This records release intent, not a release
+publication or a claim that the event-only cutover is already implemented.
+
 ## Build and package
 
 The maintained Linux release packager is `packaging/package_linux.py`.
