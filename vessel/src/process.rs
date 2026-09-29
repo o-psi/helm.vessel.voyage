@@ -63,6 +63,8 @@ mod authority_routing_tests;
 #[cfg(target_os = "linux")]
 mod bound_lifecycle;
 #[cfg(target_os = "linux")]
+mod default_execution;
+#[cfg(target_os = "linux")]
 pub mod guardian;
 #[cfg(target_os = "linux")]
 mod guardian_observation;

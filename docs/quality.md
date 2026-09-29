@@ -134,6 +134,14 @@ native-root fixture. Supply root-controlled Vessel and Voyage executables:
 VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_VESSEL_EXECUTABLE=/opt/voyage-test/vessel VOYAGE_TEST_CATALOGUE_EXECUTABLE=/opt/voyage-test/voyage cargo test -p vessel --locked --lib -- --ignored --exact process::guardian::tests::native_guardian_attests_pipe_launch_and_proves_descendant_cleanup
 ```
 
+The native guardian fixture also exercises public `StartConfigured` over an
+authenticated full-access connection using root-private `default-execution.json`,
+ordinary runtime configuration/account state, exact replay, creation resolution,
+not-admitted delayed-start fencing and observed cleanup. Run only on a disposable
+host with the fixture's explicit ordinary account. Default local tests verify
+nonowner and user-install refusal; they do not establish root/native launch.
+Plain system `Start` and account/settings/model helpers remain unavailable.
+
 It starts an actual ordinary-identity Voyage through a root-private pipe, checks
 kernel UID/GID/groups, cleared inherited capabilities and authenticated Health,
 then verifies projection/cleanup-marker forgery, duplicate/stale admission and

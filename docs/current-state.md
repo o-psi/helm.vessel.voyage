@@ -424,9 +424,16 @@ Continuing identity/grant invalidation retires the owned process. Exact restart
 receipts never re-launch on retry. An internal root-only initial bound admission
 can reserve an ordinary identity and launch through that guardian; an exact retry
 observes the saved incarnation, including an unavailable admission after a crash
-before launch. No public command invokes that path yet. Supported initial service
-launch, owner identity controls, system installation and automatic bound recovery
-remain incomplete. Bound startup does not derive scoped Vessel
+before launch. A public `StartConfigured` now selects only the root-private
+`default-execution.json` ordinary identity and routes through the same admission.
+An authenticated full-access owner connection can invoke it; workspace-only
+connections cannot select host configuration. The independent Voyage process
+opens configuration and its home-scoped provider registry after dropping to the
+configured UID/GID/groups. The supervisor never substitutes its root login
+account. Plain `Start`, account discovery/enrollment, execution settings and model
+discovery remain refused for system installations until ordinary-identity helpers
+exist. Owner identity controls, supported production system installation and
+automatic bound recovery remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
 
@@ -481,8 +488,10 @@ browser assets, protected control/runtime roots and pinned root/gateway units. I
 refuses existing state, checks the external key provisioner and records activation
 and failed cleanup. A disposable Ubuntu VM passed a fresh install, scoped route,
 reboot and deliberately failed activation with observed unit rollback. System
-update, rollback, uninstall, public bound Voyage creation, owner/client controls
-and supported production activation remain unavailable.
+update, rollback, uninstall, ordinary account helpers, owner/client controls
+and supported production activation remain unavailable. Public configured bound
+creation is limited to the explicitly provisioned ordinary identity as described
+above; it does not provide administrator execution or client identity selection.
 The staged root gateway now refuses startup without its externally provisioned
 root-private tmpfs connection key. The root unit requires a named provisioning
 service. The fresh-install increment checks that exact external unit and native

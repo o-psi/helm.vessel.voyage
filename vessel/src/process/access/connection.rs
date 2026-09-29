@@ -126,7 +126,12 @@ impl Supervisor {
                 config_path,
             } => {
                 has(ProcessRight::Create)?;
-                ensure!(config_path.is_none(), "host configuration denied");
+                ensure!(
+                    config_path.is_none()
+                        || (grant.full_access
+                            && crate::process::runtime_storage::has_bound_layout(&self.directory)),
+                    "host configuration denied"
+                );
                 approved(&grant, &workspace)?;
                 if let Ok(existing) = self.registration(session_id).await {
                     ordinary(&existing)?;
@@ -136,14 +141,49 @@ impl Supervisor {
                     );
                 }
                 // Resolve binds the original Start, never a second lifecycle payload.
-                let original = VesselCommand::Start {
-                    command_id,
-                    session_id,
-                    workspace: workspace.clone(),
+                let original = match &config_path {
+                    Some(path) => VesselCommand::StartConfigured {
+                        command_id,
+                        session_id,
+                        workspace: workspace.clone(),
+                        config_path: path.clone(),
+                    },
+                    None => VesselCommand::Start {
+                        command_id,
+                        session_id,
+                        workspace: workspace.clone(),
+                    },
                 };
                 self.bind_connection_operation(&grant, command_id, &original)
                     .await?;
-                self.resolve_start(command_id, session_id, workspace, None)
+                self.resolve_start(command_id, session_id, workspace, config_path)
+                    .await
+            }
+            VesselCommand::StartConfigured {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+            } => {
+                ensure!(
+                    grant.full_access
+                        && crate::process::runtime_storage::has_bound_layout(&self.directory),
+                    "configured system creation requires owner authority"
+                );
+                has(ProcessRight::Create)?;
+                approved(&grant, &workspace)?;
+                if let Ok(existing) = self.registration(session_id).await {
+                    ordinary(&existing)?;
+                    ensure!(
+                        existing.workspace == workspace,
+                        "session workspace conflict"
+                    );
+                }
+                self.bind_connection_operation(&grant, command_id, &operation)
+                    .await?;
+                self.connection_session(&grant, session_id, &workspace)?;
+                store::current_connection(&self.directory, &grant)?;
+                self.start(command_id, session_id, workspace, Some(config_path))
                     .await
             }
             VesselCommand::Start {

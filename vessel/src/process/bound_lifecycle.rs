@@ -33,11 +33,39 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
 }
 
 impl Supervisor {
-    /// Initial admission for a caller that already holds a reviewed, protected
-    /// ordinary execution binding. No client transport invokes this until the
-    /// owner review and identity-scoped account path are complete.
-    #[allow(dead_code)]
+    pub(super) async fn bound_creation_lock(
+        &self,
+        session: Uuid,
+    ) -> Result<std::sync::Arc<tokio::sync::Mutex<()>>> {
+        ensure!(!session.is_nil(), "nil creation identity");
+        let mut locks = self.lifecycle_locks.lock().await;
+        ensure!(
+            locks.contains_key(&session) || locks.len() < 4096,
+            "bound creation retention limit reached"
+        );
+        Ok(locks
+            .entry(session)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone())
+    }
+    /// Admission with a supervisor-created ordinary execution binding. Public
+    /// configured creation selects only the protected default identity.
+    #[cfg(test)]
     pub(super) async fn start_bound_configured(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+    ) -> Result<serde_json::Value> {
+        let lock = self.bound_creation_lock(session_id).await?;
+        let _guard = lock.lock().await;
+        self.start_bound_configured_locked(command_id, session_id, workspace, config_path, binding)
+            .await
+    }
+
+    pub(super) async fn start_bound_configured_locked(
         &self,
         command_id: Uuid,
         session_id: Uuid,
@@ -65,15 +93,18 @@ impl Supervisor {
             workspace: workspace.clone(),
             config_path: config_path.clone(),
         };
-        let lock = self
-            .lifecycle_locks
-            .lock()
-            .await
-            .entry(session_id)
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-            .clone();
-        let _guard = lock.lock().await;
         let mut registrations = self.registrations.lock().await?;
+        ensure!(
+            !super::start::resolution_record(
+                &self.directory,
+                "intent",
+                command_id,
+                &command,
+                false,
+            )
+            .await?,
+            "start command was fenced as not admitted"
+        );
         if super::registry::command_record(&self.directory, command_id, &command, false).await? {
             let previous = registrations.get(&session_id).ok_or_else(|| {
                 anyhow::anyhow!("bound creation outcome unconfirmed; inspect retained admission")

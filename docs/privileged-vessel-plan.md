@@ -120,10 +120,17 @@ root/ordinary services, pairing and exact replay, a granted command, WebSocket
 routing, wrong gateway UID, false root peer, root loss and restart. That evidence
 does not establish installer upgrade/rollback, browser runtime handoff, initial
 system voyage creation through a public route or live deployment. The bound public
-`Start` path still refuses initial system voyage creation. A separate internal
-root-only admission now accepts a previously reviewed ordinary identity binding,
-reserves its exact command/registration/binding atomically, and starts the bound
-guardian. It is not connected to owner review or account-scoped public creation.
+`Start` path still refuses initial system voyage creation without explicit
+configuration. Public `StartConfigured` now selects the root-private
+`default-execution.json` ordinary identity, validates its current OS account and
+immutable catalogue revision, then reserves the exact command/registration/binding
+atomically before starting the bound guardian. A full-access owner connection can
+invoke it; workspace-only clients cannot select a host config path. Exact replay
+uses the retained binding/incarnation, and not-admitted resolution fences delayed
+creation. Configuration and provider state are opened only by the dropped Voyage
+identity. The configured home is its account namespace; root's login account is
+never a fallback. Ordinary account enrollment/settings/model helpers, administrator
+review and both-client identity controls are still required.
 A disposable native Ubuntu fixture exercised live creation, duplicate/conflicting
 receipts, cleanup and the crash-after-admission/no-relaunch boundary. #380 retains
 the installer and native end-to-end gates.

@@ -220,3 +220,52 @@ async fn workspace_connections_require_pinned_vessel_even_for_capabilities() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn configured_system_start_refuses_nonowner_and_user_installations() {
+    for (full_access, system) in [(false, true), (true, false)] {
+        let fixture = Fixture::new();
+        if system {
+            std::fs::write(fixture.0.join("runtime-layout.json"), "{}").unwrap();
+        }
+        let supervisor = fixture.supervisor().await;
+        let mut grant = fixture.connection();
+        grant.full_access = full_access;
+        grant.token_hash = store::hash(TOKEN);
+        grant.rights = if full_access {
+            ProcessRight::all()
+        } else {
+            vec![ProcessRight::Create]
+        };
+        if full_access {
+            grant.workspaces.clear();
+            grant.accounts.clear();
+            grant.enrollment_connections.clear();
+        }
+        fixture.save_connection(&grant);
+        let session = Uuid::new_v4();
+        let error = supervisor
+            .granted(
+                grant.grant_id,
+                TOKEN.into(),
+                Some(grant.vessel_id),
+                VesselCommand::StartConfigured {
+                    command_id: Uuid::new_v4(),
+                    session_id: session,
+                    workspace: fixture.0.clone(),
+                    config_path: fixture.0.join("config.json"),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("requires owner authority"),
+            "{error:#}"
+        );
+        assert!(
+            super::database::registration(&fixture.0, session)
+                .await
+                .is_err()
+        );
+    }
+}

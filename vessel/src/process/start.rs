@@ -1,4 +1,6 @@
 use super::{registry, routing, service::Supervisor};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
 use anyhow::{Result, ensure};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
@@ -17,6 +19,19 @@ impl Supervisor {
             !command_id.is_nil() && !session_id.is_nil(),
             "session and command IDs must be nonnil"
         );
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            #[cfg(target_os = "linux")]
+            {
+                let config = config_path.context(
+                    "system voyage creation requires an explicit ordinary configuration",
+                )?;
+                return self
+                    .start_default_bound(command_id, session_id, workspace, config)
+                    .await;
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("system voyage creation is unsupported on this host");
+        }
         let command = match &config_path {
             Some(path) => {
                 ensure!(
@@ -211,7 +226,7 @@ impl Supervisor {
 // Separate private intent namespace: publication precedes the generic reservation.
 // A crash in that gap must never permit the delayed Start to launch. Completed
 // fences are retained indefinitely with bounded count/size, like lifecycle IDs.
-async fn resolution_record(
+pub(super) async fn resolution_record(
     root: &std::path::Path,
     phase: &str,
     id: Uuid,
@@ -301,11 +316,7 @@ impl Supervisor {
                 {
                     let registration = registration.clone();
                     drop(registrations);
-                    let process = routing::inspect(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                    )
-                    .await;
+                    let process = self.inspect_registration(&registration).await;
                     return Ok(
                         serde_json::json!({"status":"created", "command_id":command_id, "session_id":session_id, "process":process}),
                     );
