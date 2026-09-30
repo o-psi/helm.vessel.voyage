@@ -87,15 +87,34 @@ fn transact_validated(
     mutation: Option<(&VesselCommand, &str)>,
     validate_new: impl FnOnce() -> Result<()>,
 ) -> Result<ProfileCatalogue> {
+    transact_namespace(root, None, seed, mutation, validate_new)
+}
+
+fn transact_namespace(
+    root: &Path,
+    namespace: Option<&str>,
+    seed: Option<ExecutionProfile>,
+    mutation: Option<(&VesselCommand, &str)>,
+    validate_new: impl FnOnce() -> Result<()>,
+) -> Result<ProfileCatalogue> {
     let mut db = database::open(root)?;
     let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS execution_profiles (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL CHECK(json_valid(state))) STRICT;
+        CREATE TABLE IF NOT EXISTS execution_profiles_by_identity (namespace TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(json_valid(state))) STRICT;
         CREATE TABLE IF NOT EXISTS execution_profile_commands (id TEXT PRIMARY KEY, request TEXT NOT NULL, result TEXT NOT NULL CHECK(json_valid(result))) STRICT;")?;
-    let saved: Option<String> = tx
-        .query_row("SELECT state FROM execution_profiles WHERE id=1", [], |r| {
+    let saved: Option<String> = if let Some(namespace) = namespace {
+        tx.query_row(
+            "SELECT state FROM execution_profiles_by_identity WHERE namespace=?1",
+            [namespace],
+            |r| r.get(0),
+        )
+        .optional()?
+    } else {
+        tx.query_row("SELECT state FROM execution_profiles WHERE id=1", [], |r| {
             r.get(0)
         })
-        .optional()?;
+        .optional()?
+    };
     let mut catalogue: ProfileCatalogue = saved
         .as_deref()
         .map(serde_json::from_str)
@@ -129,7 +148,7 @@ fn transact_validated(
             _ => anyhow::bail!("invalid profile mutation"),
         };
         ensure!(!id.is_nil(), "invalid profile command identity");
-        let request = serde_json::to_string(&json!({"actor":actor,"command":command}))?;
+        let request = profile_request(namespace, actor, command)?;
         let old: Option<(String, String)> = tx
             .query_row(
                 "SELECT request,result FROM execution_profile_commands WHERE id=?1",
@@ -202,7 +221,11 @@ fn transact_validated(
     // Do not mark an unconfigured host initialized: first account setup can
     // still bootstrap. An explicit last-profile deletion does persist emptiness.
     if saved.is_some() || catalogue.revision > 0 {
-        tx.execute("INSERT INTO execution_profiles VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET state=excluded.state", [&state])?;
+        if let Some(namespace) = namespace {
+            tx.execute("INSERT INTO execution_profiles_by_identity VALUES(?1,?2) ON CONFLICT(namespace) DO UPDATE SET state=excluded.state", params![namespace, state])?;
+        } else {
+            tx.execute("INSERT INTO execution_profiles VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET state=excluded.state", [&state])?;
+        }
     }
     if let Some((id, request)) = receipt {
         tx.execute(
@@ -212,6 +235,53 @@ fn transact_validated(
     }
     tx.commit()?;
     Ok(catalogue)
+}
+
+fn profile_request(
+    namespace: Option<&str>,
+    actor: &str,
+    command: &VesselCommand,
+) -> Result<String> {
+    Ok(serde_json::to_string(&match namespace {
+        Some(namespace) => json!({"namespace":namespace,"actor":actor,"command":command}),
+        None => json!({"actor":actor,"command":command}),
+    })?)
+}
+
+#[cfg(target_os = "linux")]
+fn identity_replay(
+    root: &Path,
+    namespace: &str,
+    actor: &str,
+    command: &VesselCommand,
+) -> Result<Option<ProfileCatalogue>> {
+    let id = match command {
+        VesselCommand::SaveProfile { command_id, .. }
+        | VesselCommand::DeleteProfile { command_id, .. }
+        | VesselCommand::SetDefaultProfile { command_id, .. } => command_id,
+        _ => return Ok(None),
+    };
+    let db = database::open(root)?;
+    let table: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_profile_commands')", [], |r| r.get(0))?;
+    if !table {
+        return Ok(None);
+    }
+    let prior: Option<(String, String)> = db
+        .query_row(
+            "SELECT request,result FROM execution_profile_commands WHERE id=?1",
+            [id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    prior
+        .map(|(request, result)| {
+            ensure!(
+                request == profile_request(Some(namespace), actor, command)?,
+                "profile command identity conflict"
+            );
+            Ok(serde_json::from_str(&result)?)
+        })
+        .transpose()
 }
 
 fn filter_catalogue(
@@ -235,6 +305,110 @@ fn filter_catalogue(
 }
 
 impl Supervisor {
+    #[cfg(target_os = "linux")]
+    pub(super) async fn identity_profile_catalogue(
+        &self,
+        workspace: &Path,
+        scope: &Scope,
+    ) -> Result<ProfileCatalogue> {
+        scope.check(&self.directory, workspace, ProcessRight::AccountUse)?;
+        let identity = super::identity_accounts::selected(scope, &self.directory).await?;
+        let namespace = format!(
+            "{}:{}",
+            identity.account_context.id, identity.account_context.revision
+        );
+        let mut catalogue =
+            transact_namespace(&self.directory, Some(&namespace), None, None, || Ok(()))?;
+        let projection = self.identity_account_scope(scope, workspace)?;
+        let accounts = self
+            .identity_account_helper(
+                scope,
+                workspace,
+                ProcessRight::AccountUse,
+                voyage_protocol::identity_helper::IdentityHelperOperation::Accounts {
+                    scope: projection,
+                    transport: None,
+                },
+            )
+            .await?;
+        let accounts: Vec<voyage_protocol::accounts::AccountDescriptor> =
+            serde_json::from_value(accounts["accounts"].clone())?;
+        catalogue.profiles.retain(|profile| {
+            accounts.iter().any(|account| {
+                account.id == profile.account.account_id
+                    && account.connection_id == profile.account.connection_id
+            })
+        });
+        catalogue.default_profile_id = catalogue
+            .default_profile_id
+            .filter(|id| catalogue.profiles.iter().any(|p| p.id == *id));
+        catalogue.can_manage = can_manage(scope);
+        Ok(catalogue)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) async fn identity_execution_profiles(
+        &self,
+        command: VesselCommand,
+        scope: Scope,
+    ) -> Result<Value> {
+        let workspace = match &command {
+            VesselCommand::Profiles { workspace }
+            | VesselCommand::SaveProfile { workspace, .. }
+            | VesselCommand::DeleteProfile { workspace, .. }
+            | VesselCommand::SetDefaultProfile { workspace, .. } => workspace,
+            _ => anyhow::bail!("invalid identity profile operation"),
+        };
+        scope.check(&self.directory, workspace, ProcessRight::AccountUse)?;
+        if matches!(command, VesselCommand::Profiles { .. }) {
+            return Ok(serde_json::to_value(
+                self.identity_profile_catalogue(workspace, &scope).await?,
+            )?);
+        }
+        ensure!(
+            can_manage(&scope),
+            "profile management requires full-access human authority"
+        );
+        let identity = super::identity_accounts::selected(&scope, &self.directory).await?;
+        let namespace = format!(
+            "{}:{}",
+            identity.account_context.id, identity.account_context.revision
+        );
+        let actor = scope.actor(workspace).principal;
+        if let Some(mut result) = identity_replay(&self.directory, &namespace, &actor, &command)? {
+            result.can_manage = true;
+            scope.check(&self.directory, workspace, ProcessRight::AccountUse)?;
+            return Ok(serde_json::to_value(result)?);
+        }
+        if let VesselCommand::SaveProfile { profile, .. } = &command {
+            validate(profile)?;
+            self.identity_account_helper(
+                &scope,
+                workspace,
+                ProcessRight::AccountUse,
+                voyage_protocol::identity_helper::IdentityHelperOperation::ValidateProfile {
+                    scope: self.identity_account_scope(&scope, workspace)?,
+                    profile: profile.clone(),
+                },
+            )
+            .await?;
+        }
+        ensure!(
+            super::identity_accounts::selected(&scope, &self.directory).await? == identity,
+            "profile execution namespace changed"
+        );
+        let mut result = transact_namespace(
+            &self.directory,
+            Some(&namespace),
+            None,
+            Some((&command, &actor)),
+            || scope.check(&self.directory, workspace, ProcessRight::AccountUse),
+        )?;
+        result.can_manage = true;
+        scope.check(&self.directory, workspace, ProcessRight::AccountUse)?;
+        Ok(serde_json::to_value(result)?)
+    }
+
     pub(super) fn profile_catalogue(
         &self,
         workspace: &Path,

@@ -343,6 +343,10 @@ impl Supervisor {
         command: VesselCommand,
         scope: Scope,
     ) -> Result<Value> {
+        #[cfg(target_os = "linux")]
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            return self.host_identity_accounts(command, scope).await;
+        }
         ensure!(
             !super::runtime_storage::has_bound_layout(&self.directory),
             "system account operations require an explicit execution identity"

@@ -316,6 +316,9 @@ pub fn run(args: Args) -> Result<()> {
         command.arg("--config").arg(config);
     }
     super::launch::configure_identity(&mut command, &identity)?;
+    if let Some(digest) = super::identity_start::launch_digest(&args.directory, &registration)? {
+        command.env("VOYAGE_BOUND_CONFIG_DIGEST", digest);
+    }
     ensure!(
         unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == 0,
         "protected child guardian unavailable"

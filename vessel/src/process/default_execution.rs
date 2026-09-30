@@ -26,7 +26,7 @@ fn validate_default(identity: &ConfiguredExecutionIdentity) -> Result<()> {
     super::launch::validate_identity(identity)
 }
 
-fn protected_default(root: &Path) -> Result<ConfiguredExecutionIdentity> {
+pub(super) fn protected_default(root: &Path) -> Result<ConfiguredExecutionIdentity> {
     let control = voyage_storage::protected_linux::RootDirectory::open(root)?;
     let identity: ConfiguredExecutionIdentity =
         serde_json::from_slice(&control.read(DEFAULT_EXECUTION_RECORD.as_ref(), 16384)?)?;
@@ -34,7 +34,10 @@ fn protected_default(root: &Path) -> Result<ConfiguredExecutionIdentity> {
     Ok(identity)
 }
 
-fn binding(identity: &ConfiguredExecutionIdentity, session: Uuid) -> Result<ExecutionBinding> {
+pub(super) fn binding(
+    identity: &ConfiguredExecutionIdentity,
+    session: Uuid,
+) -> Result<ExecutionBinding> {
     // These digests identify the ordinary launch selection. They are not an
     // administrator review or a claim to have read user-owned provider secrets.
     let identity_bytes = serde_json::to_vec(identity)?;

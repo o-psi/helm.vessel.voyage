@@ -120,8 +120,12 @@ root/ordinary services, pairing and exact replay, a granted command, WebSocket
 routing, wrong gateway UID, false root peer, root loss and restart. That evidence
 does not establish installer upgrade/rollback, browser runtime handoff, initial
 system voyage creation through a public route or live deployment. The bound public
-`Start` path still refuses initial system voyage creation without explicit
-configuration. Public `StartConfigured` now selects the root-private
+`Start`, `StartAccount` and `StartSettings` paths now select the root-private
+ordinary identity and capture their frozen configuration in that identity's private
+runtime directory. The supervisor retains the exact actor/request intent before
+capture and the original public command during admission. `ResolveStartAccount`
+uses the original retained envelope and never recaptures a default or launches.
+Public `StartConfigured` selects the root-private
 `default-execution.json` ordinary identity, validates its current OS account and
 immutable catalogue revision, then reserves the exact command/registration/binding
 atomically before starting the bound guardian. A full-access owner connection can
@@ -129,8 +133,16 @@ invoke it; workspace-only clients cannot select a host config path. Exact replay
 uses the retained binding/incarnation, and not-admitted resolution fences delayed
 creation. Configuration and provider state are opened only by the dropped Voyage
 identity. The configured home is its account namespace; root's login account is
-never a fallback. Ordinary account enrollment/settings/model helpers, administrator
-review and both-client identity controls are still required.
+never a fallback. Account/default/model observations and profile validation use
+the bounded dropped-identity helper. Profile state is keyed by the protected
+account-context ID/revision; user-service profile state remains separate. A protected
+configuration digest pin crosses the guardian's cleared environment into fresh
+runtime startup, where the exact configuration bytes are checked before resolution.
+An interrupted capture retains its request and refuses changed defaults or a
+missing frozen file. This source increment is awaiting the final coordinated
+milestone verification, including actual native public creation and revocation.
+Identity-scoped enrollment/usage, administrator review/transition and both-client
+identity controls remain implementation work.
 A disposable native Ubuntu fixture exercised live creation, duplicate/conflicting
 receipts, cleanup and the crash-after-admission/no-relaunch boundary. #380 retains
 the installer and native end-to-end gates.

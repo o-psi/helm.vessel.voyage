@@ -80,3 +80,12 @@ fn runtime_root(root: &Path) -> Result<(voyage_storage::protected_linux::Runtime
     let runtime = RuntimeRoot::open(&layout.runtime_root)?;
     Ok((runtime, layout.runtime_root))
 }
+
+/// Lexical location only. It validates the protected layout without creating a
+/// session directory or treating a directory's presence as launch authority.
+#[cfg(target_os = "linux")]
+pub(super) fn planned_bound_directory(root: &Path, session: uuid::Uuid) -> Result<PathBuf> {
+    ensure!(!session.is_nil(), "invalid runtime identity");
+    let (_, runtime) = runtime_root(root)?;
+    Ok(runtime.join(session.to_string()))
+}

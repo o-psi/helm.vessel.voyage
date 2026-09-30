@@ -1,6 +1,4 @@
 use super::{registry, routing, service::Supervisor};
-#[cfg(target_os = "linux")]
-use anyhow::Context;
 use anyhow::{Result, ensure};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
@@ -22,12 +20,23 @@ impl Supervisor {
         if super::runtime_storage::has_bound_layout(&self.directory) {
             #[cfg(target_os = "linux")]
             {
-                let config = config_path.context(
-                    "system voyage creation requires an explicit ordinary configuration",
-                )?;
-                return self
-                    .start_default_bound(command_id, session_id, workspace, config)
-                    .await;
+                return match config_path {
+                    Some(config) => {
+                        self.start_default_bound(command_id, session_id, workspace, config)
+                            .await
+                    }
+                    None => {
+                        self.start_identity_request(
+                            VesselCommand::Start {
+                                command_id,
+                                session_id,
+                                workspace,
+                            },
+                            super::accounts::Scope::Owner,
+                        )
+                        .await
+                    }
+                };
             }
             #[cfg(not(target_os = "linux"))]
             anyhow::bail!("system voyage creation is unsupported on this host");

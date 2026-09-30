@@ -173,7 +173,16 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
                         .resolve(&workspace)?
                 }
                 None => {
-                    let mut config = bootstrap::load_config(args.config.as_deref(), &workspace)?;
+                    let expected_digest = if admitted.is_some() {
+                        std::env::var("VOYAGE_BOUND_CONFIG_DIGEST").ok()
+                    } else {
+                        None
+                    };
+                    let mut config = bootstrap::load_config_with_digest(
+                        args.config.as_deref(),
+                        &workspace,
+                        expected_digest.as_deref(),
+                    )?;
                     if registration.initialize.is_none() {
                         match Journal::open(directory.join("journal"))?.load_session(args.session) {
                             Ok(_) => {}

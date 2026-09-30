@@ -430,10 +430,14 @@ An authenticated full-access owner connection can invoke it; workspace-only
 connections cannot select host configuration. The independent Voyage process
 opens configuration and its home-scoped provider registry after dropping to the
 configured UID/GID/groups. The supervisor never substitutes its root login
-account. Plain `Start`, account discovery/enrollment, execution settings and model
-discovery remain refused for system installations until ordinary-identity helpers
-exist. Owner identity controls, supported production system installation and
-automatic bound recovery remain incomplete. Bound startup does not derive scoped Vessel
+account. The ordinary-identity helper source now extends system `Start`,
+`StartAccount` and `StartSettings`, account/default/model observations and
+account-context-specific execution profiles. Capture retains an exact private
+request before creating a frozen launch file; fresh startup checks a root-protected
+configuration digest before resolving those bytes. The combined implementation
+is awaiting final verification and hosted delivery. Identity-scoped enrollment and
+usage, owner identity controls, production system adoption and automatic bound
+recovery remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
 

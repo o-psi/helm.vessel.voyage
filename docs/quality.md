@@ -755,3 +755,21 @@ live authentication, provider spend or native service behavior is established.
 The final integrated provider test pass must verify these cases along with the
 existing provider tests, and final workspace coverage must retain the full source
 and current object set. No denominator exclusions are introduced.
+
+### Execution-identity account and configuration source increment (#344)
+
+The private `identity-helper` and supervisor account/start/profile source is
+prepared for the final coordinated milestone pass. No test or build has run for
+this increment, following the operator's implementation-first direction. Prepared
+regressions cover private-file limits/ownership, symlinks/hardlinks, exact digest
+fencing, missing-file non-creation, separate identity profile state and exact
+actor/namespace-bound mutation receipts. These are not passing evidence.
+
+Final verification must additionally use actual dropped helpers and system/public
+routes in disposable native Linux: ordinary account listing/defaults/models and
+profiles, configured/account/settings creation, exact retry and not-admitted
+resolution, account and connection revocation, interrupted capture, changed
+configuration after capture, and observed guardian cleanup. The isolated provider
+must be synthetic. Keep production deployment/TLS and published exact-source
+archive qualification distinct. Do not execute a newer library test with an older
+Vessel helper and infer that it verifies the new public route.

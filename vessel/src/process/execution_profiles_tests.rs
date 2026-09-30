@@ -49,6 +49,101 @@ fn apply(f: &Fixture, command: &VesselCommand) -> ProfileCatalogue {
 }
 
 #[test]
+fn execution_identity_profiles_preserve_namespace_and_exact_command_receipts() {
+    let f = Fixture::new();
+    let ordinary = format!("{}:1", Uuid::new_v4());
+    let administrator = format!("{}:1", Uuid::new_v4());
+    let command = save(&f, profile("Ordinary only"), 0, true);
+    let saved = transact_namespace(
+        &f.0,
+        Some(&ordinary),
+        None,
+        Some((&command, "human")),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(saved.revision, 1);
+    assert_eq!(
+        transact_namespace(&f.0, Some(&administrator), None, None, || Ok(())).unwrap(),
+        ProfileCatalogue::default()
+    );
+    assert_eq!(
+        transact(&f.0, None, None).unwrap(),
+        ProfileCatalogue::default()
+    );
+    let replay = transact_namespace(
+        &f.0,
+        Some(&ordinary),
+        None,
+        Some((&command, "human")),
+        || anyhow::bail!("revoked account must not be reopened for a receipt"),
+    )
+    .unwrap();
+    assert_eq!(replay, saved);
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&administrator),
+            None,
+            Some((&command, "human")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&ordinary),
+            None,
+            Some((&command, "another human")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        transact_namespace(&f.0, Some(&ordinary), None, None, || Ok(())).unwrap(),
+        saved
+    );
+}
+
+#[test]
+fn stale_identity_profile_mutation_does_not_change_another_identity_or_its_receipts() {
+    let f = Fixture::new();
+    let namespace = format!("{}:1", Uuid::new_v4());
+    let command = save(&f, profile("Pinned"), 0, true);
+    let saved = transact_namespace(
+        &f.0,
+        Some(&namespace),
+        None,
+        Some((&command, "owner")),
+        || Ok(()),
+    )
+    .unwrap();
+    let stale = save(&f, profile("Stale"), 0, true);
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&namespace),
+            None,
+            Some((&stale, "owner")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        transact_namespace(&f.0, Some(&namespace), None, None, || Ok(())).unwrap(),
+        saved
+    );
+    let db = database::open(&f.0).unwrap();
+    let count: u64 = db
+        .query_row("SELECT count(*) FROM execution_profile_commands", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
 fn bootstrap_waits_for_account_then_occurs_only_once() {
     let f = Fixture::new();
     assert_eq!(
