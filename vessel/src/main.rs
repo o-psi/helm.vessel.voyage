@@ -64,6 +64,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Explicit root-operator administrator-owner enrollment/revocation; does not launch.
+    #[cfg(target_os = "linux")]
+    AdministrativeOwner(vessel::process::administrative_owner_cli::AdministrativeOwnerArgs),
     #[cfg(target_os = "linux")]
     #[command(hide = true)]
     GuardBound(vessel::process::guardian::Args),
@@ -258,6 +261,9 @@ async fn run(cli: Cli) -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     match cli.command {
+        Some(Command::AdministrativeOwner(args)) => {
+            return vessel::process::administrative_owner_cli::run(args).await;
+        }
         Some(Command::ProcessGrant(args)) => return vessel::process::grant_cli::issue(args).await,
         Some(Command::PairInvite(args)) => return vessel::process::pair_cli::invite(args),
         Some(Command::ListConnections(args)) => return vessel::process::pair_cli::list(args),

@@ -20,6 +20,9 @@ pub use exchange::exchange;
 
 pub mod grant_cli;
 
+#[cfg(target_os = "linux")]
+pub mod administrative_owner_cli;
+
 mod lifecycle;
 
 mod identity;

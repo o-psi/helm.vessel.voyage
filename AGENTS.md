@@ -244,7 +244,10 @@ versioned installation, upgrades, rollback and user-service provisioning.
 Follow [remote updates](docs/remote-updates.md) when changing owner-approved
 self-updates: preserve pinned review, exact durable receipts, independent updater
 execution, service readiness, rollback and capability-gated client admission.
-Native private-storage changes require platform-specific security verification.
+Native private-storage changes require platform-specific security verification. Administrator-owner enrollment is a separate explicit root/operator
+operation documented in [the privileged Vessel plan](docs/privileged-vessel-plan.md#protected-administrator-owner-and-review-prerequisite).
+Never infer it from pairing or login. Keep public administrator review unavailable
+until its complete current-facts, launch and both-client path is verified.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use
 `./scripts/local-git` and do not initialize replacement metadata. If the wrapper

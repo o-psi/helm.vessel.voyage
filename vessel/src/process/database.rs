@@ -21,6 +21,10 @@ use voyage_protocol::process::{
     CatalogueMetadata, CatalogueSummary, ProcessInfo, ProcessRegistration,
 };
 
+#[cfg(target_os = "linux")]
+#[path = "database_execution_reviews.rs"]
+pub(super) mod execution_reviews;
+
 const FILE: &str = "catalogue.sqlite3";
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -106,7 +110,10 @@ fn open_file(root: &Path, file: &str) -> Result<Connection> {
         tx.commit()?;
         fs::File::open(root)?.sync_all()?;
     } else {
-        ensure!(version == 2, "unsupported supervisor database version");
+        ensure!(
+            (2..=3).contains(&version),
+            "unsupported supervisor database version"
+        );
     }
     Ok(db)
 }

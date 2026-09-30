@@ -1164,9 +1164,16 @@ process or guarantee access to existing descendants. The check requires Linux
 
 Execution identity/review/receipt contracts are staged in `voyage-protocol` for
 [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344). They are not an
-advertised capability or a callable administrator-execution API. The installer
-and supervisor still use the existing user-service/identity behavior; system
-installation, administrator review and identity transitions remain unimplemented.
+advertised capability or a callable administrator-execution API. An explicit
+root-operator `vessel administrative-owner` command now enrolls/revokes a named
+Helm principal with exact protected receipts and a pinned authority revision.
+Full-access pairing and OS login do not enroll administrators. Internal prepared
+review/approval/cancel/revoke transactions retain authority separately from
+receipts; approval records a grant without launching, and revocation reports a
+fence without claiming cleanup. The schema-3 extension is activated only by this
+explicit root operation; ordinary/user catalogue open stays at schema 2.
+Public owner review, administrator launch/transition, native qualification and
+client parity remain required. See the [privileged plan's current prerequisite](privileged-vessel-plan.md#protected-administrator-owner-and-review-prerequisite).
 
 ## Remote update admission
 

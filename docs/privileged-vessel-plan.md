@@ -140,6 +140,53 @@ adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
 deferred. Destructive tests remain confined to disposable fixtures. No live
 installation has been converted by the foundation changes.
 
+## Protected administrator-owner and review prerequisite
+
+The root operator can now explicitly enroll or revoke a Helm principal in the
+protected supervisor catalogue. This is separate from full-access pairing, process
+grants, OS login and the ordinary execution identity. No principal is enrolled by
+default. The Linux command requires actual real/effective UID 0 and a root-private
+control directory; it does not acquire root authority or launch a Voyage:
+
+```sh
+vessel administrative-owner --directory /var/lib/voyage/vessel \
+  --principal PRINCIPAL_UUID --expected-revision 0 \
+  --command-id COMMAND_UUID --enroll
+```
+
+Use `--revoke` for explicit removal, retaining the exact command UUID for retries
+and pinning the last observed authority revision. The returned receipt identifies
+the next revision and any grants fenced. A conflicting command or stale revision
+refuses rather than guessing owner intent. Removal fences that principal's active
+administrator grants in the same SQLite transaction. Independent guardians must
+separately observe retirement; enrollment/removal receipts do not claim cleanup.
+
+First enrollment transactionally upgrades only this protected catalogue from
+schema 2 to schema 3. A rejected first operation rolls back both migration and
+owner changes. Ordinary/user catalogue open stays at schema 2. Older binaries
+cannot reopen an activated schema-3 catalogue: a system downgrade must have an
+explicit compatible state/lifecycle plan. Do not switch to an old binary or
+restore a backup while independent voyages can still write. Active schema
+rollback remains an open gate in #380/#344.
+
+Internal review storage now retains exact prepared facts/digests, the current
+receipt, an optional separate administrator grant and exact cancellation/revocation
+command receipts. Approval checks explicit owner enrollment, current connection
+and authority revision, configured administrator identity/account context and the
+caller-reconstructed current review facts before atomically publishing its grant
+and Approved receipt. Approved means authorization was recorded, not that a
+process started. Duplicate approval observes the retained state, including a
+cancelled or independently revoked grant; it never launches a process. Cancel
+applies to a pending review. An approved grant requires explicit Revoke, reported
+as `revocation_requested` with cleanup still pending.
+
+This is a prerequisite with ordinary-UID transactional tests, not an advertised
+administrator-review or launch API. Public callers cannot supply these review
+facts as authority. Complete protected current host/account/release/policy/work
+facts, initial launch and transition integration, native owner/cancellation/
+revocation journeys and both clients before exposing the capability. These remain
+required v1.0.3 scope; no client/admin feature is claimed from the bookkeeping.
+
 ## 1. Outcome and boundaries
 
 The installer can provision a privileged system Vessel. The administrator selects

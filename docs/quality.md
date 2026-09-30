@@ -713,3 +713,28 @@ A fault after the durable startup-attempt flag must retain that flag and refuse
 old-binary rollback. Do not manually erase the journal to resume an uncertain effect.
 Record exact source/archives, commands, exit statuses, managed PIDs and journal
 phases; these are additional native evidence, separate from Rust line coverage.
+
+## Protected administrator review transactions
+
+```sh
+umask 077
+cargo test -p vessel --locked execution_reviews:: -j 8
+cargo clippy -p vessel -p voyage-protocol --locked --all-targets --all-features -j 8 -- -D warnings
+```
+
+The transactional tests run as the ordinary developer identity, using in-memory
+SQLite and the existing private-directory fixture. They cover explicit owner
+selection/revision, exact replay/conflict, approval without process launch,
+stale/expired/current-identity refusal, cancelled late approval, independent and
+owner-wide grant revocation, truthful cleanup-pending receipts and transactional
+schema migration rollback. Ordinary root-operator refusal is checked before any
+mutation. A zero-match test filter is not passing coverage of this surface.
+
+These tests do not establish native root enrollment, host/account/release fact
+construction, administrator process launch, a public owner route or either
+client. Default public capability remains unavailable. Complete disposable native
+Linux authority, stale/duplicate/cancel/revoke/guardian cleanup and TUI/React
+journeys before claiming #344 acceptance. First explicit root owner enrollment
+activates protected catalogue schema 3; ordinary/user catalogues remain schema 2.
+Older schema-2-only binaries cannot consume activated schema 3, so actual
+compatible downgrade/rollback remains separately required.
