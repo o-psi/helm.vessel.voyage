@@ -64,7 +64,9 @@ async fn recover_checked(
             ensure!(
                 result["session_id"] == request.session_id.to_string()
                     && result["incarnation"] == request.incarnation.to_string()
-                    && result["command_id"] == request.command_id.to_string(),
+                    && result["command_id"] == request.command_id.to_string()
+                    && result["restart_permitted"] == false
+                    && result["execution_authorized"] == false,
                 "bound recovery receipt identity mismatch"
             );
             return Ok(result.clone());
@@ -142,7 +144,9 @@ async fn recover_checked(
         .as_str()
         .map(str::parse::<uuid::Uuid>)
         .transpose()?;
-    let result = serde_json::json!({"session_id":request.session_id,"incarnation":request.incarnation,"command_id":request.command_id,"revision":snapshot["revision"],"cleanup_disposition":if retained{"unresolved_retained"}else if owner.has_cleanup_attestation().await?{"operator_attested"}else{"observed"},"restart_permitted":true,"execution_authorized":false,"retained_run_ids":retained_run_ids,"retained_resource_ids":retained_resource_ids,"last_run_id":last_run_id,"local_process_retired":true});
+    // This helper establishes only retired-owner journal bookkeeping. A later
+    // explicit Restart has its own current binding and admission checks.
+    let result = serde_json::json!({"session_id":request.session_id,"incarnation":request.incarnation,"command_id":request.command_id,"revision":snapshot["revision"],"cleanup_disposition":if retained{"unresolved_retained"}else if owner.has_cleanup_attestation().await?{"operator_attested"}else{"observed"},"restart_permitted":false,"execution_authorized":false,"retained_run_ids":retained_run_ids,"retained_resource_ids":retained_resource_ids,"last_run_id":last_run_id,"local_process_retired":true});
     check()?;
     receipts.publish(
         &name,
@@ -155,6 +159,26 @@ fn operator_changes(request: &BoundRecoveryRequest) -> bool {
     request.acknowledge_cleanup.is_some()
         || !request.acknowledge_resources.is_empty()
         || request.reconcile_tools.is_some()
+}
+
+pub(super) fn validate_workspace(workspace: &Path, request: &BoundRecoveryRequest) -> Result<()> {
+    validate(request)?;
+    let actor_workspace = Path::new(&request.actor.workspace);
+    // Canonical spelling is checked lexically because the original project may
+    // have been deleted or unmounted. No project metadata is consulted here.
+    let spelling: std::path::PathBuf = workspace.components().collect();
+    ensure!(
+        workspace.is_absolute()
+            && workspace.components().all(|component| matches!(
+                component,
+                std::path::Component::RootDir | std::path::Component::Normal(_)
+            ))
+            && spelling.as_os_str() == workspace.as_os_str()
+            && workspace.as_os_str() == actor_workspace.as_os_str()
+            && !request.actor.workspace.contains('\0'),
+        "offline workspace label does not match exact stored actor"
+    );
+    Ok(())
 }
 
 fn validate(request: &BoundRecoveryRequest) -> Result<()> {
@@ -243,6 +267,24 @@ mod tests {
             assert!(!missing.exists());
         }
     }
+    #[test]
+    fn offline_workspace_label_is_exact_without_project_filesystem_access() {
+        let root = tempfile::tempdir().unwrap();
+        let absent = root.path().join("absent-project");
+        let mut value = request(&root.path().join("private-runtime"));
+        value.actor.workspace = absent.to_str().unwrap().into();
+        assert!(validate_workspace(&absent, &value).is_ok());
+        assert!(!absent.exists());
+        assert!(validate_workspace(root.path(), &value).is_err());
+        for suffix in ["/../other", "/./nested", "/nested/", "//nested"] {
+            let altered = std::path::PathBuf::from(format!("{}{suffix}", absent.display()));
+            value.actor.workspace = altered.to_str().unwrap().into();
+            assert!(validate_workspace(&altered, &value).is_err());
+        }
+        value.actor.workspace = "relative-project".into();
+        assert!(validate_workspace(Path::new("relative-project"), &value).is_err());
+        assert!(!absent.exists());
+    }
     const CHILD: &str = "identity_helper::recovery::tests::isolated_recovery_child";
     #[test]
     fn isolated_recovery_child() {
@@ -255,10 +297,17 @@ mod tests {
         runtime.block_on(async {
             let directory = Directory::open(&root.join("runtime")).unwrap();
             drop(directory);
-            let mut session = crate::session::Session::new(
-                root.canonicalize().unwrap(),
-                "synthetic-no-provider".into(),
-            );
+            let workspace = if mode == "deleted_workspace" {
+                let workspace = root.join("deleted-project");
+                std::fs::create_dir(&workspace).unwrap();
+                let workspace = workspace.canonicalize().unwrap();
+                std::fs::remove_dir(&workspace).unwrap();
+                workspace
+            } else {
+                root.canonicalize().unwrap()
+            };
+            let mut session =
+                crate::session::Session::new(workspace.clone(), "synthetic-no-provider".into());
             session.name = Some("retained canonical name".into());
             let actor = LocalActorStore::open(&root.join("runtime/identity"))
                 .unwrap()
@@ -271,7 +320,8 @@ mod tests {
             drop(journal);
             let mut value = request(&root.join("runtime"));
             value.session_id = session.id;
-            value.actor.workspace = root.to_string_lossy().into_owned();
+            value.actor.workspace = workspace.to_string_lossy().into_owned();
+            validate_workspace(&workspace, &value).unwrap();
             if mode == "startup_owned" {
                 let lock = crate::attachment::journal::open_private_file(
                     &root.join("runtime/startup.lock"),
@@ -299,12 +349,16 @@ mod tests {
                 let result = recover_checked(value.clone(), &|| Ok(())).await.unwrap();
                 assert_eq!(result["session_id"], session.id.to_string());
                 assert_eq!(result["execution_authorized"], false);
+                assert_eq!(result["restart_permitted"], false);
                 assert!(!result.to_string().contains("retained canonical name"));
                 assert_eq!(result["cleanup_disposition"], "observed");
                 assert_eq!(
                     recover_checked(value.clone(), &|| Ok(())).await.unwrap(),
                     result
                 );
+                if mode == "deleted_workspace" {
+                    assert!(!workspace.exists());
+                }
                 value.expected_revision = Some(999);
                 assert!(recover_checked(value, &|| Ok(())).await.is_err());
                 let journal =
@@ -362,6 +416,10 @@ mod tests {
     #[test]
     fn claimed_operator_reconciliation_never_replays_after_missing_receipt() {
         child("operator_uncertain");
+    }
+    #[test]
+    fn deleted_project_does_not_prevent_retired_private_journal_bookkeeping() {
+        child("deleted_workspace");
     }
 }
 

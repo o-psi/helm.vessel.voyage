@@ -635,24 +635,30 @@ pub async fn run() -> Result<()> {
             request.schema == IDENTITY_HELPER_SCHEMA && request.workspace.is_absolute(),
             "invalid identity helper request"
         );
-        let workspace = request.workspace.canonicalize()?;
-        ensure!(
-            workspace == request.workspace && workspace.is_dir(),
-            "canonical workspace required"
-        );
         #[cfg(unix)]
         let response = match request.operation {
+            IdentityHelperOperation::RecoverBound {
+                request: recovery_request,
+            } => {
+                // Retired journal bookkeeping uses the stored workspace as an
+                // identity label. It does not enter or recreate the project.
+                recovery::validate_workspace(&request.workspace, &recovery_request)?;
+                IdentityHelperResponse::Value {
+                    value: recovery::recover(recovery_request).await?,
+                }
+            }
             IdentityHelperOperation::ReviewConfig { config_path } => {
+                let workspace = canonical_workspace(&request.workspace)?;
                 IdentityHelperResponse::Facts {
                     facts: review_config(&workspace, &config_path)?,
                 }
             }
-            IdentityHelperOperation::RecoverBound { request } => IdentityHelperResponse::Value {
-                value: recovery::recover(request).await?,
-            },
-            operation => IdentityHelperResponse::Value {
-                value: account_operation(&workspace, operation).await?,
-            },
+            operation => {
+                let workspace = canonical_workspace(&request.workspace)?;
+                IdentityHelperResponse::Value {
+                    value: account_operation(&workspace, operation).await?,
+                }
+            }
         };
         #[cfg(not(unix))]
         let response = IdentityHelperResponse::Unavailable;
@@ -668,10 +674,33 @@ pub async fn run() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn canonical_workspace(requested: &Path) -> Result<std::path::PathBuf> {
+    let workspace = requested.canonicalize()?;
+    ensure!(
+        workspace == requested && workspace.is_dir(),
+        "canonical workspace required"
+    );
+    Ok(workspace)
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn ordinary_workspace_checks_still_refuse_missing_or_aliased_projects() {
+        let fixture = tempfile::tempdir().unwrap();
+        let canonical = fixture.path().canonicalize().unwrap();
+        assert_eq!(canonical_workspace(&canonical).unwrap(), canonical);
+        let missing = canonical.join("missing-project");
+        assert!(canonical_workspace(&missing).is_err());
+        assert!(!missing.exists());
+        let alias = canonical.join("project-alias");
+        std::os::unix::fs::symlink(&canonical, &alias).unwrap();
+        assert!(canonical_workspace(&alias).is_err());
+    }
 
     #[test]
     fn frozen_observation_is_private_bounded_and_does_not_create_a_missing_parent() {

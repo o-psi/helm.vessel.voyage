@@ -1076,6 +1076,17 @@ owner may attest explicit IDs; operator intent is claimed before those mutations
 and a missing completion receipt fences replay. Exact completed receipt lookup
 returns metadata, never conversation/configuration/provider contents. The result
 explicitly grants no execution authorization and exposes bounded obligation IDs.
+It also returns `restart_permitted: false`: this bookkeeping receipt grants no
+restart permission, even when all known cleanup is observed. Explicit bound
+Restart independently checks current execution admission and protected retirement.
+Both new and cached receipts are checked for this metadata-only contract.
+
+The recovery request carries the exact protected registration workspace as its
+outer workspace label. Recovery dispatch precedes account/start workspace checks
+and requires a normalized absolute spelling identical to the actor and canonical
+session labels. It does not stat, enter, recreate or canonicalize the project, so
+deleted or unmounted original workspaces remain recoverable. Account, start and
+administrative review helpers retain their existing canonical-directory checks.
 
 Public branching now rechecks current create/history/lifecycle scope before its
 snapshot effect. Participant admission rechecks its independently pinned ordinary
