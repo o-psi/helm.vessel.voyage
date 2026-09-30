@@ -378,7 +378,7 @@ def assert_canonical(snapshot, scenario):
     assert scenario.counter.read_text() == "effect\n" * count
 
 
-def run_case(binaries, mode, kind):
+def run_case(binaries, mode, kind, tui=False):
     fixture = ContextFixture(binaries)
     scenario = Scenario(fixture, mode, kind)
     print(f"evidence ({mode}/{kind}): {fixture.root}", flush=True)
@@ -472,6 +472,20 @@ def run_case(binaries, mode, kind):
                 assert_canonical(snapshot, scenario)
             expected = {"long": 14, "rejection": 4, "manual": 3, "cancel": 3, "model":7}.get(kind, 2)
             assert len(scenario.bodies) == expected, "inference replay or missing recovery"
+        if tui:
+            from ui_journeys import launch, screen, pty_helpers
+            count = len(scenario.bodies)
+            pty = launch([str(binaries / "helm"), "connect", "--directory", str(fixture.directory), "--no-start"],
+                         fixture.env, fixture.workspace, fixture.root / "context-tui.pty", 120, 36)
+            try:
+                def observed_status():
+                    assert pty["process"].poll() is None, "Helm exited before context status"
+                    return "Last prepared input: unknown tokens" in screen(pty)
+                wait_for(observed_status, "real TUI context status")
+                (fixture.root / "context-tui-screen.txt").write_text(screen(pty))
+                assert len(scenario.bodies) == count, "observing context dispatched inference"
+            finally:
+                pty_helpers.stop_pty(pty, wait_for)
         # Suspension is the end-of-run barrier: no sleep-only claim of non-replay.
         assert not scenario.errors, scenario.errors
         (fixture.root / "snapshot.json").write_text(json.dumps(snapshot, indent=2))
@@ -492,7 +506,9 @@ def main():
     parser.add_argument("--mode", choices=["all", *MODES], default="all")
     parser.add_argument("--case", choices=["all", "rejection", "automatic", "irreducible",
                                          "manual", "cancel", "partial", "long", "model"], default="all")
+    parser.add_argument("--tui", action="store_true", help="Observe saved unknown accounting in real Helm after the Chat model case")
     args = parser.parse_args()
+    assert not args.tui or (args.mode == "chat" and args.case == "model"), "--tui requires --mode chat --case model"
     binaries = args.bin_dir.resolve()
     for binary in ("voyage", "vessel"):
         assert (binaries / binary).is_file(), f"missing {binary} binary"
@@ -500,7 +516,7 @@ def main():
     cases = ("rejection", "automatic", "irreducible", "manual", "cancel", "partial", "long") if args.case == "all" else [args.case]
     for mode in modes:
         for kind in cases:
-            run_case(binaries, mode, kind)
+            run_case(binaries, mode, kind, args.tui)
 
 
 if __name__ == "__main__":
