@@ -149,7 +149,14 @@ owned-child liveness; a lost lease refuses further effects. Source authority,
 catalogue and preferences must still equal the reviewed snapshot after freeze.
 The bounded adoption transaction supports up to 64 sessions and ten minutes;
 larger or slower handoffs refuse with retained source and preactivation recovery.
-A recorded reboot alone is not the ownership fence.
+A recorded reboot alone is not the ownership fence. Review also pins the source
+directory device/inode, full target manifest metadata and both named accounts;
+held leases verify directory identity throughout publication and relocation.
+Prepare refuses different source/retention filesystems before stopping source
+services, because the supported backend requires atomic retention by rename.
+It reports that an explicit relocation backend is required for that topology;
+it never discovers the limitation by silently abandoning a partially installed
+root supervisor.
 
 `adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
 `adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including

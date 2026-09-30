@@ -26,6 +26,9 @@ struct Review {
     operation_id: Uuid,
     phase: String,
     source_directory: PathBuf,
+    source_device: u64,
+    source_inode: u64,
+    source_manifest_digest: String,
     original_user: String,
     uid: u32,
     gid: u32,
@@ -102,10 +105,34 @@ fn recheck(review: &Review) -> Result<()> {
             && current.groups == review.groups,
         "original account changed since adoption review"
     );
-    service::files::check_path(&review.bin, 0)?;
+    let gateway = system_preflight::account(&review.gateway_user)?;
+    let pinned = &review.planned_installation;
     ensure!(
-        Manifest::inspect(&review.bin)?.id()? == review.release,
-        "reviewed root-owned archive changed"
+        gateway.uid == pinned.gateway_uid
+            && gateway.gid == pinned.gateway_gid
+            && gateway.home == pinned.gateway_home
+            && gateway.groups == pinned.gateway_groups,
+        "gateway account changed since adoption review"
+    );
+    let retained = directory(review.operation_id)?.join("retained-user-vessel");
+    let source = if retained.try_exists()? {
+        retained.as_path()
+    } else {
+        review.source_directory.as_path()
+    };
+    let metadata = fs::symlink_metadata(source)?;
+    ensure!(
+        metadata.is_dir()
+            && metadata.uid() == review.uid
+            && metadata.dev() == review.source_device
+            && metadata.ino() == review.source_inode,
+        "original source directory changed since adoption review"
+    );
+    service::files::check_path(&review.bin, 0)?;
+    let manifest = Manifest::inspect(&review.bin)?;
+    ensure!(
+        manifest.id()? == review.release && hash(&manifest)? == review.source_manifest_digest,
+        "reviewed root-owned archive or compatibility metadata changed"
     );
     Ok(())
 }
@@ -301,6 +328,10 @@ struct SourceOwnership {
     child: OwnedChild,
     channel: UnixStream,
     started: Instant,
+    directory: PathBuf,
+    device: u64,
+    inode: u64,
+    uid: u32,
 }
 impl SourceOwnership {
     fn acquire(review: &Review) -> Result<Self> {
@@ -314,12 +345,24 @@ impl SourceOwnership {
             child,
             channel,
             started: Instant::now(),
+            directory: review.source_directory.clone(),
+            device: review.source_device,
+            inode: review.source_inode,
+            uid: review.uid,
         })
     }
     fn check(&mut self) -> Result<()> {
         ensure!(
             self.started.elapsed() < Duration::from_secs(600) && self.child.try_wait()?.is_none(),
             "original namespace ownership lease ended; no further migration effects permitted"
+        );
+        let metadata = fs::symlink_metadata(&self.directory)?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.uid() == self.uid
+                && metadata.dev() == self.device
+                && metadata.ino() == self.inode,
+            "leased original supervisor directory was replaced"
         );
         Ok(())
     }
@@ -329,12 +372,18 @@ struct SourceLease {
     input: Option<std::process::ChildStdin>,
     _output: std::process::ChildStdout,
     started: Instant,
+    directory: PathBuf,
+    session: Uuid,
+    device: u64,
+    inode: u64,
+    uid: u32,
 }
 impl SourceLease {
     fn acquire(
         review: &Review,
         freeze: TransitionRequest,
     ) -> Result<(Self, PreparedTransitionReceipt)> {
+        let source_directory = freeze.operation.directory().to_owned();
         let mut command = Command::new(review.bin.join("voyage"));
         service::files::executable(&review.bin.join("voyage"), 0)?;
         command
@@ -411,6 +460,11 @@ impl SourceLease {
                 input: Some(input),
                 _output: output,
                 started: Instant::now(),
+                directory: source_directory,
+                session: receipt.session_id,
+                device: receipt.source_directory_device,
+                inode: receipt.source_directory_inode,
+                uid: receipt.source_uid,
             },
             receipt,
         ))
@@ -419,6 +473,14 @@ impl SourceLease {
         ensure!(
             self.started.elapsed() < Duration::from_secs(600) && self.child.try_wait()?.is_none(),
             "original startup/execution lease ended; no further adoption effects permitted"
+        );
+        let metadata = fs::symlink_metadata(&self.directory)?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.uid() == self.uid
+                && metadata.dev() == self.device
+                && metadata.ino() == self.inode,
+            "leased original runtime directory was replaced"
         );
         Ok(())
     }
@@ -792,6 +854,11 @@ fn apply(review: &mut Review) -> Result<()> {
     let retained = directory(review.operation_id)?.join("retained-user-vessel");
     leases_current(&mut owner, &mut leases)?;
     fs::rename(&review.source_directory, &retained)?;
+    owner.directory = retained.clone();
+    for lease in &mut leases {
+        lease.directory = retained.join("sessions").join(lease.session.to_string());
+    }
+    leases_current(&mut owner, &mut leases)?;
     fs::DirBuilder::new()
         .mode(0o711)
         .create(&review.source_directory)?;
@@ -868,12 +935,27 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             let source = account.home.join(".local/state/voyage/vessel");
             opts.adoption_source = Some(source.clone());
             let plan = Plan::prepare(&opts)?;
+            let source_metadata = fs::symlink_metadata(&source)?;
+            ensure!(
+                source_metadata.is_dir()
+                    && source_metadata.uid() == account.uid
+                    && source_metadata.mode() & 0o077 == 0,
+                "original user source directory is not private and owned"
+            );
+            ensure!(
+                source_metadata.dev() == fs::metadata(root()?)?.dev(),
+                "user adoption requires atomic same-filesystem retention between original source and /etc/voyage-adoption; different mounts require an explicit relocation backend, and source/services are unchanged"
+            );
+            let source_manifest_digest = hash(&plan.manifest)?;
             service::files::directory(&dir, 0, true)?;
             let mut review = Review {
                 schema_version: 1,
                 operation_id: id,
                 phase: "prepared".into(),
                 source_directory: source,
+                source_device: source_metadata.dev(),
+                source_inode: source_metadata.ino(),
+                source_manifest_digest,
                 original_user: opts.execution_user,
                 uid: account.uid,
                 gid: account.gid,
@@ -908,6 +990,9 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 review.source_boot,
                 &review.release,
                 &review.planned_installation,
+                review.source_device,
+                review.source_inode,
+                &review.source_manifest_digest,
                 &review.gateway_user,
                 &review.origin,
                 &review.key,
@@ -954,6 +1039,9 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 review.source_boot,
                 &review.release,
                 &review.planned_installation,
+                review.source_device,
+                review.source_inode,
+                &review.source_manifest_digest,
                 &review.gateway_user,
                 &review.origin,
                 &review.key,
