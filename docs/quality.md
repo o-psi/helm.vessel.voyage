@@ -663,7 +663,10 @@ Use separate clean disposable native guests for active, inactive and interruptio
 cases. Never convert a developer or production install for these checks. Unpack
 both checksum-verified full archives into root-owned `/root/release-old` and
 `/root/release-new`, with the new SemVer strictly greater and both manifest targets
-matching. Prepare the external key provisioner as above. Invoke the **new installer**
+matching. Stable manifest versions may use the published `vMAJOR.MINOR.PATCH`
+spelling; comparison normalizes that one prefix while retaining the exact original
+manifest, release ID and receipt version. Include equal-version, prerelease,
+downgrade and malformed-prefix refusal. Prepare the external key provisioner as above. Invoke the **new installer**
 against the old runtime for initial staging, so the baseline has the protected
 default execution contract (older fresh-install binaries did not provision it):
 
