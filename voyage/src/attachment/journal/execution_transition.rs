@@ -192,16 +192,20 @@ fn stored(db: &Connection, command: Uuid) -> Result<Option<StoredTransition>> {
     .transpose()
 }
 fn collisions(db: &Connection, id: Uuid) -> Result<()> {
-    for name in [
-        "commands",
-        "process_commands",
-        "process_command_bindings",
-        "steering",
+    for (name, column) in [
+        ("commands", "id"),
+        ("process_commands", "id"),
+        ("process_command_bindings", "id"),
+        ("steering", "id"),
+        ("process_goal_turns", "command_id"),
+        ("process_goal_meters", "command_id"),
+        ("process_goal_settlements", "command_id"),
+        ("process_transfers", "command_id"),
     ] {
         if table(db, name)? {
             ensure!(
                 !db.query_row(
-                    &format!("SELECT EXISTS(SELECT 1 FROM {name} WHERE id=?1)"),
+                    &format!("SELECT EXISTS(SELECT 1 FROM {name} WHERE {column}=?1)"),
                     [id.to_string()],
                     |r| r.get::<_, bool>(0)
                 )?,
