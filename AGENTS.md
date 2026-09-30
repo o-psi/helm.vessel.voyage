@@ -272,7 +272,12 @@ finite run/resource bounds and observed cleanup. Obtain live-provider/account an
 budget authorization before inference. Report task rewards separately from setup,
 provider, timeout and cleanup failures; partial pilots are not full leaderboard scores.
 Keep raw traces private, publish only sanitized evidence, and retain unresolved
-obligations in the GitHub issue. This does not restore retired broad suites, authorize
+obligations in the GitHub issue. For explicitly requested full runs and Hub uploads,
+follow [full-run admission and upload checks](eval/voyage_harbor/full-run.md): honor
+all task/GPU resources and deadlines, verify approved account/resource access, inspect
+a separate upload copy, upload privately unless publication is explicitly requested,
+and verify remote job/trial completeness. Never substitute a CPU-only subset or
+shortened wrapper deadline for a full benchmark. This does not restore retired broad suites, authorize
 hosted quality jobs, or relax runtime policy to make benchmark tasks pass.
 
 ## Code coverage history
