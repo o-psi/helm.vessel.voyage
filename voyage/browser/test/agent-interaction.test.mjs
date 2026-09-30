@@ -56,5 +56,32 @@ test('grounded agent paging, native input, child frames, stale targets and priva
   await call('control',{viewer,mode:'agent'});assert.deepEqual((await act({kind:'diagnostics'})).errors,{console:0,page:0});
   await w.page.setContent('<select aria-label="Large choice">'+Array.from({length:80},(_,i)=>`<option value="${i}-${'界'.repeat(250)}">${'界'.repeat(250)}</option>`).join('')+'</select>');
   const large=await observe();assert.equal(large.elements.length,1);assert.equal(large.elements[0].options_truncated,true);assert.ok(large.elements[0].options.length>0);assert.equal(large.next_offset,null);assert.ok(Buffer.byteLength(JSON.stringify(large.elements))<32768);assert.ok(Buffer.byteLength(JSON.stringify(large))<128*1024);
+  // A shadow control before a light-DOM control must not shift a separately
+  // queried locator's indices. The exact captured list supplies both references.
+  await w.page.setContent('<div id="shadow"></div><div id="late"></div><button id="light">Light action</button>');
+  await w.page.evaluate(()=>{
+    const shadow=document.querySelector('#shadow').attachShadow({mode:'open'});
+    shadow.innerHTML='<span id="name">Shadow label</span><input aria-labelledby="name"><button onclick="this.textContent=\'Shadow applied\'">Shadow action</button><div id="nested"></div>';
+    shadow.querySelector('#nested').attachShadow({mode:'open'}).innerHTML='<button onclick="this.textContent=\'Nested applied\'">Nested action</button>';
+  });
+  const shadowObserved=await observe();assert.equal(shadowObserved.control_total,4);assert.equal(shadowObserved.controls_truncated,false);
+  assert.deepEqual(shadowObserved.elements.map(e=>e.text),['Shadow label','Shadow action','Nested action','Light action']);
+  assert.equal(shadowObserved.elements.find(e=>e.text==='Shadow action').obscured,false);
+  const shadowPage=await act({kind:'inspect',offset:2,limit:1});assert.equal(shadowPage.elements[0].text,'Nested action');assert.equal(shadowPage.next_offset,3);
+  await act({kind:'click',ref:await ref('Shadow action')});assert.equal(await w.page.locator('#shadow button').first().innerText(),'Shadow applied');
+  await act({kind:'click',ref:await ref('Nested action')});assert.equal(await w.page.locator('#nested button').innerText(),'Nested applied');
+  let lightRef=await ref('Light action');
+  await w.page.evaluate(()=>document.querySelector('#shadow').shadowRoot.querySelector('#name').textContent='Changed shadow label');
+  assert.equal((await request({kind:'click',ref:lightRef})).error.code,'stale_reference','shadow mutations invalidate the whole observation');
+  lightRef=await ref('Light action');
+  await w.page.evaluate(()=>document.querySelector('#late').attachShadow({mode:'open'}).innerHTML='<button>New shadow action</button>');
+  assert.equal((await request({kind:'click',ref:lightRef})).error.code,'stale_reference','new shadow roots are discovered even without a light-DOM mutation');
+  assert.ok((await observe()).elements.some(e=>e.text==='New shadow action'));
+  await w.page.setContent('<div id="deep"></div><button>Reachable light action</button>');
+  await w.page.evaluate(()=>{let host=document.querySelector('#deep');for(let i=0;i<33;i++){const root=host.attachShadow({mode:'open'});host=document.createElement('div');root.append(host);}host.innerHTML='<button>Over depth action</button>';});
+  const deep=await observe();assert.equal(deep.controls_truncated,true);assert.deepEqual(deep.elements.map(e=>e.text),['Reachable light action']);assert.ok(deep.unsupported.some(value=>value.includes('32 open shadow levels')));
+  await w.page.setContent('<main></main>');
+  await w.page.evaluate(()=>{const nodes=document.createDocumentFragment();for(let i=0;i<100001;i++)nodes.append(document.createElement('span'));const button=document.createElement('button');button.textContent='Outside node budget';nodes.append(button);document.querySelector('main').append(nodes);});
+  const wide=await observe();assert.equal(wide.controls_truncated,true);assert.equal(wide.control_total,0);assert.equal(wide.next_offset,null);
   const receipts=await fs.readdir(path.join(root,'receipts'));for(const file of receipts)assert.doesNotMatch(await fs.readFile(path.join(root,'receipts',file),'utf8'),/HUMAN_PRIVATE|PRIVATE_SENTINEL|Frame input/);
 });

@@ -15,6 +15,13 @@ It returns visible role/label/state controls, fresh references, child frame bind
 counts and explicit truncation/unsupported content. References expire on inspection,
 DOM/control/document/tab/authority changes or after sixty seconds. The host compares
 live control signatures as well as observed mutation versions; page state is untrusted.
+Open shadow controls share one captured list with ordinary DOM controls, including
+handle lookup and pagination. Each observed open shadow root has a mutation
+observer; discovering a new root invalidates prior references. Hit testing follows
+open shadow roots before accepting a target. Traversal examines at most 100000
+elements and 32 open shadow levels. `controls_truncated` marks a partial count when
+either bound is reached; `unsupported` states the limit. Child frames retain their
+independent observed frame identity and existing frame bound.
 `read` returns bounded element text, never input values. `diagnostics` returns error
 counts only and clears them on control fences. Effects add typed `key`, native
 `select`/`check`, `double_click`, reference-to-reference `drag`, and `history`

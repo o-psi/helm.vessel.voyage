@@ -1059,3 +1059,9 @@ stale-reference refusal, exact receipts and private diagnostics exclusion. Run
 `python3 voyage/tests/host_browser.py --agent-interactions --binaries /absolute/path/to/built/bin --web-resources /absolute/path/to/webhelm/resources/js --ws /absolute/path/to/ws`
 for the scripted agent loop followed by both existing Helm viewer journeys and
 observed cleanup. This adds no paid provider calls or hosted quality jobs.
+
+The grounded control sources also cover open shadow controls before light-DOM
+controls, exact paged handle identity, shadow-local accessible labels, nested
+hit testing, mutation/new-root invalidation and explicit traversal truncation.
+These additions were prepared during the implementation-only release pass; they
+have not yet been executed against the combined release source.
