@@ -171,6 +171,22 @@ pub(super) fn runtime_namespace(
     );
     Ok(Some((record.data_directory, record.config_directory)))
 }
+/// An identity-preserving restart retains its exact private namespace; it does
+/// not enroll a new owner or change the reviewed account/configuration.
+pub(super) fn carry_namespace(
+    root: &Path,
+    previous: &ProcessRegistration,
+    next: &ProcessRegistration,
+    identity: &ConfiguredExecutionIdentity,
+) -> Result<()> {
+    if identity.authority != AuthorityClass::Administrator { return Ok(()); }
+    ensure!(next.session_id == previous.session_id && next.restart_from == Some(previous.incarnation) && next.config_path == previous.config_path && next.peer_uids == previous.peer_uids,"administrator restart identity changed");
+    runtime_namespace(root,previous,identity)?;
+    let record=provision(root)?;
+    ensure!(record.identity==*identity,"administrator restart provision changed");
+    pin_namespace(root,next.session_id,next.command_id,&record)
+}
+
 pub(super) async fn facts(
     binary: &Path,
     record: &Provision,
@@ -676,8 +692,15 @@ pub(super) async fn verify_running(
     )
     .await?;
     ensure!(
-        facts.incarnation == registration.incarnation
+        binding.incarnation == registration.incarnation
+            && binding.session_id == registration.session_id
+            && facts.session_id == registration.session_id
             && facts.identity == identity.identity
+            && facts.account_context == identity.account_context
+            && binding.identity == facts.identity
+            && binding.account_context == facts.account_context
+            && binding.host_identity_digest == facts.host_identity_digest
+            && binding.policy_digest == facts.policy_digest
             && facts.workspace == registration.workspace,
         "administrator launch review changed"
     );

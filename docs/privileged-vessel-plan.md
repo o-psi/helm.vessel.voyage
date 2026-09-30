@@ -1037,3 +1037,11 @@ final coordinated local/native verification must establish all initializer
 journeys, exact retry and failure boundaries, scoped revocation during capture,
 ordinary namespace separation, source retirement, signed transfer chunk pinning
 and transition restart behavior before this acceptance can be marked complete.
+
+Identity-preserving administrator restart carries the exact protected namespace
+pin to its new command ID. Guardian admission validates the new incarnation
+against the current root execution binding, while the continuing administrator
+grant retains the original reviewed voyage, identity, account context, host and
+policy. The grant does not acquire a new owner or account, and changed private
+provision/configuration, revoked authority or a changed release still refuses.
+This corrects source restart admission; runtime verification remains pending.
