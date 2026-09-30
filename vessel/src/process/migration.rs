@@ -188,8 +188,15 @@ fn records<T: serde::de::DeserializeOwned>(directory: &Path) -> Result<Vec<T>> {
     if !directory.try_exists()? {
         return Ok(result);
     }
-    for entry in fs::read_dir(directory)? {
-        let path = entry?.path();
+    let mut paths = fs::read_dir(directory)?
+        .map(|entry| Ok(entry?.path()))
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        paths.len() <= 4096,
+        "ordinary authority export exceeds bound"
+    );
+    paths.sort();
+    for path in paths {
         ensure!(
             path.extension().is_some_and(|s| s == "json"),
             "unknown ordinary authority artifact"
