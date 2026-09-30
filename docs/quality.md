@@ -587,6 +587,11 @@ Input-to-visible timing is recorded as local fixture evidence, not a latency
 guarantee. Crash
 qualification remains a separate adverse check.
 
+The optimized v1.0.3 candidate passed the maintained agent plus both-client
+journey, including actual suspended-owner preparation and observed cleanup.
+See [the exact browser qualification record](testing/host-browser-v1.0.3.md)
+for source/binary identity, covered behavior and remaining production TLS limits.
+
 The viewer also uses `node tests/browser-next-browser.mjs` (from the private `o-psi/webhelm` checkout) for real Chromium
 DOM replay and element input at desktop/mobile sizes and
 `node tests/browser-layout-browser.mjs` (from `o-psi/webhelm`) for the production React shell.
