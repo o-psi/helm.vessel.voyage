@@ -175,20 +175,34 @@ struct StoredTransition {
     prepared: PreparedTransitionReceipt,
     completed: Option<TransitionReceipt>,
     commit_digest: Option<String>,
+    aborted: Option<AbortedTransitionReceipt>,
+    abort_digest: Option<String>,
 }
 fn stored(db: &Connection, command: Uuid) -> Result<Option<StoredTransition>> {
     if !table(db, TABLE)? {
         return Ok(None);
     }
-    let row:Option<(String,String,Option<String>,Option<String>)>=db.query_row("SELECT request_digest,prepared_receipt,target_receipt,commit_request_digest FROM execution_transitions WHERE command_id=?1 OR commit_command_id=?1",[command.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
-    row.map(|(digest, prepared, completed, commit_digest)| {
-        Ok(StoredTransition {
-            source_digest: digest,
-            prepared: serde_json::from_str(&prepared)?,
-            completed: completed.map(|c| serde_json::from_str(&c)).transpose()?,
-            commit_digest,
-        })
-    })
+    type StoredRow = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row:Option<StoredRow>=db.query_row("SELECT request_digest,prepared_receipt,target_receipt,commit_request_digest,abort_receipt,abort_request_digest FROM execution_transitions WHERE command_id=?1 OR commit_command_id=?1 OR abort_command_id=?1",[command.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
+    row.map(
+        |(digest, prepared, completed, commit_digest, aborted, abort_digest)| {
+            Ok(StoredTransition {
+                source_digest: digest,
+                prepared: serde_json::from_str(&prepared)?,
+                completed: completed.map(|c| serde_json::from_str(&c)).transpose()?,
+                commit_digest,
+                aborted: aborted.map(|v| serde_json::from_str(&v)).transpose()?,
+                abort_digest,
+            })
+        },
+    )
     .transpose()
 }
 fn collisions(db: &Connection, id: Uuid) -> Result<()> {
@@ -214,6 +228,40 @@ fn collisions(db: &Connection, id: Uuid) -> Result<()> {
         }
     }
     Ok(())
+}
+fn source_directory(path: &Path, prepared: &PreparedTransitionReceipt) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path)?;
+    ensure!(
+        unsafe { libc::geteuid() } == prepared.source_uid
+            && unsafe { libc::getegid() } == prepared.source_gid
+            && metadata.is_dir()
+            && metadata.uid() == prepared.source_uid
+            && metadata.dev() == prepared.source_directory_device
+            && metadata.ino() == prepared.source_directory_inode,
+        "abort requires original source identity and directory"
+    );
+    Ok(())
+}
+fn checked_aborted(
+    db: &Connection,
+    path: &Path,
+    receipt: AbortedTransitionReceipt,
+) -> Result<TransitionResponse> {
+    source_directory(path, &receipt.prepared)?;
+    let current = facts(
+        db,
+        receipt.prepared.session_id,
+        receipt.prepared.source_incarnation,
+    )?;
+    ensure!(
+        current.revision == receipt.resulting_revision
+            && current.frozen_config_digest == receipt.prepared.previous_config_digest
+            && current.history_digest == receipt.history_digest
+            && current.pending_work_digest == receipt.pending_work_digest,
+        "aborted source differs from receipt"
+    );
+    Ok(TransitionResponse::Aborted { receipt })
 }
 fn checked_completed(db: &Connection, receipt: TransitionReceipt) -> Result<TransitionResponse> {
     ensure!(
@@ -331,7 +379,7 @@ fn interrupt_work(tx: &Transaction<'_>, session: Uuid, revision: u64) -> Result<
 impl Journal {
     pub(crate) fn ensure_transition_configuration_ready(&self, session: Uuid) -> Result<()> {
         if table(&self.connection, TABLE)? {
-            ensure!(!self.connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_transitions WHERE session_id=?1 AND target_receipt IS NULL)",[session.to_string()],|r|r.get::<_,bool>(0))?,"execution handoff configuration remains uncommitted");
+            ensure!(!self.connection.query_row("SELECT EXISTS(SELECT 1 FROM execution_transitions WHERE session_id=?1 AND target_receipt IS NULL AND abort_receipt IS NULL)",[session.to_string()],|r|r.get::<_,bool>(0))?,"execution handoff configuration remains uncommitted");
         }
         Ok(())
     }
@@ -363,6 +411,7 @@ impl Journal {
                 let StoredTransition {
                     prepared,
                     completed: complete,
+                    aborted,
                     ..
                 } = stored(&tx, *command_id)?.context("handoff receipt unavailable")?;
                 ensure!(
@@ -370,6 +419,9 @@ impl Journal {
                         && prepared.source_incarnation == request.source_incarnation,
                     "handoff receipt belongs elsewhere"
                 );
+                if let Some(receipt) = aborted {
+                    return checked_aborted(&tx, request.operation.directory(), receipt);
+                }
                 match complete {
                     Some(receipt) => checked_completed(&tx, receipt)?,
                     None => TransitionResponse::Prepared { receipt: prepared },
@@ -399,10 +451,14 @@ impl Journal {
                     source_digest: prior,
                     prepared,
                     completed: complete,
+                    aborted,
                     ..
                 }) = stored(&tx, *command_id)?
                 {
                     ensure!(prior == request_digest, "handoff command payload changed");
+                    if let Some(receipt) = aborted {
+                        return checked_aborted(&tx, request.operation.directory(), receipt);
+                    }
                     return match complete {
                         Some(receipt) => checked_completed(&tx, receipt),
                         None => Ok(TransitionResponse::Prepared { receipt: prepared }),
@@ -413,8 +469,8 @@ impl Journal {
                     facts(&tx, request.session_id, request.source_incarnation)? == *expected,
                     "retired facts changed since review"
                 );
-                tx.execute_batch("CREATE TABLE IF NOT EXISTS execution_transitions(command_id TEXT PRIMARY KEY,transition_id TEXT NOT NULL UNIQUE,session_id TEXT NOT NULL,request_digest TEXT NOT NULL,prepared_receipt TEXT NOT NULL,commit_command_id TEXT UNIQUE,commit_request_digest TEXT,target_receipt TEXT)")?;
-                ensure!(!tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_transitions WHERE session_id=?1 AND target_receipt IS NULL)",[request.session_id.to_string()],|r|r.get::<_,bool>(0))?,"prior handoff remains prepared");
+                tx.execute_batch("CREATE TABLE IF NOT EXISTS execution_transitions(command_id TEXT PRIMARY KEY,transition_id TEXT NOT NULL UNIQUE,session_id TEXT NOT NULL,request_digest TEXT NOT NULL,prepared_receipt TEXT NOT NULL,commit_command_id TEXT UNIQUE,commit_request_digest TEXT,target_receipt TEXT,abort_command_id TEXT UNIQUE,abort_request_digest TEXT,abort_receipt TEXT)")?;
+                ensure!(!tx.query_row("SELECT EXISTS(SELECT 1 FROM execution_transitions WHERE session_id=?1 AND target_receipt IS NULL AND abort_receipt IS NULL)",[request.session_id.to_string()],|r|r.get::<_,bool>(0))?,"prior handoff remains prepared");
                 let next = expected
                     .revision
                     .checked_add(1)
@@ -444,6 +500,15 @@ impl Journal {
                     source_incarnation: request.source_incarnation,
                     target_incarnation: *target_incarnation,
                     source_uid: unsafe { libc::geteuid() },
+                    source_gid: unsafe { libc::getegid() },
+                    source_directory_device: {
+                        use std::os::unix::fs::MetadataExt;
+                        std::fs::metadata(request.operation.directory())?.dev()
+                    },
+                    source_directory_inode: {
+                        use std::os::unix::fs::MetadataExt;
+                        std::fs::metadata(request.operation.directory())?.ino()
+                    },
                     target_uid: *target_uid,
                     target_gid: *target_gid,
                     previous_revision: expected.revision,
@@ -458,6 +523,73 @@ impl Journal {
                 };
                 tx.execute("INSERT INTO execution_transitions(command_id,transition_id,session_id,request_digest,prepared_receipt) VALUES(?1,?2,?3,?4,?5)",params![command_id.to_string(),transition_id.to_string(),request.session_id.to_string(),request_digest,serde_json::to_string(&receipt)?])?;
                 TransitionResponse::Prepared { receipt }
+            }
+            TransitionOperation::AbortSource {
+                command_id,
+                expected,
+                ..
+            } => {
+                ensure!(
+                    !command_id.is_nil() && *command_id != expected.command_id,
+                    "invalid abort command"
+                );
+                ensure!(
+                    expected.session_id == request.session_id
+                        && expected.source_incarnation == request.source_incarnation,
+                    "abort request belongs elsewhere"
+                );
+                source_directory(request.operation.directory(), expected)?;
+                let prior =
+                    stored(&tx, expected.command_id)?.context("source marker unavailable")?;
+                ensure!(
+                    prior.prepared == *expected && prior.completed.is_none(),
+                    "source already committed or marker changed"
+                );
+                if let Some(receipt) = prior.aborted {
+                    ensure!(
+                        prior.abort_digest.as_deref() == Some(request_digest.as_str()),
+                        "abort payload changed"
+                    );
+                    return checked_aborted(&tx, request.operation.directory(), receipt);
+                }
+                collisions(&tx, *command_id)?;
+                ensure!(
+                    stored(&tx, *command_id)?.is_none(),
+                    "abort command already used"
+                );
+                let current = facts(&tx, request.session_id, request.source_incarnation)?;
+                ensure!(
+                    current.revision == expected.prepared_revision
+                        && current.history_digest == expected.history_digest
+                        && current.frozen_config_digest == expected.previous_config_digest
+                        && current.pending_work_digest == expected.retained_pending_work_digest,
+                    "prepared source changed"
+                );
+                retired(&tx, request.session_id)?;
+                let next = current
+                    .revision
+                    .checked_add(1)
+                    .context("revision overflow")?;
+                ensure!(
+                    tx.execute(
+                        "UPDATE sessions SET revision=?1 WHERE id=?2 AND revision=?3",
+                        params![
+                            i64::try_from(next)?,
+                            request.session_id.to_string(),
+                            i64::try_from(current.revision)?
+                        ]
+                    )? == 1,
+                    "source abort revision changed"
+                );
+                let receipt = AbortedTransitionReceipt {
+                    command_id: *command_id,
+                    prepared: expected.clone(),
+                    resulting_revision: next,
+                    history_digest: current.history_digest,
+                    pending_work_digest: current.pending_work_digest,
+                };
+                ensure!(tx.execute("UPDATE execution_transitions SET abort_command_id=?1,abort_request_digest=?2,abort_receipt=?3 WHERE command_id=?4 AND target_receipt IS NULL AND abort_receipt IS NULL",params![command_id.to_string(),request_digest,serde_json::to_string(&receipt)?,expected.command_id.to_string()])?==1,"source abort marker changed");
+                TransitionResponse::Aborted { receipt }
             }
             TransitionOperation::TargetCommit {
                 command_id,
@@ -475,8 +607,10 @@ impl Journal {
                     prepared,
                     completed: complete,
                     commit_digest: prior_commit,
+                    aborted,
                     ..
                 } = stored(&tx, expected.command_id)?.context("source handoff unavailable")?;
+                ensure!(aborted.is_none(), "source handoff was aborted");
                 ensure!(
                     prepared == *expected
                         && expected.session_id == request.session_id

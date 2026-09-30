@@ -810,6 +810,16 @@ actual native two-identity lifecycle evidence and final combined validation rema
 required before claiming the transition is supported. Source preparation has not
 been compiled or executed under the user's final-test direction.
 
+Cancellation before target publication has a distinct credential-free AbortSource
+phase. It accepts only the original source UID/GID and exact original directory
+device/inode, before target commit. An immutable distinct abort command/receipt
+clears the prepared startup gate while retaining the source configuration,
+interrupted runs, rejected queued steering, disabled Goal continuation and every
+uncertain external obligation. It never restarts the retired process or certifies
+cleanup. Root orchestration must additionally verify that target ownership/binding/
+admission has not occurred; after publication the target must finish or undergo
+explicit repair. Copied directories cannot use this source abort receipt.
+
 ## Bound runtime execution-scope metadata bridge
 
 Bound authorized requests now carry an explicit root-minted opaque scope lease.

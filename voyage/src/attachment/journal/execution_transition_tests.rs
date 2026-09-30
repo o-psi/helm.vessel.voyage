@@ -345,3 +345,82 @@ fn forged_complete_receipt_cannot_enable_lookup_without_actual_committed_configu
         "{\"source\":true}"
     );
 }
+
+#[test]
+fn pretransfer_source_abort_clears_startup_gate_without_unfreezing_prior_work() {
+    let (_root, mut journal, session, guard, inc) = fixture();
+    let facts = observe(&mut journal, &guard, session.id, inc);
+    let request = freeze(&journal, facts);
+    let receipt = prepared(&mut journal, &guard, &request);
+    let abort = TransitionRequest {
+        schema: SCHEMA,
+        session_id: session.id,
+        source_incarnation: inc,
+        operation: TransitionOperation::AbortSource {
+            directory: journal.directory.parent().unwrap().into(),
+            command_id: Uuid::new_v4(),
+            expected: receipt.clone(),
+        },
+    };
+    let first = journal.retired_transition(&guard, &abort, None).unwrap();
+    let TransitionResponse::Aborted { receipt: aborted } = &first else {
+        panic!("aborted expected")
+    };
+    assert_eq!(aborted.history_digest, receipt.history_digest);
+    assert_eq!(
+        aborted.pending_work_digest,
+        receipt.retained_pending_work_digest
+    );
+    assert_eq!(aborted.resulting_revision, receipt.prepared_revision + 1);
+    assert_eq!(
+        journal
+            .initial_configuration(session.id)
+            .unwrap()
+            .as_deref(),
+        Some("{\"source\":true}")
+    );
+    assert_eq!(
+        journal.retired_transition(&guard, &abort, None).unwrap(),
+        first
+    );
+    let target = commit_request(&journal, receipt);
+    assert!(
+        journal
+            .retired_transition(&guard, &target, Some("{\"target\":true}"))
+            .is_err()
+    );
+}
+#[test]
+fn source_abort_refuses_replaced_directory_identity_and_committed_target() {
+    let (_root, mut journal, session, guard, inc) = fixture();
+    let facts = observe(&mut journal, &guard, session.id, inc);
+    let request = freeze(&journal, facts);
+    let receipt = prepared(&mut journal, &guard, &request);
+    let mut copied = receipt.clone();
+    copied.source_directory_inode = copied.source_directory_inode.wrapping_add(1);
+    let abort = TransitionRequest {
+        schema: SCHEMA,
+        session_id: session.id,
+        source_incarnation: inc,
+        operation: TransitionOperation::AbortSource {
+            directory: journal.directory.parent().unwrap().into(),
+            command_id: Uuid::new_v4(),
+            expected: copied,
+        },
+    };
+    assert!(journal.retired_transition(&guard, &abort, None).is_err());
+    assert!(journal.initial_configuration(session.id).is_err());
+    let target = commit_request(&journal, receipt.clone());
+    journal
+        .retired_transition(&guard, &target, Some("{\"target\":true}"))
+        .unwrap();
+    let abort = TransitionRequest {
+        operation: TransitionOperation::AbortSource {
+            directory: journal.directory.parent().unwrap().into(),
+            command_id: Uuid::new_v4(),
+            expected: receipt,
+        },
+        ..abort
+    };
+    assert!(journal.retired_transition(&guard, &abort, None).is_err());
+}

@@ -39,6 +39,11 @@ pub enum TransitionOperation {
         expected: PreparedTransitionReceipt,
         target_config_path: PathBuf,
     },
+    AbortSource {
+        directory: PathBuf,
+        command_id: Uuid,
+        expected: PreparedTransitionReceipt,
+    },
     Lookup {
         directory: PathBuf,
         command_id: Uuid,
@@ -50,7 +55,8 @@ impl TransitionOperation {
             Self::Observe { directory }
             | Self::SourceFreeze { directory, .. }
             | Self::TargetCommit { directory, .. }
-            | Self::Lookup { directory, .. } => directory,
+            | Self::Lookup { directory, .. }
+            | Self::AbortSource { directory, .. } => directory,
         }
     }
 }
@@ -74,6 +80,9 @@ pub struct PreparedTransitionReceipt {
     pub source_incarnation: Uuid,
     pub target_incarnation: Uuid,
     pub source_uid: u32,
+    pub source_gid: u32,
+    pub source_directory_device: u64,
+    pub source_directory_inode: u64,
     pub target_uid: u32,
     pub target_gid: u32,
     pub previous_revision: u64,
@@ -97,10 +106,20 @@ pub struct TransitionReceipt {
     pub pending_work_digest: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbortedTransitionReceipt {
+    pub command_id: Uuid,
+    pub prepared: PreparedTransitionReceipt,
+    pub resulting_revision: u64,
+    pub history_digest: String,
+    pub pending_work_digest: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransitionResponse {
     Facts { facts: RetiredJournalFacts },
     Prepared { receipt: PreparedTransitionReceipt },
     Committed { receipt: TransitionReceipt },
+    Aborted { receipt: AbortedTransitionReceipt },
     Unavailable,
 }
