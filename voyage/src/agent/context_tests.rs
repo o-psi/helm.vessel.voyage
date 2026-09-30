@@ -205,19 +205,6 @@ async fn actual_rejection_reduces_followup_without_executing_tool_twice() {
         result.tool_call_id
     );
     assert!(checkpoint.working.lock().unwrap().generation > 0);
-    let observations = checkpoint.observations.lock().unwrap();
-    let final_observation = observations.last().unwrap();
-    let preparation = final_observation.preparation.as_ref().unwrap();
-    assert!(
-        preparation.before_count.reliable_input_tokens().unwrap()
-            > final_observation.count.reliable_input_tokens().unwrap()
-    );
-    assert!(preparation.before_generation < final_observation.projection_generation);
-    assert!(preparation.reduced_messages > 0 && preparation.steps <= 4);
-    assert_eq!(
-        final_observation.pressure,
-        voyage_protocol::context_accounting::ContextPressure::WithinBudget
-    );
 }
 
 #[tokio::test]
@@ -513,6 +500,19 @@ async fn trustworthy_pressure_prepares_before_predictable_rejection_without_effe
     assert_eq!(result.tool_call_id.as_deref(), Some("durable-effect-64"));
     assert!(result.content.starts_with("BEGIN ") && result.content.ends_with(" END"));
     assert!(checkpoint.working.lock().unwrap().generation > 0);
+    let observations = checkpoint.observations.lock().unwrap();
+    let final_observation = observations.last().unwrap();
+    let preparation = final_observation.preparation.as_ref().unwrap();
+    assert!(
+        preparation.before_count.reliable_input_tokens().unwrap()
+            > final_observation.count.reliable_input_tokens().unwrap()
+    );
+    assert!(preparation.before_generation < final_observation.projection_generation);
+    assert!(preparation.reduced_messages > 0 && preparation.steps <= 4);
+    assert_eq!(
+        final_observation.pressure,
+        voyage_protocol::context_accounting::ContextPressure::WithinBudget
+    );
 }
 #[tokio::test]
 async fn trustworthy_explicit_limit_refuses_irreducible_input_with_canonical_recovery() {
@@ -839,10 +839,11 @@ async fn cancellation_after_context_persistence_retains_receipt_without_inferenc
     let serialized = serde_json::to_value(&working).unwrap();
     let restored: crate::context::WorkingContext = serde_json::from_value(serialized).unwrap();
     let projected = restored.project(&canonical).unwrap();
+    let receipt_text = receipt.to_string();
     assert!(
         projected
             .iter()
-            .any(|m| m.tool_call_id.as_deref() == Some("compact") && m.content == receipt)
+            .any(|m| m.tool_call_id.as_deref() == Some("compact") && m.content == receipt_text)
     );
     assert!(
         !canonical
