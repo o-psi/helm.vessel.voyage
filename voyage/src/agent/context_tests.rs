@@ -205,6 +205,19 @@ async fn actual_rejection_reduces_followup_without_executing_tool_twice() {
         result.tool_call_id
     );
     assert!(checkpoint.working.lock().unwrap().generation > 0);
+    let observations = checkpoint.observations.lock().unwrap();
+    let final_observation = observations.last().unwrap();
+    let preparation = final_observation.preparation.as_ref().unwrap();
+    assert!(
+        preparation.before_count.reliable_input_tokens().unwrap()
+            > final_observation.count.reliable_input_tokens().unwrap()
+    );
+    assert!(preparation.before_generation < final_observation.projection_generation);
+    assert!(preparation.reduced_messages > 0 && preparation.steps <= 4);
+    assert_eq!(
+        final_observation.pressure,
+        voyage_protocol::context_accounting::ContextPressure::WithinBudget
+    );
 }
 
 #[tokio::test]
@@ -829,12 +842,76 @@ async fn cancellation_after_context_persistence_retains_receipt_without_inferenc
     assert!(
         projected
             .iter()
-            .any(|m| m.tool_call_id.as_deref() == Some("compact")
-                && m.content == receipt)
+            .any(|m| m.tool_call_id.as_deref() == Some("compact") && m.content == receipt)
     );
     assert!(
         !canonical
             .iter()
             .any(|m| m.tool_call_id.as_deref() == Some("compact"))
     );
+}
+
+#[tokio::test]
+async fn stale_or_switched_catalogue_cannot_supply_an_enabled_window() {
+    use voyage_protocol::context_accounting::*;
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, _, _) = fixture(root.path(), false);
+    agent.provider = Box::new(CountedProvider {
+        requests,
+        rejections: Arc::new(AtomicUsize::new(0)),
+    });
+    let request = ModelRequest {
+        model: "fixture".into(),
+        messages: vec![Message::new(Role::User, "Keep my exact task")],
+        tools: vec![],
+        temperature: None,
+        reasoning_effort: None,
+        service_tier: None,
+        max_tokens: Some(10),
+    };
+    let count = agent.provider.input_tokens(&request).await.unwrap();
+    let now = count.observed_at_ms;
+    let capacity = ModelContextCapacity {
+        scope: count.scope.clone(),
+        observed_at_ms: now,
+        source: "test_catalogue".into(),
+        default_window_tokens: Some(1000),
+        maximum_selectable_window_tokens: Some(10000),
+        enabled_window_tokens: Some(1000),
+        default_output_tokens: Some(10),
+        maximum_output_tokens: None,
+    };
+    for case in ["fresh", "stale", "future", "model", "transport", "endpoint"] {
+        let mut capacity = capacity.clone();
+        match case {
+            "stale" => capacity.observed_at_ms = now.saturating_sub(300_001),
+            "future" => capacity.observed_at_ms = now + 60_000,
+            "model" => capacity.scope.model = "other".into(),
+            "transport" => capacity.scope.transport = "other".into(),
+            "endpoint" => capacity.scope.endpoint_fingerprint = Some("b".repeat(64)),
+            _ => {}
+        }
+        let mut model = crate::provider::ModelInfo::minimal("fixture");
+        model.context_capacity = Some(capacity);
+        *agent.model_cache.lock().await = Some((std::time::Instant::now(), vec![model]));
+        let observed = agent
+            .observe_request_context(&request, uuid::Uuid::new_v4(), 0, &CancellationToken::new())
+            .await
+            .unwrap();
+        let observed_capacity = observed.capacity.unwrap();
+        assert_eq!(
+            observed_capacity.source,
+            if case == "fresh" {
+                "test_catalogue"
+            } else {
+                "provider_adapter_effective_limit"
+            },
+            "{case}"
+        );
+        assert_eq!(
+            observed_capacity.enabled_window_tokens,
+            Some(if case == "fresh" { 1000 } else { 100 }),
+            "{case}"
+        );
+    }
 }

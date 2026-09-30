@@ -75,6 +75,17 @@ pub enum ContextPressure {
     Irreducible,
 }
 
+/// One bounded automatic-preparation sequence, attached to its final observation.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContextPreparation {
+    pub trigger: String,
+    pub before_generation: u64,
+    pub before_count: RequestTokenCount,
+    pub reduced_messages: usize,
+    pub steps: u8,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ContextObservation {
@@ -89,6 +100,8 @@ pub struct ContextObservation {
     pub pressure: ContextPressure,
     /// This observation describes one prepared request, never future tool results.
     pub scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preparation: Option<ContextPreparation>,
 }
 
 impl ContextObservation {
@@ -96,6 +109,9 @@ impl ContextObservation {
     pub fn public_view(&self) -> Self {
         let mut value = self.clone();
         value.count.scope.account = None;
+        if let Some(preparation) = &mut value.preparation {
+            preparation.before_count.scope.account = None;
+        }
         if let Some(capacity) = &mut value.capacity {
             capacity.scope.account = None;
         }

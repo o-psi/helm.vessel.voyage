@@ -164,6 +164,7 @@ mod tests {
             safety_margin: 0,
             pressure: ContextPressure::Unknown,
             scope: "prepared_provider_input_before_dispatch".into(),
+            preparation: None,
         };
         journal
             .save_context_observation(&guard, run.id, &observation)

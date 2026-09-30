@@ -72,6 +72,7 @@ impl ContextPolicy {
             safety_margin: self.safety_margin,
             pressure,
             scope: "prepared_provider_input_before_dispatch".into(),
+            preparation: None,
         }
     }
 }

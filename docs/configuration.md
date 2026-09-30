@@ -628,6 +628,9 @@ headroom is configurable with `context_safety_margin_tokens` (default zero); no
 universal occupancy percentage or byte-to-token ratio is used. A catalogue maximum
 alone does not establish enabled capacity. Stale or mismatched metadata is unknown.
 The last prepared-request observation is saved separately from canonical history.
+Automatic preparation retains content-free trigger and before/after count and
+generation identities, reduction count and bounded step count; trigger evidence
+is saved before reduction. Missing after-counts remain unknown.
 Neither it nor its derived headroom describes future tool results.
 
 A recognized provider input-context rejection causes the same active run to build

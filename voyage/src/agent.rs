@@ -1213,6 +1213,7 @@ impl Agent {
             let mut provider_recovery = provider_attempts::RecoveryState::new(&self.retry);
             let mut recovery_attempt = 0;
             let mut pressure_attempt = 0;
+            let mut preparation: Option<voyage_protocol::context_accounting::ContextPreparation> = None;
             let response = loop {
                 let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
                 completion_continuation.project(&mut messages);
@@ -1244,16 +1245,32 @@ impl Agent {
                         self.sink.emit(AgentEvent::SteeringApplied {history:history.clone()}).await;
                         provider_recovery.previous_request_size = None;
                         pressure_attempt = 0;
+                        preparation = None;
                         continue;
                     }
                 }
+                observation.preparation = preparation.clone();
                 if observation.pressure == voyage_protocol::context_accounting::ContextPressure::PreparationNeeded {
+                    // Preserve the trigger before any projection mutation; final
+                    // accounting carries this sequence's before/after identities.
+                    if let Some(checkpoint) = checkpoint {
+                        gate::guarded(tokio::time::timeout(context.timeout, checkpoint.context_observation(&observation)), &cancel).await?.map_err(|_| CheckpointError)??;
+                    }
                     let mut changed = 0;
                     while pressure_attempt < 4 && changed == 0 {
                         changed = working_context.prepare_for_pressure(&history, pressure_attempt).map_err(|_| CheckpointError)?;
                         pressure_attempt += 1;
                     }
                     if changed > 0 {
+                        let evidence = preparation.get_or_insert_with(|| voyage_protocol::context_accounting::ContextPreparation {
+                            trigger: "trustworthy_enabled_capacity_pressure".into(),
+                            before_generation: observation.projection_generation,
+                            before_count: observation.count.clone(),
+                            reduced_messages: 0,
+                            steps: 0,
+                        });
+                        evidence.reduced_messages = evidence.reduced_messages.saturating_add(changed);
+                        evidence.steps = evidence.steps.saturating_add(1);
                         if let Some(checkpoint) = checkpoint {
                             gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?.map_err(|_| CheckpointError)??;
                         }
