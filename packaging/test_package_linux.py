@@ -27,6 +27,23 @@ class PackagingTests(unittest.TestCase):
         (self.source / "README.md").write_text("[Guide](docs/guide.md#intro) [Code](src/main.rs)\n")
         (self.source / "docs/guide.md").write_text("# Intro\n[Home](../README.md)\n")
         (self.source / "secret.txt").write_text("not for release")
+        # The archive's rollback contract comes from the actual parser/writer
+        # implementations and build inputs. Keep the fixture documentation and
+        # binaries synthetic, but supply those real inputs without mocking the
+        # contract or inventing schema compatibility.
+        for directory in ("vessel/src", "voyage/src", "crates/voyage-protocol/src",
+                          "crates/voyage-storage/src", "installer/src"):
+            for path in (pack.ROOT / directory).rglob("*"):
+                if path.is_file() and path.suffix in (".rs", ".sql"):
+                    destination = self.source / path.relative_to(pack.ROOT)
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(path, destination)
+        for name in ("Cargo.toml", "Cargo.lock", "helm/Cargo.toml", "vessel/Cargo.toml",
+                     "voyage/Cargo.toml", "installer/Cargo.toml",
+                     "crates/voyage-protocol/Cargo.toml", "crates/voyage-storage/Cargo.toml"):
+            destination = self.source / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(pack.ROOT / name, destination)
         self.bins = self.base / "bins"
         self.bins.mkdir()
         header = b"\x7fELF\x02\x01\x01" + bytes(9) + struct.pack("<HH", 3, 62)
@@ -76,6 +93,8 @@ class PackagingTests(unittest.TestCase):
             self.assertEqual(manifest["target"], pack.TARGET)
             self.assertEqual(manifest["version"], "v1.0.0")
             self.assertEqual(set(manifest["binaries"]), set(pack.BINARIES))
+            self.assertEqual(manifest["update_compatibility"],
+                             pack.update_compatibility.contract(pack.ROOT))
             for name in pack.BINARIES:
                 data = archive.extractfile(f"{root}/bin/{name}").read()
                 self.assertEqual(manifest["binaries"][name]["sha256"], hashlib.sha256(data).hexdigest())
@@ -84,6 +103,19 @@ class PackagingTests(unittest.TestCase):
             self.assertIn("(docs/guide.md#intro)", text)
             self.assertIn("https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.0/src/main.rs", text)
         self.assertNotIn("https:", (self.source / "README.md").read_text())
+
+    def test_missing_update_contract_inputs_refuse_publication(self):
+        for name in ("voyage/src/attachment/journal.rs", "Cargo.lock"):
+            with self.subTest(name=name):
+                path = self.source / name
+                contents = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaises(FileNotFoundError):
+                        self.package()
+                    self.assert_clean()
+                finally:
+                    path.write_bytes(contents)
 
     def test_existing_assets_and_symlinks_are_preserved(self):
         self.package()

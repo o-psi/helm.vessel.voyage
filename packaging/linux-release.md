@@ -100,7 +100,11 @@ python3 packaging/package_linux.py --help
 Fixtures check archive membership, manifests/checksums, generated document paths,
 link rewriting, version rejection, path safety, subprocess bounds, no-clobber and
 owned rollback. They mock executable behavior for archive fixtures and separately
-exercise real bounded subprocess execution. They do not build Rust or establish
+exercise real bounded subprocess execution. The isolated archive source fixture
+copies the checkout's actual persistence/protocol implementations and Cargo inputs,
+checks that its compatibility contract matches the checkout, and refuses packaging
+when required contract inputs are missing. It does not replace the source-owned
+contract with a fabricated schema or hash. These checks do not build Rust or establish
 real-binary release, installer, provider or native deployment success. The final
 coordinator must run the packager against all four actual version-matched builds,
 check checksums and retain installation evidence separately.
