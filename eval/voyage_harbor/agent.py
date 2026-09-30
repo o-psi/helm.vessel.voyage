@@ -8,6 +8,7 @@ import tempfile
 from harbor.agents.installed.base import BaseInstalledAgent, NonZeroAgentExitCodeError
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
+from .trajectory import write_trajectory
 
 
 class VoyageAgent(BaseInstalledAgent):
@@ -16,12 +17,20 @@ class VoyageAgent(BaseInstalledAgent):
         return "voyage"
 
     def __init__(
-        self, *args, binary_dir: str, reasoning_effort: str = "medium", **kwargs
+        self,
+        *args,
+        binary_dir: str,
+        reasoning_effort: str = "medium",
+        run_timeout_secs: int = 28800,
+        **kwargs,
     ):
         if reasoning_effort not in ("medium", "high", "xhigh"):
             raise ValueError("Unsupported benchmark reasoning effort")
         self.binary_dir = Path(binary_dir).resolve()
         self.effort = reasoning_effort
+        if type(run_timeout_secs) is not int or not 1 <= run_timeout_secs <= 28800:
+            raise ValueError("Wrapper bound must be between 1 and 28800 seconds")
+        self.run_timeout_secs = run_timeout_secs
         super().__init__(*args, **kwargs)
         self.version_text = (self.binary_dir.parent / "BUILD.txt").read_text()
 
@@ -71,6 +80,7 @@ class VoyageAgent(BaseInstalledAgent):
                         "effort": self.effort,
                         "proxy_token": token,
                         "source": self.version_text,
+                        "run_timeout_secs": self.run_timeout_secs,
                     }
                 )
             )
@@ -80,7 +90,7 @@ class VoyageAgent(BaseInstalledAgent):
             result = await self.exec_as_agent(
                 environment,
                 "python3 /installed-agent/voyage/runner.py /installed-agent/voyage/input.json",
-                timeout_sec=1900,
+                timeout_sec=self.run_timeout_secs + 120,
             )
         except asyncio.CancelledError:
             # wait_for waits for this bounded cancellation handler. A detached
@@ -114,6 +124,9 @@ class VoyageAgent(BaseInstalledAgent):
             raise RuntimeError("Voyage cleanup unresolved; verifier must not run")
 
     def populate_context_post_run(self, context: AgentContext) -> None:
+        write_trajectory(
+            self.logs_dir, self.version(), self.model_name or "gpt-6.1-sol", self.effort
+        )
         path = self.logs_dir / "voyage-summary.json"
         stats_path = os.environ.get("VOYAGE_BENCH_STATS_PATH")
         if not path.exists() or not stats_path:

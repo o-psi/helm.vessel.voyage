@@ -1,0 +1,418 @@
+{
+  "schema_version": 1,
+  "status": "prepared-not-started",
+  "issue": "https://github.com/o-psi/helm.vessel.voyage/issues/398",
+  "dataset": "terminal-bench/terminal-bench@4.0.0",
+  "dataset_content_hash": "39d9f44b40420cde8fdcc087579c0d72a7e14fa3656d603c3f0d22fb35e27732",
+  "dataset_version_id": "1922072f-a433-429a-8929-350d5e1bcf02",
+  "tasks": [
+    {
+      "org": "terminal-bench",
+      "name": "layout-config-recreation2",
+      "ref": "sha256:193312b14b1dcb6ef551efff691cbb708b2032f58879b0b19efe88a2cddc9deb"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "photonic-waveguide-routing",
+      "ref": "sha256:31cd14c817cd8b05f7fce5492bf8c44777b6bfc7c0e0057e482d18164d28423e"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "mp-checkpoint-consolidation",
+      "ref": "sha256:7be196e68aa533288fb3e6f78969816a9076ff4f1eaf6fca4c28be8eb619fc6c"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "biped-contact-dynamics",
+      "ref": "sha256:7d9120179572cbb6511108fcfa1e76e6bc1bb56f2cace8e606d4ccded15cb4c4"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "ks-solver-cpp",
+      "ref": "sha256:d4eef6bb296028e57be0abb4b19dab71cf04b807cbe22fad4bc64174f9380cc0"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "react-lead-form",
+      "ref": "sha256:790af6a6308be694896fa5258c3f3c1b536dfa75acdb9936799a4344a3e4573b"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "lake-temp-glm",
+      "ref": "sha256:4ccec50699de5de3b1bcdedf1189a56d72520220da27306c10d93419a3316a0c"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "takens-embedding-lean",
+      "ref": "sha256:8d8c7bdc58a79af79502ac9cdaf4c65333ae907f08a9615f6b538fa0d7530ac4"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "satb-audio-transcription",
+      "ref": "sha256:2b1bf5dcc71458a7e378f84468959993a304a8e89e51381ac0f78163e6e60f14"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "formal-crypto",
+      "ref": "sha256:cb4f5a280f6ac1bfcc6c919841810084e286ce3109969841e1f5739fe9f7acf7"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "fin-saccr-rwa",
+      "ref": "sha256:bd0ee47169986cfdd4b0ccc98f461382c612e1301dd75f98d1381015eb25398a"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "embedding-drift-monitor",
+      "ref": "sha256:6907ffce9ad5c8a8b41fe9c0a076a9aeb9754a2f8083c52f9aede5481a4f4c59"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "math-eval-grader",
+      "ref": "sha256:aac7c54d58a56d79a5c0a0f869e70a74c42b327b086ba8010b0dd477e114b904"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "pretrain-shard-corruption",
+      "ref": "sha256:0f17568e65b9e8b79480e474a457811a65815cdaf7272660efffd1bc690021a0"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "freight-dispatch-shift",
+      "ref": "sha256:9c27972688139fce999058386bd381ca194c9f4ba76161a52bb8560aee9ceb2c"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "sound-change-cascade",
+      "ref": "sha256:6214ceb80aaa657d72658a6f39a44fa11ea51f443822b6a1212eef1ba65bf91d"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "cad-model",
+      "ref": "sha256:037b83651678230c04217bc7bd077c9e2c3d5a383bb368cdeb19e88a2202f644"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "glycan-ms2-elucidation",
+      "ref": "sha256:80bf0ef924d6ba9a4323172f5a13df1734609914ddd086deef2da0288e9c560d"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "coq-block-bound",
+      "ref": "sha256:4e2a6b608b18eeda1e18996efa115fec3573d90d4f798406b073b078fea52c89"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "cargo-flight-dispatch",
+      "ref": "sha256:18a1c2670ce4be0e6752f48ed6c750281d7f97db025f5e74edc6c8728f62f5b5"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "payments-pipeline-fix",
+      "ref": "sha256:ed92bf0b59203522407a2f628f186ccd11ee300a7a1ee04641f9510e46db1f14"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "heat-pump-warranty",
+      "ref": "sha256:7ce04515367c33c3673d1e6dc387edfa9b5a2565e6f040b1d24626efc07d0ad7"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "foodstuff-beta-activity",
+      "ref": "sha256:52adca169e97e15fe8692986470b6556f478e7348a37c58739a5bdb3f02cc45a"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "protein-autointerp-disulfide",
+      "ref": "sha256:6b70d5b8b2ed87b10cd58461c58981d4296f504eda0869c63cd6b0fb2b9edfb9"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "session-window-debug",
+      "ref": "sha256:f7e05e0d4c0e90d7050445fd158db514158272c50aafa1b2446ef3f68bd01182"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "batched-eval-parity",
+      "ref": "sha256:e1d54abdb0a83b6c28714fe54c5fd0cfe053132cf2a9d511a0166c6c556ea2be"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "wal-recovery-ordering",
+      "ref": "sha256:8eb700419711e0d5eba317b8f6dec41aa3411e03e320e82b8da8070974ff3aae"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "ctr-optimization",
+      "ref": "sha256:df8b7d99e23ad23ac9c92da35ff0a2714d78781e9424edd63143cc86860e096b"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "bun-sourcemap-leak",
+      "ref": "sha256:e55ae542f338f50f4468d940c7d7c93a45d34fd418dc6cc5883c1fedc753603a"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "legacy-utility-triage",
+      "ref": "sha256:d9954d3b78c8440a5927bc9826bfd9a61827391bf47f0885575fc7f27c4c8b6e"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "mvcc-lsm-compaction",
+      "ref": "sha256:370406dd79cc164e50b73568de37c34eba1b0e30782d7dc03f87c38c68123137"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "risk-scorer-replay",
+      "ref": "sha256:3645f552b5485633a67027130c9d471eb1a364f1451b6ada140bacd148f9cd87"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "atrx-vep-crispr",
+      "ref": "sha256:4ebe9e13de8cbd39ee2f9e14a9d7b1233c047ae43fba238ebc6274465697be3a"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "nextjs-performance",
+      "ref": "sha256:81f8315fb984f91208c45b4ac153c8801d07d3beec5eb0f0d3fa9d49b6588fdd"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "live-database-cutover",
+      "ref": "sha256:850fc34a564f68c1cf6f48178700168a4e3322f7ac6de80df98eb8a42d54913f"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "cumulative-layout-shift",
+      "ref": "sha256:d9805202ade29c603a55f5aa5af27a794a2ed3897e05e8ff0a484b4a84a0ed8a"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "data-anonymization",
+      "ref": "sha256:dec4261252665cf2981783df104ea10c901dcab3720b27b4bf8909a059713f08"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "vba-userform-port",
+      "ref": "sha256:38f141630a3803538908de5080d4a38e87fa3ce77a9fbbaad284cb7f9e89fe22"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "freecad-impeller",
+      "ref": "sha256:40d322e979d30dd53c0a9330445b8799cf5c02099b0718a3b3ad15231b366dba"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "music-harmony",
+      "ref": "sha256:f32afbf135cbd3c622ee687ba032abe61cab85a33b5243ee5cbbde82557f3ed1"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "telecom-entity-resolution",
+      "ref": "sha256:f818fa0aabaa916c35966e67e611e06d2bed372555d4f16b0e147726d382d1ad"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "distributed-dedup",
+      "ref": "sha256:a645441376fea3d5b1acc15b64fe288eb0bb835724f6bf7a21adb1eca2bb814d"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "ontology-kg-querying",
+      "ref": "sha256:3149354c3fdc71ee698752c294cd9b020a908ab01280f7494513e69708f8833c"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "production-planning",
+      "ref": "sha256:1958ac51553517b79e3a642ed4f3bd9affb5b42166dcbacaa4c32f4b040edaff"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "freecad-platform-drawing",
+      "ref": "sha256:ed6db89260074bd0db58b064d90977cc4d470843deefecd8a9caf7f21da9a747"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "vpp-loss-divergence",
+      "ref": "sha256:6db99a33495fcd7489072a4753a365e0cb4db9ea64c2b3f85a8b44db984fd0d3"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "gsea-proteomics",
+      "ref": "sha256:7c0512e617cd4c0a0b595ebfb81258495d7e4a12c003cd0592c1137aa986a85d"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "intrastat-meldung",
+      "ref": "sha256:d944c51392857e886211327f38086513c0540b5c2f557b75b2b44dec209b8222"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "kv-live-surgery",
+      "ref": "sha256:810958fbeefc6a7f677624f908561e6e47d88aec8c06fa5321d81f5aa75a9ffc"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "html-js-filter",
+      "ref": "sha256:f211960f1f7c66ace91c3d079db073ed0f841d458db4cad1f2f943cba6cc79f3"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "interleaved-vigenere",
+      "ref": "sha256:238a75a32aad5e60b33a22ac53087790e95b752c6272f41d724407f198df4a14"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "uefi-bootkit",
+      "ref": "sha256:f17de5664e18ba15b6af2262c35954093fdfcfe7f2852e8ea57dd4a6f131a208"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "layout-config-recreation",
+      "ref": "sha256:997003ffc98f6df316167de8752c9beada20cb1292588b0fa6409d87ed3a1def"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "shadow-relay",
+      "ref": "sha256:bb4928fdbe32ef9a17fe829ae45270533a07c93e071bc81c3b250f5fc4aa49b6"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "vllm-deepseek-streaming",
+      "ref": "sha256:cb78aec591411780aedf133b95ca829584ba48768bbc437487fa773afbde321d"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "roy-polymorph-cn",
+      "ref": "sha256:012e714e79b4ff4f0d36eeb8fa2b6fa3be1043a71af880af8a71f61487669dfc"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "rs-archive-clone",
+      "ref": "sha256:a6e74dbc5290e535872d70d5a9f52b97ca040d520a7b5f11a6f5b14013c4da85"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "wdm-design",
+      "ref": "sha256:99aa16fb8df2da75e69948e78ccefb69360c439d981011ce08efd57e7e918a91"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "freecad-spring-clip",
+      "ref": "sha256:c3110552902a44e17326df0a87083eb6028068cfbc7aa47461c7f2c0aa528bab"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "fp8-rmsnorm-gemm",
+      "ref": "sha256:c071d986784369f0403ebf60070c7f96d7df3acc7e5a4614c986f8f421acda38"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "vf2-speedup-networkx",
+      "ref": "sha256:cdbad1f303f57856199aae757bdbc6363111e8ad60d31db49c61d01706da63ab"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "jax-speedrun-gpu",
+      "ref": "sha256:b8ea491d376abbb0da944e7a3b0fdef710d6de76a85cd5e25d132a8a541748fe"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "medical-claims-processing",
+      "ref": "sha256:8c7adb0a16026a79de234ed834d03942b53bd70237d02f47a381dd295b880552"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "retro-console-soc",
+      "ref": "sha256:2b43b109ac633a4740364a3942df1195a8ae6ebfdae93b6a53e1ade8a6ffcf9e"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "sglang-qwen-burst",
+      "ref": "sha256:32bdf75983144af64a855c3711df1136cd347219b05bf5ef3b839375b1f82941"
+    },
+    {
+      "org": "terminal-bench",
+      "name": "hof-topology-interpenetration",
+      "ref": "sha256:2534e62c5ab3c8592f4e0de3dee14ff07a5c1c9434164e7f80e2f564273de014"
+    }
+  ],
+  "task_count": 66,
+  "attempts_per_task": 5,
+  "planned_trials": 330,
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "provider": "existing native ChatGPT subscription; identity withheld",
+  "resource_policy": "unchanged task settings; environment not yet approved/configured",
+  "agent_timeout_seconds": 28800,
+  "gpu_tasks": [
+    {
+      "cpus": 4,
+      "memory_mb": 16384,
+      "storage_mb": 30720,
+      "gpus": 1,
+      "gpu_types": [
+        "H100"
+      ],
+      "docker_image": "harborframework/terminal-bench:fp8-rmsnorm-gemm-environment-c6108b9484d3fcde@sha256:2ff70c4fda8432085a4df9bb6565c309058077de0b93d827ed68c1cede55e055",
+      "task": "fp8-rmsnorm-gemm"
+    },
+    {
+      "cpus": 16,
+      "memory_mb": 32768,
+      "storage_mb": 1024000,
+      "gpus": 1,
+      "gpu_types": [
+        "H100"
+      ],
+      "docker_image": "harborframework/terminal-bench:jax-speedrun-gpu-environment-03138eca1759d833@sha256:d091f08f4076c6e37c0e395740c8defaab655aa7d89811b004f1243772d7712d",
+      "task": "jax-speedrun-gpu"
+    },
+    {
+      "cpus": 8,
+      "memory_mb": 16384,
+      "storage_mb": 30720,
+      "gpus": 1,
+      "gpu_types": [
+        "H100"
+      ],
+      "docker_image": "harborframework/terminal-bench:math-eval-grader-environment-ca68d32d17d9a0bb@sha256:a58366cc4b4192c2b74612b6a2adfe0404a3ca48807ddc4447a5708e9f473773",
+      "task": "math-eval-grader"
+    }
+  ],
+  "runtime_source": "8e109046fb0bff11b17c3247a86a1afb098ccf83",
+  "blockers": [
+    "H100-capable execution environment, credentials and cloud spending authorization",
+    "Harbor Hub authentication not completed"
+  ],
+  "remaining_verification": [
+    "Approved remote credential relay and multi-container/H100 environment checks",
+    "Native host account freshness for long-running subscription inference",
+    "Upload-copy sanitization and private Hub upload/read-back",
+    "All 330 task attempts and observed teardown"
+  ],
+  "runtime": {
+    "source": "8e109046fb0bff11b17c3247a86a1afb098ccf83",
+    "version": "1.0.3",
+    "rust": "1.94.1",
+    "platform": "Linux x86_64 Ubuntu 22.04 glibc 2.35",
+    "features": [
+      "reqwest/rustls-tls-native-roots"
+    ],
+    "binaries": {
+      "helm": "92555c9f40b00640ab0fdeb3368bba2ae111438a5762162028ad2ac76a5b39f6",
+      "vessel": "263672e91fb32f6105a15aa5579f25c27ab5a976fe5fbe95e7088a9f0a542d7a",
+      "voyage": "f64532517083894249d50b6fac5967d49ccc1210409dbd7b8668e3e0ae8684c4"
+    },
+    "build_image_id": "sha256:d88e243366b4c077b65777efaf40b5826a3b85d09081748b7af010c4aa8ebea4",
+    "command": "cargo build -p helm -p vessel -p voyage --release --locked --features reqwest/rustls-tls-native-roots -j 8",
+    "rust_cargo_source_unchanged": true
+  },
+  "completed_checks": [
+    "Native compatible runtime build from unchanged pinned Rust/Cargo source",
+    "Native offline file output and observed cleanup with eight-hour wrapper configuration",
+    "Full revision-bound public history, linked tool outputs and validated ATIF",
+    "UTF-8 byte cursor, stale-revision and observation-deadline checks",
+    "Short-deadline cancellation with observed cleanup"
+  ]
+}
