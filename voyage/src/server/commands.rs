@@ -636,6 +636,7 @@ pub(super) async fn dispatch_admitted(
                 incarnation: state.registration.incarnation,
                 token: String::new(), // Internal recheck does not authenticate transport.
                 authorization: authorization.grant,
+                scope_authority: None,
                 command: command.clone(),
             };
             let current = state.clone();

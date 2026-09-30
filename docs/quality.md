@@ -823,3 +823,19 @@ Verify SQL configuration/revision/receipt commit together, lost-output lookup ne
 reapplies, and prepared-but-uncommitted runtime startup refuses. Preserve original
 canonical Session IDs/messages, uncertain effects and external cleanup obligations.
 Neither interruption nor the helper's successful receipt is native cleanup evidence.
+
+### Bound scope bridge qualification deferred to final integrated pass
+
+Verify kernel root-peer authentication before any secret write, two-second bounded
+connect/frame I/O, unavailable/malformed/oversized replies, exact session/incarnation/
+workspace/grant revision and expiry checks. Exercise live and suspended authorized
+requests with an explicit lease; refuse legacy user handles and bound requests
+without one. Verify per-dispatch revocation and account/history rights without
+ordinary-runtime reads of root-private grant files.
+
+Private lease cache verification must cover 0700 directory/0600 single-link records,
+nofollow reads, 64 KiB/64-record limits, exact binding keys, redacted Debug and absence
+from journal/history/events. Goal continuation must re-query current authority using
+the cached lease and current registration after a clean restart; identity/grant
+execution epochs must invalidate old leases. These are pending checks, not passing
+coverage or native evidence. No tests/compilation were run for this source increment.

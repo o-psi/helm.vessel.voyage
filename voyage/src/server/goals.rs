@@ -34,6 +34,17 @@ fn authorize(
         incarnation: state.registration.incarnation,
         token: state.registration.token.clone(),
         authorization: saved.grant.clone(),
+        scope_authority: if state.registration.peer_uids.is_some() {
+            saved
+                .grant
+                .as_ref()
+                .map(|binding| {
+                    crate::execution_scope_client::cached_handle(&state.directory, binding)
+                })
+                .transpose()?
+        } else {
+            None
+        },
         command,
     };
     let auth = authorization::authorize(state, &request, &state.directory)?;
@@ -278,6 +289,7 @@ mod tests {
             incarnation: state.registration.incarnation,
             token: state.registration.token.clone(),
             authorization: Some(binding),
+            scope_authority: None,
             command: RuntimeCommand::Submit {
                 command_id: Uuid::new_v4(),
                 expected_revision: 0,

@@ -809,3 +809,32 @@ a tool or attest descendant/remote cleanup. Root controller/client integration,
 actual native two-identity lifecycle evidence and final combined validation remain
 required before claiming the transition is supported. Source preparation has not
 been compiled or executed under the user's final-test direction.
+
+## Bound runtime execution-scope metadata bridge
+
+Bound authorized requests now carry an explicit root-minted opaque scope lease.
+The runtime validates the root abstract-socket peer with kernel UID 0 before
+sending the registration token or lease secret; each exchange has a two-second
+budget and 16 KiB frames. The response contains current rights, account/enrollment
+scope, expiry and exact GrantBinding/session/incarnation/workspace metadata, never
+token hashes or private grant files. Root broker validation owns current grant,
+parent authority, execution epoch and transport admission checks.
+
+The runtime re-queries this broker at policy dispatch and account binding, retaining
+the original actor/binding for exact receipts. It does not derive a protected
+control root from a bound runtime's directory. Legacy user runtimes retain their
+existing private-file grant checks and reject scope handles. A bound request with
+an authorization binding must supply its private scope handle.
+
+Validated handles can be cached only in the runtime identity's separate private
+`scope-credentials` directory (0700, ordinary single-link 0600 records, 64 KiB per
+record, at most 64 records). Cache keys bind exact grant/principal/revision; secrets
+never enter the journal, conversation, events or Debug output. Internal Goal
+continuation reconstructs its authority with this private handle and re-queries the
+broker using the current registration. Root execution epochs reject leases after
+an identity handoff, while a permitted clean restart can reuse its credential.
+External missing-handle requests cannot use this cache as an authority fallback.
+
+This remains source preparation without test/build execution. Root counterpart,
+suspended forwarding and final integrated/native verification are required before
+claiming working broker admission or continuous revocation.

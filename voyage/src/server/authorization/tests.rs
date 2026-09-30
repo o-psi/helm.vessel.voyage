@@ -147,6 +147,7 @@ fn admission_enforces_operation_rights_supervised_path_and_workspace() {
         incarnation: registration.incarnation,
         token: "fixture".into(),
         authorization: None,
+        scope_authority: None,
         command: RuntimeCommand::Health,
     };
     let local = authorize_parts(actor, &registration, &request, &directory).unwrap();

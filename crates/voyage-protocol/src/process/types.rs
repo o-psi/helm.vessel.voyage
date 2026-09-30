@@ -399,6 +399,8 @@ pub struct RuntimeRequest {
     pub token: String,
     #[serde(default)]
     pub authorization: Option<GrantBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_authority: Option<crate::execution_scope::ExecutionScopeHandle>,
     pub command: RuntimeCommand,
 }
 

@@ -74,3 +74,6 @@ pub mod identity_helper;
 
 /// Private two-phase retired-runtime identity handoff; no public authority.
 pub mod execution_transition;
+
+/// Private runtime-to-supervisor current scope metadata.
+pub mod execution_scope;
