@@ -111,6 +111,7 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
         "access denied"
     );
     current(&grant)?;
+    super::execution_epoch::check(root, &grant)?;
     Ok(grant)
 }
 pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {

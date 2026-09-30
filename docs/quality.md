@@ -839,3 +839,12 @@ from journal/history/events. Goal continuation must re-query current authority u
 the cached lease and current registration after a clean restart; identity/grant
 execution epochs must invalidate old leases. These are pending checks, not passing
 coverage or native evidence. No tests/compilation were run for this source increment.
+
+The supervisor counterpart also requires final native checks of the exact runtime
+UID, registration token/incarnation, root lease and protected grant epoch. Exercise
+ordinary restart with unchanged scope, ordinary-to-administrator and reverse
+transition with old tokens, connection/participant revocation, source/target
+namespace changes, supervisor restart with a retained Goal lease, and suspended
+observation without root-directory access. Preserve no-replay oracles and prove
+owned cleanup. Prepared source and successful source formatting do not establish
+these outcomes; no broker test was executed during implementation preparation.

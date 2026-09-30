@@ -165,6 +165,7 @@ impl Supervisor {
                     revision: binding.revision,
                 }),
             };
+            crate::process::access::execution_epoch::pin(&self.directory, &child)?;
             store::save(&store::grant_path(&self.directory, child_grant_id), &child)
                 .map_err(|error| error.context(routing::OutcomeUnknown))?;
             assignment
@@ -222,6 +223,7 @@ impl Supervisor {
                     revision: assignment.request.binding_revision,
                 }),
             };
+            crate::process::access::execution_epoch::pin(&self.directory, &child)?;
             store::save(&child_grant_path, &child)?;
         }
         let child = assignment.observation.child_session_id;

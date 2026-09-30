@@ -75,6 +75,8 @@ mod guardian_observation;
 mod identity_accounts;
 #[cfg(target_os = "linux")]
 mod identity_start;
+#[cfg(target_os = "linux")]
+mod scope_authority;
 
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 mod admin_execution;

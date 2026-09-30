@@ -1,5 +1,6 @@
 //! Explicit bearer grants supplement account-owner access; execution policy stays local.
 mod connection;
+pub(super) mod execution_epoch;
 mod routing;
 pub(super) mod store;
 use super::{registry, service::Supervisor};
@@ -126,6 +127,7 @@ impl Supervisor {
         };
         // Immutable intent precedes publication. Retrying only completes deterministic local metadata.
         registry::command_record(&self.directory, *command_id, &command, true).await?;
+        execution_epoch::pin(&self.directory, &grant)?;
         store::save(
             &store::credential_path(&self.directory, *grant_id),
             &credential,

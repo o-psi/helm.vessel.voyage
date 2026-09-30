@@ -79,7 +79,15 @@ impl Supervisor {
             workspace: workspace.clone(),
             config_path: config_path.clone(),
         };
-        self.start_bound_request_locked(command_id, session_id, workspace, config_path, binding, original).await
+        self.start_bound_request_locked(
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            binding,
+            original,
+        )
+        .await
     }
 
     pub(super) async fn start_bound_request_locked(
@@ -145,9 +153,10 @@ impl Supervisor {
         runtime_storage::validate_bound_layout(&self.directory)?;
         let identity = database::configured_identity(&self.directory, &binding.identity).await?;
         ensure!(
-            matches!((identity.authority,binding.administrator_grant_id),
-                (AuthorityClass::Ordinary,None)|(AuthorityClass::Administrator,Some(_)))
-                && identity.account_context == binding.account_context
+            matches!(
+                (identity.authority, binding.administrator_grant_id),
+                (AuthorityClass::Ordinary, None) | (AuthorityClass::Administrator, Some(_))
+            ) && identity.account_context == binding.account_context
                 && identity.uid == binding.peer_uids.runtime,
             "bound creation identity changed"
         );
@@ -361,7 +370,8 @@ impl Supervisor {
                 registration.incarnation,
             )?;
             if let Ok(directory) = runtime_storage::directory(&self.directory, registration).await {
-                let _ = routing::forward_authorized(
+                let _ = routing::forward_bound(
+                    &self.directory,
                     &directory,
                     registration,
                     RuntimeCommand::Stop,
@@ -420,17 +430,30 @@ impl Supervisor {
 
         // Bound configuration/account changes need their executing-identity
         // helpers; never inspect the supervisor's account namespace as fallback.
-        if matches!(command, RuntimeCommand::SetAccountInference { .. } | RuntimeCommand::SetInference {..} | RuntimeCommand::SetModel {..} | RuntimeCommand::SetAccess {..} | RuntimeCommand::Configure {..}) {
-            let binding = database::execution_binding(&self.directory,registration.session_id).await?
-                .ok_or_else(||anyhow::anyhow!("bound identity unavailable"))?;
-            let identity = database::configured_identity(&self.directory,&binding.identity).await?;
-            ensure!(identity.uid != 0,"administrator account settings require a fresh execution review");
+        if matches!(
+            command,
+            RuntimeCommand::SetAccountInference { .. }
+                | RuntimeCommand::SetInference { .. }
+                | RuntimeCommand::SetModel { .. }
+                | RuntimeCommand::SetAccess { .. }
+                | RuntimeCommand::Configure { .. }
+        ) {
+            let binding = database::execution_binding(&self.directory, registration.session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("bound identity unavailable"))?;
+            let identity =
+                database::configured_identity(&self.directory, &binding.identity).await?;
+            ensure!(
+                identity.uid != 0,
+                "administrator account settings require a fresh execution review"
+            );
         }
         if matches!(command, RuntimeCommand::Stop) {
             return self.bound_stop(&registration, authorization).await;
         }
         let directory = runtime_storage::directory(&self.directory, &registration).await?;
-        let result = routing::forward_authorized(
+        let result = routing::forward_bound(
+            &self.directory,
             &directory,
             &registration,
             command.clone(),

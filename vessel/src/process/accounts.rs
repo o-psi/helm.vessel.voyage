@@ -175,6 +175,7 @@ impl voyage_runtime::policy::ExecutionAuthority for UsageAuthority {
 /// continue enrollment merely because a derived session record is still present.
 fn current_session_scope(root: &Path, grant: &ProcessGrant) -> Result<()> {
     store::current(grant)?;
+    super::access::execution_epoch::check(root, grant)?;
     ensure!(
         !grant.full_access
             || (grant.connection_binding.is_some()

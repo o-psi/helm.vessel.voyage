@@ -47,6 +47,50 @@ pub(super) async fn forward_authorized(
     command: RuntimeCommand,
     authorization: Option<GrantBinding>,
 ) -> Result<RuntimeResponse> {
+    ensure!(
+        registration.peer_uids.is_none() || authorization.is_none(),
+        "bound scoped forwarding requires explicit protected authority root"
+    );
+    forward_scope(directory, registration, command, authorization, None).await
+}
+
+#[cfg(target_os = "linux")]
+pub(super) async fn forward_bound(
+    root: &Path,
+    directory: &Path,
+    registration: &ProcessRegistration,
+    command: RuntimeCommand,
+    authorization: Option<GrantBinding>,
+) -> Result<RuntimeResponse> {
+    ensure!(
+        registration.peer_uids.is_some(),
+        "protected runtime binding required"
+    );
+    if super::recovery::suspended(directory, registration) && command.observes_suspended() {
+        return super::suspension::observe(
+            Some(root),
+            directory,
+            registration,
+            command,
+            authorization,
+        )
+        .await;
+    }
+    let authority = if let Some(binding) = &authorization {
+        Some(super::scope_authority::mint(root, registration, binding).await?)
+    } else {
+        None
+    };
+    forward_scope(directory, registration, command, authorization, authority).await
+}
+
+async fn forward_scope(
+    directory: &Path,
+    registration: &ProcessRegistration,
+    command: RuntimeCommand,
+    authorization: Option<GrantBinding>,
+    scope_authority: Option<voyage_protocol::execution_scope::ExecutionScopeHandle>,
+) -> Result<RuntimeResponse> {
     let expected_uid = expected_runtime_uid(registration)?;
     if super::recovery::suspended(directory, registration) && command.observes_suspended() {
         return super::suspension::observe(None, directory, registration, command, authorization)
@@ -68,6 +112,7 @@ pub(super) async fn forward_authorized(
                 incarnation: registration.incarnation,
                 token: registration.token.clone(),
                 authorization,
+                scope_authority,
                 command,
             },
         )

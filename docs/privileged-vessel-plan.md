@@ -838,3 +838,32 @@ External missing-handle requests cannot use this cache as an authority fallback.
 This remains source preparation without test/build execution. Root counterpart,
 suspended forwarding and final integrated/native verification are required before
 claiming working broker admission or continuous revocation.
+
+### Protected supervisor scope counterpart
+
+The supervisor now binds a read-only abstract Unix authority endpoint only for a
+system layout. A typed check requires the registered runtime's kernel UID, exact
+current incarnation/token and a root-minted opaque scope lease. It rechecks the
+current process grant, connection/participant ancestry, configured execution
+identity and protected scope epoch before returning bounded permission metadata.
+It does not return a control key, bearer token or token hash and cannot execute a
+command. Requests/replies are limited to 16 KiB, waits to two seconds and owned
+connections/tasks to 32. Listener ownership is retained across startup failures
+and normal service detachment; Voyages remain independent processes.
+
+Live bound forwarding and dropped suspended observers receive the explicit
+private handle. They do not infer authority from runtime path ancestry. The
+runtime's owner-only nonjournal cache supports existing Goal continuation across
+an ordinary clean process replacement; the new incarnation must still authenticate
+its own current registration. Its handle cannot acquire a different execution
+identity/account context or administrator grant.
+
+Every newly issued system process grant has a protected identity/authorization
+epoch pin. Human-derived grant IDs include the epoch and current connection
+revision. Root, ordinary and participant scopes remain distinct; a missing or
+changed system pin refuses instead of adopting current authority. The epoch is
+stable across an ordinary restart and changes on identity/context/authorization
+transition. An explicit reviewed migration may pin retained ordinary grants only
+after reconstructing the original user identity; it cannot confer administrator
+authority from legacy user records. Native public Run/browser/revocation/restart
+and malformed/false-peer qualification remain in the final deferred test set.
