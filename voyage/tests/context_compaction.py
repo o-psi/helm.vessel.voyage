@@ -410,6 +410,13 @@ def run_case(binaries, mode, kind, tui=False):
         info = suspended(fixture, session)
         snapshot = full_snapshot(fixture, session)
         assert not scenario.errors, scenario.errors
+        if mode == "responses" and kind == "automatic":
+            observation = snapshot["context_observation"]
+            preparation = observation["preparation"]
+            assert preparation["before_count"]["input_tokens"] > observation["count"]["input_tokens"]
+            assert preparation["before_count"]["scope"]["account"] is None
+            assert preparation["before_generation"] < observation["projection_generation"]
+            assert 0 < preparation["steps"] <= 4 and preparation["reduced_messages"] > 0
         if kind == "irreducible":
             assert len(scenario.bodies) == 1
             assert not scenario.counter.exists()
