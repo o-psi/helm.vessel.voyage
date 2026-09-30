@@ -61,6 +61,7 @@ pub(super) async fn selected(scope: &Scope, root: &Path) -> Result<ConfiguredExe
 #[derive(Clone, Copy)]
 pub(super) enum Selection<'a> {
     Default,
+    InitializationDefault(&'a ConfiguredExecutionIdentity),
     FrozenDefault(&'a ConfiguredExecutionIdentity),
     Bound(&'a ProcessRegistration),
     ReviewTarget(&'a ConfiguredExecutionIdentity),
@@ -87,7 +88,15 @@ async fn selected_for(
     root: &Path,
     selection: Selection<'_>,
 ) -> Result<ConfiguredExecutionIdentity> {
-    if let Selection::Bound(registration) = selection {
+    if let Selection::InitializationDefault(identity) = selection {
+        let current = super::default_execution::protected_default(root)?;
+        ensure!(
+            &current == identity
+                && database::configured_identity(root, &identity.identity).await? == current,
+            "initialization ordinary destination changed"
+        );
+        Ok(current)
+    } else if let Selection::Bound(registration) = selection {
         let current = database::registration(root, registration.session_id).await?;
         ensure!(
             current.incarnation == registration.incarnation

@@ -1,5 +1,5 @@
 //! Lifecycle orchestration passes private initialization provenance, never transcripts.
-use super::{registry, service::Supervisor};
+use super::service::Supervisor;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use voyage_protocol::process::*;
@@ -77,6 +77,14 @@ impl Supervisor {
         .await
     }
     pub(super) async fn branch(&self, command: VesselCommand) -> Result<Value> {
+        self.branch_scoped(command, super::accounts::Scope::Owner)
+            .await
+    }
+    pub(super) async fn branch_scoped(
+        &self,
+        command: VesselCommand,
+        scope: super::accounts::Scope,
+    ) -> Result<Value> {
         let VesselCommand::Branch {
             command_id,
             session_id,
@@ -104,7 +112,7 @@ impl Supervisor {
             "stale source incarnation"
         );
         drop(registrations);
-        let source_directory = registry::directory(&self.directory, *session_id);
+        let source_directory = super::runtime_storage::directory(&self.directory, &source).await?;
         let frozen = self
             .forward_resuming(
                 *session_id,
@@ -135,8 +143,25 @@ impl Supervisor {
             source_command_id: *command_id,
             branch_id: *branch_id,
         };
-        let process = self
-            .start_initialized(
+        scope.check(&self.directory, &source.workspace, ProcessRight::Create)?;
+        let process = if super::runtime_storage::has_bound_layout(&self.directory) {
+            #[cfg(target_os = "linux")]
+            {
+                self.start_ordinary_initialized(
+                    *command_id,
+                    *branch_id,
+                    source.workspace,
+                    source.config_path,
+                    Some(initialization),
+                    command,
+                    scope,
+                )
+                .await?
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("system branching unsupported");
+        } else {
+            self.start_initialized(
                 *command_id,
                 *branch_id,
                 source.workspace,
@@ -144,7 +169,8 @@ impl Supervisor {
                 Some(initialization),
                 command,
             )
-            .await?;
+            .await?
+        };
         Ok(process)
     }
 }

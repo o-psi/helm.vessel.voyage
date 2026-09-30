@@ -413,7 +413,11 @@ impl Supervisor {
                 self.bind_connection_operation(&grant, *command_id, &operation)
                     .await?;
                 store::current_connection(&self.directory, &grant)?;
-                self.branch(command).await
+                self.branch_scoped(
+                    command,
+                    crate::process::accounts::Scope::Connection(grant.clone()),
+                )
+                .await
             }
             VesselCommand::Restart {
                 command_id,

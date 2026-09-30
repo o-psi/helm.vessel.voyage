@@ -80,6 +80,8 @@ mod identity_enrollment;
 #[cfg(target_os = "linux")]
 mod identity_start;
 #[cfg(target_os = "linux")]
+mod identity_initialize;
+#[cfg(target_os = "linux")]
 mod scope_authority;
 
 #[cfg(target_os = "linux")]

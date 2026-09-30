@@ -19,6 +19,8 @@ pub struct IdentityHelperRequest {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IdentityHelperOperation {
+    /// Source identity validates an owned portable checkpoint; only metadata returns.
+    ObserveTransferArtifact { artifact_path: PathBuf },
     /// Reads an exact private frozen launch file; no login defaults or network.
     ReviewConfig { config_path: PathBuf },
     Accounts {
@@ -45,6 +47,14 @@ pub enum IdentityHelperOperation {
     ValidateProfile {
         scope: IdentityAccountScope,
         profile: crate::execution_profiles::ExecutionProfile,
+    },
+    /// Freeze initialization configuration and verify private provenance after UID drop.
+    CaptureInitialization {
+        scope: IdentityAccountScope,
+        directory: PathBuf,
+        request_digest: String,
+        base_config_path: Option<PathBuf>,
+        initialize: crate::process::RuntimeInitialization,
     },
     CaptureLaunch {
         scope: IdentityAccountScope,

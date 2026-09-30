@@ -994,3 +994,46 @@ pre-ownership SourceAbort cleanup when authority was fenced. Atomic catalogue
 admission also checks the saved review/receipt and current enrolled authority
 inside its transaction, including ordinary target handoffs with no admin grant.
 No new target admission or guardian launch follows a fenced review.
+
+### Ordinary initialization and transport source increment (#344, #380)
+
+The initializer implementation now selects an independently protected ordinary
+identity for managed import, JSON import, participant admission and destination
+transfer activation. A branch retains its exact still-valid ordinary source
+identity; an administrator source is refused rather than copying administrative
+authority into the branch. Public branch capture retains its authenticated
+connection scope. Participant capture checks the original source grant and account
+projection while selecting the ordinary destination independently; an inaccessible
+account namespace is refused, never replaced with root defaults or credentials.
+
+Root retains bounded immutable initialization intent before staging/capture.
+The dropped identity helper verifies private source provenance and captures private
+configuration, including the source runtime's frozen branch configuration. Root
+receives only the private path and digest. Registration retains every initialization
+variant, so runtime bootstrap remains the owner of canonical import/branch state.
+Transfer destination staging copies bounded signed opaque root-controlled bytes
+through a pinned runtime directory descriptor, creates a private target-owned
+file once, and leaves an interrupted or conflicting copy unresolved. Existing
+ordinary-owned bytes are never repaired or parsed by the supervisor.
+
+Bound source export uses the protected runtime coordinate and positive owner
+retirement observation. A source-identity helper parses the owned portable
+checkpoint and returns only IDs, generation, digest, length and inode metadata.
+Root retains that metadata and forwards bounded opaque chunks through descriptor
+opens which refuse symbolic links in every ancestor, foreign-owner ancestors,
+nonprivate/hardlinked files and changed inodes/lengths. Each chunk rechecks the
+protected bound identity and signed artifact digest; canonical history is not
+parsed by Root. Legacy user-scope transfer remains in its original owner realm.
+
+Restart carries the original command-keyed launch digest before new admission.
+Transition recovery additionally uses the separate positively never-launched
+marker and carries its reviewed retained digest only for that dormant transition;
+ordinary post-live saved settings do not acquire a permanent transition pin.
+No uncertain capture, partial copy, missing receipt or guardian launch is replayed.
+
+This source increment has not been compiled or exercised. Integration must retain
+the transition recovery module's `dormant` and `carry_retained_digest` hooks. The
+final coordinated local/native verification must establish all initializer
+journeys, exact retry and failure boundaries, scoped revocation during capture,
+ordinary namespace separation, source retirement, signed transfer chunk pinning
+and transition restart behavior before this acceptance can be marked complete.

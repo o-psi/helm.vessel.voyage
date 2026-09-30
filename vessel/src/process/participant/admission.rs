@@ -240,22 +240,40 @@ impl Supervisor {
                 workspace: binding.workspace.clone(),
             },
         };
-        let started = self
-            .start_initialized(
+        let initialize = Some(RuntimeInitialization::Participant {
+            assignment_id: assignment.request.assignment_id,
+            parent_vessel_id: assignment.request.parent_vessel_id,
+            parent_session_id: assignment.request.parent_session_id,
+            parent_run_id: assignment.request.parent_run_id,
+            policy: assignment.request.policy.clone(),
+        });
+        let started = if super::super::runtime_storage::has_bound_layout(&self.directory) {
+            #[cfg(target_os = "linux")]
+            {
+                self.start_ordinary_initialized(
+                    assignment.start_command_id,
+                    child,
+                    binding.workspace,
+                    binding.config_path,
+                    initialize,
+                    command,
+                    super::super::accounts::Scope::Session(grant.clone()),
+                )
+                .await?
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("system participant initialization unsupported");
+        } else {
+            self.start_initialized(
                 assignment.start_command_id,
                 child,
                 binding.workspace,
                 binding.config_path,
-                Some(RuntimeInitialization::Participant {
-                    assignment_id: assignment.request.assignment_id,
-                    parent_vessel_id: assignment.request.parent_vessel_id,
-                    parent_session_id: assignment.request.parent_session_id,
-                    parent_run_id: assignment.request.parent_run_id,
-                    policy: assignment.request.policy.clone(),
-                }),
+                initialize,
                 command,
             )
-            .await?;
+            .await?
+        };
         let info: ProcessInfo = serde_json::from_value(started)?;
         ensure!(
             matches!(info.state, ProcessState::Live | ProcessState::Suspended),

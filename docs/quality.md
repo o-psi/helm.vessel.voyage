@@ -963,3 +963,19 @@ positive release requires completion of its owned Tokio peer task. It does not
 establish native executable isolation, descendant cleanup or live-provider behavior.
 These source cases have not been executed and await the single final verification
 set. The current published coverage summary remains unchanged.
+### Bound initializer and opaque transfer source preparation (#353)
+
+Nine new unexecuted adversarial source cases cover private transfer bytes and
+hashes, symlink/hardlink/mode/source-directory refusals, initialization provenance
+conflicts, uncertain capture without default recapture, nil participant/self-branch
+references, metadata-only portable checkpoint observation, the separate 16 MiB
+opaque artifact bound, and retained source inode replacement during chunk reads.
+The small credential/provenance record limit remains 64 KiB; opaque signed
+transport artifacts use a separate bounded descriptor read instead of increasing
+that credential-cache denominator or weakening its private-file boundary.
+
+No Cargo/test/build/Clippy/coverage or native journey was run for this source
+increment. Formatting and diff checks are source checks only. Final acceptance
+requires the integrated implementation and unchanged whole-workspace coverage
+scope, including real bound initializer/transfer/restart fixtures and the exact
+transition recovery hooks; these prepared tests are not passing evidence.

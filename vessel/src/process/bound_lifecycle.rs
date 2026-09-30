@@ -18,8 +18,16 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
         info.state = ProcessState::Stopped;
         return info;
     }
-    if super::migration::dormant(root,registration.session_id,registration.incarnation).unwrap_or(false) {
-        info.state=ProcessState::Suspended;
+    if super::migration::dormant(root, registration.session_id, registration.incarnation)
+        .unwrap_or(false)
+        || super::execution_transition::dormant(
+            root,
+            registration.session_id,
+            registration.incarnation,
+        )
+        .unwrap_or(false)
+    {
+        info.state = ProcessState::Suspended;
         return info;
     }
     info.state = ProcessState::Unavailable;
@@ -103,6 +111,29 @@ impl Supervisor {
         binding: ExecutionBinding,
         command: VesselCommand,
     ) -> Result<serde_json::Value> {
+        self.start_bound_initialized_request_locked(
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            binding,
+            None,
+            command,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn start_bound_initialized_request_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+        initialize: Option<RuntimeInitialization>,
+        command: VesselCommand,
+    ) -> Result<serde_json::Value> {
         ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
         ensure!(
             !command_id.is_nil()
@@ -135,6 +166,7 @@ impl Supervisor {
             })?;
             ensure!(
                 previous.command_id == command_id
+                    && previous.initialize == initialize
                     && previous.config_path.as_ref() == Some(&config_path)
                     && previous.incarnation == binding.incarnation
                     && previous.peer_uids.as_ref() == Some(&binding.peer_uids)
@@ -180,7 +212,7 @@ impl Supervisor {
             incarnation: binding.incarnation,
             command_id,
             restart_from: None,
-            initialize: None,
+            initialize,
             config_path: Some(config_path),
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
             peer_uids: Some(binding.peer_uids.clone()),
@@ -282,8 +314,11 @@ impl Supervisor {
             "ownership relinquished"
         );
         ensure!(
-            guardian::cleanup_observed(&self.directory,session_id,incarnation).unwrap_or(false)
-                || super::migration::dormant(&self.directory,session_id,incarnation).unwrap_or(false),
+            guardian::cleanup_observed(&self.directory, session_id, incarnation).unwrap_or(false)
+                || super::migration::dormant(&self.directory, session_id, incarnation)
+                    .unwrap_or(false)
+                || super::execution_transition::dormant(&self.directory, session_id, incarnation)
+                    .unwrap_or(false),
             "restart requires protected observed local cleanup"
         );
         let identity = database::bound_observer_identity(&self.directory, &previous).await?;
@@ -299,6 +334,20 @@ impl Supervisor {
         next.restart_from = Some(incarnation);
         next.token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         next.state = ProcessState::Starting;
+        if let Some(digest) = super::identity_start::launch_digest(&self.directory, &previous)? {
+            let path = next
+                .config_path
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("retained launch path missing"))?;
+            super::identity_start::pin_launch(
+                &self.directory,
+                command_id,
+                session_id,
+                path,
+                &digest,
+            )?;
+        }
+        super::execution_transition::carry_retained_digest(&self.directory, &previous, &next)?;
         database::restart_bound(
             &self.directory,
             &previous,

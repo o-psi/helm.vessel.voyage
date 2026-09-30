@@ -79,10 +79,22 @@ impl Supervisor {
         initialize: Option<RuntimeInitialization>,
         command: VesselCommand,
     ) -> Result<Value> {
-        ensure!(
-            !super::runtime_storage::has_bound_layout(&self.directory),
-            "system voyage creation requires an explicit execution identity"
-        );
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            #[cfg(target_os = "linux")]
+            return self
+                .start_ordinary_initialized(
+                    command_id,
+                    session_id,
+                    workspace,
+                    config_path,
+                    initialize,
+                    command,
+                    super::accounts::Scope::Owner,
+                )
+                .await;
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("system initialization is unsupported on this host");
+        }
         let endpoint = registry::directory(&self.directory, session_id).join("runtime.sock");
         ensure!(
             endpoint.as_os_str().as_encoded_bytes().len() < 108,

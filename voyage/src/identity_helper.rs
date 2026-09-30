@@ -7,6 +7,7 @@ use voyage_protocol::identity_helper::*;
 const PRIVATE_CONFIG_BYTES: usize = 65_536;
 #[cfg(target_os = "linux")]
 mod authority;
+mod initialization;
 
 fn digest(domain: &[u8], bytes: &[u8]) -> String {
     let mut value = Sha256::new();
@@ -357,6 +358,20 @@ async fn account_operation(
             validate_profile(&scope, workspace, &profile)?;
             Ok(json!({"valid":true,"account":profile.account}))
         }
+        IdentityHelperOperation::CaptureInitialization {
+            scope,
+            directory,
+            request_digest,
+            base_config_path,
+            initialize,
+        } => initialization::capture(
+            &scope,
+            workspace,
+            &directory,
+            &request_digest,
+            base_config_path.as_deref(),
+            &initialize,
+        ),
         IdentityHelperOperation::CaptureLaunch {
             scope,
             directory,
@@ -373,6 +388,9 @@ async fn account_operation(
             account,
             &settings,
         ),
+        IdentityHelperOperation::ObserveTransferArtifact { artifact_path } => {
+            initialization::observe_transfer(&artifact_path)
+        }
         IdentityHelperOperation::ReviewConfig { .. } => {
             anyhow::bail!("unsupported account operation")
         }
