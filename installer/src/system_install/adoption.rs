@@ -297,7 +297,148 @@ fn options(review: &Review) -> Options {
         adoption_source: Some(review.source_directory.clone()),
     }
 }
-fn observe_snapshot(review: &mut Review, label: &str) -> Result<Snapshot> {
+struct SourceOwnership {
+    child: OwnedChild,
+    channel: UnixStream,
+    started: Instant,
+}
+impl SourceOwnership {
+    fn acquire(review: &Review) -> Result<Self> {
+        let (child, mut channel) = peer(review, false, &review.source_directory)?;
+        write(&mut channel, &UserRequest::HoldOwner)?;
+        ensure!(
+            matches!(read::<Frame>(&mut channel)?, Frame::OwnerHeld),
+            "original supervisor ownership lease unavailable"
+        );
+        Ok(Self {
+            child,
+            channel,
+            started: Instant::now(),
+        })
+    }
+    fn check(&mut self) -> Result<()> {
+        ensure!(
+            self.started.elapsed() < Duration::from_secs(600) && self.child.try_wait()?.is_none(),
+            "original namespace ownership lease ended; no further migration effects permitted"
+        );
+        Ok(())
+    }
+}
+struct SourceLease {
+    child: OwnedChild,
+    input: Option<std::process::ChildStdin>,
+    _output: std::process::ChildStdout,
+    started: Instant,
+}
+impl SourceLease {
+    fn acquire(
+        review: &Review,
+        freeze: TransitionRequest,
+    ) -> Result<(Self, PreparedTransitionReceipt)> {
+        let mut command = Command::new(review.bin.join("voyage"));
+        service::files::executable(&review.bin.join("voyage"), 0)?;
+        command
+            .arg("transition-helper")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        drop_identity(&mut command, review)?;
+        let mut child = OwnedChild(command.spawn()?);
+        let mut input = child.stdin.take().context("source lease pipe missing")?;
+        let request = TransitionRequest {
+            schema: SCHEMA,
+            session_id: freeze.session_id,
+            source_incarnation: freeze.source_incarnation,
+            operation: TransitionOperation::SourceLease {
+                directory: freeze.operation.directory().to_owned(),
+                freeze: Box::new(freeze),
+            },
+        };
+        let bytes = serde_json::to_vec(&request)?;
+        ensure!(
+            bytes.len() <= MAX_REQUEST,
+            "source lease request exceeds bound"
+        );
+        input.write_all(&(bytes.len() as u32).to_be_bytes())?;
+        input.write_all(&bytes)?;
+        let mut output = child
+            .stdout
+            .take()
+            .context("source lease reply pipe missing")?;
+        use std::os::fd::{FromRawFd, OwnedFd};
+        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as i32, 0) };
+        ensure!(raw >= 0, "source lease process pin unavailable");
+        let pidfd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let killer = std::thread::spawn(move || {
+            if done_rx.recv_timeout(Duration::from_secs(10)).is_err() {
+                unsafe {
+                    libc::syscall(
+                        libc::SYS_pidfd_send_signal,
+                        pidfd.as_raw_fd(),
+                        libc::SIGKILL,
+                        std::ptr::null::<libc::siginfo_t>(),
+                        0,
+                    );
+                }
+            }
+        });
+        let result = (|| {
+            let mut header = [0; 4];
+            output.read_exact(&mut header)?;
+            let length = u32::from_be_bytes(header) as usize;
+            ensure!(
+                length > 0 && length <= MAX_RESPONSE,
+                "source lease reply bound"
+            );
+            let mut bytes = vec![0; length];
+            output.read_exact(&mut bytes)?;
+            match serde_json::from_slice::<TransitionResponse>(&bytes)? {
+                TransitionResponse::Prepared { receipt } => Ok(receipt),
+                _ => bail!("source lease freeze unavailable"),
+            }
+        })();
+        let _ = done_tx.send(());
+        let _ = killer.join();
+        let receipt = result?;
+        ensure!(
+            child.try_wait()?.is_none(),
+            "source lease ended before publication"
+        );
+        Ok((
+            Self {
+                child,
+                input: Some(input),
+                _output: output,
+                started: Instant::now(),
+            },
+            receipt,
+        ))
+    }
+    fn check(&mut self) -> Result<()> {
+        ensure!(
+            self.started.elapsed() < Duration::from_secs(600) && self.child.try_wait()?.is_none(),
+            "original startup/execution lease ended; no further adoption effects permitted"
+        );
+        Ok(())
+    }
+    fn release(mut self) -> Result<()> {
+        drop(self.input.take());
+        finish(&mut self.child)
+    }
+}
+fn leases_current(owner: &mut SourceOwnership, leases: &mut [SourceLease]) -> Result<()> {
+    owner.check()?;
+    for lease in leases {
+        lease.check()?;
+    }
+    Ok(())
+}
+fn observe_snapshot(
+    review: &mut Review,
+    label: &str,
+    owner: Option<&mut SourceOwnership>,
+) -> Result<Snapshot> {
     ensure!(
         ["reviewed-source", "current-source", "frozen-source"].contains(&label),
         "invalid private snapshot phase"
@@ -305,7 +446,12 @@ fn observe_snapshot(review: &mut Review, label: &str) -> Result<Snapshot> {
     let capture = directory(review.operation_id)?.join(label);
     service::files::directory(&capture, 0, true)?;
     let (mut child, mut channel) = peer(review, false, &review.source_directory)?;
-    write(&mut channel, &UserRequest::Export)?;
+    if let Some(owner) = owner {
+        owner.check()?;
+        write(&mut channel, &UserRequest::ExportHeld)?;
+    } else {
+        write(&mut channel, &UserRequest::Export)?;
+    }
     let snapshot = match read::<Frame>(&mut channel)? {
         Frame::Snapshot { snapshot } => snapshot,
         _ => bail!("ordinary source snapshot missing"),
@@ -448,11 +594,22 @@ fn transition(review: &Review, request: &TransitionRequest) -> Result<Transition
     );
     Ok(serde_json::from_slice(&data[4..])?)
 }
-fn freeze(review: &mut Review, snapshot: &Snapshot) -> Result<()> {
+fn freeze(
+    review: &mut Review,
+    snapshot: &Snapshot,
+    owner: &mut SourceOwnership,
+) -> Result<Vec<SourceLease>> {
+    ensure!(
+        snapshot.sessions.len() <= 64,
+        "adoption exceeds bounded 64-session lease capacity; source is retained unchanged"
+    );
+    let mut leases = Vec::new();
     for session in &snapshot.sessions {
-        if review.freezes.contains_key(&session.session_id) {
-            continue;
-        }
+        leases_current(owner, &mut leases)?;
+        ensure!(
+            !review.freezes.contains_key(&session.session_id),
+            "lost source lease requires preactivation rollback; source freeze is not replayed"
+        );
         let path = review
             .source_directory
             .join("sessions")
@@ -486,9 +643,9 @@ fn freeze(review: &mut Review, snapshot: &Snapshot) -> Result<()> {
         );
         review.phase = "freezing-source".into();
         save(review)?;
-        let response = transition(
+        let (lease, receipt) = SourceLease::acquire(
             review,
-            &TransitionRequest {
+            TransitionRequest {
                 schema: SCHEMA,
                 session_id: session.session_id,
                 source_incarnation: session.incarnation,
@@ -505,14 +662,11 @@ fn freeze(review: &mut Review, snapshot: &Snapshot) -> Result<()> {
                 },
             },
         )?;
-        let receipt = match response {
-            TransitionResponse::Prepared { receipt } => receipt,
-            _ => bail!("source freeze unconfirmed; reconcile exact helper command identity"),
-        };
+        leases.push(lease);
         review.freezes.insert(session.session_id, receipt);
         save(review)?;
     }
-    Ok(())
+    Ok(leases)
 }
 fn apply(review: &mut Review) -> Result<()> {
     ensure!(
@@ -523,19 +677,28 @@ fn apply(review: &mut Review) -> Result<()> {
     review.phase = "capturing-retired-source".into();
     save(review)?;
     let approved_snapshot = review.snapshot_digest.clone();
-    let first = observe_snapshot(review, "current-source")?;
+    let mut owner = SourceOwnership::acquire(review)?;
+    let first = observe_snapshot(review, "current-source", Some(&mut owner))?;
     ensure!(
         review.snapshot_digest == approved_snapshot,
         "retired source changed since exact reviewed snapshot; no publication applied"
     );
-    freeze(review, &first)?;
-    let snapshot = observe_snapshot(review, "frozen-source")?;
+    let mut leases = freeze(review, &first, &mut owner)?;
+    leases_current(&mut owner, &mut leases)?;
+    let snapshot = observe_snapshot(review, "frozen-source", Some(&mut owner))?;
+    ensure!(
+        hash(&first)? == hash(&snapshot)?,
+        "source authority/catalogue/preferences changed after reviewed freeze"
+    );
+    leases_current(&mut owner, &mut leases)?;
     review.phase = "installing-dormant-system".into();
     save(review)?;
     let dir = directory(review.operation_id)?.join("frozen-source");
     let opts = options(review);
     let plan = Plan::prepare(&opts)?;
+    leases_current(&mut owner, &mut leases)?;
     apply_install(plan, &opts)?;
+    leases_current(&mut owner, &mut leases)?;
     let layout = voyage_storage::protected_linux::RuntimeRoot::open(Path::new(RUNTIME))?;
     for session in &snapshot.sessions {
         layout.create_session(
@@ -561,6 +724,7 @@ fn apply(review: &mut Review) -> Result<()> {
         .collect::<Vec<_>>();
     frames.sort();
     for frame in frames {
+        leases_current(&mut owner, &mut leases)?;
         let value: Frame = serde_json::from_slice(&files::read(&frame, 128 * 1024 * 1024)?)?;
         write(&mut channel, &value)?;
     }
@@ -571,6 +735,7 @@ fn apply(review: &mut Review) -> Result<()> {
     drop(channel);
     finish(&mut child)?;
     for session in &snapshot.sessions {
+        leases_current(&mut owner, &mut leases)?;
         let target = Path::new(RUNTIME).join(session.session_id.to_string());
         let request = TransitionRequest {
             schema: SCHEMA,
@@ -591,6 +756,7 @@ fn apply(review: &mut Review) -> Result<()> {
             "target journal handoff unconfirmed; reconcile exact commit command identity"
         );
     }
+    leases_current(&mut owner, &mut leases)?;
     ctl(&["start", &review.provisioner])?;
     let mapped: ConfiguredExecutionIdentity = serde_json::from_slice(&files::read(
         &Path::new(CONTROL).join("default-execution.json"),
@@ -624,6 +790,7 @@ fn apply(review: &mut Review) -> Result<()> {
     // Fence the old supervisor namespace. Preserve compatibility aliases only
     // for session artifacts; no old control/authentication record is exposed.
     let retained = directory(review.operation_id)?.join("retained-user-vessel");
+    leases_current(&mut owner, &mut leases)?;
     fs::rename(&review.source_directory, &retained)?;
     fs::DirBuilder::new()
         .mode(0o711)
@@ -642,6 +809,12 @@ fn apply(review: &mut Review) -> Result<()> {
             &serde_json::json!({"schema_version":1,"operation_id":review.operation_id,"control_root":CONTROL,"legacy_owner_retired":true}),
         )?,
     )?;
+    leases_current(&mut owner, &mut leases)?;
+    for lease in leases {
+        lease.release()?;
+    }
+    drop(owner.channel);
+    finish(&mut owner.child)?;
     review.phase = "dormant-installed".into();
     save(review)
 }
@@ -770,7 +943,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 "review requires observed host boot retirement of original owners"
             );
             recheck(&review)?;
-            let _snapshot = observe_snapshot(&mut review, "reviewed-source")?;
+            let _snapshot = observe_snapshot(&mut review, "reviewed-source", None)?;
             review.receipt_digest = hash(&(
                 &review.operation_id,
                 &review.original_user,

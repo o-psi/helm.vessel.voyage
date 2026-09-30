@@ -209,9 +209,13 @@ fn records<T: serde::de::DeserializeOwned>(directory: &Path) -> Result<Vec<T>> {
     }
     Ok(result)
 }
-fn snapshot(root: &Path) -> Result<Snapshot> {
+fn snapshot(root: &Path, held: bool) -> Result<Snapshot> {
     registry::private_directory(root)?;
-    let _owner = registry::lock(root)?;
+    let _owner = if held {
+        None
+    } else {
+        Some(registry::lock(root)?)
+    };
     let db = database::open(root)?;
     let mut statement = db.prepare("SELECT registration FROM voyages ORDER BY session_id")?;
     let sessions = statement
@@ -318,6 +322,16 @@ pub async fn user(args: UserArgs) -> Result<()> {
     let mut channel = pipe(args.pipe_fd)?;
     let action: UserRequest = read_frame(&mut channel)?;
     match action {
+        UserRequest::HoldOwner => {
+            registry::private_directory(&args.directory)?;
+            let _owner = registry::lock(&args.directory)?;
+            write_frame(&mut channel, &Frame::OwnerHeld)?;
+            channel.set_read_timeout(Some(Duration::from_secs(900)))?;
+            // EOF or bounded lifetime releases ownership. No effect/command is
+            // accepted while root retains this original-UID namespace lease.
+            let mut unexpected = [0; 1];
+            let _ = channel.read(&mut unexpected);
+        }
         UserRequest::Quiesce => {
             let response = super::exchange::exchange(
                 &args.directory,
@@ -555,8 +569,9 @@ pub async fn user(args: UserArgs) -> Result<()> {
                 },
             )?;
         }
-        UserRequest::Export => {
-            let snapshot = snapshot(&args.directory)?;
+        export @ (UserRequest::Export | UserRequest::ExportHeld) => {
+            let held = matches!(export, UserRequest::ExportHeld);
+            let snapshot = snapshot(&args.directory, held)?;
             let ids = snapshot
                 .sessions
                 .iter()

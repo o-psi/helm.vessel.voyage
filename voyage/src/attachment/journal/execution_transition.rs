@@ -413,6 +413,9 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let response = match &request.operation {
+            TransitionOperation::SourceLease { .. } => {
+                anyhow::bail!("source lease must retain private helper lifetime fences")
+            }
             TransitionOperation::RetainConfiguration { .. } => {
                 anyhow::bail!("configuration retention requires private helper")
             }

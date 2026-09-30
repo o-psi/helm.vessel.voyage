@@ -119,8 +119,11 @@ against exact reviewed candidate or previous source and readiness without replay
 
 Older system archives without the contract require an explicit host-operator
 `adopt-update-contract --scope system --bin-dir ABS EXPECTED_RELEASE
-EXPECTED_INSTALLATION_FINGERPRINT`. This drains protected owners, freezes their
-journals through their executing identities and stages the new release inactive.
+EXPECTED_INSTALLATION_FINGERPRINT`. This first stops the exact managed
+supervisor/gateway to fence new public admissions, then drains protected owners
+and freezes their journals through their executing identities. Guardian retirement
+is observed separately; supervisor stop is not cleanup evidence. It stages the
+new release inactive.
 `start --scope system EXPECTED_RELEASE` separately activates it. These are source
 implementation paths awaiting the coordinated native verification gate.
 
@@ -138,6 +141,15 @@ work without replay, publishes new ordinary bindings/incarnations and stages an
 inactive root supervisor. Provider credentials remain in the original home. The
 original human connection-key provisioner must make the same runtime key available;
 this path neither invents nor copies provider credentials into root custody.
+
+Application owns an original-UID supervisor lease plus one exact source-freeze
+helper per voyage. Those helpers retain the original startup and execution locks
+through target publication and namespace fencing. Every stage checks positive
+owned-child liveness; a lost lease refuses further effects. Source authority,
+catalogue and preferences must still equal the reviewed snapshot after freeze.
+The bounded adoption transaction supports up to 64 sessions and ten minutes;
+larger or slower handoffs refuse with retained source and preactivation recovery.
+A recorded reboot alone is not the ownership fence.
 
 `adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
 `adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including

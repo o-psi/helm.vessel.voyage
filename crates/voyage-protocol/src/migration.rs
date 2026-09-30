@@ -8,6 +8,9 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UserRequest {
+    HoldOwner,
+    ExportHeld,
+
     Quiesce,
     RestoreServices {
         definitions: std::collections::BTreeMap<String, String>,
@@ -74,6 +77,7 @@ pub enum Frame {
     RestoredServices {
         ready: bool,
     },
+    OwnerHeld,
     Complete,
 }
 #[derive(Serialize, Deserialize)]

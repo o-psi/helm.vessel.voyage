@@ -955,8 +955,11 @@ pub(super) fn adopt_contract(args: &[String]) -> Result<()> {
     write_operation(&operation)?;
     operation.phase = "stopping".into();
     write_operation(&operation)?;
-    super::adoption::system_quiescent(&source, true)?;
+    // Fence public admissions before observing/draining the catalogue. A
+    // supervisor stop does not prove runtime cleanup; independent guardians
+    // remain authoritative and the new trusted helper observes each owner.
     stop()?;
+    super::adoption::system_quiescent(&source, true)?;
     save(&retired)?;
     operation.phase = "complete".into();
     write_operation(&operation)?;

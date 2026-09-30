@@ -8,7 +8,7 @@ pub const SCHEMA: u32 = 1;
 pub const MAX_REQUEST: usize = 64 * 1024;
 pub const MAX_RESPONSE: usize = 64 * 1024;
 pub const MAX_TARGET_CONFIG: usize = 64 * 1024;
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransitionRequest {
     pub schema: u32,
@@ -16,9 +16,15 @@ pub struct TransitionRequest {
     pub source_incarnation: Uuid,
     pub operation: TransitionOperation,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransitionOperation {
+    /// Holds original startup/execution fences after the exact source freeze.
+    /// Only private root pipes may carry this bounded lease; EOF releases it.
+    SourceLease {
+        directory: PathBuf,
+        freeze: Box<TransitionRequest>,
+    },
     Observe {
         directory: PathBuf,
     },
@@ -55,7 +61,8 @@ pub enum TransitionOperation {
 impl TransitionOperation {
     pub fn directory(&self) -> &std::path::Path {
         match self {
-            Self::Observe { directory }
+            Self::SourceLease { directory, .. }
+            | Self::Observe { directory }
             | Self::RetainConfiguration { directory }
             | Self::SourceFreeze { directory, .. }
             | Self::TargetCommit { directory, .. }

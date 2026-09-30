@@ -101,7 +101,13 @@ mod linux {
             .context("target configuration unavailable")
     }
     use anyhow::Context;
-    fn apply(request: TransitionRequest) -> Result<TransitionResponse> {
+    struct HeldJournal {
+        directory: crate::attachment::local_actor::storage::Directory,
+        _startup: File,
+        journal: crate::attachment::journal::Journal,
+        guard: crate::attachment::journal::ExecutionGuard,
+    }
+    fn hold(request: &TransitionRequest) -> Result<HeldJournal> {
         ensure!(request.schema == SCHEMA, "unsupported handoff schema");
         let directory = request.operation.directory();
         ensure!(
@@ -124,13 +130,27 @@ mod linux {
         let startup =
             crate::attachment::journal::open_private_file(&directory.join("startup.lock"))?;
         startup.try_lock()?;
-        let mut journal = crate::attachment::journal::Journal::open(directory.join("journal"))?;
+        let journal = crate::attachment::journal::Journal::open(directory.join("journal"))?;
         let guard = journal.acquire_execution(request.session_id)?;
+        Ok(HeldJournal {
+            directory: _directory,
+            _startup: startup,
+            journal,
+            guard,
+        })
+    }
+    fn apply_held(
+        held: &mut HeldJournal,
+        request: TransitionRequest,
+    ) -> Result<TransitionResponse> {
+        let _directory = &held.directory;
+        let journal = &mut held.journal;
+        let guard = &held.guard;
         if matches!(
             &request.operation,
             TransitionOperation::RetainConfiguration { .. }
         ) {
-            let value = journal.retain_transition_configuration(&guard)?;
+            let value = journal.retain_transition_configuration(guard)?;
             let bytes = value.as_bytes();
             if let Some(existing) =
                 _directory.read_bounded("migration-config.json", MAX_TARGET_CONFIG)?
@@ -166,8 +186,12 @@ mod linux {
             let launch: crate::launch_config::LaunchConfig = serde_json::from_slice(&bytes)?;
             let config = launch.resolve(&workspace)?;
             ensure!(
-                config.account.is_some(),
-                "handoff requires an explicit target account"
+                config.account.is_some()
+                    || (expected.source_uid != 0
+                        && expected.source_uid == expected.target_uid
+                        && expected.source_gid == expected.target_gid
+                        && expected.previous_config_digest == expected.target_config_digest),
+                "changed identity/configuration and administrator handoff require an explicit target account"
             );
             config.validate_account()?;
             crate::runtime_policy::RuntimePolicy::resolve(&config, &workspace)?
@@ -176,7 +200,11 @@ mod linux {
             configuration = Some(String::from_utf8(bytes)?);
         }
         _directory.verify()?;
-        journal.retired_transition(&guard, &request, configuration.as_deref())
+        journal.retired_transition(guard, &request, configuration.as_deref())
+    }
+    fn apply(request: TransitionRequest) -> Result<TransitionResponse> {
+        let mut held = hold(&request)?;
+        apply_held(&mut held, request)
     }
     pub(super) async fn run() -> Result<()> {
         identity()?;
@@ -197,6 +225,42 @@ mod linux {
             })
             .await??;
             let request: TransitionRequest = serde_json::from_slice(&bytes)?;
+            if let TransitionOperation::SourceLease { directory, freeze } = &request.operation {
+                ensure!(
+                    request.session_id == freeze.session_id
+                        && request.source_incarnation == freeze.source_incarnation
+                        && freeze.schema == SCHEMA
+                        && freeze.operation.directory() == directory
+                        && matches!(&freeze.operation, TransitionOperation::SourceFreeze { .. }),
+                    "source lease identity differs from exact freeze"
+                );
+                let mut held = hold(&request)?;
+                let response = apply_held(&mut held, *freeze.clone())?;
+                ensure!(
+                    matches!(&response, TransitionResponse::Prepared { .. }),
+                    "source lease freeze unavailable"
+                );
+                let bytes = serde_json::to_vec(&response)?;
+                ensure!(
+                    bytes.len() <= MAX_RESPONSE,
+                    "source lease response exceeds bound"
+                );
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    write_all(&output, &(bytes.len() as u32).to_be_bytes()).await?;
+                    write_all(&output, &bytes).await
+                })
+                .await??;
+                // Root retains the pipe, this child, and the exact guards until
+                // namespace fencing. No further commands or effects are accepted.
+                let mut unexpected = [0; 1];
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(900),
+                    read_exact(&input, &mut unexpected),
+                )
+                .await;
+                drop(held);
+                return Ok(TransitionResponse::Unavailable);
+            }
             // This worker has no detached effect. The root caller independently
             // bounds/kills its owned process if filesystem/SQLite work stalls.
             tokio::task::spawn_blocking(move || apply(request)).await?
