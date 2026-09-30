@@ -135,8 +135,21 @@ impl Supervisor {
             "initialization requires independently validated ordinary identity"
         );
         super::launch::validate_identity(&identity)?;
+        let scope_binding = match &scope {
+            Scope::Owner => None,
+            Scope::Connection(grant) => Some(GrantBinding {
+                grant_id: grant.grant_id,
+                principal_id: grant.principal_id,
+                revision: grant.revision,
+            }),
+            Scope::Session(grant) => Some(GrantBinding {
+                grant_id: grant.grant_id,
+                principal_id: grant.principal_id,
+                revision: grant.revision,
+            }),
+        };
         let intent = serde_json::to_vec(
-            &serde_json::json!({"schema":1,"command":command,"initialize":initialize,"identity":identity.identity,"account_context":identity.account_context,"actor":scope.actor(&workspace),"base_config_path":base}),
+            &serde_json::json!({"schema":1,"command":command,"initialize":initialize,"identity":identity.identity,"account_context":identity.account_context,"actor":scope.actor(&workspace),"scope_binding":scope_binding,"base_config_path":base}),
         )?;
         ensure!(
             intent.len() <= 65_536,
