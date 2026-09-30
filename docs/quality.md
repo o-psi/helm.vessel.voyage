@@ -900,3 +900,18 @@ coverage improvement, native terminal acceptance or 100% reachability claim foll
 Final integrated verification must include existing tests and the unchanged full
 workspace denominator. Execution UI hooks owned by the concurrent identity work
 were not modified by this pass.
+
+### Owned-PTY terminal and transport source journeys (#353)
+
+Additional unexecuted Linux cases run an isolated test child on a child-owned PTY
+with a scripted numeric-loopback peer. They prepare real attach/resize/snapshot/
+render/restoration paths for explicit detach, owner change after attach, already
+exited programs and observed exit. Only Ctrl+] is injected by the fixture; no human
+terminal or real program receives input. Mode restoration and completion markers
+must be observed in the final run. Unknown outcomes refuse composer resumption;
+restoration alone is not an explicit detach or remote cleanup observation.
+
+Transport source cases preserve exact receipts and private socket identity, refuse
+uncertain input retransmission after loss, and distinguish complete no-dispatch
+preparation from partial/positive effect claims. No native terminal acceptance or
+passing evidence is inferred from these source-only additions.

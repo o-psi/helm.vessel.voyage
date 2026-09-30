@@ -560,3 +560,7 @@ mod restoration_tests {
 #[cfg(test)]
 #[path = "terminal_final_tests.rs"]
 mod terminal_final_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "terminal/attach_boundary_tests.rs"]
+mod attach_boundary_tests;
