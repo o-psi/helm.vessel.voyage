@@ -876,3 +876,27 @@ changed default identity, private-code exclusion and one usage refresh at a time
 Prepared negative peer/descriptor cases are unexecuted. Use synthetic provider
 fixtures and disposable native hosts; skipped or inaccessible provider/host work
 is not passing evidence. Preserve existing user-service account behavior.
+
+### Helm account/profile/connected frontend coverage source pass (#353)
+
+A further unexecuted source pass targets the retained Helm account/profile and
+frontend/browser gaps. Profile cases exercise the actual scripted WebSocket
+loading sequence, optional account-label failure, nil host refusal, late replies
+for abandoned destinations, absent defaults and retained values after failure.
+Account cases cover exact usage identity/capability, private code disposal,
+closure without fictitious cancellation, hidden/busy/resize input fencing,
+unavailable transports and authored failure notices without private codes/URLs.
+
+The connected frontend seam retains production owner/configuration logic with an
+explicit fixture client: fresh configured start never submits, active resume
+refuses overrides, idle resume pins the observed revision/model and no-override
+resume retains the live owner. Viewer cases assert uncertain control poisoning,
+read-only mirror refusal and stale binding/one-use bootstrap boundaries. Synthetic
+peers bind numeric loopback; no real Vessel, provider or browser is contacted and
+no operator default configuration/storage is connected by these fixtures.
+
+These source cases have not been compiled, executed or measured. No passing count,
+coverage improvement, native terminal acceptance or 100% reachability claim follows.
+Final integrated verification must include existing tests and the unchanged full
+workspace denominator. Execution UI hooks owned by the concurrent identity work
+were not modified by this pass.

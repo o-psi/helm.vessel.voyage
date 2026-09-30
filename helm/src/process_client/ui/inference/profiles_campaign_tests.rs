@@ -257,3 +257,242 @@ fn profile_poll_distinguishes_waiting_interrupted_failed_and_loaded_catalogues()
         assert!(app.inference.profiles.labels.is_empty());
     }
 }
+
+async fn peer_app() -> (
+    Fixture,
+    App,
+    Target,
+    crate::process_client::loopback_tests::Peer,
+) {
+    let (fixture, mut app, old) = setup(true);
+    let peer = crate::process_client::loopback_tests::Peer::open().await;
+    let view = app.views.remove(&old).unwrap();
+    app.clients = crate::process_client::ui::routes::Routes::new(vec![peer.client.clone()]);
+    let target = Target {
+        route: app.clients.first_route().unwrap(),
+        session: old.session,
+    };
+    app.views.insert(target, view);
+    app.selected = Some(target);
+    app.inference.profiles.panel.as_mut().unwrap().destination = Destination::Live(target);
+    (fixture, app, target, peer)
+}
+async fn finish_profiles(app: &mut App) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while app.inference.profiles.job.is_some() {
+            app.poll_profiles();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+#[tokio::test]
+async fn authenticated_profile_loading_survives_optional_account_metadata_failure() {
+    use voyage_protocol::{duplex::ServerFrame, vessel::VesselResponse};
+    let (_fixture, mut app, target, mut peer) = peer_app().await;
+    let original = app.views[&target].draft.text.clone();
+    let host = Uuid::new_v4();
+    app.open_profiles().unwrap();
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Capabilities));
+    peer.reply(id, serde_json::json!({"vessel_id":host})).await;
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Accounts { .. }));
+    crate::process_client::loopback_tests::send(
+        &mut peer.socket,
+        ServerFrame::Reply {
+            request_id: id,
+            response: VesselResponse {
+                error: Some("label metadata unavailable".into()),
+                ..crate::process_client::loopback_tests::response(serde_json::Value::Null)
+            },
+        },
+    )
+    .await;
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Profiles { .. }));
+    let catalogue = app
+        .inference
+        .profiles
+        .panel
+        .as_ref()
+        .unwrap()
+        .catalogue
+        .clone()
+        .unwrap_or_default();
+    peer.reply(
+        id,
+        serde_json::to_value(ProfileCatalogue {
+            revision: 31,
+            can_manage: true,
+            ..catalogue
+        })
+        .unwrap(),
+    )
+    .await;
+    finish_profiles(&mut app).await;
+    assert_eq!(
+        app.inference
+            .profiles
+            .panel
+            .as_ref()
+            .unwrap()
+            .catalogue
+            .as_ref()
+            .unwrap()
+            .revision,
+        31
+    );
+    assert!(app.inference.profiles.accounts.is_empty());
+    assert_eq!(app.views[&target].draft.text, original);
+    assert!(app.views[&target].pending.is_none());
+    assert_eq!(app.account_host(target.route), Some(host));
+}
+#[tokio::test]
+async fn nil_host_refusal_does_not_issue_profile_or_account_mutations() {
+    let (_fixture, mut app, target, mut peer) = peer_app().await;
+    app.open_profiles().unwrap();
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Capabilities));
+    peer.reply(id, serde_json::json!({"vessel_id":Uuid::nil()}))
+        .await;
+    finish_profiles(&mut app).await;
+    assert!(
+        app.inference
+            .profiles
+            .panel
+            .as_ref()
+            .unwrap()
+            .notice
+            .contains("host changed")
+    );
+    assert!(app.account_host(target.route).is_none());
+    assert!(app.views[&target].pending.is_none());
+    assert_eq!(app.views[&target].draft.text, "preserved draft");
+}
+#[tokio::test]
+async fn late_profile_response_for_old_destination_cannot_modify_new_selected_voyage() {
+    let (_fixture, mut app, target, mut peer) = peer_app().await;
+    app.open_profiles().unwrap();
+    let (id, _) = peer.command().await;
+    peer.reply(id, serde_json::json!({"vessel_id":Uuid::new_v4()}))
+        .await;
+    let (id, _) = peer.command().await;
+    peer.reply(
+        id,
+        serde_json::json!({"accounts":[],"connections":[],"revision":1}),
+    )
+    .await;
+    let (id, _) = peer.command().await;
+    app.selected = None;
+    peer.reply(
+        id,
+        serde_json::to_value(ProfileCatalogue {
+            revision: 99,
+            can_manage: true,
+            ..Default::default()
+        })
+        .unwrap(),
+    )
+    .await;
+    finish_profiles(&mut app).await;
+    assert!(app.inference.profiles.panel.is_none());
+    assert!(app.views[&target].pending.is_none());
+    assert_eq!(app.views[&target].draft.text, "preserved draft");
+}
+#[test]
+fn absent_default_profile_never_applies_an_unreviewed_selection() {
+    let (_fixture, mut app, target) = setup(true);
+    let catalogue = app
+        .inference
+        .profiles
+        .panel
+        .as_ref()
+        .unwrap()
+        .catalogue
+        .clone()
+        .unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.inference.profiles.job = Some(rx);
+    app.inference.profiles.automatic = true;
+    let host = Uuid::new_v4();
+    assert!(
+        tx.send(Ok((
+            host,
+            ProfileCatalogue {
+                default_profile_id: Some(Uuid::new_v4()),
+                ..catalogue
+            },
+            vec![]
+        )))
+        .is_ok()
+    );
+    app.poll_profiles();
+    assert!(!app.inference.profiles.automatic);
+    assert!(app.views[&target].pending.is_none());
+    assert_eq!(app.views[&target].draft.text, "preserved draft");
+    assert!(app.inference.profiles.panel.is_some());
+}
+#[test]
+fn failed_profile_operation_cannot_inject_terminal_controls_or_drop_reviewed_settings() {
+    let (_fixture, mut app, _) = setup(true);
+    let profile = app
+        .inference
+        .profiles
+        .panel
+        .as_ref()
+        .unwrap()
+        .catalogue
+        .as_ref()
+        .unwrap()
+        .profiles[0]
+        .clone();
+    app.inference.profiles.pending_save = Some(profile.clone());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.inference.profiles.job = Some(rx);
+    assert!(
+        tx.send(Err(anyhow::anyhow!("failure\x1b[31m\rPRIVATE")))
+            .is_ok()
+    );
+    app.poll_profiles();
+    let panel = app.inference.profiles.panel.as_ref().unwrap();
+    assert!(!panel.notice.contains('\x1b'));
+    assert!(!panel.notice.contains('\r'));
+    assert_eq!(
+        panel.name.as_ref().unwrap().2.as_ref().unwrap().account,
+        profile.account
+    );
+    assert_eq!(
+        panel.name.as_ref().unwrap().2.as_ref().unwrap().model,
+        profile.model
+    );
+}
+#[test]
+fn delete_confirmation_is_bound_to_selection_and_press_release_cannot_confirm() {
+    let (_fixture, mut app, target) = setup(true);
+    key(&mut app, KeyCode::Char('x'));
+    assert!(
+        app.inference
+            .profiles
+            .panel
+            .as_ref()
+            .unwrap()
+            .delete_confirm
+    );
+    let mut release = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    release.kind = KeyEventKind::Release;
+    app.profiles_input(&Event::Key(release)).unwrap();
+    assert!(app.inference.profiles.job.is_none());
+    key(&mut app, KeyCode::Esc);
+    assert!(
+        !app.inference
+            .profiles
+            .panel
+            .as_ref()
+            .unwrap()
+            .delete_confirm
+    );
+    assert!(app.views[&target].pending.is_none());
+    assert_eq!(app.views[&target].draft.text, "preserved draft");
+}
