@@ -470,7 +470,9 @@ fn source_freeze_and_abort_preserve_legacy_schema_and_interrupted_work() {
     let directory = prepare_directory(root.path().join("journal")).unwrap();
     drop(open_private_file(&directory.join("journal.sqlite3")).unwrap());
     let source = Connection::open(directory.join("journal.sqlite3")).unwrap();
-    source.execute_batch("CREATE TABLE attachment_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL); INSERT INTO attachment_schema VALUES(1,12); CREATE TABLE sessions(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state TEXT NOT NULL,next_sequence INTEGER NOT NULL DEFAULT 1); CREATE TABLE runs(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,record TEXT NOT NULL,active INTEGER NOT NULL); CREATE TABLE process_configuration(session_id TEXT PRIMARY KEY,settings TEXT NOT NULL);").unwrap();
+    source
+        .execute_batch(include_str!("../../../tests/fixtures/journal-v1.0.2.sql"))
+        .unwrap();
     let session = Session::new(root.path().canonicalize().unwrap(), "legacy".into());
     let history = serde_json::to_string(&session).unwrap();
     source
@@ -510,9 +512,42 @@ fn source_freeze_and_abort_preserve_legacy_schema_and_interrupted_work() {
             ],
         )
         .unwrap();
+    let admission = TurnAdmission {
+        budget: None,
+        coordination: None,
+        operator_name: None,
+        command_id: run.command_id,
+        machine_id: run.machine_id,
+        principal_id: run.principal_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 1000,
+        prompt: "legacy running input".into(),
+        parts: Vec::new(),
+    };
+    let command_digest = Sha256::digest(serde_json::to_vec(&admission).unwrap()).to_vec();
+    source
+        .execute(
+            "INSERT INTO commands VALUES(?1,?2,?3)",
+            params![
+                run.command_id.to_string(),
+                command_digest,
+                run.id.to_string()
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        source
+            .query_row("SELECT count(*) FROM notification_outbox", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        256
+    );
+    assert!(!table(&source, "process_goals").unwrap());
     drop(source);
     let mut journal = Journal::open(directory).unwrap();
     assert_eq!(journal.opened_schema, 12);
+    assert!(!table(&journal.connection, "process_goals").unwrap());
     let guard = journal.acquire_execution(session.id).unwrap();
     let inc = Uuid::new_v4();
     let before = observe(&mut journal, &guard, session.id, inc);
@@ -557,6 +592,18 @@ fn source_freeze_and_abort_preserve_legacy_schema_and_interrupted_work() {
     assert_eq!(
         settings(&journal.connection, session.id).unwrap(),
         "{\"source\":true}"
+    );
+    assert!(!table(&journal.connection, "process_goals").unwrap());
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT digest FROM commands WHERE id=?1",
+                [run.command_id.to_string()],
+                |row| row.get::<_, Vec<u8>>(0)
+            )
+            .unwrap(),
+        command_digest
     );
     let retained = journal.run(run.id).unwrap();
     assert_eq!(retained.state, RunState::Interrupted);
