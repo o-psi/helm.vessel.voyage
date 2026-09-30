@@ -99,7 +99,7 @@ fn review_digest(review: &Review, with_snapshot: bool) -> Result<String> {
         "release_id":review.release,"installation_plan":review.planned_installation,
         "source_device":review.source_device,"source_inode":review.source_inode,"source_manifest_digest":review.source_manifest_digest,"opaque_retention":review.opaque_retention,
         "gateway_user":review.gateway_user,"gateway_origin":review.origin,"credential_key":review.key,"credential_provisioner":review.provisioner,"source_credential_key":review.source_credential_key,
-        "source_units":if with_snapshot {Some(&review.source_definitions)}else{None},
+        "source_units":review.source_definitions,
         "snapshot_digest":if with_snapshot {review.snapshot_digest.as_ref()}else{None},
         "target_incarnations":if with_snapshot {Some(&review.target_incarnations)}else{None},
         "freeze_commands":if with_snapshot {Some(&review.freeze_commands)}else{None},
@@ -1609,16 +1609,37 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             };
             review.receipt_digest = review_digest(&review, false)?;
             save(&review)?;
+            let definitions = match user_request(&review, &UserRequest::ReviewServices)? {
+                Frame::ReviewedServices { definitions } => definitions,
+                _ => bail!("read-only original user unit review unavailable"),
+            };
+            review.source_units = definitions.keys().cloned().collect();
+            review.source_definitions = definitions;
+            review.provider_fingerprint = Some(
+                match user_request(&review, &UserRequest::ProviderFingerprint)? {
+                    Frame::ProviderFingerprint { sha256 } => sha256,
+                    _ => bail!("original provider fingerprint unavailable before quiescence"),
+                },
+            );
+            review.receipt_digest = review_digest(&review, false)?;
+            save(&review)?;
             review.phase = "quiescence-requested".into();
             save(&review)?;
-            match user_request(&review, &UserRequest::Quiesce)? {
+            match user_request(
+                &review,
+                &UserRequest::Quiesce {
+                    definitions: review.source_definitions.clone(),
+                },
+            )? {
                 Frame::Quiesced {
                     services,
                     definitions,
                     ..
                 } => {
-                    review.source_units = services;
-                    review.source_definitions = definitions;
+                    ensure!(
+                        services == review.source_units && definitions == review.source_definitions,
+                        "ordinary quiescence reply differs from saved exact unit review"
+                    );
                 }
                 _ => bail!("legacy quiescence request unconfirmed"),
             };
@@ -1633,7 +1654,10 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             );
             let mut review = load(id)?;
             ensure!(
-                review.phase == "awaiting-boot-retirement" && boot()? != review.source_boot,
+                matches!(
+                    review.phase.as_str(),
+                    "awaiting-boot-retirement" | "quiescence-requested"
+                ) && boot()? != review.source_boot,
                 "review requires observed host boot retirement of original owners"
             );
             recheck(&review)?;
@@ -1792,7 +1816,10 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 review.receipt_digest == args[2]
                     && matches!(
                         review.phase.as_str(),
-                        "ready"
+                        "prepared"
+                            | "quiescence-requested"
+                            | "awaiting-boot-retirement"
+                            | "ready"
                             | "capturing-retired-source"
                             | "freezing-source"
                             | "capturing-opaque-retention"
@@ -1801,6 +1828,10 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                             | "rollback-requested"
                     ),
                 "legacy rollback is restricted to exact reviewed preactivation adoption; no active or uncertain activation fallback"
+            );
+            ensure!(
+                boot()? != review.source_boot && !review.source_definitions.is_empty(),
+                "preactivation rollback needs observed source boot retirement and saved exact user units"
             );
             recheck(&review)?;
             let current_provider = match user_request(&review, &UserRequest::ProviderFingerprint)? {
@@ -1873,8 +1904,11 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 SourceOwnership::acquire_at(&review, &retained, &UserRequest::HoldOwner)?;
             let pins = rollback_pins(&review, &retained)?;
             let traversal = open_retention_for_rollback(&review)?;
-            let mut journal_leases =
-                rollback_journal_leases(&review, &retained, &mut owner, &pins)?;
+            let mut journal_leases = if review.snapshot_digest.is_some() {
+                rollback_journal_leases(&review, &retained, &mut owner, &pins)?
+            } else {
+                Vec::new()
+            };
             if !review.rollback_source_verified {
                 if let Some(expected) = &review.opaque_digest {
                     ensure!(

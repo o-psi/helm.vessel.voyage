@@ -132,8 +132,10 @@ implementation paths awaiting the coordinated native verification gate.
 `adopt-user prepare UUID --scope system --bin-dir ABS --execution-user ORIGINAL
 --gateway-user DISTINCT --gateway-origin HTTPS --credential-key ROOT_RUN_KEY
 --credential-unit PROVISIONER.service --source-credential-key ORIGINAL_RUN_KEY
---no-start` records the explicit source/account and requests user-owner/service
-quiescence. An observed host reboot establishes local process retirement; it does
+--no-start` records the explicit source/account, reads and saves exact user-unit
+definition hashes before effects, then claims user-owner/service quiescence.
+A lost quiescence reply retains those unit pins; neither preparation nor status
+repeats the uncertain stop effect. An observed host reboot establishes local process retirement; it does
 not establish completion of external effects. After that reboot, `adopt-user
 review UUID` returns the exact review digest. `adopt-user apply UUID DIGEST`
 exports history and settings through a dropped-identity helper, interrupts retained
@@ -169,7 +171,9 @@ recovery identity.
 
 `adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
 `adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including
-interrupted capture/freeze/partial installation. It refuses admitted target
+interrupted capture/freeze/partial installation and preparatory unit effects
+whose exact definitions were saved. Preparatory recovery requires observed boot
+retirement before the original services are restored. It refuses admitted target
 guardians or live/drifted system units, retains copied artifacts and restores the
 frozen user namespace and exact reviewed user services. It holds the original
 supervisor plus every startup/execution guard, verifies the retained opaque digest

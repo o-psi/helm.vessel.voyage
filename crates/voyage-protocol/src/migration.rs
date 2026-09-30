@@ -12,7 +12,10 @@ pub enum UserRequest {
     OpaqueExport,
     ExportHeld,
 
-    Quiesce,
+    ReviewServices,
+    Quiesce {
+        definitions: std::collections::BTreeMap<String, String>,
+    },
     RestoreServices {
         definitions: std::collections::BTreeMap<String, String>,
     },
@@ -60,6 +63,9 @@ pub enum Frame {
     },
     End {
         sha256: String,
+    },
+    ReviewedServices {
+        definitions: std::collections::BTreeMap<String, String>,
     },
     Quiesced {
         stop_requested: bool,

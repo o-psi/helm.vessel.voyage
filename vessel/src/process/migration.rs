@@ -321,6 +321,7 @@ async fn unit_fingerprint(unit: &str) -> Result<String> {
     let shown = tokio::time::timeout(
         Duration::from_secs(20),
         tokio::process::Command::new("/usr/bin/systemctl")
+            .kill_on_drop(true)
             .args([
                 "--user",
                 "show",
@@ -343,6 +344,77 @@ async fn unit_fingerprint(unit: &str) -> Result<String> {
         .collect::<Vec<_>>()
         .join("\n");
     Ok(format!("{:x}", Sha256::digest(stable.as_bytes())))
+}
+async fn review_user_services(
+    directory: &Path,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    // User manager effects execute under the original account, never root.
+    let result = tokio::time::timeout(
+        Duration::from_secs(20),
+        tokio::process::Command::new("/usr/bin/systemctl")
+            .kill_on_drop(true)
+            .args([
+                "--user",
+                "--no-pager",
+                "list-units",
+                "--type=service",
+                "--all",
+                "--output=json",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await??;
+    ensure!(
+        result.status.success() && result.stdout.len() <= 1024 * 1024,
+        "ordinary service inventory unavailable"
+    );
+    let inventory: Vec<serde_json::Value> = serde_json::from_slice(&result.stdout)?;
+    let mut units = Vec::new();
+    for item in inventory {
+        let name = item["unit"].as_str().context("ordinary unit has no name")?;
+        ensure!(
+            name.ends_with(".service")
+                && name.len() <= 128
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_@.".contains(&b)),
+            "invalid ordinary unit identity"
+        );
+        let shown = tokio::time::timeout(
+            Duration::from_secs(20),
+            tokio::process::Command::new("/usr/bin/systemctl")
+                .kill_on_drop(true)
+                .args(["--user", "show", name, "--property=ExecStart", "--value"])
+                .stderr(std::process::Stdio::null())
+                .output(),
+        )
+        .await??;
+        ensure!(
+            shown.stdout.len() <= 16384,
+            "ordinary unit definition exceeds bound"
+        );
+        let definition = String::from_utf8(shown.stdout)?;
+        let directory = directory
+            .to_str()
+            .context("ordinary source path is not UTF8")?;
+        if definition.contains(directory)
+            && (definition.contains("serve") || definition.contains("--vessel-directory"))
+            && definition.contains("vessel")
+        {
+            units.push(name.to_owned());
+        }
+    }
+    ensure!(
+        !units.is_empty() && units.len() <= 16,
+        "reviewed ordinary manager has no matching Vessel services"
+    );
+    let mut definitions = std::collections::BTreeMap::new();
+    for unit in units {
+        definitions.insert(unit.clone(), unit_fingerprint(&unit).await?);
+    }
+    Ok(definitions)
 }
 fn opaque_export(root: &Path, channel: &mut UnixStream) -> Result<()> {
     let mut paths = Vec::new();
@@ -422,7 +494,21 @@ pub async fn user(args: UserArgs) -> Result<()> {
         UserRequest::OpaqueExport => {
             anyhow::bail!("request requires held original namespace ownership")
         }
-        UserRequest::Quiesce => {
+        UserRequest::ReviewServices => {
+            let definitions = review_user_services(&args.directory).await?;
+            write_frame(&mut channel, &Frame::ReviewedServices { definitions })?;
+        }
+        UserRequest::Quiesce { definitions } => {
+            ensure!(
+                !definitions.is_empty() && definitions.len() <= 16,
+                "ordinary quiescence unit bound"
+            );
+            for (unit, expected) in &definitions {
+                ensure!(
+                    unit_fingerprint(unit).await? == *expected,
+                    "ordinary unit changed before quiescence"
+                );
+            }
             let response = super::exchange::exchange(
                 &args.directory,
                 &VesselRequest {
@@ -455,71 +541,14 @@ pub async fn user(args: UserArgs) -> Result<()> {
                 )
                 .await;
             }
-            // User manager effects execute under the original account, never root.
-            let result = tokio::time::timeout(
-                Duration::from_secs(20),
-                tokio::process::Command::new("/usr/bin/systemctl")
-                    .args([
-                        "--user",
-                        "--no-pager",
-                        "list-units",
-                        "--type=service",
-                        "--all",
-                        "--output=json",
-                    ])
-                    .stdin(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .output(),
-            )
-            .await??;
-            ensure!(
-                result.status.success() && result.stdout.len() <= 1024 * 1024,
-                "ordinary service inventory unavailable"
-            );
-            let inventory: Vec<serde_json::Value> = serde_json::from_slice(&result.stdout)?;
-            let mut units = Vec::new();
-            for item in inventory {
-                let name = item["unit"].as_str().context("ordinary unit has no name")?;
-                ensure!(
-                    name.ends_with(".service")
-                        && name.len() <= 128
-                        && name
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b"-_@.".contains(&b)),
-                    "invalid ordinary unit identity"
-                );
-                let shown = tokio::time::timeout(
-                    Duration::from_secs(20),
-                    tokio::process::Command::new("/usr/bin/systemctl")
-                        .args(["--user", "show", name, "--property=ExecStart", "--value"])
-                        .stderr(std::process::Stdio::null())
-                        .output(),
-                )
-                .await??;
-                ensure!(
-                    shown.stdout.len() <= 16384,
-                    "ordinary unit definition exceeds bound"
-                );
-                let definition = String::from_utf8(shown.stdout)?;
-                let directory = args
-                    .directory
-                    .to_str()
-                    .context("ordinary source path is not UTF8")?;
-                if definition.contains(directory)
-                    && (definition.contains("serve") || definition.contains("--vessel-directory"))
-                    && definition.contains("vessel")
-                {
-                    units.push(name.to_owned());
-                }
-            }
-            ensure!(
-                !units.is_empty() && units.len() <= 16,
-                "reviewed ordinary manager has no matching Vessel services"
-            );
-            let mut definitions = std::collections::BTreeMap::new();
+            let units = definitions.keys().cloned().collect::<Vec<_>>();
             for unit in &units {
-                definitions.insert(unit.clone(), unit_fingerprint(unit).await?);
+                ensure!(
+                    unit_fingerprint(unit).await? == definitions[unit],
+                    "ordinary unit changed before its stop effect"
+                );
                 let status = tokio::process::Command::new("/usr/bin/systemctl")
+                    .kill_on_drop(true)
                     .args(["--user", "--no-block", "stop", unit])
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
@@ -530,6 +559,7 @@ pub async fn user(args: UserArgs) -> Result<()> {
                 let status = tokio::time::timeout(
                     Duration::from_secs(20),
                     tokio::process::Command::new("/usr/bin/systemctl")
+                        .kill_on_drop(true)
                         .args(["--user", "disable", unit])
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
@@ -561,6 +591,7 @@ pub async fn user(args: UserArgs) -> Result<()> {
                     let status = tokio::time::timeout(
                         Duration::from_secs(20),
                         tokio::process::Command::new("/usr/bin/systemctl")
+                            .kill_on_drop(true)
                             .args(["--user", "--no-block", action, &unit])
                             .stdin(std::process::Stdio::null())
                             .stdout(std::process::Stdio::null())
