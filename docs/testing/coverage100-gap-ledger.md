@@ -9,7 +9,27 @@ standard test/dependency exclusions. No module exclusions were added. Web/JavaSc
 Python process checks, doctests, native other-platform runs and branch coverage are
 not represented by this line percentage.
 
-## Audited checkpoint
+## Latest separately published baseline
+
+Concurrent browser-controls delivery #379 published a newer full-workspace record
+in `675f12ed1f05b03f6fc45828993f95fec8e55b85`, measuring clean source
+`782354d2eaba298d50d10baeecd4bc524ab35d71` on September 30:
+**89,290 / 116,781 lines (76.459356%)**, 8,111 / 11,013 functions and
+140,542 / 192,137 regions; **2,039 passed, zero failed, eight ignored**.
+Its report retained all 504 prior workspace files, the same standard-library
+source and 16 distinct current object hashes, with no new exclusions. The record
+adds 136 covered and 128 measured lines relative to the checkpoint below.
+
+The release integration branch incorporates that delivery, but its identity,
+adoption, recovery, browser-shadow and prepared coverage changes are newer and
+remain unmeasured. This baseline is evidence for its named source only. No new
+tests or coverage were run by the release coordinator during the user's current
+implementation-first hold; the final combined measurement is still required.
+`coverage/latest.json` records the published measurement, not the current release
+branch's coverage. The detailed area table below is the retained September 29 gap
+map; it has not been silently regenerated or presented as current edited totals.
+
+## Historical audited checkpoint and area map
 
 The September 29 clean-source checkpoint is
 `7b72f40bd25c5783ca78e8422f689f45404b42c1`, published with its summary in
