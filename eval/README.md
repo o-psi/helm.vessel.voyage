@@ -16,3 +16,11 @@ visual acceptance, trial schedule or incumbent cutover gate yet. Historical tria
 proposals do not supersede that direction or turn unrun checks into passes.
 See [useful-work evidence](../docs/useful-work-evidence.md) for #22's objectively
 checked outputs, retained failures and unresolved live/deployment scope.
+
+## Opt-in Harbor benchmark integration
+
+The explicitly requested [native Voyage Harbor adapter](voyage_harbor/README.md)
+provides a local Terminal-Bench baseline through the real supervised runtime.
+It preserves the retired runner decision and keeps hosted automation build-only.
+Live runs require an approved account/model and budget; integration smoke checks
+are distinct from measured task capability. See #397 for the delivery record.
