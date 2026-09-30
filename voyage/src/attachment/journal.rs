@@ -1891,3 +1891,6 @@ mod authority_tests;
 
 #[cfg(test)]
 mod coverage_tests;
+
+#[cfg(target_os = "linux")]
+mod execution_transition;

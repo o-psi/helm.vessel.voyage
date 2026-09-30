@@ -805,3 +805,21 @@ The source pass also catches subagent executor unwind and records an authored
 failure without exposing its payload or replaying it. It releases the execution
 slot; separate resource-cleanup ledgers remain authoritative and are not marked
 observed by this handler. Explicit cancellation still takes precedence.
+
+### Retired journal two-phase qualification pending
+
+The `transition-helper` source has not been compiled/executed. At the final
+integrated pass, verify private anonymous root-pipe admission, full namespace maps,
+original UID observation/freeze, live startup/execution-lock refusal, exact revision/
+history/config/pending digests, interruption without replay, Goal continuation
+withdrawal and immutable source receipt retries. Root must receive no conversation,
+SQLite content or target configuration bytes.
+
+On disposable native two-identity fixtures, publish target ownership through the
+root controller's safe descriptor path, then invoke target commit only in its
+pinned UID/GID and account namespace. Refuse wrong identities, changed private
+configuration, changed prepared facts and conflicting source/target command IDs.
+Verify SQL configuration/revision/receipt commit together, lost-output lookup never
+reapplies, and prepared-but-uncommitted runtime startup refuses. Preserve original
+canonical Session IDs/messages, uncertain effects and external cleanup obligations.
+Neither interruption nor the helper's successful receipt is native cleanup evidence.

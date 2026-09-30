@@ -774,3 +774,38 @@ next required source work; both directions preserve canonical history and forbid
 uncertain effects or automatic continuation. Complete it and the full client
 journeys before declaring #344 source ready or running the final coordinated
 verification set.
+
+## Retired journal handoff implementation
+
+The new hidden transition helper is a separate process in the **original identity**
+for observation/source freeze and in the **target identity** for target commit.
+Both input and output must be authenticated anonymous root-owned private pipes;
+namespace and real/effective identity checks precede work. The supervisor receives
+only bounded opaque facts/receipts and never parses an ordinary user's SQLite or
+canonical conversation. The helper holds the runtime startup lock and session
+execution fence; it cannot take a live cooperative runtime's journal.
+
+Source freeze receives only a reviewed configuration digest, target identity/
+incarnation, exact session revision, history/pending-work digests and command IDs.
+It stores a credential-free marker while leaving the original frozen configuration
+and canonical session bytes unchanged. Active runs become Interrupted, queued
+steering is rejected without replay, owned resources become cleanup_unknown and
+Goal continuation authority is withdrawn. No external effect or cleanup is claimed
+observed. Unresolved work remains in the journal and receipt.
+
+After the root controller safely publishes descriptor-checked target ownership,
+only the target helper reads the target identity's private captured launch path.
+It checks exact UID/GID, prepared receipt, current revision/history/pending state,
+reviewed domain-separated configuration digest and explicit target account/policy.
+Frozen configuration replacement, revision advance and committed receipt are one
+SQLite transaction. Startup refuses a prepared-but-uncommitted handoff. Distinct
+source/target command IDs and immutable request digests support phase lookup after
+lost output; mismatched retries refuse rather than rerunning uncertain work.
+
+The caller must first establish the original guardian's observed retirement and
+must preserve root-protected review/ownership-transfer/launch records. This worker
+is bookkeeping; it does not launch a Voyage, call a provider, resume a Goal, replay
+a tool or attest descendant/remote cleanup. Root controller/client integration,
+actual native two-identity lifecycle evidence and final combined validation remain
+required before claiming the transition is supported. Source preparation has not
+been compiled or executed under the user's final-test direction.

@@ -52,3 +52,6 @@ pub mod catalogue;
 pub mod start_settings;
 
 pub mod identity_helper;
+
+/// Root-private, identity-scoped retired journal bookkeeping; never execution.
+pub mod transition_helper;

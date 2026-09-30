@@ -32,6 +32,8 @@ impl Journal {
 
     /// Startup caller holds the process startup lock; reading settings has no effects.
     pub(crate) fn initial_configuration(&self, session: Uuid) -> Result<Option<String>> {
+        #[cfg(target_os = "linux")]
+        self.ensure_transition_configuration_ready(session)?;
         let exists:bool=self.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='process_configuration')",[],|row|row.get(0))?;
         if !exists {
             return Ok(None);

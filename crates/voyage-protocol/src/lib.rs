@@ -71,3 +71,6 @@ pub mod execution_review_control;
 
 /// Private dropped-identity helper contracts, never a public authority surface.
 pub mod identity_helper;
+
+/// Private two-phase retired-runtime identity handoff; no public authority.
+pub mod execution_transition;
