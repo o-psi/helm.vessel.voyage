@@ -30,7 +30,7 @@ pub(super) fn retained_digest(root:&Path,registration:&ProcessRegistration)->Res
     let result=read::<(Uuid,String)>(root,registration.incarnation,"retained-config");
     match result{Ok((session,digest))=>{ensure!(session==registration.session_id&&digest.len()==64&&digest.bytes().all(|b|b.is_ascii_hexdigit()),"retained configuration pin changed");Ok(Some(digest))},Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::NotFound)=>Ok(None),Err(error)=>Err(error)}
 }
-async fn helper(binary:&Path,identity:&ConfiguredExecutionIdentity,namespace:Option<(PathBuf,PathBuf)>,request:TransitionRequest)->Result<TransitionResponse>{
+async fn helper(binary:&Path,identity:&ConfiguredExecutionIdentity,namespace:Option<(PathBuf,PathBuf)>,request:TransitionRequest,monitor:Option<(&Supervisor,&ConnectionGrant,&Intent,&SavedExecutionReview)>)->Result<TransitionResponse>{
     super::launch::protected_binary(binary)?;
     ensure!(serde_json::to_vec(&request)?.len()<=MAX_REQUEST,"transition request exceeds bounds");
     let mut command=tokio::process::Command::new(binary);command.arg("transition-helper").current_dir(&identity.home).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
@@ -38,9 +38,13 @@ async fn helper(binary:&Path,identity:&ConfiguredExecutionIdentity,namespace:Opt
     if let Some((data,config))=namespace{command.env("XDG_DATA_HOME",data).env("XDG_CONFIG_HOME",config);}
     let mut child=command.spawn()?;
     let result:std::result::Result<anyhow::Result<TransitionResponse>,tokio::time::error::Elapsed>=tokio::time::timeout(Duration::from_secs(10),async{
-        write_frame(&mut child.stdin.take().context("transition input unavailable")?,&request).await?;
-        let reply:TransitionResponse=read_frame(&mut child.stdout.take().context("transition output unavailable")?).await?;
-        ensure!(serde_json::to_vec(&reply)?.len()<=MAX_RESPONSE&&child.wait().await?.success(),"transition observation unavailable");Ok(reply)
+        let exchange=async{
+            write_frame(&mut child.stdin.take().context("transition input unavailable")?,&request).await?;
+            let reply:TransitionResponse=read_frame(&mut child.stdout.take().context("transition output unavailable")?).await?;
+            ensure!(serde_json::to_vec(&reply)?.len()<=MAX_RESPONSE&&child.wait().await?.success(),"transition observation unavailable");Ok(reply)
+        };
+        tokio::pin!(exchange);
+        loop{tokio::select!{reply=&mut exchange=>break reply,_=tokio::time::sleep(Duration::from_millis(100)),if monitor.is_some()=>{let (supervisor,grant,intent,review)=monitor.expect("guarded private helper");supervisor.transition_authority(grant,intent,review).await?;}}}
     }).await;
     if let Ok(Ok(reply))=result{return Ok(reply);}let _=child.kill().await;anyhow::bail!("transition observation unavailable")
 }
@@ -89,7 +93,7 @@ impl Supervisor {
         database::execution_reviews::authority(&self.directory,grant).await?;
         ensure!(self.registration(intent.source.session_id).await?.incarnation==intent.source.incarnation,"source incarnation changed");
         let runtime=super::runtime_storage::bound_directory(&self.directory,intent.source.session_id,intent.source_identity.uid,intent.source_identity.gid)?;
-        let response=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:intent.source.session_id,source_incarnation:intent.source.incarnation,operation:TransitionOperation::Observe{directory:runtime}}).await?;
+        let response=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:intent.source.session_id,source_incarnation:intent.source.incarnation,operation:TransitionOperation::Observe{directory:runtime}},None).await?;
         let TransitionResponse::Facts{facts:source}=response else{anyhow::bail!("retired source journal unavailable")};
         write(&self.directory,intent.review_id,"source",&source)?;
         let current=self.transition_facts(grant,intent,&source).await?;
@@ -122,6 +126,14 @@ impl Supervisor {
         let outcome=match transition {Ok(observed)=>ExecutionOutcome::Ready{observed},Err(_)=>ExecutionOutcome::Unconfirmed{cleanup_obligations:vec![intent.source.session_id]}};
         Ok(serde_json::to_value(database::execution_reviews::finish_launch(&self.directory,grant,approval.review_id,outcome).await?)?)
     }
+    async fn transition_authority(&self,grant:&ConnectionGrant,intent:&Intent,expected:&SavedExecutionReview)->Result<SavedExecutionReview>{
+        let revision=database::execution_reviews::authority(&self.directory,grant).await?;
+        let saved=database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await?;
+        ensure!(revision==expected.review.facts.authority_revision.get()&&saved.review==expected.review&&saved.review.facts.connection_id==grant.grant_id&&saved.review.facts.connection_revision.get()==grant.revision&&saved.review.facts.administrative_owner_id==grant.principal_id&&intent.principal==grant.principal_id&&matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}),"reviewed transition authority changed");
+        ensure!(database::configured_identity(&self.directory,&intent.target.identity).await?==intent.target,"reviewed target OS identity changed");
+        if let Some(id)=saved.administrator_grant_id{ensure!(database::execution_reviews::grant_facts(&self.directory,id).await?==saved.review.facts,"administrator execution grant changed");}
+        Ok(saved)
+    }
     pub(super) async fn reconcile_execution_transition(&self,grant:&ConnectionGrant,review_id:Uuid,command_id:Uuid,review_digest:&str)->Result<serde_json::Value>{
         ensure!(!command_id.is_nil(),"reconciliation command identity missing");
         database::execution_reviews::authority(&self.directory,grant).await?;
@@ -140,6 +152,7 @@ impl Supervisor {
     }
     async fn commit_execution_transition_mode(&self,grant:&ConnectionGrant,intent:&Intent,source:&RetiredJournalFacts,approved:&SavedExecutionReview,launch:bool)->Result<serde_json::Value>{
         let session=intent.source.session_id;let old=intent.source.incarnation;
+        self.transition_authority(grant,intent,approved).await?;
         ensure!(super::guardian::cleanup_observed(&self.directory,session,old).unwrap_or(false)||super::migration::dormant(&self.directory,session,old).unwrap_or(false),"source retirement remains unconfirmed");
         if let Ok(current)=self.registration(session).await{
             if current.incarnation==intent.target_incarnation{
@@ -158,31 +171,47 @@ impl Supervisor {
         Ok(receipt)=>receipt,
         Err(_)=>{
         super::runtime_storage::bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid)?;
-        let prepared=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::SourceFreeze{directory:runtime.clone(),command_id:phase_command(intent.review_id,"freeze"),transition_id:intent.review_id,target_incarnation:intent.target_incarnation,expected:source.clone(),target_uid:intent.target.uid,target_gid:intent.target.gid,target_config_digest:intent.target_facts.config_digest.clone(),review_digest:approved.review.digest.clone()}}).await?;
+        let prepared=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::SourceFreeze{directory:runtime.clone(),command_id:phase_command(intent.review_id,"freeze"),transition_id:intent.review_id,target_incarnation:intent.target_incarnation,expected:source.clone(),target_uid:intent.target.uid,target_gid:intent.target.gid,target_config_digest:intent.target_facts.config_digest.clone(),review_digest:approved.review.digest.clone()}},Some((self,grant,intent,approved))).await;
+        let prepared=match prepared{Ok(prepared)=>prepared,Err(error)=>{
+            // A private helper may commit just before its reply or authority
+            // fence. Receipt-only lookup settles metadata; it never replays the
+            // freeze, copies target secrets, or authorizes a process launch.
+            if let Ok(TransitionResponse::Prepared{receipt})=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::Lookup{directory:runtime.clone(),command_id:phase_command(intent.review_id,"freeze")}},None).await{
+                ensure!(receipt.review_digest==approved.review.digest&&receipt.transition_id==intent.review_id,"source freeze receipt identity changed");
+                write(&self.directory,intent.review_id,"prepared",&receipt)?;
+                if self.transition_authority(grant,intent,approved).await.is_err(){
+                    if let Ok(TransitionResponse::Aborted{receipt:aborted})=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::AbortSource{directory:runtime.clone(),command_id:phase_command(intent.review_id,"abort"),expected:receipt}},None).await{write(&self.directory,intent.review_id,"aborted",&aborted)?;}
+                }
+            }
+            return Err(error);
+        }};
         let TransitionResponse::Prepared{receipt}=prepared else{anyhow::bail!("source transition remains unconfirmed")};write(&self.directory,intent.review_id,"prepared",&receipt)?;receipt}};
-        let permitted=database::execution_reviews::authority(&self.directory,grant).await.is_ok()&&database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await.is_ok_and(|saved|matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}));
+        let permitted=self.transition_authority(grant,intent,approved).await.is_ok();
         if !permitted {
             ensure!(read::<(u32,u32,PreparedTransitionReceipt)>(&self.directory,intent.review_id,"ownership-intent").is_err(),"authority fenced after ownership handoff; retained target requires operator reconciliation");
             // No target ownership, catalogue binding or guardian admission has
             // been published at this point. Abort metadata only; paused/unknown
             // work and the original account configuration remain retained.
-            let aborted=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::AbortSource{directory:runtime.clone(),command_id:phase_command(intent.review_id,"abort"),expected:receipt.clone()}}).await?;
+            let aborted=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::AbortSource{directory:runtime.clone(),command_id:phase_command(intent.review_id,"abort"),expected:receipt.clone()}},None).await?;
             let TransitionResponse::Aborted{receipt:aborted}=aborted else{anyhow::bail!("source abort remains unconfirmed")};
             write(&self.directory,intent.review_id,"aborted",&aborted)?;
             anyhow::bail!("transition authority was fenced; source retirement remains retained");
         }
         let inventory=match read::<Vec<(u64,u64,u32,u64)>>(&self.directory,intent.review_id,"ownership-inventory"){Ok(inventory)=>inventory,Err(_)=>{let inventory=super::runtime_storage::transfer_inventory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid)?;write(&self.directory,intent.review_id,"ownership-inventory",&inventory)?;inventory}};
+        self.transition_authority(grant,intent,approved).await?;
         write(&self.directory,intent.review_id,"ownership-intent",&(intent.source_identity.uid,intent.target.uid,&receipt))?;
         if read::<(u32,u32)>(&self.directory,intent.review_id,"ownership-complete").is_err(){super::runtime_storage::transfer_bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid,intent.target.uid,intent.target.gid,&inventory)?;}
         write(&self.directory,intent.review_id,"ownership-complete",&(intent.target.uid,intent.target.gid))?;
         super::launch::validate_identity(&intent.target)?;
         let namespace=if intent.target.authority==AuthorityClass::Administrator{let provision=super::admin_execution::provision(&self.directory)?;Some((provision.data_directory,provision.config_directory))}else{None};
         super::runtime_storage::bound_directory(&self.directory,session,intent.target.uid,intent.target.gid)?;
-        ensure!(database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await.is_ok_and(|saved|matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..})),"transition authority fenced before target configuration commit");
-        let committed=helper(&self.binary,&intent.target,namespace,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::TargetCommit{directory:runtime,command_id:phase_command(intent.review_id,"commit"),expected:receipt,target_config_path:intent.target_config.clone()}}).await?;
+        self.transition_authority(grant,intent,approved).await?;
+        self.transition_facts(grant,intent,source).await?;
+        let committed=helper(&self.binary,&intent.target,namespace,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::TargetCommit{directory:runtime,command_id:phase_command(intent.review_id,"commit"),expected:receipt,target_config_path:intent.target_config.clone()}},Some((self,grant,intent,approved))).await?;
         let TransitionResponse::Committed{receipt}=committed else{anyhow::bail!("target configuration commit remains unconfirmed")};write(&self.directory,intent.review_id,"committed",&receipt)?;
         ensure!(receipt.config_digest==intent.target_facts.config_digest&&receipt.history_digest==source.history_digest,"target handoff receipt changed");
-        database::execution_reviews::authority(&self.directory,grant).await?;
+        self.transition_authority(grant,intent,approved).await?;
+        self.transition_facts(grant,intent,source).await?;
         if intent.target.authority==AuthorityClass::Administrator{let provision=super::admin_execution::provision(&self.directory)?;super::admin_execution::pin_namespace(&self.directory,session,intent.command_id,&provision)?;}
         super::identity_start::pin_launch(&self.directory,intent.command_id,session,&intent.target_config,&intent.target_facts.config_digest)?;
         write(&self.directory,intent.target_incarnation,"retained-config",&(session,intent.target_facts.config_digest.clone()))?;
@@ -199,11 +228,14 @@ impl Supervisor {
         if !launch{next.state=ProcessState::Stopped;}
         let previous=self.registration(session).await?;
         let mut immutable=previous.clone();immutable.state=intent.source.state;ensure!(immutable==intent.source,"source admission changed during handoff");
-        database::transition_bound(&self.directory,&previous,&next,&binding,serde_json::to_vec(&VesselCommand::Execution{operation:ExecutionOperation::Approve{approval:ReviewApproval{review_id:intent.review_id,command_id:intent.command_id,digest:approved.review.digest.clone()}}})?).await?;
+        self.transition_authority(grant,intent,approved).await?;
+        database::transition_bound(&self.directory,&previous,&next,&binding,serde_json::to_vec(&VesselCommand::Execution{operation:ExecutionOperation::Approve{approval:ReviewApproval{review_id:intent.review_id,command_id:intent.command_id,digest:approved.review.digest.clone()}}})?,&approved.review).await?;
         if !launch{return Ok(serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":next.incarnation,"process_state":"stopped","phase":"handoff_committed"},"message":"Exact handoff metadata committed. No process launched; explicitly restart this voyage to launch the reviewed target."}));}
+        self.transition_authority(grant,intent,approved).await?;
         write(&self.directory,intent.target_incarnation,"launch-intent",&(session,intent.review_id))?;
         self.spawn_bound_guardian(&next).await?;
         let info=tokio::time::timeout(Duration::from_secs(10),async{loop{let info=super::bound_lifecycle::inspect(&self.directory,&next).await;if info.state==ProcessState::Live{return info;}tokio::time::sleep(Duration::from_millis(100)).await;}}).await?;
+        self.transition_authority(grant,intent,approved).await?;
         ensure!(info.incarnation==intent.target_incarnation,"transition process incarnation changed");
         Ok(serde_json::to_value(super::admin_execution::observation(&self.directory,session,intent.target_incarnation)?)?)
     }

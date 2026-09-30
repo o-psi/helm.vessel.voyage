@@ -984,3 +984,13 @@ explicit restart. Ordinary settings changed after a live launch remain eligible
 for ordinary later restart. TUI `/execution reconcile` and Web's exact handoff
 reconciliation action retain unknown outcomes and never automatically approve or
 relaunch. Source-only status still applies to this entire increment.
+
+Transition authority is rechecked at every retained metadata boundary against the
+exact original connection and administrator-authority revision. Re-enrolling an
+owner cannot revive an old approval. Private freeze/target-commit helpers are
+bounded and monitor authority every 100 milliseconds; interrupted helper replies
+remain unknown until exact receipt lookup. SourceFreeze lookup may lead only to
+pre-ownership SourceAbort cleanup when authority was fenced. Atomic catalogue
+admission also checks the saved review/receipt and current enrolled authority
+inside its transaction, including ordinary target handoffs with no admin grant.
+No new target admission or guardian launch follows a fenced review.
