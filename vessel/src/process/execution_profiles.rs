@@ -148,6 +148,7 @@ fn transact_namespace(
             _ => anyhow::bail!("invalid profile mutation"),
         };
         ensure!(!id.is_nil(), "invalid profile command identity");
+        database::reject_retired_command(&tx, id)?;
         let request = profile_request(namespace, actor, command)?;
         let old: Option<(String, String)> = tx
             .query_row(
@@ -262,6 +263,7 @@ fn identity_replay(
         _ => return Ok(None),
     };
     let db = database::open(root)?;
+    database::reject_retired_command(&db, *id)?;
     let table: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_profile_commands')", [], |r| r.get(0))?;
     if !table {
         return Ok(None);

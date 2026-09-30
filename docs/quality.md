@@ -1010,3 +1010,11 @@ and preserve unknown operation IDs and unsent drafts without writing private
 receipt storage or dispatching approval. These cases were prepared from retained
 coverage evidence; they have not been run during the implementation-first pass.
 The final coordinated tests and workspace coverage measurement remain required.
+
+Retired user profile command IDs are now refused before both identity receipt
+lookup and the profile mutation transaction, through the same migration tombstone
+check as lifecycle receipts. Two prepared adversarial sources verify that old
+cached receipts cannot become current authority, validation callbacks do not run,
+and Save/Delete/SetDefault IDs cannot mutate either namespace after migration.
+The retained profile catalogue and original receipt remain intact. These sources
+are unexecuted pending the final coordinated verification.
