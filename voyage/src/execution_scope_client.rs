@@ -27,6 +27,14 @@ fn query(
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis()
         .try_into()?;
+    metadata_to_grant(registration, binding, scope, now)
+}
+fn metadata_to_grant(
+    registration: &ProcessRegistration,
+    binding: &GrantBinding,
+    scope: RuntimeScope,
+    now: u64,
+) -> Result<ProcessGrant> {
     ensure!(
         !binding.grant_id.is_nil()
             && !binding.principal_id.is_nil()
@@ -61,6 +69,7 @@ fn query(
         participant_binding: None,
     })
 }
+
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
@@ -204,15 +213,18 @@ mod linux {
         ensure!(body.len() <= MAX_FRAME, "scope request exceeds bound");
         write(&mut stream, &(body.len() as u32).to_be_bytes(), deadline)?;
         write(&mut stream, &body, deadline)?;
+        response(&mut stream, deadline)
+    }
+    pub(super) fn response(stream: &mut UnixStream, deadline: Instant) -> Result<RuntimeScope> {
         let mut header = [0; 4];
-        read(&mut stream, &mut header, deadline)?;
+        read(stream, &mut header, deadline)?;
         let size = u32::from_be_bytes(header) as usize;
         ensure!(
             size > 0 && size <= MAX_FRAME,
             "scope response exceeds bound"
         );
         let mut bytes = vec![0; size];
-        read(&mut stream, &mut bytes, deadline)?;
+        read(stream, &mut bytes, deadline)?;
         serde_json::from_slice::<ScopeReply>(&bytes)?
             .scope
             .context("scope denied")
@@ -333,3 +345,7 @@ pub(crate) fn cached_handle(
     })();
     result.map_err(|_| anyhow::anyhow!("execution scope credential unavailable"))
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "execution_scope_client_tests.rs"]
+mod tests;

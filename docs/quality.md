@@ -848,3 +848,19 @@ namespace changes, supervisor restart with a retained Goal lease, and suspended
 observation without root-directory access. Preserve no-replay oracles and prove
 owned cleanup. Prepared source and successful source formatting do not establish
 these outcomes; no broker test was executed during implementation preparation.
+
+### Scope bridge adverse source cases (#353)
+
+Prepared cases now cover exact/stale grant and runtime metadata, expiry/workspace/
+owner/size refusal, ordinary abstract-socket peer rejection before any credential
+write, truncated/malformed/oversized frames and bounded idle reads. Cache cases
+assert 0700/0600, single-link/nofollow records, exact keys, capacity and redacted
+Debug; incoming bound requests cannot borrow a cached handle when the wire handle
+is missing. Clean-registration credential reuse requires new current metadata;
+a readable cache never proves a valid root execution epoch. The native wrong-peer
+case explicitly requires ordinary Linux UID and does not simulate UID 0 authority.
+
+These are source-only cases, not executed verification. Actual root broker epoch,
+parent/connection revocation and suspended/live roundtrips remain final integrated
+native gates. Existing legacy-file authority test construction was updated for the
+new AuthoritySource representation without weakening its assertions.
