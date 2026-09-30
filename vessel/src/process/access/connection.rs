@@ -197,18 +197,15 @@ impl Supervisor {
                 };
                 let mut entries = Vec::new();
                 for entry in source {
-                    if grant.full_access
-                        || grant.workspaces.iter().any(|w| w.path == entry.workspace)
+                    if (grant.full_access
+                        || grant.workspaces.iter().any(|w| w.path == entry.workspace))
+                        && let Ok(registration) = self.registration(entry.session_id).await
+                        && self
+                            .execution_connection(&grant, &registration, true)
+                            .await
+                            .is_ok()
                     {
-                        if let Ok(registration) = self.registration(entry.session_id).await {
-                            if self
-                                .execution_connection(&grant, &registration, true)
-                                .await
-                                .is_ok()
-                            {
-                                entries.push(entry);
-                            }
-                        }
+                        entries.push(entry);
                     }
                 }
                 if !grant.rights.contains(&ProcessRight::History) {

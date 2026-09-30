@@ -195,9 +195,7 @@ impl Supervisor {
                 && current == intent.target_facts,
             "target account/configuration changed during review"
         );
-        let host;
-        let policy;
-        if target.authority == AuthorityClass::Administrator {
+        let (host, policy) = if target.authority == AuthorityClass::Administrator {
             let (_, facts, _) = self
                 .execution_facts(
                     grant,
@@ -209,12 +207,13 @@ impl Supervisor {
                     &target.identity,
                 )
                 .await?;
-            host = facts.host_identity_digest;
-            policy = facts.policy_digest;
+            (facts.host_identity_digest, facts.policy_digest)
         } else {
-            host = digest(&(&target, &current.account_root_digest))?;
-            policy = digest(&(&current.policy_digest, &current.config_digest))?;
-        }
+            (
+                digest(&(&target, &current.account_root_digest))?,
+                digest(&(&current.policy_digest, &current.config_digest))?,
+            )
+        };
         Ok(ReviewFacts {
             vessel_id: grant.vessel_id,
             session_id: intent.source.session_id,
@@ -241,6 +240,8 @@ impl Supervisor {
             pending_work_digest: digest(source)?,
         })
     }
+    // Source generation, target identity and stop intent are separate authority/provenance inputs.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn prepare_execution_transition(
         &self,
         grant: &ConnectionGrant,
@@ -684,8 +685,7 @@ impl Supervisor {
                                 .transition_authority(grant, intent, approved)
                                 .await
                                 .is_err()
-                            {
-                                if let Ok(TransitionResponse::Aborted { receipt: aborted }) =
+                                && let Ok(TransitionResponse::Aborted { receipt: aborted }) =
                                     helper(
                                         &self.binary,
                                         &intent.source_identity,
@@ -706,9 +706,8 @@ impl Supervisor {
                                         None,
                                     )
                                     .await
-                                {
-                                    write(&self.directory, intent.review_id, "aborted", &aborted)?;
-                                }
+                            {
+                                write(&self.directory, intent.review_id, "aborted", &aborted)?;
                             }
                         }
                         return Err(error);
@@ -1014,15 +1013,15 @@ pub(super) fn carry_retained_digest(
     previous: &ProcessRegistration,
     next: &ProcessRegistration,
 ) -> Result<()> {
-    if dormant(root, previous.session_id, previous.incarnation).unwrap_or(false) {
-        if let Some(digest) = retained_digest(root, previous)? {
-            write(
-                root,
-                next.incarnation,
-                "retained-config",
-                &(next.session_id, digest),
-            )?;
-        }
+    if dormant(root, previous.session_id, previous.incarnation).unwrap_or(false)
+        && let Some(digest) = retained_digest(root, previous)?
+    {
+        write(
+            root,
+            next.incarnation,
+            "retained-config",
+            &(next.session_id, digest),
+        )?;
     }
     Ok(())
 }

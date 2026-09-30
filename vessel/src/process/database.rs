@@ -1237,19 +1237,19 @@ pub async fn transition_bound(
             "source execution binding changed"
         );
         validate_binding_tx(&tx, &binding)?;
-        if let Some(id) = old.administrator_grant_id {
-            if Some(id) != binding.administrator_grant_id {
-                let mut hash = Sha256::new();
-                hash.update(b"voyage/transition-revocation/v1");
-                hash.update(next.command_id.as_bytes());
-                hash.update(id.as_bytes());
-                let value = hash.finalize();
-                let command = Uuid::from_bytes(value[..16].try_into()?);
-                tx.execute(
-                    "INSERT OR IGNORE INTO administrator_revocations VALUES(?1,?2,?3)",
-                    params![id.to_string(), command.to_string(), now()],
-                )?;
-            }
+        if let Some(id) = old.administrator_grant_id
+            && Some(id) != binding.administrator_grant_id
+        {
+            let mut hash = Sha256::new();
+            hash.update(b"voyage/transition-revocation/v1");
+            hash.update(next.command_id.as_bytes());
+            hash.update(id.as_bytes());
+            let value = hash.finalize();
+            let command = Uuid::from_bytes(value[..16].try_into()?);
+            tx.execute(
+                "INSERT OR IGNORE INTO administrator_revocations VALUES(?1,?2,?3)",
+                params![id.to_string(), command.to_string(), now()],
+            )?;
         }
         tx.execute(
             "DELETE FROM execution_bindings WHERE session_id=?1",

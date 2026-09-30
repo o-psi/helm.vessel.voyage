@@ -278,6 +278,8 @@ pub(super) fn observation(
     Ok(observed)
 }
 impl Supervisor {
+    // Keep requester, review, command and runtime identities explicit at this authority boundary.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn execution_facts(
         &self,
         grant: &ConnectionGrant,
