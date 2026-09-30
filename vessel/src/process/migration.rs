@@ -161,10 +161,14 @@ fn digest_tree(root: &Path) -> Result<String> {
     files(root, root, &mut paths)?;
     paths.sort();
     let mut hash = Sha256::new();
+    hash.update(b"voyage/migration-private-tree/v1\0");
     let mut total = 0u64;
     for relative in paths {
-        hash.update(relative.as_os_str().as_encoded_bytes());
+        let name = relative.as_os_str().as_encoded_bytes();
+        hash.update((name.len() as u64).to_be_bytes());
+        hash.update(name);
         let mut file = source_file(&root.join(relative))?;
+        hash.update(file.metadata()?.len().to_be_bytes());
         let mut buf = [0; 65536];
         loop {
             let n = file.read(&mut buf)?;
@@ -228,10 +232,19 @@ fn snapshot(root: &Path, held: bool) -> Result<Snapshot> {
     );
     let mut statement =
         db.prepare("SELECT DISTINCT command_id FROM lifecycle_commands ORDER BY command_id")?;
-    let legacy_commands = statement
+    let mut legacy_commands = statement
         .query_map([], |row| row.get::<_, String>(0))?
         .map(|row| Ok(Uuid::parse_str(&row?)?))
         .collect::<Result<Vec<_>>>()?;
+    let profile_commands:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_profile_commands')",[],|row|row.get(0))?;
+    if profile_commands {
+        let mut statement = db.prepare("SELECT id FROM execution_profile_commands ORDER BY id")?;
+        for id in statement.query_map([], |row| row.get::<_, String>(0))? {
+            legacy_commands.push(Uuid::parse_str(&id?)?);
+        }
+        legacy_commands.sort();
+        legacy_commands.dedup();
+    }
     ensure!(
         legacy_commands.len() <= 100000,
         "legacy command export exceeds bound"
@@ -941,12 +954,24 @@ pub async fn control(args: ControlArgs) -> Result<()> {
         )?;
     }
     if let Some(profiles) = &import.snapshot.profiles {
-        let _: voyage_protocol::execution_profiles::ProfileCatalogue =
+        let mut catalogue: voyage_protocol::execution_profiles::ProfileCatalogue =
             serde_json::from_value(profiles.clone())?;
-        tx.execute_batch("CREATE TABLE IF NOT EXISTS execution_profiles(id INTEGER PRIMARY KEY CHECK(id=1),state TEXT NOT NULL CHECK(json_valid(state))) STRICT;")?;
+        ensure!(
+            catalogue.profiles.len() <= 64
+                && catalogue
+                    .default_profile_id
+                    .is_none_or(|id| catalogue.profiles.iter().any(|profile| profile.id == id)),
+            "legacy profile catalogue/default exceeds its original bounds"
+        );
+        catalogue.can_manage = false; // Presentation authority is recomputed per connection.
+        let namespace = format!(
+            "{}:{}",
+            import.identity.account_context.id, import.identity.account_context.revision
+        );
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS execution_profiles_by_identity(namespace TEXT PRIMARY KEY,state TEXT NOT NULL CHECK(json_valid(state))) STRICT;")?;
         tx.execute(
-            "INSERT INTO execution_profiles VALUES(1,?1)",
-            [serde_json::to_string(profiles)?],
+            "INSERT INTO execution_profiles_by_identity VALUES(?1,?2)",
+            params![namespace, serde_json::to_string(&catalogue)?],
         )?;
     }
     tx.commit()?;
