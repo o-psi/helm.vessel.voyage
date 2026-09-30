@@ -607,7 +607,7 @@ impl Supervisor {
                 );
             }
             let mut immutable = current.clone();
-            immutable.state = intent.source.state;
+            immutable.state = intent.source.state.clone();
             ensure!(
                 serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
                 "source registration changed during reconciliation"
@@ -903,7 +903,7 @@ impl Supervisor {
                 );
             }
             let mut immutable = current.clone();
-            immutable.state = intent.source.state;
+            immutable.state = intent.source.state.clone();
             ensure!(
                 serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
                 "source registration changed during reconciliation"
@@ -920,7 +920,7 @@ impl Supervisor {
         }
         let previous = self.registration(session).await?;
         let mut immutable = previous.clone();
-        immutable.state = intent.source.state;
+        immutable.state = intent.source.state.clone();
         ensure!(
             serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
             "source admission changed during handoff"
