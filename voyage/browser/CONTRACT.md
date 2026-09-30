@@ -9,3 +9,14 @@ The parent admits at most four viewers with `join`. `disconnect` removes a viewe
 `mirror` is a read-only viewer request with a cursor. The injected `mirror-source.mjs` lazily records rrweb snapshots and changes in the main document and up to eight child frames. It keeps bounded events, can take a new full snapshot, and exposes node IDs to the worker through Playwright. Child events are read through the private Playwright pipe, never posted to website parent scripts. The worker compresses bounded event arrays, inlines captured image/font/style resources from a bounded host cache and sends localized visual fallback images for visible canvas/video or unsupported top-level iframe elements. No page content is written to worker receipts. The worker resolves element IDs on the current page or a short-lived frame document for click, fill, select, wheel and upload, checking live visibility/editability before each effect. Downloads are capped and associated with their owner.
 
 The worker must never accept untrusted `config`, `policy`, executable paths or filesystem roots from an agent. Private/localhost browsing requires an explicit trusted origin grant even when public web access is enabled. CONNECT tunnels retain origin/address containment, not inspection of encrypted application messages. Browser profiles are temporary, never the user's ordinary browser profile. See the [public protocol](../../docs/host-browser-protocol.md) and [host-browser design](../../docs/host-browser.md).
+
+Agent `inspect` accepts bounded control/text offsets and an observed child `frame`.
+It returns visible role/label/state controls, fresh references, child frame bindings,
+counts and explicit truncation/unsupported content. References expire on inspection,
+DOM/control/document/tab/authority changes or after sixty seconds. The host compares
+live control signatures as well as observed mutation versions; page state is untrusted.
+`read` returns bounded element text, never input values. `diagnostics` returns error
+counts only and clears them on control fences. Effects add typed `key`, native
+`select`/`check`, `double_click`, reference-to-reference `drag`, and `history`
+(back/forward/reload). These retain the existing journal, network policy and control
+fences; they do not accept arbitrary evaluation/CDP or retry uncertain outcomes.

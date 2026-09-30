@@ -1220,3 +1220,13 @@ system bootstrap and user-to-system adoption source paths are described in
 [remote updates](remote-updates.md); interrupted multistage adoption uses explicit preactivation rollback, with no
 forward-effect replay or unqualified active legacy fallback. Native verification
 is pending.
+
+### Grounded host-browser agent controls
+
+Host-browser agent tools additionally support paged role/label/state inspection,
+observed child-frame targets, native select/check, targeted keyboard input,
+double-click/drag, history navigation, bounded element-text reads and content-free
+error counts. Fresh references expire after document/control/DOM/property changes
+or sixty seconds; private input remains fenced. See [host-browser](host-browser.md#agent-inspection-and-interaction-379)
+for limits and [quality](quality.md) for offline verification commands. Arbitrary
+site fidelity and native macOS/Windows operation remain separate qualification.
