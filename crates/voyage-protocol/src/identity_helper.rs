@@ -68,6 +68,7 @@ pub enum IdentityHelperOperation {
     },
     Enrollment {
         scope: IdentityAccountScope,
+        #[serde(rename = "enrollment_operation")]
         operation: IdentityEnrollmentOperation,
     },
     Usage {
