@@ -33,7 +33,16 @@ impl Pipe {
                 == Some("3"),
             "private authority pipe unavailable"
         );
-        Self::from_descriptor(3)
+        let pipe = Self::from_descriptor(3)?;
+        // dup2 intentionally made the launch descriptor inheritable across the
+        // first exec. Only the helper owns this authority; subsequent utility
+        // execs (including same-UID environment observation) must not inherit it.
+        let flags = unsafe { libc::fcntl(3, libc::F_GETFD) };
+        ensure!(
+            flags >= 0 && unsafe { libc::fcntl(3, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == 0,
+            "private authority descriptor unavailable"
+        );
+        Ok(pipe)
     }
 
     fn from_descriptor(fd: i32) -> Result<Self> {
