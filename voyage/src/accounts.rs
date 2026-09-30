@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 pub use voyage_protocol::accounts::*;
 pub mod device;
+mod environment;
 pub mod usage;
 
 const LIMIT: usize = 65_536;
@@ -447,10 +448,8 @@ impl Registry {
         self.transaction(|db| match &checked(db, binding)?.credential {
             Credential::Stored(key) => Ok(key.clone()),
             Credential::Environment { name, digest } => {
-                let key = std::env::var(name).map_err(|_| {
-                    anyhow::anyhow!(
-                        "bound environment key unavailable; supervisor restart may be needed"
-                    )
+                let key = environment::resolve(name).map_err(|_| {
+                    anyhow::anyhow!("bound environment key unavailable in the executing identity")
                 })?;
                 ensure!(
                     fingerprint(&key) == *digest,
@@ -796,7 +795,8 @@ fn api_input(input: ApiKeyInput) -> Result<Credential> {
                 "invalid environment name"
             );
             (
-                std::env::var(&name).map_err(|_| anyhow::anyhow!("environment key unavailable"))?,
+                environment::resolve(&name)
+                    .map_err(|_| anyhow::anyhow!("environment key unavailable"))?,
                 Some(name),
             )
         }
@@ -872,7 +872,7 @@ fn describe(a: &Account) -> AccountDescriptor {
         match &a.credential {
             Credential::None => CredentialAvailability::Missing,
             Credential::Stored(_) => CredentialAvailability::Available,
-            Credential::Environment { name, digest } => match std::env::var(name) {
+            Credential::Environment { name, digest } => match environment::resolve(name) {
                 Err(_) => CredentialAvailability::EnvironmentUnavailable,
                 Ok(value) if fingerprint(&value) != *digest => {
                     CredentialAvailability::EnvironmentChanged
