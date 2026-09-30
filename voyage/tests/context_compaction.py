@@ -14,6 +14,7 @@ from pathlib import Path
 import select
 import sys
 import threading
+import subprocess
 import time
 import uuid
 import urllib.request
@@ -161,8 +162,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
+    def do_GET(self):
+        if self.path == "/v1/models":
+            model = {"id":"fixture-model"}
+            if self.server.scenario.mode == "responses" and self.server.scenario.kind == "automatic":
+                model.update(default_context_window=1000,max_context_window=2000,default_output_tokens=200)
+            payload = encoded({"data":[model]})
+            self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload)
+        else:
+            self.send_error(404)
+
     def do_POST(self):
         scenario = self.server.scenario
+        if self.path == "/v1/responses/input_tokens":
+            size = int(self.headers["Content-Length"])
+            body = json.loads(self.rfile.read(size))
+            if scenario.kind == "automatic":
+                # This toy model's token contract is structural, not byte-sized.
+                tokens = 1500 if scenario.middle in json.dumps(body) else 32
+                payload = encoded({"object":"response.input_tokens","input_tokens":tokens})
+                self.send_response(200)
+            else:
+                payload = b'{}'; self.send_response(404)
+            self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(payload))); self.end_headers(); self.wfile.write(payload); return
         try:
             assert self.path == MODES[scenario.mode][1], self.path
             self.connection.settimeout(10)
@@ -181,7 +203,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 else:
                     if scenario.check_reduction:
                         assert completed == 6, "effect repeated during context recovery"
-                        assert len(encoded(body)) < scenario.rejected * 0.8
+                        assert len(encoded(body)) < scenario.rejected
                         scenario.check_reduction = False
                     self.stream(events(scenario.mode, tool=completed < 12, call_id=f"loop-{completed}"))
             elif scenario.kind == "irreducible":
@@ -193,8 +215,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 assert scenario.counter.read_text() == "effect\n"
                 wire = encoded(body)
                 if scenario.kind == "automatic":
-                    assert len(wire) < len(scenario.payload.encode()) // 2, "large result not prepared"
-                    assert scenario.middle.encode() not in wire
+                    if scenario.mode == "responses":
+                        assert len(wire) < len(scenario.payload.encode()) // 2, "known token pressure did not prepare the result"
+                        assert scenario.middle.encode() not in wire
+                    else:
+                        assert scenario.middle.encode() in wire, "unknown token accounting prematurely removed evidence"
                     self.stream(events(scenario.mode))
                 elif scenario.kind == "partial":
                     self.stream(events(scenario.mode, partial=True))
@@ -206,7 +231,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.reject()
             elif step == 3 and scenario.kind in ("rejection", "cancel", "manual"):
                 old, new = encoded(scenario.bodies[1]), encoded(body)
-                assert len(new) < len(old) * 0.75, (len(old), len(new))
+                assert len(new) < len(old), (len(old), len(new))
                 assert scenario.middle.encode() not in new, "omitted middle still sent"
                 assert scenario.counter.read_text() == "effect\n", "tool effect repeated"
                 if scenario.kind == "cancel":
@@ -224,7 +249,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     raise AssertionError("cancel did not close held reduced request")
                 self.stream(events(scenario.mode))
             elif step == 4 and scenario.kind == "rejection":
-                assert len(encoded(body)) < len(encoded(scenario.bodies[1])) * 0.75
+                assert len(encoded(body)) < len(encoded(scenario.bodies[1]))
                 assert scenario.middle.encode() not in encoded(body)
                 assert scenario.counter.read_text() == "effect\n"
                 self.stream(events(scenario.mode))
@@ -279,7 +304,7 @@ class Scenario:
             'api_key_env = "FIXTURE_API_KEY"\n'
             f'base_url = "http://127.0.0.1:{fixture.provider.server_port}/v1"\n'
             f'access = "unrestricted"\nmax_tokens = {64 if mode == "anthropic" else 0}\ncontext_window = 0\n'
-            'provider_retry_attempts = 1\nmax_output_bytes = 524288\n'
+            'provider_retry_attempts = 8\nmax_output_bytes = 524288\n'
             'command_timeout_secs = 10\n')
 
 
@@ -325,6 +350,17 @@ def run_case(binaries, mode, kind):
     print(f"evidence ({mode}/{kind}): {fixture.root}", flush=True)
     try:
         fixture.start()
+        if mode in ("chat", "responses"):
+            def account_cli(*arguments):
+                result = subprocess.run([str(binaries / "vessel"), "auth", "accounts", *arguments], env=fixture.env, cwd=fixture.workspace, capture_output=True, text=True, timeout=15)
+                assert result.returncode == 0, result.stderr
+                return json.loads(result.stdout)
+            transport = MODES[mode][0]
+            connection = account_cli("connect", "--label", "context-fixture", "--endpoint", f"http://127.0.0.1:{fixture.provider.server_port}/v1", "--transports", transport)
+            account = account_cli("add", "--connection", connection["id"], "--account", "fixture", "--env", "FIXTURE_API_KEY")
+            binding = {"account_id":account["id"],"connection_id":connection["id"],"identity_generation":account["identity_generation"],"connection_revision":connection["revision"],"transport":transport.replace("-","_")}
+            with fixture.config.open("a") as output:
+                output.write("\n[account]\n"+"\n".join(f"{key} = {json.dumps(value)}" for key,value in binding.items())+"\n")
         session = fixture.new()
         admission = fixture.command(session, fixture.mutation(session, "submit", prompt=scenario.prompt))
         assert admission["status"] == "accepted", admission

@@ -21,7 +21,7 @@ fn scope(request: &ModelRequest, transport: &str, endpoint: Option<&str>) -> Con
         account: None,
     }
 }
-pub(super) fn unknown(
+pub(crate) fn unknown(
     request: &ModelRequest,
     transport: &str,
     endpoint: Option<&str>,

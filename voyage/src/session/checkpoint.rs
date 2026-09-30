@@ -119,6 +119,22 @@ impl RunCheckpoint for SessionCheckpoint {
         Ok(session.working_context.clone())
     }
 
+    async fn context_observation(
+        &self,
+        observation: &voyage_protocol::context_accounting::ContextObservation,
+    ) -> Result<(), CheckpointError> {
+        if observation.execution_id != self.run_id() {
+            return Err(CheckpointError);
+        }
+        let mut session = self.session.lock().await;
+        self.validate(&session)?;
+        let mut next = session.clone();
+        next.context_observation = Some(observation.clone());
+        self.persist(&mut next).await?;
+        *session = next;
+        Ok(())
+    }
+
     async fn save_working_context(
         &self,
         context: &crate::context::WorkingContext,

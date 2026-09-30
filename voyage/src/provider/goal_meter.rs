@@ -339,6 +339,24 @@ impl Provider for MeteredProvider {
         .map_err(|_| refused())?
     }
 
+    fn context_output_reserve(&self, request: &ModelRequest) -> Option<u64> {
+        let totals = self.meter.totals.lock().ok()?;
+        let used = totals
+            .input
+            .checked_add(totals.output)?
+            .checked_add(totals.reserved)?;
+        let remaining = self
+            .meter
+            .token_allowance
+            .checked_sub(used)?
+            .min(u64::from(u32::MAX));
+        let requested = self
+            .inner
+            .context_output_reserve(request)
+            .unwrap_or(remaining);
+        let limit = requested.min(remaining);
+        (limit > 0).then_some(limit)
+    }
     fn context_window(&self, model: &str) -> Option<usize> {
         self.inner.context_window(model)
     }

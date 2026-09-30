@@ -59,6 +59,9 @@ pub struct Session {
     /// Provider working projection; canonical conversation remains complete.
     #[serde(default)]
     pub working_context: crate::context::WorkingContext,
+    /// Content-free last prepared-request accounting, never current billing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_observation: Option<voyage_protocol::context_accounting::ContextObservation>,
     pub usage: Usage,
     #[serde(default)]
     pub terminals: Vec<crate::terminal::TerminalSummary>,
@@ -196,6 +199,7 @@ impl Session {
             draft: String::new(),
             messages: Vec::new(),
             working_context: crate::context::WorkingContext::default(),
+            context_observation: None,
             usage: Usage::default(),
             terminals: Vec::new(),
         }
@@ -287,6 +291,7 @@ impl Session {
     pub fn clear_conversation(&mut self) {
         self.messages.clear();
         self.working_context = crate::context::WorkingContext::default();
+        self.context_observation = None;
         self.run_summaries.clear();
         let automatic = self.title_state_mut().automatic
             && self
@@ -637,6 +642,7 @@ impl SessionStore {
         for message in &mut branch.messages {
             message.provider_state = None;
         }
+        branch.context_observation = None;
         branch.working_context.validate(&branch.messages)?;
         branch.title_state = None;
         branch.name = name

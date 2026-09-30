@@ -137,6 +137,12 @@ pub struct Config {
     pub system_prompt: String,
     pub max_tokens: u32,
     pub context_window: usize,
+    /// Additional context headroom in actual tokens, never bytes.
+    #[serde(default)]
+    pub context_safety_margin_tokens: u64,
+    /// Optional headroom when the provider output default is unknown (zero = unknown).
+    #[serde(default)]
+    pub context_output_reserve_tokens: u64,
     pub temperature: Option<f32>,
     /// Omit for the provider default; explicit values are transport-validated.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,7 +284,17 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
     },
     ConfigOverrideSpec {
         key: "context_window",
-        description: "Optional context limit (0 disables local token gating)",
+        description: "Optional provider-counted local cap (0 disables; unknown counts permit dispatch)",
+        kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "context_safety_margin_tokens",
+        description: "Additional trustworthy-token context headroom",
+        kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "context_output_reserve_tokens",
+        description: "Response headroom when its provider default is unknown (0 leaves unknown)",
         kind: ConfigValueKind::NonNegativeInteger,
     },
     ConfigOverrideSpec {
@@ -476,6 +492,8 @@ impl Default for Config {
             system_prompt: include_str!("../prompts/system.md").trim().into(),
             max_tokens: 0,
             context_window: 0,
+            context_safety_margin_tokens: 0,
+            context_output_reserve_tokens: 0,
             temperature: None,
             reasoning_effort: None,
             service_tier: None,

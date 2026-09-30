@@ -1175,3 +1175,12 @@ error counts. Fresh references expire after document/control/DOM/property change
 or sixty seconds; private input remains fenced. See [host-browser](host-browser.md#agent-inspection-and-interaction-379)
 for limits and [quality](quality.md) for offline verification commands. Arbitrary
 site fidelity and native macOS/Windows operation remain separate qualification.
+
+
+The #381 branch replaces byte-triggered preparation/admission with request-token
+policy. Native OpenAI Responses counts the encoded input; unsupported transports,
+including ChatGPT OAuth counting, remain unknown. Known pressure can persist a
+reduced working projection before dispatch, while zero adds no operator veto.
+Content-free last-request accounting is saved under the executing owner. Model
+status/compaction tools and both clients' accounting display remain unfinished
+#381 work; this paragraph does not claim the complete feature is delivered.

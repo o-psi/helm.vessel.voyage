@@ -637,3 +637,24 @@ stale-reference refusal, exact receipts and private diagnostics exclusion. Run
 `python3 voyage/tests/host_browser.py --agent-interactions --binaries /absolute/path/to/built/bin --web-resources /absolute/path/to/webhelm/resources/js --ws /absolute/path/to/ws`
 for the scripted agent loop followed by both existing Helm viewer journeys and
 observed cleanup. This adds no paid provider calls or hosted quality jobs.
+
+## Request context accounting (#381)
+
+`cargo test -p voyage --locked context -j 8` covers trustworthy/unknown admission,
+capacity versus catalogue maxima, token-count provenance, preparation before a
+predictable rejection, exact effect preservation, ownership/generation fencing,
+and steering received during counting. The focused supervised process check runs
+without live providers:
+
+```sh
+cargo build -p vessel -p voyage --locked -j 8
+python3 -B voyage/tests/context_compaction.py --bin-dir target/debug --mode chat
+python3 -B voyage/tests/context_compaction.py --bin-dir target/debug --mode responses
+```
+
+Each mode has seven bounded scenarios and observes fixture-owned cleanup. The
+Responses automatic case uses declared counts from its toy counting endpoint;
+the Chat automatic case proves unknown accounting keeps large evidence. Report
+those synthetic counts separately from real provider measurements and payload
+bytes. Counter traffic is separate from inference requests. These checks do not
+establish live-provider task quality or native macOS/Windows behavior.

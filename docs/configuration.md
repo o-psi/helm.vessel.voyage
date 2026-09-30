@@ -411,7 +411,7 @@ already dispatched effects. Linux ceiling enforcement is not claimed for other O
 `command_timeout_secs`, `max_output_bytes`, terminal count/unread limits and
 subagent concurrency bound different resources. `max_tokens = 0` and
 `context_window = 0` add no operator token cap; provider-specific requirements still
-apply. [Working-context compaction](#working-context-compaction) prepares large results
+apply. [Working-context compaction](#working-context-compaction) prepares results under known pressure
 and recovers from recognized provider context rejection without enabling a local
 token gate or repeating completed tools. `provider_retry_attempts` (default 8 total),
 `provider_retry_initial_ms` (1000), `provider_retry_max_ms` (30000) and
@@ -606,12 +606,29 @@ through Vessel. Neither Helm nor Vessel runs a summarizing agent.
 
 ### Automatic preparation and recovery
 
-Before a provider request, Voyage applies saved working-context reductions. At
-192 KiB of serialized projected messages it attempts extractive preparation of
-large assistant text and tool results. This is a preparation threshold, **not a
-token allowance or admission veto**. If preparation cannot shrink anything, the
-initial request still reaches the provider unless an operator explicitly enabled
-a local context limit. The threshold is not a model-capacity claim.
+Before a provider request, Voyage applies saved working-context reductions and
+counts the final input after redaction, setting resolution and replay projection.
+Native OpenAI Responses uses its input-token counting API; ChatGPT OAuth and
+unsupported endpoints retain unknown accounting. Counts include the encoder's
+instructions, schemas and supported modality/replay inputs. They are per-request
+observations, not cumulative billing, and cached input is not subtracted.
+
+The former 192 KiB trigger and one-token-per-UTF-8-byte admission estimate are
+removed. Unknown counts preserve useful context and allow dispatch, including
+when a positive `context_window` is configured. This changes the old opt-in byte
+estimator's behavior explicitly: a local veto now requires trustworthy counts.
+`context_window = 0` continues to disable operator local admission. A known model
+capacity can advise preparation without enabling an operator veto.
+
+Known pressure triggers bounded extractive preparation, with a persisted projection
+before the next provider request. Explicit output limits (including runtime budget
+clamps), observed provider defaults or `context_output_reserve_tokens` provide
+headroom. Zero or missing output reserve remains unknown. Additional absolute
+headroom is configurable with `context_safety_margin_tokens` (default zero); no
+universal occupancy percentage or byte-to-token ratio is used. A catalogue maximum
+alone does not establish enabled capacity. Stale or mismatched metadata is unknown.
+The last prepared-request observation is saved separately from canonical history.
+Neither it nor its derived headroom describes future tool results.
 
 A recognized provider input-context rejection causes the same active run to build
 a smaller request. Native OpenAI Chat/Responses, ChatGPT OAuth Responses and

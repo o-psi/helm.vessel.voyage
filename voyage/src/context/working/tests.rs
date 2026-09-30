@@ -23,11 +23,11 @@ fn history(bytes: usize) -> Vec<Message> {
 }
 
 #[test]
-fn automatic_large_result_preserves_canonical_and_identity() {
+fn known_pressure_large_result_preserves_canonical_and_identity() {
     let canonical = history(300_000);
     let original = serde_json::to_vec(&canonical).unwrap();
     let mut context = WorkingContext::default();
-    assert_eq!(context.prepare(&canonical).unwrap(), 1);
+    assert_eq!(context.prepare_for_pressure(&canonical, 0).unwrap(), 1);
     let projected = context.project(&canonical).unwrap();
     assert!(size(&projected) < size(&canonical) / 10);
     assert_eq!(projected[0].content, canonical[0].content);
@@ -144,4 +144,16 @@ fn explicit_middle_decisions_are_retained_and_oversized_constraints_are_not_summ
     assert!(excerpt(&text, 256).contains("Decision: retain migration compatibility."));
     let text = format!("Constraint: {}", "mandatory ".repeat(1000));
     assert_eq!(excerpt(&text, 256), text);
+}
+
+#[test]
+fn unknown_pressure_preserves_large_early_evidence_and_obligations() {
+    let canonical = history(300_000);
+    let mut context = WorkingContext::default();
+    assert_eq!(context.prepare(&canonical).unwrap(), 0);
+    assert_eq!(context.generation, 0);
+    assert_eq!(
+        serde_json::to_value(context.project(&canonical).unwrap()).unwrap(),
+        serde_json::to_value(&canonical).unwrap()
+    );
 }

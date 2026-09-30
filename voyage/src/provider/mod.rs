@@ -498,6 +498,10 @@ pub trait Provider: Send + Sync {
             "counting_unavailable",
         ))
     }
+    /// Upper bound on this request's output, including runtime budget clamps.
+    fn context_output_reserve(&self, request: &ModelRequest) -> Option<u64> {
+        request.max_tokens.filter(|n| *n > 0).map(u64::from)
+    }
     /// Whether new canonical user input is honored at every request boundary.
     fn supports_steering(&self) -> bool {
         true

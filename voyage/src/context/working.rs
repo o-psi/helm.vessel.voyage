@@ -4,8 +4,6 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Preparation threshold in serialized bytes, not a token allowance or admission gate.
-const PREPARE_BYTES: usize = 192 * 1024;
 const EXCERPT_LIMITS: [usize; 3] = [4096, 1024, 256];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -24,6 +22,7 @@ pub enum CompactionReason {
     Manual,
     Preparation,
     ProviderRejection,
+    CapacityPressure,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,18 +195,30 @@ impl WorkingContext {
         Ok(changed)
     }
 
-    /// Proactive preparation is advisory: inability to shrink never vetoes initial dispatch.
+    /// Unknown token pressure preserves the existing working projection. Byte
+    /// length is not a preparation trigger; canonical integrity is still checked.
     pub fn prepare(&mut self, canonical: &[Message]) -> Result<usize> {
-        let saved = self.reduce_saved_results(canonical)?;
-        if size(&self.project(canonical)?) <= PREPARE_BYTES {
-            return Ok(saved);
-        }
-        let count = canonical.iter().filter(|m| m.role != Role::System).count();
-        let changed = self.reduce(canonical, count, EXCERPT_LIMITS[0], false)?;
+        self.validate(canonical)?;
+        Ok(0)
+    }
+
+    /// Called only after trustworthy request accounting establishes pressure.
+    /// Excerpt sizes bound the reduction payload; they never count tokens.
+    pub fn prepare_for_pressure(&mut self, canonical: &[Message], attempt: usize) -> Result<usize> {
+        let saved = if attempt == 0 {
+            self.reduce_saved_results(canonical)?
+        } else {
+            0
+        };
+        let changed = if saved > 0 {
+            saved
+        } else {
+            self.recover(canonical, attempt)?
+        };
         if changed > 0 {
-            self.reason = Some(CompactionReason::Preparation);
+            self.reason = Some(CompactionReason::CapacityPressure);
         }
-        Ok(changed + saved)
+        Ok(changed)
     }
 
     /// At most four distinct reductions follow an actual provider rejection. Each caller

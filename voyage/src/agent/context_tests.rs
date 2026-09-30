@@ -60,12 +60,25 @@ struct Checkpoint {
     canonical: Mutex<Vec<Message>>,
     working: Mutex<crate::context::WorkingContext>,
     fail_compaction: bool,
+    observations: Mutex<Vec<voyage_protocol::context_accounting::ContextObservation>>,
     cancel_after_compaction: Option<CancellationToken>,
 }
 #[async_trait]
 impl RunCheckpoint for Checkpoint {
     fn run_id(&self) -> uuid::Uuid {
         self.id
+    }
+    async fn context_observation(
+        &self,
+        observation: &voyage_protocol::context_accounting::ContextObservation,
+    ) -> Result<(), CheckpointError> {
+        assert_eq!(observation.execution_id, self.id);
+        assert_eq!(
+            observation.projection_generation,
+            self.working.lock().unwrap().generation
+        );
+        self.observations.lock().unwrap().push(observation.clone());
+        Ok(())
     }
     async fn canonical(&self, messages: &[Message], _: &Usage) -> Result<(), CheckpointError> {
         *self.canonical.lock().unwrap() = messages.to_vec();
@@ -146,6 +159,7 @@ fn fixture(
         canonical: Mutex::new(vec![]),
         working: Mutex::new(Default::default()),
         fail_compaction: false,
+        observations: Mutex::new(vec![]),
         cancel_after_compaction: None,
     };
     (agent, requests, effects, checkpoint)
@@ -170,7 +184,10 @@ async fn actual_rejection_reduces_followup_without_executing_tool_twice() {
     assert_eq!(effects.load(Ordering::SeqCst), 1);
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 3);
-    assert!(crate::context::estimate(&requests[2]) + 128 < crate::context::estimate(&requests[1]));
+    assert!(
+        crate::context::payload_bytes(&requests[2]) + 128
+            < crate::context::payload_bytes(&requests[1])
+    );
     let result = outcome
         .messages
         .iter()
@@ -342,15 +359,156 @@ async fn repeated_provider_rejection_is_bounded_and_each_dispatch_shrinks() {
     let requests = requests.lock().unwrap();
     assert!(requests.len() > 1 && requests.len() <= 5);
     for pair in requests.windows(2) {
-        assert!(crate::context::estimate(&pair[1]) + 128 < crate::context::estimate(&pair[0]));
+        assert!(
+            crate::context::payload_bytes(&pair[1]) + 128 < crate::context::payload_bytes(&pair[0])
+        );
     }
     assert!(checkpoint.canonical.lock().unwrap()[1].content.len() > 60_000);
 }
 
 #[tokio::test]
-async fn explicit_context_limit_still_refuses_dispatch_and_retains_input() {
+async fn explicit_context_limit_without_counting_never_uses_bytes_or_drops_constraints() {
     let root = tempfile::tempdir().unwrap();
     let (agent, requests, effects, checkpoint) = fixture(root.path(), false);
+    let outcome = agent
+        .with_context_window(1)
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.messages[0].content, "Keep my exact task");
+    assert_eq!(outcome.answer, "Finished without replay.");
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+}
+
+struct CountedProvider {
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+    rejections: Arc<AtomicUsize>,
+}
+fn full_fixture_result(request: &ModelRequest) -> bool {
+    request
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool && m.content.starts_with("BEGIN "))
+}
+#[async_trait]
+impl Provider for CountedProvider {
+    fn context_window(&self, _: &str) -> Option<usize> {
+        Some(100)
+    }
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        use sha2::{Digest, Sha256};
+        use voyage_protocol::context_accounting::*;
+        // A synthetic model's fixture contract, also enforced by complete().
+        // These API-like counts are deliberately independent of UTF-8 size.
+        let tokens = if full_fixture_result(request) {
+            128
+        } else {
+            32
+        };
+        Ok(RequestTokenCount {
+            scope: ContextScope {
+                model: request.model.clone(),
+                transport: "fixture".into(),
+                endpoint_fingerprint: None,
+                account: None,
+            },
+            observed_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            input_tokens: Some(tokens),
+            precision: CountPrecision::ProviderExact,
+            method: "fixture_token_counter".into(),
+            complete: true,
+            input_fingerprint: Some(format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(request).unwrap())
+            )),
+            limitations: vec![],
+        })
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        assert!(
+            request
+                .messages
+                .iter()
+                .any(|m| m.role == Role::User && m.content == "Keep my exact task")
+        );
+        let full = full_fixture_result(&request);
+        let has_result = request.messages.iter().any(|m| m.role == Role::Tool);
+        self.requests.lock().unwrap().push(request);
+        if full {
+            self.rejections.fetch_add(1, Ordering::SeqCst);
+            return Err(ProviderError::ContextLength);
+        }
+        let mut message = Message::new(Role::Assistant, "Finished with the exact constraint.");
+        if !has_result {
+            message.content.clear();
+            message.tool_calls.push(ToolCall {
+                id: "durable-effect-64".into(),
+                name: "fixture_effect".into(),
+                arguments: serde_json::json!({}),
+            });
+        }
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn trustworthy_pressure_prepares_before_predictable_rejection_without_effect_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, effects, checkpoint) = fixture(root.path(), false);
+    let rejections = Arc::new(AtomicUsize::new(0));
+    agent.provider = Box::new(CountedProvider {
+        requests: requests.clone(),
+        rejections: rejections.clone(),
+    });
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(rejections.load(Ordering::SeqCst), 0);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.messages[0].content, "Keep my exact task");
+    let result = outcome
+        .messages
+        .iter()
+        .find(|m| m.role == Role::Tool)
+        .unwrap();
+    assert_eq!(result.tool_call_id.as_deref(), Some("durable-effect-64"));
+    assert!(result.content.starts_with("BEGIN ") && result.content.ends_with(" END"));
+    assert!(checkpoint.working.lock().unwrap().generation > 0);
+}
+#[tokio::test]
+async fn trustworthy_explicit_limit_refuses_irreducible_input_with_canonical_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, effects, checkpoint) = fixture(root.path(), false);
+    agent.provider = Box::new(CountedProvider {
+        requests: requests.clone(),
+        rejections: Arc::new(AtomicUsize::new(0)),
+    });
     let error = agent
         .with_context_window(1)
         .run_checkpointed(
@@ -370,4 +528,88 @@ async fn explicit_context_limit_still_refuses_dispatch_and_retains_input() {
     );
     assert!(requests.lock().unwrap().is_empty());
     assert_eq!(effects.load(Ordering::SeqCst), 0);
+}
+
+struct SteeringDuringCount {
+    sender: SteeringSender,
+    counts: Arc<AtomicUsize>,
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+#[async_trait]
+impl Provider for SteeringDuringCount {
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        if self.counts.fetch_add(1, Ordering::SeqCst) == 0 {
+            assert!(
+                !request
+                    .messages
+                    .iter()
+                    .any(|m| m.content == "Keep the unresolved obligation")
+            );
+            self.sender
+                .try_send("Keep the unresolved obligation".into())
+                .unwrap();
+            tokio::task::yield_now().await;
+        } else {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.content == "Keep the unresolved obligation")
+            );
+        }
+        Ok(crate::provider::context_accounting::unknown(
+            request,
+            "fixture",
+            None,
+            "fixture_unknown",
+        ))
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        assert!(
+            request
+                .messages
+                .iter()
+                .any(|m| m.content == "Keep the unresolved obligation")
+        );
+        self.requests.lock().unwrap().push(request);
+        Ok(ModelResponse {
+            message: Message::new(Role::Assistant, "Guidance applied before dispatch"),
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn steering_during_count_invalidates_the_prepared_request_before_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, _, checkpoint) = fixture(root.path(), false);
+    let (sender, receiver) = steering_channel(2);
+    let counts = Arc::new(AtomicUsize::new(0));
+    agent.provider = Box::new(SteeringDuringCount {
+        sender,
+        counts: counts.clone(),
+        requests: requests.clone(),
+    });
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            Some(receiver),
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(counts.load(Ordering::SeqCst), 2);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(outcome.messages.iter().any(|m| {
+        m.steering
+            .as_ref()
+            .is_some_and(|s| matches!(s.status, crate::model::SteeringStatus::Applied))
+    }));
+    assert_eq!(checkpoint.observations.lock().unwrap().len(), 1);
 }

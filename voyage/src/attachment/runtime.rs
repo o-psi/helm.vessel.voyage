@@ -735,6 +735,24 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         })
         .await
     }
+    async fn context_observation(
+        &self,
+        observation: &voyage_protocol::context_accounting::ContextObservation,
+    ) -> Result<(), CheckpointError> {
+        let observation = observation.clone();
+        let token = self.token.clone();
+        self.storage_named(Operation::WorkingContext, move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
+            steering::authorize(store, &token)?;
+            store
+                .journal
+                .save_context_observation(&store.guard, store.run_id, &observation)
+        })
+        .await
+    }
+
     async fn save_working_context(
         &self,
         context: &crate::context::WorkingContext,
@@ -908,6 +926,12 @@ impl RunCheckpoint for RunOwner {
     }
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         self.checkpoint().working_context().await
+    }
+    async fn context_observation(
+        &self,
+        observation: &voyage_protocol::context_accounting::ContextObservation,
+    ) -> Result<(), CheckpointError> {
+        self.checkpoint().context_observation(observation).await
     }
     async fn save_working_context(
         &self,

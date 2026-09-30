@@ -166,7 +166,7 @@ pub enum AgentEvent {
         delay: Duration,
         error: String,
     },
-    ContextBudget(crate::context::ContextReport),
+    ContextBudget(Box<voyage_protocol::context_accounting::ContextObservation>),
     CompletionState {
         phase: CompletionPhase,
         readiness: Option<crate::completion::Readiness>,
@@ -197,6 +197,15 @@ pub trait RunCheckpoint: Send + Sync {
     ) -> Result<(), CheckpointError> {
         Ok(())
     }
+    /// Managed sessions commit content-free request accounting separately from
+    /// compaction, so accounting alone cannot fabricate a projection change.
+    async fn context_observation(
+        &self,
+        _observation: &voyage_protocol::context_accounting::ContextObservation,
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+
     /// Durable request-only reductions; canonical history remains independently readable.
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         Ok(Default::default())
@@ -411,6 +420,7 @@ pub struct Agent {
     system_prompt: String,
     max_tokens: u32,
     context_window: usize,
+    context_policy: crate::context::ContextPolicy,
     completion_coordinator: Option<crate::completion::runtime::Coordinator>,
     completion_gate: Option<gate::GateResources>,
     temperature: Option<f32>,
@@ -617,6 +627,7 @@ impl Agent {
             system_prompt,
             max_tokens,
             context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
+            context_policy: Default::default(),
             completion_coordinator: None,
             completion_gate: None,
             temperature,
@@ -744,6 +755,11 @@ impl Agent {
         .await
     }
 
+    pub fn with_context_policy(mut self, policy: crate::context::ContextPolicy) -> Self {
+        self.context_policy = policy;
+        self
+    }
+
     pub fn with_context_window(mut self, limit: usize) -> Self {
         self.context_window = limit;
         self
@@ -861,7 +877,22 @@ impl Agent {
             request.max_tokens = (self.max_tokens > 0).then_some(self.max_tokens);
             let limit = self.context_limit(&request.model);
             if limit > 0 {
-                crate::context::preflight(&mut request, limit).ok()?;
+                let count = tokio::time::timeout(
+                    self.context.timeout,
+                    self.provider.input_tokens(&request),
+                )
+                .await
+                .ok()?
+                .ok()?;
+                let observation = self.context_policy.observe(
+                    self.context.execution_id,
+                    0,
+                    count,
+                    None,
+                    limit,
+                    request.max_tokens.map(u64::from),
+                );
+                crate::context::check_operator_limit(&observation).ok()?;
             }
             self.check_current_policy().ok()?;
             if cancel.is_cancelled() {
@@ -1173,6 +1204,7 @@ impl Agent {
             }
             let mut provider_recovery = provider_attempts::RecoveryState::new(&self.retry);
             let mut recovery_attempt = 0;
+            let mut pressure_attempt = 0;
             let response = loop {
                 let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
                 completion_continuation.project(&mut messages);
@@ -1188,7 +1220,45 @@ impl Agent {
                     temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
-                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
+                let request = self.prepare_provider_request(request, &cancel).await?;
+                let mut observation = self.observe_request_context(&request, context.execution_id, working_context.generation, &cancel).await?;
+                // Counting/discovery may await I/O. Guidance queued during that
+                // wait is applied before dispatch, invalidating the old count.
+                if let Some(receiver) = &mut input {
+                    let pending = receiver.drain();
+                    if !pending.is_empty() {
+                        if !self.supports_steering() { return Err(ProviderError::Request("active steering is unavailable with this compatibility provider".into()).into()); }
+                        for mut message in pending {
+                            if let Some(receipt) = &mut message.steering {receipt.status = crate::model::SteeringStatus::Applied;}
+                            history.push(message);
+                        }
+                        gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+                        self.sink.emit(AgentEvent::SteeringApplied {history:history.clone()}).await;
+                        provider_recovery.previous_request_size = None;
+                        pressure_attempt = 0;
+                        continue;
+                    }
+                }
+                if observation.pressure == voyage_protocol::context_accounting::ContextPressure::PreparationNeeded {
+                    let mut changed = 0;
+                    while pressure_attempt < 4 && changed == 0 {
+                        changed = working_context.prepare_for_pressure(&history, pressure_attempt).map_err(|_| CheckpointError)?;
+                        pressure_attempt += 1;
+                    }
+                    if changed > 0 {
+                        if let Some(checkpoint) = checkpoint {
+                            gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?.map_err(|_| CheckpointError)??;
+                        }
+                        continue;
+                    }
+                    observation.pressure = voyage_protocol::context_accounting::ContextPressure::Irreducible;
+                }
+                if let Some(checkpoint) = checkpoint {
+                    gate::guarded(tokio::time::timeout(context.timeout, checkpoint.context_observation(&observation)), &cancel).await?.map_err(|_| CheckpointError)??;
+                }
+                self.sink.emit(AgentEvent::ContextBudget(Box::new(observation.clone()))).await;
+                crate::context::check_operator_limit(&observation).map_err(|error| AgentError::from(error).with_recovery(&history, &usage))?;
+                let result = self.stream_prepared_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
                 match result {
                     Ok(provider_attempts::RequestOutcome::Completed(response)) => break *response,
                     Ok(provider_attempts::RequestOutcome::Interrupted(attempt_id)) => {
@@ -1494,6 +1564,66 @@ impl Agent {
             .map_or(self.context_window, |limit| limit.min(self.context_window))
     }
 
+    async fn observe_request_context(
+        &self,
+        request: &ModelRequest,
+        execution_id: uuid::Uuid,
+        generation: u64,
+        cancel: &CancellationToken,
+    ) -> Result<voyage_protocol::context_accounting::ContextObservation, AgentError> {
+        self.check_current_policy()?;
+        let count = tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            result = tokio::time::timeout(self.context.timeout, self.provider.input_tokens(request)) => {
+                match result {
+                    Ok(Ok(count)) if count.scope.model == request.model => count,
+                    _ => crate::provider::context_accounting::unknown(request, "unknown", None, "counting_unavailable_or_incomplete"),
+                }
+            }
+        };
+        self.check_current_policy()?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
+        let cache = self.model_cache.lock().await;
+        let capacity = cache
+            .as_ref()
+            .and_then(|(_, models)| models.iter().find(|m| m.id == request.model))
+            .and_then(|model| model.context_capacity.clone())
+            .filter(|capacity| {
+                (count.reliable_input_tokens().is_none() || capacity.scope == count.scope)
+                    && capacity.observed_at_ms <= now
+                    && now - capacity.observed_at_ms <= 300_000
+            })
+            .or_else(|| {
+                self.provider
+                    .context_window(&request.model)
+                    .filter(|n| *n > 0)
+                    .map(
+                        |limit| voyage_protocol::context_accounting::ModelContextCapacity {
+                            scope: count.scope.clone(),
+                            observed_at_ms: now,
+                            source: "provider_adapter_effective_limit".into(),
+                            default_window_tokens: Some(limit as u64),
+                            maximum_selectable_window_tokens: None,
+                            enabled_window_tokens: Some(limit as u64),
+                            default_output_tokens: None,
+                            maximum_output_tokens: None,
+                        },
+                    )
+            });
+        Ok(self.context_policy.observe(
+            execution_id,
+            generation,
+            count,
+            capacity,
+            self.context_window,
+            self.provider.context_output_reserve(request),
+        ))
+    }
+
     async fn project_provider_text(
         &self,
         text: String,
@@ -1513,14 +1643,11 @@ impl Agent {
         Ok(())
     }
 
-    async fn stream_with_retry(
+    async fn prepare_provider_request(
         &self,
         mut request: ModelRequest,
         cancel: &CancellationToken,
-        checkpoint: Option<&dyn RunCheckpoint>,
-        partial_output: &mut String,
-        recovery: &mut provider_attempts::RecoveryState,
-    ) -> Result<provider_attempts::RequestOutcome, AgentError> {
+    ) -> Result<ModelRequest, AgentError> {
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
@@ -1582,20 +1709,20 @@ impl Agent {
             }
         }
         tool_replay::project_interrupted_calls(&mut request.messages);
-        let limit = self.context_limit(&request.model);
-        if limit > 0 {
-            let report = crate::context::preflight(&mut request, limit)?;
-            tracing::info!(
-                estimated_tokens = report.estimated,
-                context_window = report.limit,
-                omitted_messages = report.omitted_messages,
-                "explicit request context preflight"
-            );
-            self.sink.emit(AgentEvent::ContextBudget(report)).await;
-        }
-        // Compare the actual post-redaction, tool-replay and explicit-limit projection.
-        // A raw-history decrease is insufficient if preflight had already omitted it.
-        let request_size = crate::context::estimate(&request);
+        Ok(request)
+    }
+
+    async fn stream_prepared_with_retry(
+        &self,
+        request: ModelRequest,
+        cancel: &CancellationToken,
+        checkpoint: Option<&dyn RunCheckpoint>,
+        partial_output: &mut String,
+        recovery: &mut provider_attempts::RecoveryState,
+    ) -> Result<provider_attempts::RequestOutcome, AgentError> {
+        // Compare the final runtime request projection for bounded rejection recovery.
+        // These bytes are resource/progress evidence, never context token occupancy.
+        let request_size = crate::context::payload_bytes(&request);
         if recovery
             .previous_request_size
             .is_some_and(|previous| request_size.saturating_add(128) >= previous)

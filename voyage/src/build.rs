@@ -165,6 +165,11 @@ pub async fn build_authorized_agent_bundle(
         .with_completion_coordinator(subagents.coordinator)
         .with_completion_gate(gate_todos, gate_agents, gate_runtime)
         .with_context_window(config.context_window)
+        .with_context_policy(crate::context::ContextPolicy {
+            safety_margin: config.context_safety_margin_tokens,
+            output_reserve: (config.context_output_reserve_tokens > 0)
+                .then_some(config.context_output_reserve_tokens),
+        })
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,

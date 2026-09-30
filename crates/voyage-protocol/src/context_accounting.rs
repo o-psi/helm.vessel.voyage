@@ -38,7 +38,13 @@ pub struct RequestTokenCount {
 
 impl RequestTokenCount {
     pub fn reliable_input_tokens(&self) -> Option<u64> {
-        if self.complete && self.precision == CountPrecision::ProviderExact {
+        if self.complete
+            && self.precision == CountPrecision::ProviderExact
+            && self
+                .input_fingerprint
+                .as_ref()
+                .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
             self.input_tokens
         } else {
             None
@@ -58,4 +64,29 @@ pub struct ModelContextCapacity {
     pub enabled_window_tokens: Option<u64>,
     pub default_output_tokens: Option<u64>,
     pub maximum_output_tokens: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextPressure {
+    Unknown,
+    WithinBudget,
+    PreparationNeeded,
+    Irreducible,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContextObservation {
+    pub execution_id: uuid::Uuid,
+    pub projection_generation: u64,
+    pub count: RequestTokenCount,
+    pub capacity: Option<ModelContextCapacity>,
+    pub operator_limit: Option<u64>,
+    pub output_reserve: Option<u64>,
+    pub reserve_source: String,
+    pub safety_margin: u64,
+    pub pressure: ContextPressure,
+    /// This observation describes one prepared request, never future tool results.
+    pub scope: String,
 }
