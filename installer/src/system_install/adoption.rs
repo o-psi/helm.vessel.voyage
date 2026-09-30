@@ -7,7 +7,7 @@ use std::{
     collections::BTreeMap,
     os::{
         fd::AsRawFd,
-        unix::{net::UnixStream, process::CommandExt},
+        unix::{fs::OpenOptionsExt, net::UnixStream, process::CommandExt},
     },
     process::{Child, Command, Stdio},
 };
