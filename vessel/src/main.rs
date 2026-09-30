@@ -70,6 +70,12 @@ enum Command {
     #[cfg(target_os = "linux")]
     #[command(hide = true)]
     GuardBound(vessel::process::guardian::Args),
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    MigrationUser(vessel::process::migration::UserArgs),
+    #[cfg(target_os = "linux")]
+    #[command(hide = true)]
+    MigrationControl(vessel::process::migration::ControlArgs),
     /// Read bounded content-free workspace-grant lifecycle history (runtime key required).
     #[cfg(target_os = "linux")]
     ConnectionAudit(vessel::process::pair_cli::ConnectionAuditArgs),
@@ -263,6 +269,12 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::AdministrativeOwner(args)) => {
             return vessel::process::administrative_owner_cli::run(args).await;
+        }
+        Some(Command::MigrationUser(args)) => {
+            return vessel::process::migration::user(args).await;
+        }
+        Some(Command::MigrationControl(args)) => {
+            return vessel::process::migration::control(args).await;
         }
         Some(Command::ProcessGrant(args)) => return vessel::process::grant_cli::issue(args).await,
         Some(Command::PairInvite(args)) => return vessel::process::pair_cli::invite(args),

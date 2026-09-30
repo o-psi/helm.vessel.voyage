@@ -78,14 +78,17 @@ mod identity_authority;
 #[cfg(target_os = "linux")]
 mod identity_enrollment;
 #[cfg(target_os = "linux")]
-mod identity_start;
-#[cfg(target_os = "linux")]
 mod identity_initialize;
+#[cfg(target_os = "linux")]
+mod identity_start;
 #[cfg(target_os = "linux")]
 mod scope_authority;
 
 #[cfg(target_os = "linux")]
 mod admin_execution;
 
-#[cfg(target_os="linux")]
+#[cfg(target_os = "linux")]
 mod execution_transition;
+
+#[cfg(target_os = "linux")]
+pub mod migration;

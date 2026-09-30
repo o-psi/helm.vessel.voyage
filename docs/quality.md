@@ -979,3 +979,13 @@ increment. Formatting and diff checks are source checks only. Final acceptance
 requires the integrated implementation and unchanged whole-workspace coverage
 scope, including real bound initializer/transfer/restart fixtures and the exact
 transition recovery hooks; these prepared tests are not passing evidence.
+
+The system adoption helpers are hidden typed Vessel subcommands,
+`migration-user --directory ABS --pipe-fd FD` and
+`migration-control --directory ABS --pipe-fd FD`. They require their root-created
+private pipe and their own original-user/full-host authority checks; parsing a
+command line does not provide migration authority. The final disposable native
+adoption verification must use the same built Vessel as the installer, qualify
+quiescence/reboot, retained namespace and exact services, interrupted preparation/
+capture/freeze/install/fence recovery, explicit activation and refused legacy
+administrator promotion. Source registration alone is not passing evidence.
