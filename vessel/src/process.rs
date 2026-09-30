@@ -31,6 +31,8 @@ mod transfer;
 mod participant;
 
 mod recover_command;
+#[cfg(target_os="linux")]
+mod bound_recovery;
 
 mod api;
 

@@ -31,6 +31,7 @@ use std::sync::Arc;
 // Version 17 preserves parent allocation reservations and exact child accounting.
 pub(crate) const SCHEMA_VERSION: i64 = 20;
 mod goals;
+mod offline_recovery;
 pub(crate) use goals::{
     GoalAllocation, GoalAuthority, GoalMeasurement, GoalReportContext, GoalTurnReservation,
 };

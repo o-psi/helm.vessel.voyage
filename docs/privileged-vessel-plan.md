@@ -1045,3 +1045,47 @@ grant retains the original reviewed voyage, identity, account context, host and
 policy. The grant does not acquire a new owner or account, and changed private
 provision/configuration, revoked authority or a changed release still refuses.
 This corrects source restart admission; runtime verification remains pending.
+### Bound offline reconciliation implementation (#344, #380)
+
+Bound recovery now uses a dedicated nonexecuting helper under the original
+catalogue-pinned OS identity. Root validates the exact current registration,
+execution binding and positive guardian retirement or protected never-launched
+marker. The original identity lookup is bookkeeping only: revoked execution
+grants and a later disabled identity revision do not authorize launch, Run,
+account access or provider work. Actual OS name/UID/GID/home/group drift refuses.
+The confined cleanup adapter changes no catalogue, identity flag or grant state.
+Administrator helpers require the exact reviewed, protected XDG namespace; an
+unavailable pin refuses instead of using ambient root HOME/provider defaults.
+
+Current full-owner connection authority is checked before dispatch and through a
+root-peer-validated private descriptor before each helper operation. Human
+administrator attestations/tool reconciliation additionally require current
+explicit administrative-owner enrollment independently of execution permission.
+Automatic Root bookkeeping cannot attest resources or reconcile uncertain tool
+outcomes. The ordinary account authority runner denies the separate Recover
+right; the recovery helper bypasses account registry dispatch entirely.
+
+The helper holds the ordinary private startup and journal ownership fences,
+marks interrupted work, disables cached Goal continuation while preserving the
+objective, and retains unobserved run/resource obligations. Only exact current
+incarnation guardian cleanup may release matching host-resource reservations.
+Never-launched retirement does not establish those resources' cleanup. Private
+legacy run/root-terminal rows lack adequate incarnation attribution, so this
+helper does not automatically promote them to observed. A current authorized
+owner may attest explicit IDs; operator intent is claimed before those mutations,
+and a missing completion receipt fences replay. Exact completed receipt lookup
+returns metadata, never conversation/configuration/provider contents. The result
+explicitly grants no execution authorization and exposes bounded obligation IDs.
+
+Public branching now rechecks current create/history/lifecycle scope before its
+snapshot effect. Participant admission rechecks its independently pinned ordinary
+child epoch before initialization and Submit; observation uses protected bound
+runtime coordinates and preserves cleanup_unknown if that lookup fails. Current
+parent authority is checked before bound cancellation bookkeeping and polling.
+
+These are source changes awaiting coordinated verification. The final native
+qualification must prove revoked/disabled ordinary and administrator bookkeeping
+without Run revival, enrolled-owner revocation at each callback, no ambient root
+namespace, live-fence refusal, exact receipt/conflict and uncertain operator
+replay refusal, retained unknown IDs and Goal continuation fencing. Preserve the
+separately delivered administrator namespace carry on restart.

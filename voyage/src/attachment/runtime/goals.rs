@@ -197,6 +197,15 @@ impl ManagedSessionOwner {
         .await?
     }
 
+    pub(crate) async fn fence_offline_goal(&self)->anyhow::Result<()> {
+        let shared=self.store.clone();
+        tokio::task::spawn_blocking(move||{
+            let mut store=shared.lock().map_err(|_|anyhow::anyhow!("owner poisoned"))?;
+            let Store{journal,guard,..}=&mut *store;
+            journal.fence_offline_goal(guard)
+        }).await?
+    }
+
     pub(crate) async fn recover_goal_turn(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

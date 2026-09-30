@@ -448,6 +448,60 @@ pub async fn bound_observer_identity(
     .await
 }
 
+/// Original identity for nonexecuting offline bookkeeping only. Revocation or a
+/// disabled/new identity revision does not erase ownership of retained records.
+/// This function never establishes launch, run or account/provider authority.
+pub(super) async fn bound_cleanup_identity(
+    root: &Path,
+    registration: &ProcessRegistration,
+) -> Result<ConfiguredExecutionIdentity> {
+    let current = self::registration(root, registration.session_id).await?;
+    ensure!(
+        current.incarnation == registration.incarnation
+            && current.command_id == registration.command_id
+            && current.token == registration.token
+            && current.workspace == registration.workspace
+            && current.config_path == registration.config_path
+            && current.peer_uids == registration.peer_uids,
+        "cleanup registration changed"
+    );
+    let registration = registration.clone();
+    blocking(root, move |db| {
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [registration.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let binding: ExecutionBinding = serde_json::from_str(&saved)?;
+        ensure!(
+            binding.session_id == registration.session_id
+                && binding.incarnation == registration.incarnation
+                && registration.peer_uids.as_ref() == Some(&binding.peer_uids)
+                && binding.peer_uids.supervisor == unsafe { libc::geteuid() },
+            "cleanup execution binding changed"
+        );
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![
+                binding.identity.id.to_string(),
+                binding.identity.revision.get()
+            ],
+            |row| row.get(0),
+        )?;
+        let identity: ConfiguredExecutionIdentity = serde_json::from_str(&saved)?;
+        ensure!(
+            identity.identity == binding.identity
+                && identity.account_context == binding.account_context
+                && identity.uid == binding.peer_uids.runtime
+                && binding.administrator_grant_id.is_some()
+                    == (identity.authority == AuthorityClass::Administrator),
+            "cleanup original identity unavailable"
+        );
+        Ok(identity)
+    })
+    .await
+}
+
 #[allow(dead_code)] // Reached through the owner-only administrator review path.
 pub async fn issue_administrator_grant(root: &Path, grant: &AdministratorGrant) -> Result<()> {
     ensure!(

@@ -425,6 +425,35 @@ impl Supervisor {
                 )
                 .await
             }
+            command @ VesselCommand::Recover { .. } => {
+                ensure!(
+                    grant.full_access,
+                    "offline recovery requires explicit account-owner connection"
+                );
+                has(ProcessRight::History)?;
+                has(ProcessRight::Lifecycle)?;
+                let VesselCommand::Recover {
+                    command_id,
+                    session_id,
+                    ..
+                } = &command
+                else {
+                    unreachable!()
+                };
+                let registration = self.registration(*session_id).await?;
+                self.bind_connection_operation(&grant, *command_id, &operation)
+                    .await?;
+                store::current_connection(&self.directory, &grant)?;
+                if registration.peer_uids.is_some() {
+                    self.recover_bound(
+                        command,
+                        crate::process::accounts::Scope::Connection(grant.clone()),
+                    )
+                    .await
+                } else {
+                    self.recover(command).await
+                }
+            }
             VesselCommand::Restart {
                 command_id,
                 session_id,

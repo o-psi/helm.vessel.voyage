@@ -19,6 +19,8 @@ pub struct IdentityHelperRequest {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum IdentityHelperOperation {
+    /// Offline journal reconciliation under its exact current execution identity.
+    RecoverBound { request: BoundRecoveryRequest },
     /// Source identity validates an owned portable checkpoint; only metadata returns.
     ObserveTransferArtifact { artifact_path: PathBuf },
     /// Reads an exact private frozen launch file; no login defaults or network.
@@ -107,6 +109,8 @@ pub enum IdentityEnrollmentOperation {
 pub enum IdentityAuthorityRight {
     Use,
     Enroll,
+    /// Nonexecuting offline bookkeeping only; never account or launch authority.
+    Recover,
 }
 
 /// An independent private pipe checks CURRENT supervisor authority at each
@@ -166,4 +170,23 @@ pub enum IdentityHelperResponse {
     },
     /// No configuration, filesystem, credential or subprocess diagnostics.
     Unavailable,
+}
+
+/// Root supplies positive retirement proof over its authenticated private pipe.
+/// This contains no canonical history, credentials or execution instruction.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoundRecoveryRequest {
+    pub directory: PathBuf,
+    pub session_id: Uuid,
+    pub incarnation: Uuid,
+    pub command_id: Uuid,
+    pub local_process_retired: bool,
+    /// Exact current-incarnation guardian cleanup, distinct from never-launched retirement.
+    pub current_scope_cleanup_observed: bool,
+    pub actor: EnrollmentActor,
+    pub acknowledge_cleanup: Option<Uuid>,
+    pub acknowledge_resources: Vec<Uuid>,
+    pub reconcile_tools: Option<Uuid>,
+    pub expected_revision: Option<u64>,
 }

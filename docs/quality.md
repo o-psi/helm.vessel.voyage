@@ -1033,3 +1033,23 @@ no rollback or automatic retry). Missing read-only paths remain absent, exact
 size bounds hold, and symlink/FIFO inputs refuse without following or waiting.
 These source cases add no coverage exclusions or measured percentages. The
 single coordinated verification/coverage pass is still pending.
+### Bound recovery and initializer integration audit source preparation (#353)
+
+The retained pre-change HTML identifies 36 uncovered cells in recover_command,
+38 in participant observation, 71 in lifecycle and 330 in bound lifecycle (line
+cells are source guidance only; current integrated totals require measurement).
+New private helper sources prepare refusal before file access on absent retirement,
+revoked authority or malformed actor/attestation references; isolated child-owned
+journals prepare exact metadata receipt replay/conflict, owned startup-fence refusal
+and no replay of claimed operator reconciliation with a missing receipt. Their
+HOME/XDG/host-resource ledger roots are private to the fixture child; no operator
+store or real provider is used. A separate real journal case prepares Goal fencing
+with unchanged objective and idempotent continuation denial.
+
+The synthetic helper check used by these journal cases tests private state
+semantics, not a positive Root transport or native administrator boundary. Final
+qualification still needs actual Root peer/UID drop/current owner callbacks,
+revoked execution grant versus cleanup permission, original administrator namespace,
+private Root result recovery after loss, per-resource uncertainty preservation,
+participant epoch rotation and bound polling/cancellation. No cases were executed,
+no exclusions were added, and no 100% coverage or acceptance claim is made.

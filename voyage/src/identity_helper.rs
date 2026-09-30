@@ -8,6 +8,7 @@ const PRIVATE_CONFIG_BYTES: usize = 65_536;
 #[cfg(target_os = "linux")]
 mod authority;
 mod initialization;
+mod recovery;
 
 fn digest(domain: &[u8], bytes: &[u8]) -> String {
     let mut value = Sha256::new();
@@ -391,6 +392,9 @@ async fn account_operation(
         IdentityHelperOperation::ObserveTransferArtifact { artifact_path } => {
             initialization::observe_transfer(&artifact_path)
         }
+        IdentityHelperOperation::RecoverBound { .. } => {
+            anyhow::bail!("recovery requires isolated helper dispatch")
+        }
         IdentityHelperOperation::ReviewConfig { .. } => {
             anyhow::bail!("unsupported account operation")
         }
@@ -643,6 +647,9 @@ pub async fn run() -> Result<()> {
                     facts: review_config(&workspace, &config_path)?,
                 }
             }
+            IdentityHelperOperation::RecoverBound { request } => IdentityHelperResponse::Value {
+                value: recovery::recover(request).await?,
+            },
             operation => IdentityHelperResponse::Value {
                 value: account_operation(&workspace, operation).await?,
             },

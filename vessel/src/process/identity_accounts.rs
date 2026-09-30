@@ -618,11 +618,12 @@ pub(super) async fn run_owned_helper(
                 check = async {if let Some(stream)=&mut authority {super::identity_authority::read(stream).await} else {std::future::pending().await}} => {
                     match check {
                         Ok(check)=>{
-                            let right=match check.right {IdentityAuthorityRight::Use=>ProcessRight::AccountUse,IdentityAuthorityRight::Enroll=>ProcessRight::AccountEnroll};
+                            let right=match check.right {IdentityAuthorityRight::Use=>ProcessRight::AccountUse,IdentityAuthorityRight::Enroll=>ProcessRight::AccountEnroll,IdentityAuthorityRight::Recover=>{super::identity_authority::reply(authority.as_mut().context("authority channel unavailable")?,false).await?;continue;}};
                             let mut allowed=check.actor==scope.actor(workspace)
                                 &&current(scope,root,workspace,&identity,right,selection).await.is_ok();
                             if allowed {
                                 allowed=match check.right {
+                                    IdentityAuthorityRight::Recover=>false,
                                     IdentityAuthorityRight::Enroll=>check.account_id.is_none()&&scope.connection_allowed(check.connection_id),
                                     IdentityAuthorityRight::Use=>if let Some(id)=check.account_id {
                                         let projection=projection(scope,root,workspace)?;

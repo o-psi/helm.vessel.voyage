@@ -112,6 +112,13 @@ impl Supervisor {
             "stale source incarnation"
         );
         drop(registrations);
+        for right in [
+            ProcessRight::Create,
+            ProcessRight::History,
+            ProcessRight::Lifecycle,
+        ] {
+            scope.check(&self.directory, &source.workspace, right)?;
+        }
         let source_directory = super::runtime_storage::directory(&self.directory, &source).await?;
         let frozen = self
             .forward_resuming(
