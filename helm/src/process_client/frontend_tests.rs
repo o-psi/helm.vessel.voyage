@@ -406,8 +406,10 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
         let incarnation = Uuid::new_v4();
         let workspace = root.path().canonicalize().unwrap();
         let reference = session.to_string();
-        let mut config = crate::Config::default();
-        config.model = "explicit-model".into();
+        let config = crate::Config {
+            model: "explicit-model".into(),
+            ..Default::default()
+        };
         let task = tokio::spawn(async move {
             open_connected(
                 &config,

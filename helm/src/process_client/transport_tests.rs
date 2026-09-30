@@ -362,7 +362,6 @@ async fn browser_revision_rejects_malformed_and_misbound_snapshots() {
 #[tokio::test]
 async fn uncertain_private_write_closes_with_unknown_outcome_without_resending_input() {
     use crate::process_client::loopback_tests::Peer;
-    use futures_util::SinkExt;
     use voyage_protocol::vessel::*;
     let mut peer = Peer::open().await;
     let socket = peer.client.connection_state().borrow().socket_id.unwrap();

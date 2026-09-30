@@ -1,9 +1,5 @@
 //! Explicit human review; observation never repeats an uncertain approval.
-use super::{
-    App,
-    observe::Update,
-    state::{Target, View},
-};
+use super::{App, observe::Update, state::Target};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
 use voyage_protocol::execution_identity::{ExecutionOutcome, IdentityRef, ReviewApproval};
@@ -59,7 +55,7 @@ fn restored(target: Target) -> Result<Option<[Uuid; 3]>> {
     }
     crate::process_client::local::check_private_directory(&root)?;
     let name = root.join(format!("{}-{}.json", target.route.id, target.session));
-    let mut file = match std::fs::OpenOptions::new()
+    let file = match std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(name)
@@ -278,10 +274,9 @@ impl App {
                     if matches!(
                         saved.receipt.outcome,
                         ExecutionOutcome::Cancelled | ExecutionOutcome::Refused { .. }
-                    ) {
-                        if forget(target).is_ok() {
-                            view.execution_pending = None;
-                        }
+                    ) && forget(target).is_ok()
+                    {
+                        view.execution_pending = None;
                     }
                     view.panel = Some(super::safe(&format!(
                         "EXECUTION REVIEW\nState: {:?}\nVoyage: {}\nWorkspace: {}\nAccount: {}\nReview: {}\nExpires: {}\n\nAdministrator execution can alter host files, processes, credentials and Vessel. Namespaces/mounts still constrain actual authority; root can alter local receipts.\n\n/execution approve explicitly authorizes this exact voyage/account/workspace until revoked.\n/execution cancel cancels only pending review; /execution revoke fences authorization, without claiming cleanup.\n/execution check observes the retained receipt. Ready is a launch observation, not a completed run. /use VOYAGE_UUID opens the new voyage.\nCurrent draft remains in its original voyage.",
