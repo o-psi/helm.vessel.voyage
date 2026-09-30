@@ -43,3 +43,32 @@ pub struct SavedExecutionReview {
     pub receipt: ExecutionReceipt,
     pub administrator_grant_id: Option<Uuid>,
 }
+
+/// Human-visible operations use configured references only; never UID/env/paths.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag="action",rename_all="snake_case",deny_unknown_fields)]
+pub enum ExecutionOperation {
+    Inventory,
+    Prepare {
+        review_id:Uuid,
+        command_id:Uuid,
+        session_id:Uuid,
+        workspace:std::path::PathBuf,
+        identity:super::execution_identity::IdentityRef,
+    },
+    Approve { approval:super::execution_identity::ReviewApproval },
+    Review { review_id:Uuid },
+    Control { control:ExecutionReviewControl },
+    Status { session_id:Uuid },
+}
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionStatus {
+    pub session_id:Uuid,
+    pub incarnation:Uuid,
+    pub identity:super::execution_identity::IdentitySummary,
+    pub observed:Option<super::execution_identity::ObservedExecution>,
+    pub process_state:super::process::ProcessState,
+    pub administrator_authorized:bool,
+    pub cleanup_observed:bool,
+}

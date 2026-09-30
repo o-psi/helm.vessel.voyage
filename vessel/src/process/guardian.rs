@@ -246,6 +246,7 @@ fn current(
             );
             let identity = super::database::bound_observer_identity(root, &registration).await?;
             super::launch::validate_identity(&identity)?;
+            super::admin_execution::verify_running(root,&registration,&identity).await?;
             Ok((registration, identity))
         })
 }
@@ -316,6 +317,9 @@ pub fn run(args: Args) -> Result<()> {
         command.arg("--config").arg(config);
     }
     super::launch::configure_identity(&mut command, &identity)?;
+    if let Some((data, config)) = super::admin_execution::runtime_namespace(&args.directory,&registration,&identity)? {
+        command.env("XDG_DATA_HOME",data).env("XDG_CONFIG_HOME",config);
+    }
     if let Some(digest) = super::identity_start::launch_digest(&args.directory, &registration)? {
         command.env("VOYAGE_BOUND_CONFIG_DIGEST", digest);
     }

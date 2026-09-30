@@ -25,6 +25,9 @@ use voyage_protocol::process::{
 #[path = "database_execution_reviews.rs"]
 pub(super) mod execution_reviews;
 
+pub(super) const CATALOGUE_READ_SCHEMAS: &[i64] = &[1, 2, 3];
+pub(super) const CATALOGUE_WRITE_SCHEMAS: &[i64] = &[2, 3];
+
 const FILE: &str = "catalogue.sqlite3";
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -104,6 +107,7 @@ fn open_file(root: &Path, file: &str) -> Result<Connection> {
     let version: i64 = db.query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
         r.get(0)
     })?;
+    ensure!(CATALOGUE_READ_SCHEMAS.contains(&version), "unsupported supervisor database version");
     if version == 1 {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("database_v2_migration.sql"))?;
@@ -111,7 +115,7 @@ fn open_file(root: &Path, file: &str) -> Result<Connection> {
         fs::File::open(root)?.sync_all()?;
     } else {
         ensure!(
-            (2..=3).contains(&version),
+            CATALOGUE_WRITE_SCHEMAS.contains(&version),
             "unsupported supervisor database version"
         );
     }

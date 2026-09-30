@@ -719,3 +719,45 @@ binaries: schema compatibility is unknown. Uninstall retains independent voyages
 and their protected state. The user-scoped remote updater refuses root system
 invocations. Remote system prepare/review/apply, active schema rollback and native
 lifecycle qualification remain unfinished #380 gates.
+
+
+### Initial administrator review/launch source integration
+
+Initial administrator creation is now prepared in source through the authenticated
+`execution` service operation. It requires both the existing connection rights
+and separate root-operator enrollment. Preserved user-installation connection IDs
+listed in protected `legacy-user-connections.json` cannot authorize root review or
+system updates, even after their principal is enrolled; use a fresh root-issued
+connection. No migration silently clears that provenance.
+
+The explicit root-private `administrator-execution.json` record has schema 1,
+`identity` (the complete configured administrator identity), `config_path` (a
+private frozen LaunchConfig for the reviewed workspace), `data_directory`,
+`config_directory`, and bounded `workspace_roots`. Data/config namespaces must
+be beneath control-root `administrator-data`/`administrator-config`, with the
+account registry at `data_directory/helm/accounts`. They are separate from the
+root login namespace. Provision and enroll accounts there explicitly; inherited
+credentials, mutable login defaults and ordinary credentials are not copied.
+Missing account/configuration/provisioning refuses preflight.
+
+A dropped independent private helper reports actual account/capability, policy,
+configuration/namespace hashes and UID/GID/groups without credentials or inference.
+Approval reconstructs those facts, records its separate grant, then durably
+latches Launching before admission. A lost or interrupted operation is observed
+by exact review ID; repeated approval never launches again. Protected per-command
+configuration and namespace pins fence changes between review and runtime startup.
+The guardian rechecks configured OS identity, namespace, account capability,
+configuration/release and continuing grant; authority changes retire its owned
+process. Read-only status distinguishes observed launch, current process state and
+observed cleanup. Stop/revoke request alone never proves cleanup.
+
+TUI `/execution` and a stock React Execution dialog are being integrated with
+these exact operations and retained IDs. This source increment has not been
+compiled or exercised, following the user's implementation-first/final-batch
+verification direction. Initial creation is not a claim that reviewed identity
+transition or old-journal replacement is complete. The retired-runtime source
+marker/target-private configuration commit and safe ownership handoff remain the
+next required source work; both directions preserve canonical history and forbid
+uncertain effects or automatic continuation. Complete it and the full client
+journeys before declaring #344 source ready or running the final coordinated
+verification set.

@@ -97,8 +97,7 @@ impl Supervisor {
                 && !session_id.is_nil()
                 && !binding.incarnation.is_nil()
                 && binding.session_id == session_id
-                && binding.peer_uids.supervisor == 0
-                && binding.administrator_grant_id.is_none(),
+                && binding.peer_uids.supervisor == 0,
             "invalid bound creation identity"
         );
         ensure!(
@@ -146,7 +145,8 @@ impl Supervisor {
         runtime_storage::validate_bound_layout(&self.directory)?;
         let identity = database::configured_identity(&self.directory, &binding.identity).await?;
         ensure!(
-            identity.authority == AuthorityClass::Ordinary
+            matches!((identity.authority,binding.administrator_grant_id),
+                (AuthorityClass::Ordinary,None)|(AuthorityClass::Administrator,Some(_)))
                 && identity.account_context == binding.account_context
                 && identity.uid == binding.peer_uids.runtime,
             "bound creation identity changed"
@@ -420,10 +420,12 @@ impl Supervisor {
 
         // Bound configuration/account changes need their executing-identity
         // helpers; never inspect the supervisor's account namespace as fallback.
-        ensure!(
-            !matches!(command, RuntimeCommand::SetAccountInference { .. }),
-            "bound account selection requires identity-scoped account helpers"
-        );
+        if matches!(command, RuntimeCommand::SetAccountInference { .. } | RuntimeCommand::SetInference {..} | RuntimeCommand::SetModel {..} | RuntimeCommand::SetAccess {..} | RuntimeCommand::Configure {..}) {
+            let binding = database::execution_binding(&self.directory,registration.session_id).await?
+                .ok_or_else(||anyhow::anyhow!("bound identity unavailable"))?;
+            let identity = database::configured_identity(&self.directory,&binding.identity).await?;
+            ensure!(identity.uid != 0,"administrator account settings require a fresh execution review");
+        }
         if matches!(command, RuntimeCommand::Stop) {
             return self.bound_stop(&registration, authorization).await;
         }
