@@ -76,6 +76,23 @@ class Nightly(unittest.TestCase):
                 with self.assertRaises(ns['Failure']):
                     ns['nightly']('x86_64-unknown-linux-gnu')
 
+    def test_system_public_mode_never_consults_existing_github_login(self):
+        ns, _ = self.fixture()
+        ns['MODE'] = 'latest'
+        def forbidden():
+            raise AssertionError('root updater consulted GitHub credentials')
+        def release(_):
+            self.assertFalse(ns['AUTHENTICATED'])
+            binary = ns['ROOT'] / 'synthetic-bin'
+            binary.mkdir()
+            for name in ns['BINARIES']:
+                (binary / name).write_bytes(b'fixture')
+            return binary, 'public fixture'
+        ns.update(github_login=forbidden, latest=release)
+        with patch('sys.argv', ['worker', 'latest', str(ns['ROOT']), 'public']):
+            ns['execute']()
+        self.assertFalse(ns['AUTHENTICATED'])
+
     def test_unsupported_target_does_not_contact_github(self):
         ns, calls = self.fixture()
         with self.assertRaises(ns['Failure']):

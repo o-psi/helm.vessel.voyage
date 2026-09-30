@@ -76,7 +76,7 @@ impl Scope {
             }
         }
     }
-    fn connection_allowed(&self, id: Uuid) -> bool {
+    pub(super) fn connection_allowed(&self, id: Uuid) -> bool {
         match self {
             Self::Owner => true,
             Self::Connection(g) => g.full_access || g.enrollment_connections.contains(&id),
@@ -175,6 +175,7 @@ impl voyage_runtime::policy::ExecutionAuthority for UsageAuthority {
 /// continue enrollment merely because a derived session record is still present.
 fn current_session_scope(root: &Path, grant: &ProcessGrant) -> Result<()> {
     store::current(grant)?;
+    super::access::execution_epoch::check(root, grant)?;
     ensure!(
         !grant.full_access
             || (grant.connection_binding.is_some()
@@ -304,6 +305,10 @@ pub(super) fn device_service(root: PathBuf) -> Result<DeviceService> {
 
 impl Supervisor {
     pub(super) async fn resume_enrollments(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            return self.resume_identity_enrollments().await;
+        }
         for (id, actor) in self.devices.resume_candidates()? {
             self.enrollment_worker(id, actor, None).await;
         }
@@ -343,6 +348,10 @@ impl Supervisor {
         command: VesselCommand,
         scope: Scope,
     ) -> Result<Value> {
+        #[cfg(target_os = "linux")]
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            return self.host_identity_accounts(command, scope).await;
+        }
         ensure!(
             !super::runtime_storage::has_bound_layout(&self.directory),
             "system account operations require an explicit execution identity"

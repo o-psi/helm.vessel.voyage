@@ -203,10 +203,10 @@ The root unit takes an explicit path to an externally provisioned root-owned
 it never embeds the key. The root gateway refuses startup when provisioning is
 absent or invalid. A supported installation still needs to review and qualify
 that service and the same key across reboot.
-The explicit `install --scope system` path now supports **fresh installation only**
+The explicit `install --scope system` path supports fresh installation
 in a designated disposable native Linux fixture. It is an implementation increment,
-not a supported production path: update, rollback, uninstall, public bound Voyage
-creation, owner review and adoption remain unavailable. It refuses existing system
+not a supported production path: remote system updates, schema rollback, owner
+review and adoption remain unqualified. It refuses existing system
 state and existing user installations for either selected account. It requires a
 root-controlled unpacked full release with a valid manifest, two distinct ordinary
 local accounts, an HTTPS gateway origin and an independently provisioned key unit.
@@ -286,3 +286,56 @@ installation is unsupported; packaging those binaries is not deployment evidence
 ## Updates from Helm Web
 
 Managed Linux installations support the owner-approved [remote update flow](../docs/remote-updates.md). The updater prepares a pinned stable or explicitly selected nightly artifact, retains a durable operation receipt and runs outside the Vessel service during replacement. Pre-updater releases require one remote administrator bootstrap. Existing provider credentials and independent voyages are preserved.
+
+### Root-local system lifecycle transactions
+
+`upgrade --scope system --bin-dir ABS [--dry-run]` verifies the retained installation,
+accounts, exact units and provisioner, then stages the full verified release with
+the same architecture and a strictly newer SemVer version. It retains both root-private control state and independent
+Voyage processes. A protected lifecycle journal is written before stop/publication.
+Both units pin the new release; active installations require root/gateway PID and
+public readiness observations before completion. Inactive installations remain
+inactive. No identity, provider credential or user installation is inferred.
+
+An interrupted transaction blocks another mutation and never replays an uncertain
+service effect. Active upgrade/rollback requires both archives to declare the
+identical validated code-owned reader/writer, implementation and build-input
+contract. Qualified activation failure restores the retained source and exact
+units, observes readiness and retains journals in place. Missing/changed contracts
+fail closed. Inactive-only rollback remains available where the candidate never
+started. Stopping the supervisor does not prove independent voyages ended.
+
+`uninstall --scope system [--dry-run]` stops the managed root/gateway processes,
+observes their PIDs at zero, disables/removes only the exact reviewed units and
+retains all releases, private control/runtime/gateway state, credential provisioner
+and its key. This is service removal, not destructive session cleanup or adoption.
+Reinstallation over retained state is refused pending a reviewed adoption inventory.
+
+The user remote updater refuses root system invocation before journal/service
+effects. Explicit `remote-update system` now provides a separate protected
+prepare/review/apply path, described below. Native lifecycle/updater qualification
+remain required for #380 acceptance.
+
+Fresh system installation also publishes a root-private `default-execution.json`
+with fresh host-local identity/account-context UUIDs and the explicitly configured
+ordinary account. Primary GID is excluded from supplementary groups; root group
+membership is refused. Upgrades preserve this identity record rather than creating
+a new authority binding. Public configured start admission is separately verified
+by Vessel; this file does not grant administrator execution or provider credentials.
+
+
+### System remote update increment
+
+Managed system Vessel owner connections can invoke typed preparation/status/
+approval/discard operations through `voyage-installer remote-update system`.
+Acquisition and receipts use protected system state and public downloads; the
+independent system-manager worker rechecks the exact reviewed installation before
+running the scope-aware lifecycle. Candidate compatibility probes use a dynamic
+unprivileged identity. Worker status reconciles observed stopped workers against
+exact candidate/previous source and readiness without replay. See
+[remote updates](../docs/remote-updates.md) for qualified active rollback,
+`adopt-update-contract`, `start --scope system` and explicit `adopt-user`
+prepare/review/apply/activate/rollback commands. Interrupted preactivation adoption supports explicit reviewed rollback while
+retaining copied state. Lost service replies are observed without replay; uncertain
+activation forbids unqualified legacy fallback. Native qualification remains a
+release gate. Source implementation is not verification evidence.

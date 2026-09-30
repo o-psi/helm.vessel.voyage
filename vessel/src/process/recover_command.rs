@@ -35,10 +35,29 @@ impl Supervisor {
             registration.incarnation == incarnation,
             "stale runtime incarnation"
         );
-        ensure!(
-            registration.peer_uids.is_none(),
-            "bound recovery requires protected process cleanup evidence"
-        );
+        if registration.peer_uids.is_some() {
+            use sha2::{Digest, Sha256};
+            let digest = Sha256::digest(format!(
+                "voyage-bound-offline-recovery-v1:{session_id}:{incarnation}"
+            ));
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&digest[..16]);
+            let command_id = uuid::Uuid::from_bytes(bytes);
+            self.recover_bound(
+                VesselCommand::Recover {
+                    command_id,
+                    session_id,
+                    incarnation,
+                    acknowledge_cleanup: None,
+                    reconcile_tools: None,
+                    expected_revision: None,
+                    acknowledge_resources: vec![],
+                },
+                super::accounts::Scope::Owner,
+            )
+            .await?;
+            return Ok(());
+        }
         if restart_permitted(&directory, &registration) {
             return Ok(());
         }
@@ -112,10 +131,13 @@ impl Supervisor {
                 && registration.state != ProcessState::Relinquished,
             "stale or relinquished owner cannot recover"
         );
-        ensure!(
-            registration.peer_uids.is_none(),
-            "bound recovery requires an identity-scoped helper and protected process evidence"
-        );
+        if registration.peer_uids.is_some() {
+            let command = command.clone();
+            drop(registrations);
+            return self
+                .recover_bound(command, super::accounts::Scope::Owner)
+                .await;
+        }
         let directory = registry::directory(&self.directory, *session_id);
         ensure!(
             routing::inspect(&directory, registration).await.state != ProcessState::Live,

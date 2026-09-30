@@ -1012,3 +1012,39 @@ pub fn connection_audit(root: &Path, limit: usize, cursor: Option<&str>) -> Resu
 
 #[cfg(test)]
 mod tests;
+
+// Migration operates on typed ordinary state under its original identity. No
+// pending invitation is promoted into a fresh root-administrative credential.
+pub(super) fn migration_export(root: &Path) -> Result<Vec<u8>> {
+    let _lock = lock(root)?;
+    let mut state = load(root)?;
+    for invitation in &mut state.invitations {
+        if invitation.redemption.is_none() {
+            invitation.expires_at_ms = 0;
+        }
+    }
+    Ok(serde_json::to_vec(&state)?)
+}
+pub(super) fn migration_import(root: &Path, bytes: &[u8]) -> Result<()> {
+    ensure!(
+        unsafe { libc::geteuid() } == 0 && bytes.len() <= STATE_BYTES,
+        "migration pairing import requires bounded root custody"
+    );
+    let _lock = lock(root)?;
+    ensure!(!state_present(root)?, "root pairing state already exists");
+    let mut state: State = serde_json::from_slice(bytes)
+        .map_err(|_| anyhow::anyhow!("invalid legacy pairing state"))?;
+    ensure!(
+        state.invitations.len() <= LIMIT && state.revocations.len() <= LIMIT,
+        "legacy pairing state exceeds limit"
+    );
+    for invitation in &mut state.invitations {
+        if invitation.redemption.is_none() {
+            invitation.expires_at_ms = 0;
+        }
+    }
+    if let Some(audit) = &state.audit {
+        audit.validate()?;
+    }
+    save(root, &state)
+}

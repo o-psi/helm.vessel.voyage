@@ -30,9 +30,10 @@ fn run() -> Result<bool> {
         return Ok(false);
     }
     #[cfg(target_os = "linux")]
-    if args
-        .windows(2)
-        .any(|pair| pair[0] == "--scope" && pair[1] == "system")
+    if args.first().is_some_and(|command| command == "adopt-user")
+        || args
+            .windows(2)
+            .any(|pair| pair[0] == "--scope" && pair[1] == "system")
     {
         system_install::run(&args)?;
         return Ok(false);

@@ -1,5 +1,5 @@
 //! Explicit Linux system-scope installation. Fresh publication is deliberately
-//! separate from the ordinary-user layout; update/adoption remain later gates.
+//! separate from the ordinary-user layout; adoption remains a later gate.
 use crate::{
     install::files, install::release::Manifest, service, system_preflight, system_service,
 };
@@ -33,13 +33,15 @@ struct Options {
     credential_unit: String,
     start: bool,
     dry_run: bool,
+    // Set only by the root-reviewed adoption flow, never ordinary install flags.
+    adoption_source: Option<PathBuf>,
 }
 
 impl Options {
     fn parse(args: &[String]) -> Result<Self> {
         ensure!(
             args.first().map(String::as_str) == Some("install"),
-            "system scope currently requires an explicit fresh install; update, rollback and adoption are not yet available"
+            "fresh system install requires install; existing state needs an explicit system lifecycle command, and adoption remains unavailable"
         );
         let mut bin = None;
         let mut execution_user = None;
@@ -138,12 +140,14 @@ impl Options {
             credential_unit: credential_unit.context("system install needs --credential-unit")?,
             start,
             dry_run,
+            adoption_source: None,
         })
     }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[derive(Clone)]
 struct Record {
     schema_version: u32,
     phase: String,
@@ -206,8 +210,8 @@ impl Plan {
         let execution = system_preflight::account(&options.execution_user)?;
         let gateway = system_preflight::account(&options.gateway_user)?;
         ensure!(
-            execution.uid != gateway.uid,
-            "execution and gateway resolve to the same UID"
+            execution.uid != gateway.uid && !execution.groups.contains(&0),
+            "execution/gateway UID must differ and execution supplementary groups must exclude root"
         );
         for (name, account) in [
             (&options.execution_user, &execution),
@@ -220,7 +224,8 @@ impl Plan {
                 "{name} home must be an owned ordinary directory"
             );
             ensure!(
-                !account.home.join(".local/share/voyage/install").exists(),
+                !account.home.join(".local/share/voyage/install").exists()
+                    || (name == &options.execution_user && options.adoption_source.is_some()),
                 "an existing user installation needs separate reviewed adoption"
             );
         }
@@ -329,7 +334,7 @@ impl Plan {
         println!("Root unit:\n{}", self.record.root_unit);
         println!("Gateway unit:\n{}", self.record.gateway_unit);
         println!(
-            "User installations are not converted. Update, rollback and adoption are not available in this increment."
+            "User installations are not converted. Root-local lifecycle commands are available; remote system update, schema rollback and adoption remain unqualified."
         );
     }
 }
@@ -581,6 +586,10 @@ fn apply(mut plan: Plan, options: &Options) -> Result<()> {
         &Path::new(CONTROL).join("runtime-layout.json"),
         &serde_json::to_vec(&layout)?,
     )?;
+    files::write_new(
+        &Path::new(CONTROL).join("default-execution.json"),
+        &serde_json::to_vec(&default_execution(&plan.record)?)?,
+    )?;
     plan.record.phase = "publishing-units".into();
     files::atomic_json(&transaction, &plan.record)?;
     let root_path = Path::new(UNIT_ROOT).join(ROOT_UNIT);
@@ -640,12 +649,147 @@ fn apply(mut plan: Plan, options: &Options) -> Result<()> {
     );
     println!("Supervisor/gateway: {}", plan.record.phase);
     println!(
-        "Update, rollback and adoption remain unavailable; do not use this fresh-install increment as a supported production path."
+        "Remote update, schema rollback and adoption remain unqualified; this increment is not a supported production path."
     );
     Ok(())
 }
 
+fn kernel_uuid() -> Result<String> {
+    let value = system_preflight::proc_value("/proc/sys/kernel/random/uuid", 128)?;
+    let value = value.trim();
+    ensure!(
+        value.len() == 36
+            && value.bytes().enumerate().all(|(i, b)| {
+                if [8, 13, 18, 23].contains(&i) {
+                    b == b'-'
+                } else {
+                    b.is_ascii_hexdigit()
+                }
+            }),
+        "kernel UUID source is invalid"
+    );
+    Ok(value.into())
+}
+fn uuid_shape(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        })
+}
+fn validate_default_execution(record: &Record, value: &serde_json::Value) -> Result<()> {
+    let fields = [
+        "identity",
+        "label",
+        "user_name",
+        "uid",
+        "gid",
+        "supplementary_groups",
+        "home",
+        "account_context",
+        "authority",
+        "enabled",
+    ];
+    let object = value
+        .as_object()
+        .context("default execution must be an object")?;
+    ensure!(
+        object.len() == fields.len() && fields.iter().all(|field| object.contains_key(*field)),
+        "default execution fields differ from the supported contract"
+    );
+    for field in ["identity", "account_context"] {
+        let reference = value[field]
+            .as_object()
+            .context("identity reference must be an object")?;
+        ensure!(
+            reference.len() == 2
+                && value[field]["revision"] == 1
+                && value[field]["id"].as_str().is_some_and(uuid_shape),
+            "default identity reference is invalid"
+        );
+    }
+    let groups: Vec<u32> = record
+        .execution_groups
+        .iter()
+        .copied()
+        .filter(|gid| *gid != record.execution_gid)
+        .collect();
+    ensure!(
+        record.execution_uid != 0
+            && record.execution_gid != 0
+            && !groups.contains(&0)
+            && value["identity"]["id"] != value["account_context"]["id"]
+            && value["label"] == record.execution_user
+            && value["user_name"] == record.execution_user
+            && value["uid"] == record.execution_uid
+            && value["gid"] == record.execution_gid
+            && value["supplementary_groups"] == serde_json::to_value(groups)?
+            && value["home"] == serde_json::to_value(&record.execution_home)?
+            && value["authority"] == "ordinary"
+            && value["enabled"] == true,
+        "protected default execution differs from the pinned ordinary account"
+    );
+    Ok(())
+}
+fn verify_default_execution(record: &Record) -> Result<()> {
+    let path = Path::new(CONTROL).join("default-execution.json");
+    service::files::check_path(&path, 0)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    ensure!(
+        metadata.is_file()
+            && metadata.uid() == 0
+            && metadata.nlink() == 1
+            && metadata.mode() & 0o7777 == 0o600,
+        "default execution record must be root-private"
+    );
+    let value = serde_json::from_slice(&files::read(&path, 16384)?)?;
+    validate_default_execution(record, &value)
+}
+fn default_execution(record: &Record) -> Result<serde_json::Value> {
+    ensure!(
+        record.execution_uid != 0
+            && record.execution_gid != 0
+            && !record.execution_groups.contains(&0),
+        "default execution identity must be ordinary"
+    );
+    let groups: Vec<u32> = record
+        .execution_groups
+        .iter()
+        .copied()
+        .filter(|gid| *gid != record.execution_gid)
+        .collect();
+    Ok(serde_json::json!({
+        "identity": {"id": kernel_uuid()?, "revision": 1},
+        "label": record.execution_user, "user_name": record.execution_user,
+        "uid": record.execution_uid, "gid": record.execution_gid,
+        "supplementary_groups": groups, "home": record.execution_home,
+        "account_context": {"id": kernel_uuid()?, "revision": 1},
+        "authority": "ordinary", "enabled": true
+    }))
+}
+
+mod lifecycle;
+
 pub(super) fn run(args: &[String]) -> Result<()> {
+    if args.first().is_some_and(|s| s == "adopt-user") {
+        return adoption::run(&args[1..]);
+    }
+
+    if args.first().is_some_and(|s| s == "start") {
+        return lifecycle::start_reviewed_system(args);
+    }
+    if args.first().is_some_and(|s| s == "adopt-update-contract") {
+        return lifecycle::adopt_contract(args);
+    }
+    if matches!(
+        args.first().map(String::as_str),
+        Some("upgrade" | "rollback" | "uninstall")
+    ) {
+        return lifecycle::run(args);
+    }
     if args.first().map(String::as_str) == Some("status") {
         ensure!(
             args == ["status", "--scope", "system"],
@@ -684,6 +828,19 @@ fn status() -> Result<()> {
         "Execution UID: {}; gateway UID: {}",
         record.execution_uid, record.gateway_uid
     );
+    lifecycle::report_pending()?;
+    if record.phase == "uninstalled-retained" {
+        for name in [ROOT_UNIT, GATEWAY_UNIT] {
+            ensure!(
+                !Path::new(UNIT_ROOT).join(name).try_exists()? && query(name, "MainPID")? == "0",
+                "removed installation has a service unit or live managed process"
+            );
+        }
+        println!(
+            "Managed services removed; private state, independent voyages, releases and external provisioner retained."
+        );
+        return Ok(());
+    }
     if !matches!(record.phase.as_str(), "active" | "inactive") {
         println!(
             "Unresolved system installation; inspect the exact units, state and service PIDs before another mutation."
@@ -698,6 +855,7 @@ fn status() -> Result<()> {
         serde_json::to_vec(&record)? == serde_json::to_vec(&config)?,
         "system configuration and transaction differ"
     );
+    verify_default_execution(&record)?;
     let release = Path::new(RELEASE_ROOT)
         .join("releases")
         .join(&record.release);
@@ -795,3 +953,23 @@ mod tests {
         }
     }
 }
+
+pub(crate) use lifecycle::{RemoteFacts, remote_review};
+pub(crate) fn remote_apply(bin: &Path, fingerprint: &str) -> Result<()> {
+    lifecycle::run_reviewed(
+        &[
+            "upgrade".into(),
+            "--scope".into(),
+            "system".into(),
+            "--bin-dir".into(),
+            bin.to_string_lossy().into_owned(),
+        ],
+        Some(fingerprint),
+    )
+}
+
+pub(crate) fn remote_host() -> Result<()> {
+    root_host()
+}
+
+mod adoption;

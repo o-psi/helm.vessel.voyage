@@ -499,17 +499,33 @@ impl Supervisor {
         request: VoyageRequest,
         authorization: Option<GrantBinding>,
     ) -> Result<Value> {
-        if matches!(&request.command, VoyageCommand::SetAccountInference { .. })
-            || matches!(&request.command, VoyageCommand::Resolve { original: Some(original), .. }
-                if matches!(original.as_ref(), VoyageCommand::SetAccountInference { .. }))
-        {
-            ensure!(
-                self.registration(request.session_id)
-                    .await?
-                    .peer_uids
-                    .is_none(),
-                "bound account selection requires identity-scoped account helpers"
-            );
+        let selected_account = match &request.command {
+            VoyageCommand::SetAccountInference { account, .. } => Some(account),
+            VoyageCommand::Resolve {
+                original: Some(original),
+                ..
+            } => match original.as_ref() {
+                VoyageCommand::SetAccountInference { account, .. } => Some(account),
+                _ => None,
+            },
+            _ => None,
+        };
+        let mut bound_account = false;
+        if let Some(account) = selected_account {
+            let registration = self.registration(request.session_id).await?;
+            if registration.peer_uids.is_some() {
+                bound_account = true;
+                #[cfg(target_os = "linux")]
+                self.validate_identity_account_binding(
+                    &registration,
+                    authorization.as_ref(),
+                    account,
+                    matches!(request.command, VoyageCommand::Resolve { .. }),
+                )
+                .await?;
+                #[cfg(not(target_os = "linux"))]
+                anyhow::bail!("bound account selection unsupported on this host");
+            }
         }
         // Owner selection is a service responsibility. Live-resource commands
         // carry a fence; ordinary session operations always select the current owner.
@@ -623,7 +639,7 @@ impl Supervisor {
                 },
                 _ => None,
             };
-            if let Some(account) = selected {
+            if let Some(account) = selected.filter(|_| !bound_account) {
                 let scope = super::accounts::Scope::Session(grant.clone());
                 if matches!(request.command, VoyageCommand::Resolve { .. }) {
                     // Resolving a retained command is not new inference admission.

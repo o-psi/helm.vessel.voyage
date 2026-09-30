@@ -25,7 +25,7 @@ pub enum ProcessRight {
     Terminal,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrantBinding {
     pub grant_id: Uuid,

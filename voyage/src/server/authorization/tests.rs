@@ -75,9 +75,11 @@ fn current_authority_rechecks_identity_revision_expiry_and_revocation() {
     }
     save(&path, &original);
     let authority = GrantAuthority {
-        path: path.clone(),
-        binding: b,
-        session: original.session_id,
+        source: AuthoritySource::UserFile {
+            path: path.clone(),
+            binding: b,
+            session: original.session_id,
+        },
         account: None,
         browser_history: true,
     };
@@ -147,6 +149,7 @@ fn admission_enforces_operation_rights_supervised_path_and_workspace() {
         incarnation: registration.incarnation,
         token: "fixture".into(),
         authorization: None,
+        scope_authority: None,
         command: RuntimeCommand::Health,
     };
     let local = authorize_parts(actor, &registration, &request, &directory).unwrap();
@@ -238,4 +241,54 @@ fn owner_connection_authority_requires_current_explicit_parent() {
             .unwrap()
             .full_access
     );
+}
+
+#[test]
+fn bound_authorization_cannot_fall_back_to_files_or_cached_credentials() {
+    let root = tempfile::tempdir().unwrap();
+    let g = grant(root.path());
+    let b = binding(&g);
+    let mut registration = ProcessRegistration {
+        executable: None,
+        protocol: 1,
+        session_id: g.session_id,
+        incarnation: Uuid::new_v4(),
+        command_id: Uuid::new_v4(),
+        restart_from: None,
+        initialize: None,
+        config_path: None,
+        token: "private-fixture-token".into(),
+        peer_uids: Some(voyage_protocol::process::ProcessPeerUids {
+            supervisor: 0,
+            runtime: unsafe { libc::geteuid() },
+        }),
+        workspace: root.path().into(),
+        state: ProcessState::Live,
+        name: None,
+    };
+    let actor = LocalActor {
+        installation_id: Uuid::new_v4(),
+        principal_id: g.principal_id,
+    };
+    let h = voyage_protocol::execution_scope::ExecutionScopeHandle {
+        socket_name: "fixture-scope-unavailable".into(),
+        lease_id: Uuid::new_v4(),
+        secret: "private-lease-secret-xxxxxxxxxxxxxxxx".into(),
+    };
+    crate::execution_scope_client::cache_validated(root.path(), &b, &h).unwrap();
+    let mut request = RuntimeRequest {
+        protocol: 1,
+        session_id: g.session_id,
+        incarnation: registration.incarnation,
+        token: registration.token.clone(),
+        authorization: Some(b.clone()),
+        scope_authority: None,
+        command: RuntimeCommand::Health,
+    };
+    assert!(authorize_parts(actor, &registration, &request, root.path()).is_err());
+    request.scope_authority = Some(h);
+    registration.peer_uids = None;
+    assert!(authorize_parts(actor, &registration, &request, root.path()).is_err());
+    request.authorization = None;
+    assert!(authorize_parts(actor, &registration, &request, root.path()).is_err());
 }

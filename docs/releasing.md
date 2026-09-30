@@ -8,6 +8,11 @@ Linux architecture cutover is implemented; platform/deployment limits are record
 
 ## Planned release sequence
 
+The `release/v1.0.3-integration` review branch has stable-baseline candidate
+versions 1.0.3 and a [candidate guide](releases-v1.0.3.md). This prepares the
+coordinated release verification; it does not create a stable tag, publish assets
+or change the current stable download.
+
 The next planned releases are **v1.0.3**, then **v1.1.0**. The latter requires
 [complete removal of legacy Helm–Vessel snapshot transport](event-only-v1.1.0.md)
 in both Helm clients. Keep the nightly target on v1.0.3 until that stable release
@@ -86,8 +91,9 @@ or checksums. Retain historical artifacts. Handled failures remove their tempora
 staging data; forced termination may leave a `.package-*` directory or publication
 lock. Verify the originating process stopped before handling those leftovers.
 
-The [quality runner](quality.md) performs packaging and checksum checks. Automated
-archive regression fixtures are absent. For documentation changes, inspect archive
+The [local quality commands](quality.md) include maintained packaging regression
+fixtures and checksum checks. Retired hosted quality workflows and their
+`scripts/check-quality` entry point are not release gates. For documentation changes, inspect archive
 membership, guide links, configuration and generated CLI documents explicitly.
 Do not claim native runtime or clean-install validation from checksum success.
 

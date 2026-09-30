@@ -20,6 +20,9 @@ pub use exchange::exchange;
 
 pub mod grant_cli;
 
+#[cfg(target_os = "linux")]
+pub mod administrative_owner_cli;
+
 mod lifecycle;
 
 mod identity;
@@ -27,6 +30,8 @@ mod transfer;
 
 mod participant;
 
+#[cfg(target_os = "linux")]
+mod bound_recovery;
 mod recover_command;
 
 mod api;
@@ -63,6 +68,29 @@ mod authority_routing_tests;
 #[cfg(target_os = "linux")]
 mod bound_lifecycle;
 #[cfg(target_os = "linux")]
+mod default_execution;
+#[cfg(target_os = "linux")]
 pub mod guardian;
 #[cfg(target_os = "linux")]
 mod guardian_observation;
+#[cfg(target_os = "linux")]
+mod identity_accounts;
+#[cfg(target_os = "linux")]
+mod identity_authority;
+#[cfg(target_os = "linux")]
+mod identity_enrollment;
+#[cfg(target_os = "linux")]
+mod identity_initialize;
+#[cfg(target_os = "linux")]
+mod identity_start;
+#[cfg(target_os = "linux")]
+mod scope_authority;
+
+#[cfg(target_os = "linux")]
+mod admin_execution;
+
+#[cfg(target_os = "linux")]
+mod execution_transition;
+
+#[cfg(target_os = "linux")]
+pub mod migration;

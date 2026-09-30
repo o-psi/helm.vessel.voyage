@@ -1,5 +1,5 @@
-//! Staged system-unit contract. Publication and activation remain unavailable
-//! until protected system layout and scope-aware rollback are integrated.
+//! Version-pinned system-unit contract used by explicit root-local installation
+//! and lifecycle transactions. Remote system updates remain unqualified.
 #![allow(dead_code)]
 
 use anyhow::{Context, Result, ensure};

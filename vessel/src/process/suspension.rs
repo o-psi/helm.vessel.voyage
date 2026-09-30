@@ -539,6 +539,7 @@ pub(super) async fn observe(
         .as_ref()
         .context("suspended observation binary missing")?;
     let mut observer = tokio::process::Command::new(binary);
+    let mut scope_authority = None;
     observer
         .arg("observe-suspended")
         .arg("--directory")
@@ -558,6 +559,17 @@ pub(super) async fn observe(
             super::launch::protected_binary(binary)?;
             let identity = super::database::bound_observer_identity(root, registration).await?;
             super::launch::configure_identity(observer.as_std_mut(), &identity)?;
+            if let Some((data, config)) =
+                super::admin_execution::runtime_namespace(root, registration, &identity)?
+            {
+                observer
+                    .env("XDG_DATA_HOME", data)
+                    .env("XDG_CONFIG_HOME", config);
+            }
+            if let Some(binding) = &authorization {
+                scope_authority =
+                    Some(super::scope_authority::mint(root, registration, binding).await?);
+            }
         }
         #[cfg(not(target_os = "linux"))]
         anyhow::bail!("bound observation is unsupported on this host");
@@ -573,6 +585,7 @@ pub(super) async fn observe(
                 incarnation: registration.incarnation,
                 token: registration.token.clone(),
                 authorization,
+                scope_authority,
                 command,
             },
         )

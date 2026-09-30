@@ -339,3 +339,7 @@ fn invalid_patch(reason: &str) -> ToolError {
         "invalid unified diff: {reason}; no target file was written. Supply a single-file diff with --- / +++ headers and @@ -old_start,old_count +new_start,new_count @@ hunks. Prefix body lines with space, - or +; hunk counts must match the body and patch lines must end with newlines. Do not include Markdown fences or patch-tool wrappers. Prepare a new patch using a fresh read_file SHA-256 for an existing file; no automatic correction or retry was performed."
     ))
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "filesystem_boundary_tests.rs"]
+mod boundary_tests;

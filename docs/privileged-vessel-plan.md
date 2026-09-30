@@ -120,10 +120,42 @@ root/ordinary services, pairing and exact replay, a granted command, WebSocket
 routing, wrong gateway UID, false root peer, root loss and restart. That evidence
 does not establish installer upgrade/rollback, browser runtime handoff, initial
 system voyage creation through a public route or live deployment. The bound public
-`Start` path still refuses initial system voyage creation. A separate internal
-root-only admission now accepts a previously reviewed ordinary identity binding,
-reserves its exact command/registration/binding atomically, and starts the bound
-guardian. It is not connected to owner review or account-scoped public creation.
+`Start`, `StartAccount` and `StartSettings` paths now select the root-private
+ordinary identity and capture their frozen configuration in that identity's private
+runtime directory. The supervisor retains the exact actor/request intent before
+capture and the original public command during admission. `ResolveStartAccount`
+uses the original retained envelope and never recaptures a default or launches.
+Public `StartConfigured` selects the root-private
+`default-execution.json` ordinary identity, validates its current OS account and
+immutable catalogue revision, then reserves the exact command/registration/binding
+atomically before starting the bound guardian. A full-access owner connection can
+invoke it; workspace-only clients cannot select a host config path. Exact replay
+uses the retained binding/incarnation, and not-admitted resolution fences delayed
+creation. Configuration and provider state are opened only by the dropped Voyage
+identity. The configured home is its account namespace; root's login account is
+never a fallback. Account/default/model observations and profile validation use
+the bounded dropped-identity helper. Profile state is keyed by the protected
+account-context ID/revision; user-service profile state remains separate. A protected
+configuration digest pin crosses the guardian's cleared environment into fresh
+runtime startup, where the exact configuration bytes are checked before resolution.
+An interrupted capture retains its request and refuses changed defaults or a
+missing frozen file. This source increment is awaiting the final coordinated
+milestone verification, including actual native public creation and revocation.
+Identity-scoped enrollment/usage, administrator review/transition and both-client
+identity controls remain implementation work.
+
+Ordinary bound account changes and exact command resolution now validate the
+registered runtime's account namespace through its dropped helper, rather than
+the supervisor or a subsequently changed default identity. Receipt observation
+checks continuing permission without requiring a logged-out account to become
+usable again. Administrator account changes require a fresh explicit review.
+For a reviewed transition to an ordinary identity, an enrolled administrator
+owner can prepare a separate private configuration stage under the target UID.
+Only its path, account/capability references and digests cross back to Vessel;
+target configuration contents are not disclosed to the old identity. Owner,
+identity, grant and file facts are rechecked before returning the stage. These
+source paths await the same combined verification and do not establish completed
+transition or adoption behavior.
 A disposable native Ubuntu fixture exercised live creation, duplicate/conflicting
 receipts, cleanup and the crash-after-admission/no-relaunch boundary. #380 retains
 the installer and native end-to-end gates.
@@ -132,6 +164,53 @@ The user authorized any available test host. HelmWeb is the selected first live
 adoption candidate after isolated native Linux fixtures pass. Tax-Axis remains
 deferred. Destructive tests remain confined to disposable fixtures. No live
 installation has been converted by the foundation changes.
+
+## Protected administrator-owner and review prerequisite
+
+The root operator can now explicitly enroll or revoke a Helm principal in the
+protected supervisor catalogue. This is separate from full-access pairing, process
+grants, OS login and the ordinary execution identity. No principal is enrolled by
+default. The Linux command requires actual real/effective UID 0 and a root-private
+control directory; it does not acquire root authority or launch a Voyage:
+
+```sh
+vessel administrative-owner --directory /var/lib/voyage/vessel \
+  --principal PRINCIPAL_UUID --expected-revision 0 \
+  --command-id COMMAND_UUID --enroll
+```
+
+Use `--revoke` for explicit removal, retaining the exact command UUID for retries
+and pinning the last observed authority revision. The returned receipt identifies
+the next revision and any grants fenced. A conflicting command or stale revision
+refuses rather than guessing owner intent. Removal fences that principal's active
+administrator grants in the same SQLite transaction. Independent guardians must
+separately observe retirement; enrollment/removal receipts do not claim cleanup.
+
+First enrollment transactionally upgrades only this protected catalogue from
+schema 2 to schema 3. A rejected first operation rolls back both migration and
+owner changes. Ordinary/user catalogue open stays at schema 2. Older binaries
+cannot reopen an activated schema-3 catalogue: a system downgrade must have an
+explicit compatible state/lifecycle plan. Do not switch to an old binary or
+restore a backup while independent voyages can still write. Active schema
+rollback remains an open gate in #380/#344.
+
+Internal review storage now retains exact prepared facts/digests, the current
+receipt, an optional separate administrator grant and exact cancellation/revocation
+command receipts. Approval checks explicit owner enrollment, current connection
+and authority revision, configured administrator identity/account context and the
+caller-reconstructed current review facts before atomically publishing its grant
+and Approved receipt. Approved means authorization was recorded, not that a
+process started. Duplicate approval observes the retained state, including a
+cancelled or independently revoked grant; it never launches a process. Cancel
+applies to a pending review. An approved grant requires explicit Revoke, reported
+as `revocation_requested` with cleanup still pending.
+
+This is a prerequisite with ordinary-UID transactional tests, not an advertised
+administrator-review or launch API. Public callers cannot supply these review
+facts as authority. Complete protected current host/account/release/policy/work
+facts, initial launch and transition integration, native owner/cancellation/
+revocation journeys and both clients before exposing the capability. These remain
+required v1.0.3 scope; no client/admin feature is claimed from the bookkeeping.
 
 ## 1. Outcome and boundaries
 
@@ -197,6 +276,24 @@ workflow, participant, subagent and updater. A fix only in new-voyage setup is
 insufficient. Update all applicable public allowlists and both protocol ends.
 
 ## 3. Authority model
+
+### Private execution-identity configuration observation
+
+The hidden `voyage identity-helper` entry point reads one bounded private-pipe
+request without creating a session. `ReviewConfig` opens a frozen private
+`LaunchConfig` only after the supervisor has selected the configured execution
+identity. It requires an explicit account, validates the executing identity's
+registry and effective policy without provider calls, and returns account and
+capability references, configuration/policy/namespace digests and actual
+UID/GID/groups. It returns only `unavailable` on failure. Configuration content,
+credentials and subprocess diagnostics are absent from its response.
+
+This helper does not authorize a launch. Its caller must check the protected
+identity and owner grant, bound output/time/resources, choose the same explicit
+account/configuration environment for the eventual runtime, and reconstruct facts
+immediately before admission. Administrator account state must use a separately
+provisioned private namespace; root's login defaults cannot supply that namespace.
+The source increment is awaiting the coordinated final milestone verification.
 
 Keep these independent:
 
@@ -623,3 +720,388 @@ installation remain outstanding. An explicit system layout refuses account,
 model and implicit-identity start operations that would otherwise use root's
 login namespace. Enrollment bookkeeping uses a separate control-root account
 registry; this does not implement administrator account selection.
+
+## Root-local system lifecycle increment
+
+The installer now implements explicit system upgrade, inactive-only rollback and
+service-removal uninstall using protected lifecycle records. Identity and credential
+provisioner configuration are retained, releases remain version-pinned, readiness is
+observed for both managed processes, and interrupted mutations block replay. A
+candidate that may have opened state is never automatically replaced with old
+binaries: schema compatibility is unknown. Uninstall retains independent voyages
+and their protected state. The user-scoped remote updater refuses root system
+invocations. Remote system prepare/review/apply, active schema rollback and native
+lifecycle qualification remain unfinished #380 gates.
+
+
+### Initial administrator review/launch source integration
+
+Initial administrator creation is now prepared in source through the authenticated
+`execution` service operation. It requires both the existing connection rights
+and separate root-operator enrollment. Preserved user-installation connection IDs
+listed in protected `legacy-user-connections.json` cannot authorize root review or
+system updates, even after their principal is enrolled; use a fresh root-issued
+connection. No migration silently clears that provenance.
+
+The explicit root-private `administrator-execution.json` record has schema 1,
+`identity` (the complete configured administrator identity), `config_path` (a
+private frozen LaunchConfig for the reviewed workspace), `data_directory`,
+`config_directory`, and bounded `workspace_roots`. Data/config namespaces must
+be beneath control-root `administrator-data`/`administrator-config`, with the
+account registry at `data_directory/helm/accounts`. They are separate from the
+root login namespace. Provision and enroll accounts there explicitly; inherited
+credentials, mutable login defaults and ordinary credentials are not copied.
+Missing account/configuration/provisioning refuses preflight.
+
+A dropped independent private helper reports actual account/capability, policy,
+configuration/namespace hashes and UID/GID/groups without credentials or inference.
+Approval reconstructs those facts, records its separate grant, then durably
+latches Launching before admission. A lost or interrupted operation is observed
+by exact review ID; repeated approval never launches again. Protected per-command
+configuration and namespace pins fence changes between review and runtime startup.
+The guardian rechecks configured OS identity, namespace, account capability,
+configuration/release and continuing grant; authority changes retire its owned
+process. Read-only status distinguishes observed launch, current process state and
+observed cleanup. Stop/revoke request alone never proves cleanup.
+
+TUI `/execution` and a stock React Execution dialog are being integrated with
+these exact operations and retained IDs. This source increment has not been
+compiled or exercised, following the user's implementation-first/final-batch
+verification direction. Initial creation is not a claim that reviewed identity
+transition or old-journal replacement is complete. The retired-runtime source
+marker/target-private configuration commit and safe ownership handoff remain the
+next required source work; both directions preserve canonical history and forbid
+uncertain effects or automatic continuation. Complete it and the full client
+journeys before declaring #344 source ready or running the final coordinated
+verification set.
+
+## Retired journal handoff implementation
+
+The new hidden transition helper is a separate process in the **original identity**
+for observation/source freeze and in the **target identity** for target commit.
+Both input and output must be authenticated anonymous root-owned private pipes;
+namespace and real/effective identity checks precede work. The supervisor receives
+only bounded opaque facts/receipts and never parses an ordinary user's SQLite or
+canonical conversation. The helper holds the runtime startup lock and session
+execution fence; it cannot take a live cooperative runtime's journal.
+
+Source freeze receives only a reviewed configuration digest, target identity/
+incarnation, exact session revision, history/pending-work digests and command IDs.
+It stores a credential-free marker while leaving the original frozen configuration
+and canonical session bytes unchanged. Active runs become Interrupted, queued
+steering is rejected without replay, owned resources become cleanup_unknown and
+Goal continuation authority is withdrawn. No external effect or cleanup is claimed
+observed. Unresolved work remains in the journal and receipt.
+
+After the root controller safely publishes descriptor-checked target ownership,
+only the target helper reads the target identity's private captured launch path.
+It checks exact UID/GID, prepared receipt, current revision/history/pending state,
+reviewed domain-separated configuration digest and explicit target account/policy.
+Frozen configuration replacement, revision advance and committed receipt are one
+SQLite transaction. Startup refuses a prepared-but-uncommitted handoff. Distinct
+source/target command IDs and immutable request digests support phase lookup after
+lost output; mismatched retries refuse rather than rerunning uncertain work.
+
+The caller must first establish the original guardian's observed retirement and
+must preserve root-protected review/ownership-transfer/launch records. This worker
+is bookkeeping; it does not launch a Voyage, call a provider, resume a Goal, replay
+a tool or attest descendant/remote cleanup. Root controller/client integration,
+actual native two-identity lifecycle evidence and final combined validation remain
+required before claiming the transition is supported. Source preparation has not
+been compiled or executed under the user's final-test direction.
+
+Cancellation before target publication has a distinct credential-free AbortSource
+phase. It accepts only the original source UID/GID and exact original directory
+device/inode, before target commit. An immutable distinct abort command/receipt
+clears the prepared startup gate while retaining the source configuration,
+interrupted runs, rejected queued steering, disabled Goal continuation and every
+uncertain external obligation. It never restarts the retired process or certifies
+cleanup. Root orchestration must additionally verify that target ownership/binding/
+admission has not occurred; after publication the target must finish or undergo
+explicit repair. Copied directories cannot use this source abort receipt.
+
+A retired helper can retain its frozen configuration into the fixed private
+`migration-config.json` within its own runtime directory. This path is never
+chosen by a client and publication is create-only; an existing different capture
+is refused. Only the identity-scoped helper reads SQLite/settings and writes the
+0600 capture, returning path and domain-separated digest to root. The operation
+holds both private startup/session fences and creates no run, provider call or
+continuation. Root still establishes prior observed retirement before requesting
+this metadata-only capture for system quiescence/adoption.
+
+## Bound runtime execution-scope metadata bridge
+
+Bound authorized requests now carry an explicit root-minted opaque scope lease.
+The runtime validates the root abstract-socket peer with kernel UID 0 before
+sending the registration token or lease secret; each exchange has a two-second
+budget and 16 KiB frames. The response contains current rights, account/enrollment
+scope, expiry and exact GrantBinding/session/incarnation/workspace metadata, never
+token hashes or private grant files. Root broker validation owns current grant,
+parent authority, execution epoch and transport admission checks.
+
+The runtime re-queries this broker at policy dispatch and account binding, retaining
+the original actor/binding for exact receipts. It does not derive a protected
+control root from a bound runtime's directory. Legacy user runtimes retain their
+existing private-file grant checks and reject scope handles. A bound request with
+an authorization binding must supply its private scope handle.
+
+Validated handles can be cached only in the runtime identity's separate private
+`scope-credentials` directory (0700, ordinary single-link 0600 records, 64 KiB per
+record, at most 64 records). Cache keys bind exact grant/principal/revision; secrets
+never enter the journal, conversation, events or Debug output. Internal Goal
+continuation reconstructs its authority with this private handle and re-queries the
+broker using the current registration. Root execution epochs reject leases after
+an identity handoff, while a permitted clean restart can reuse its credential.
+External missing-handle requests cannot use this cache as an authority fallback.
+
+This remains source preparation without test/build execution. Root counterpart,
+suspended forwarding and final integrated/native verification are required before
+claiming working broker admission or continuous revocation.
+
+### Ordinary account enrollment and usage source integration
+
+System account operations now delegate device enrollment, private status, exact
+resolution/cancellation, cached usage and bounded usage refresh to the explicitly
+selected ordinary identity. A separate root-created descriptor checks current
+actor, grant, identity and account/enrollment rights before provider steps and
+credential publication. The helper authenticates the root peer before sending
+check metadata. The reply is a boolean; root never opens that user's credentials
+or receives device codes from the authority channel. Private enrollment status
+retains its human-only response path and is absent from command/event history.
+
+The supervisor tracks each original attempt before starting its owned worker.
+Duplicate waiters share its start response; leaving the request does not cancel
+the driver. Drivers retain exact IDs and bounded lifetimes. After supervisor
+restart, protected intent recovery resolves the attempt before driving it: an
+unadmitted or uncertain device-start/exchange is never automatically repeated.
+Changed default execution identity, grant revocation or unavailable authority
+refuses further effects. Owner-private provider state stays in the original home;
+administrator login credentials are never a fallback. Usage refresh keeps the
+existing single-refresh gate and publishes only under current authority.
+
+These paths are source-only and await the combined ordinary/native, cancellation,
+restart, private-code and provider-fixture checks. They do not establish live
+provider authentication, spending authorization or completed #344 acceptance.
+
+### Protected supervisor scope counterpart
+
+The supervisor now binds a read-only abstract Unix authority endpoint only for a
+system layout. A typed check requires the registered runtime's kernel UID, exact
+current incarnation/token and a root-minted opaque scope lease. It rechecks the
+current process grant, connection/participant ancestry, configured execution
+identity and protected scope epoch before returning bounded permission metadata.
+It does not return a control key, bearer token or token hash and cannot execute a
+command. Requests/replies are limited to 16 KiB, waits to two seconds and owned
+connections/tasks to 32. Listener ownership is retained across startup failures
+and normal service detachment; Voyages remain independent processes.
+
+Live bound forwarding and dropped suspended observers receive the explicit
+private handle. They do not infer authority from runtime path ancestry. The
+runtime's owner-only nonjournal cache supports existing Goal continuation across
+an ordinary clean process replacement; the new incarnation must still authenticate
+its own current registration. Its handle cannot acquire a different execution
+identity/account context or administrator grant.
+
+Every newly issued system process grant has a protected identity/authorization
+epoch pin. Human-derived grant IDs include the epoch and current connection
+revision. Root, ordinary and participant scopes remain distinct; a missing or
+changed system pin refuses instead of adopting current authority. The epoch is
+stable across an ordinary restart and changes on identity/context/authorization
+transition. An explicit reviewed migration may pin retained ordinary grants only
+after reconstructing the original user identity; it cannot confer administrator
+authority from legacy user records. Native public Run/browser/revocation/restart
+and malformed/false-peer qualification remain in the final deferred test set.
+
+
+### Client and identity-observation source preparation
+
+The TUI `/execution` entry and stock React Execution dialog now have source for
+configured-reference inventory, observed execution/process/local-cleanup status,
+explicit fresh administrator preparation and approval, exact retained-review
+observation and cancellation/revocation. Review IDs are retained before dispatch;
+reconnect and check actions only observe. Current message drafts remain separate.
+Neither UI chooses a UID, environment, executable, credential file or process
+identity directly. The backend checks existing Observe/Create/Execute/Decide/
+Lifecycle rights in addition to separately enrolled administrator authority.
+
+System ordinary identity inventory/status remains available under existing scoped
+observation rights without administrator enrollment. Administrator sessions require
+the original enrolled owner; privileged updates additionally require that explicit
+root association. Host/group/capability/namespace, configured account capability,
+configuration bytes and the protected release are part of current launch facts.
+Last observed launch and owned-process cleanup are distinct from current process
+liveness and unresolved external effects. Preserved legacy credentials cannot be
+promoted by merely enrolling their principal.
+
+Adopted dormant incarnations use the migration module's protected never-launched
+marker only when no guardian admission exists. That is separate evidence from
+observed descendant cleanup. Retired user-installation lifecycle UUIDs are refused
+by the catalogue transaction instead of being replayed under the new system scope.
+
+This remains uncompiled/unexecuted source preparation under the user's single
+coordinated final-verification instruction. Real identity transition is still being
+integrated through an original-UID credential-free source marker, positive old
+owner retirement, safe descriptor ownership handoff, and target-UID private frozen
+configuration commit. Both clients must expose that same reviewed scope and exact
+receipt before #344 is complete. No source-only increment counts as native or
+production acceptance.
+### Reviewed handoff controller source (verification pending)
+
+The root controller now retains an immutable intent before requesting source
+retirement. Reconnection can finish metadata preparation after positive guardian
+cleanup without replaying stop or approval. The source identity reads its journal
+and freezes work; the target identity alone opens its private configuration and
+commits the replacement. Root transfers only bounded, descriptor-pinned ownership
+metadata and publishes a new same-session incarnation/binding before guardian
+launch. Retained configuration startup checks use a protected incarnation pin;
+administrator saved configuration stays pinned to its current review.
+
+Both clients expose explicit source-stop consent and exact configured target
+references. Unknown responses retain their operation IDs. Administrator authority
+fenced before ownership publication uses the private SourceAbort receipt, which
+keeps interrupted runs and paused goals rather than continuing them.
+
+This source has not been compiled or tested under the current implementation-first
+release direction. Transition implementation now includes explicit metadata reconciliation below;
+the coordinated final verification is still required. A controller crash after a
+directory fence retains the obligation and does not establish target launch.
+
+
+The controller persists the exact bounded inode/device/mode/link inventory before
+ownership fencing. An explicit `reconcile_transition` revalidates that inventory
+and completes only the pinned source/target/root ownership mixture; new entries,
+links, unsafe modes, devices and inode replacements refuse. It never restores
+private target configuration to the source identity. TargetCommit duplicate
+receipts resolve through the target UID. Existing admissions are observed without
+repeating guardian launch. Before any new guardian spawn the immutable launch
+intent removes never-launched evidence, even if the child response is lost.
+
+When metadata reconciliation reaches a target not previously admitted, it creates
+a stopped target binding and protected dormant marker, with no guardian launch.
+A human can explicitly restart it. Dormant evidence rejects a guardian admission
+or launch intent; it carries the first-launch retained config pin into that
+explicit restart. Ordinary settings changed after a live launch remain eligible
+for ordinary later restart. TUI `/execution reconcile` and Web's exact handoff
+reconciliation action retain unknown outcomes and never automatically approve or
+relaunch. Source-only status still applies to this entire increment.
+
+Transition authority is rechecked at every retained metadata boundary against the
+exact original connection and administrator-authority revision. Re-enrolling an
+owner cannot revive an old approval. Private freeze/target-commit helpers are
+bounded and monitor authority every 100 milliseconds; interrupted helper replies
+remain unknown until exact receipt lookup. SourceFreeze lookup may lead only to
+pre-ownership SourceAbort cleanup when authority was fenced. Atomic catalogue
+admission also checks the saved review/receipt and current enrolled authority
+inside its transaction, including ordinary target handoffs with no admin grant.
+No new target admission or guardian launch follows a fenced review.
+
+### Ordinary initialization and transport source increment (#344, #380)
+
+The initializer implementation now selects an independently protected ordinary
+identity for managed import, JSON import, participant admission and destination
+transfer activation. A branch retains its exact still-valid ordinary source
+identity; an administrator source is refused rather than copying administrative
+authority into the branch. Public branch capture retains its authenticated
+connection scope. Participant capture checks the original source grant and account
+projection while selecting the ordinary destination independently; an inaccessible
+account namespace is refused, never replaced with root defaults or credentials.
+
+Root retains bounded immutable initialization intent before staging/capture.
+The dropped identity helper verifies private source provenance and captures private
+configuration, including the source runtime's frozen branch configuration. Root
+receives only the private path and digest. Registration retains every initialization
+variant, so runtime bootstrap remains the owner of canonical import/branch state.
+Transfer destination staging copies bounded signed opaque root-controlled bytes
+through a pinned runtime directory descriptor, creates a private target-owned
+file once, and leaves an interrupted or conflicting copy unresolved. Existing
+ordinary-owned bytes are never repaired or parsed by the supervisor.
+
+Bound source export uses the protected runtime coordinate and positive owner
+retirement observation. A source-identity helper parses the owned portable
+checkpoint and returns only IDs, generation, digest, length and inode metadata.
+Root retains that metadata and forwards bounded opaque chunks through descriptor
+opens which refuse symbolic links in every ancestor, foreign-owner ancestors,
+nonprivate/hardlinked files and changed inodes/lengths. Each chunk rechecks the
+protected bound identity and signed artifact digest; canonical history is not
+parsed by Root. Legacy user-scope transfer remains in its original owner realm.
+
+Restart carries the original command-keyed launch digest before new admission.
+Transition recovery additionally uses the separate positively never-launched
+marker and carries its reviewed retained digest only for that dormant transition;
+ordinary post-live saved settings do not acquire a permanent transition pin.
+No uncertain capture, partial copy, missing receipt or guardian launch is replayed.
+
+This source increment has not been compiled or exercised. Integration must retain
+the transition recovery module's `dormant` and `carry_retained_digest` hooks. The
+final coordinated local/native verification must establish all initializer
+journeys, exact retry and failure boundaries, scoped revocation during capture,
+ordinary namespace separation, source retirement, signed transfer chunk pinning
+and transition restart behavior before this acceptance can be marked complete.
+
+Identity-preserving administrator restart carries the exact protected namespace
+pin to its new command ID. Guardian admission validates the new incarnation
+against the current root execution binding, while the continuing administrator
+grant retains the original reviewed voyage, identity, account context, host and
+policy. The grant does not acquire a new owner or account, and changed private
+provision/configuration, revoked authority or a changed release still refuses.
+This corrects source restart admission; runtime verification remains pending.
+### Bound offline reconciliation implementation (#344, #380)
+
+Bound recovery now uses a dedicated nonexecuting helper under the original
+catalogue-pinned OS identity. Root validates the exact current registration,
+execution binding and positive guardian retirement or protected never-launched
+marker. The original identity lookup is bookkeeping only: revoked execution
+grants and a later disabled identity revision do not authorize launch, Run,
+account access or provider work. Actual OS name/UID/GID/home/group drift refuses.
+The confined cleanup adapter changes no catalogue, identity flag or grant state.
+Administrator helpers require the exact reviewed, protected XDG namespace; an
+unavailable pin refuses instead of using ambient root HOME/provider defaults.
+
+Current full-owner connection authority is checked before dispatch and through a
+root-peer-validated private descriptor before each helper operation. Human
+administrator attestations/tool reconciliation additionally require current
+explicit administrative-owner enrollment independently of execution permission.
+Automatic Root bookkeeping cannot attest resources or reconcile uncertain tool
+outcomes. The ordinary account authority runner denies the separate Recover
+right; the recovery helper bypasses account registry dispatch entirely.
+
+The helper holds the ordinary private startup and journal ownership fences,
+marks interrupted work, disables cached Goal continuation while preserving the
+objective, and retains unobserved run/resource obligations. Only exact current
+incarnation guardian cleanup may release matching host-resource reservations.
+Never-launched retirement does not establish those resources' cleanup. Private
+legacy run/root-terminal rows lack adequate incarnation attribution, so this
+helper does not automatically promote them to observed. A current authorized
+owner may attest explicit IDs; operator intent is claimed before those mutations,
+and a missing completion receipt fences replay. Exact completed receipt lookup
+returns metadata, never conversation/configuration/provider contents. The result
+explicitly grants no execution authorization and exposes bounded obligation IDs.
+It also returns `restart_permitted: false`: this bookkeeping receipt grants no
+restart permission, even when all known cleanup is observed. Explicit bound
+Restart independently checks current execution admission and protected retirement.
+Both new and cached receipts are checked for this metadata-only contract.
+The offline helper initializes process bookkeeping through the same managed-owner
+entry point as the runtime: command, decision, lifecycle and assignment tables
+precede observation triggers and cleanup progress; session-resource initialization
+follows. The direct journal Goal-fence fixture now mirrors that order and also
+asserts removal of the private continuation authority while retaining its objective.
+
+The recovery request carries the exact protected registration workspace as its
+outer workspace label. Recovery dispatch precedes account/start workspace checks
+and requires a normalized absolute spelling identical to the actor and canonical
+session labels. It does not stat, enter, recreate or canonicalize the project, so
+deleted or unmounted original workspaces remain recoverable. Account, start and
+administrative review helpers retain their existing canonical-directory checks.
+
+Public branching now rechecks current create/history/lifecycle scope before its
+snapshot effect. Participant admission rechecks its independently pinned ordinary
+child epoch before initialization and Submit; observation uses protected bound
+runtime coordinates and preserves cleanup_unknown if that lookup fails. Current
+parent authority is checked before bound cancellation bookkeeping and polling.
+
+These are source changes awaiting coordinated verification. The final native
+qualification must prove revoked/disabled ordinary and administrator bookkeeping
+without Run revival, enrolled-owner revocation at each callback, no ambient root
+namespace, live-fence refusal, exact receipt/conflict and uncertain operator
+replay refusal, retained unknown IDs and Goal continuation fencing. Preserve the
+separately delivered administrator namespace carry on restart.

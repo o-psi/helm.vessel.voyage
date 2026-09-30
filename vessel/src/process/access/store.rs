@@ -111,6 +111,7 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
         "access denied"
     );
     current(&grant)?;
+    super::execution_epoch::check(root, &grant)?;
     Ok(grant)
 }
 pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {
@@ -125,7 +126,7 @@ pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {
     ensure!(grant.expires_at_ms > now()?, "access expired");
     Ok(())
 }
-pub(super) fn credential_path(root: &Path, id: Uuid) -> PathBuf {
+pub(in crate::process) fn credential_path(root: &Path, id: Uuid) -> PathBuf {
     directory(root)
         .join("credentials")
         .join(format!("{id}.json"))

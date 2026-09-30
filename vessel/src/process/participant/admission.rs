@@ -165,6 +165,7 @@ impl Supervisor {
                     revision: binding.revision,
                 }),
             };
+            crate::process::access::execution_epoch::pin(&self.directory, &child)?;
             store::save(&store::grant_path(&self.directory, child_grant_id), &child)
                 .map_err(|error| error.context(routing::OutcomeUnknown))?;
             assignment
@@ -222,7 +223,19 @@ impl Supervisor {
                     revision: assignment.request.binding_revision,
                 }),
             };
+            crate::process::access::execution_epoch::pin(&self.directory, &child)?;
             store::save(&child_grant_path, &child)?;
+        }
+        if super::super::runtime_storage::has_bound_layout(&self.directory) {
+            let child_grant: ProcessGrant = store::load(&child_grant_path)?;
+            ensure!(
+                child_grant.grant_id == assignment.child_grant_id
+                    && child_grant.session_id == assignment.observation.child_session_id
+                    && child_grant.parent_grant.as_ref() == Some(&assignment.source_grant)
+                    && !child_grant.revoked,
+                "participant child authority changed"
+            );
+            super::super::access::execution_epoch::check(&self.directory, &child_grant)?;
         }
         let child = assignment.observation.child_session_id;
         let command = match &binding.config_path {
@@ -238,22 +251,40 @@ impl Supervisor {
                 workspace: binding.workspace.clone(),
             },
         };
-        let started = self
-            .start_initialized(
+        let initialize = Some(RuntimeInitialization::Participant {
+            assignment_id: assignment.request.assignment_id,
+            parent_vessel_id: assignment.request.parent_vessel_id,
+            parent_session_id: assignment.request.parent_session_id,
+            parent_run_id: assignment.request.parent_run_id,
+            policy: assignment.request.policy.clone(),
+        });
+        let started = if super::super::runtime_storage::has_bound_layout(&self.directory) {
+            #[cfg(target_os = "linux")]
+            {
+                self.start_ordinary_initialized(
+                    assignment.start_command_id,
+                    child,
+                    binding.workspace,
+                    binding.config_path,
+                    initialize,
+                    command,
+                    super::super::accounts::Scope::Session(grant.clone()),
+                )
+                .await?
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("system participant initialization unsupported");
+        } else {
+            self.start_initialized(
                 assignment.start_command_id,
                 child,
                 binding.workspace,
                 binding.config_path,
-                Some(RuntimeInitialization::Participant {
-                    assignment_id: assignment.request.assignment_id,
-                    parent_vessel_id: assignment.request.parent_vessel_id,
-                    parent_session_id: assignment.request.parent_session_id,
-                    parent_run_id: assignment.request.parent_run_id,
-                    policy: assignment.request.policy.clone(),
-                }),
+                initialize,
                 command,
             )
-            .await?;
+            .await?
+        };
         let info: ProcessInfo = serde_json::from_value(started)?;
         ensure!(
             matches!(info.state, ProcessState::Live | ProcessState::Suspended),
@@ -267,6 +298,15 @@ impl Supervisor {
             2 * 1024 * 1024,
         )?;
         let registration = self.registration(child).await?;
+        if registration.peer_uids.is_some() {
+            let child_grant: ProcessGrant = store::load(&child_grant_path)?;
+            super::super::access::execution_epoch::check(&self.directory, &child_grant)?;
+            super::super::accounts::Scope::Session(grant.clone()).check(
+                &self.directory,
+                &grant.workspace,
+                ProcessRight::Execute,
+            )?;
+        }
         let response = self
             .forward_resuming(
                 child,

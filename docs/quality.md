@@ -134,6 +134,14 @@ native-root fixture. Supply root-controlled Vessel and Voyage executables:
 VOYAGE_DISPOSABLE_ROOT_FIXTURE=1 VOYAGE_TEST_VESSEL_EXECUTABLE=/opt/voyage-test/vessel VOYAGE_TEST_CATALOGUE_EXECUTABLE=/opt/voyage-test/voyage cargo test -p vessel --locked --lib -- --ignored --exact process::guardian::tests::native_guardian_attests_pipe_launch_and_proves_descendant_cleanup
 ```
 
+The native guardian fixture also exercises public `StartConfigured` over an
+authenticated full-access connection using root-private `default-execution.json`,
+ordinary runtime configuration/account state, exact replay, creation resolution,
+not-admitted delayed-start fencing and observed cleanup. Run only on a disposable
+host with the fixture's explicit ordinary account. Default local tests verify
+nonowner and user-install refusal; they do not establish root/native launch.
+Plain system `Start` and account/settings/model helpers remain unavailable.
+
 It starts an actual ordinary-identity Voyage through a root-private pipe, checks
 kernel UID/GID/groups, cleared inherited capabilities and authenticated Health,
 then verifies projection/cleanup-marker forgery, duplicate/stale admission and
@@ -565,12 +573,24 @@ These checks verify staging and integrity, not browser execution. Browser
 execution and cleanup use `npm test --prefix voyage/browser` after pinned npm
 preparation, and `python3 voyage/tests/host_browser.py --binaries
 /absolute/path/to/built/bin --web-resources
-/absolute/path/to/webhelm/resources/js` with actual locally built Helm, Vessel and
-Voyage and the matching `o-psi/webhelm` checkout.
+/absolute/path/to/webhelm/resources/js` with actual built Helm, Vessel and
+Voyage and the matching `o-psi/webhelm` checkout. The fixture defaults its existing
+WebSocket package to that checkout's `node_modules/ws`; use `--ws` for another
+already installed package. It never downloads dependencies during the journey.
 The process journey checks both Helm clients, DOM replay, ordinary first-action
 claim and private takeover,
-multiple voyages, suspended-owner preparation and observed cleanup. Crash
+multiple voyages, external styles, cookie-gated images, open shadow DOM,
+cross-origin child replay and element control, suspended-owner preparation and
+observed cleanup. Its idle attached fixture viewer renews the status lease, just
+as the production viewer does; it does not disable the runtime's 20-second fence.
+Input-to-visible timing is recorded as local fixture evidence, not a latency
+guarantee. Crash
 qualification remains a separate adverse check.
+
+The optimized v1.0.3 candidate passed the maintained agent plus both-client
+journey, including actual suspended-owner preparation and observed cleanup.
+See [the exact browser qualification record](testing/host-browser-v1.0.3.md)
+for source/binary identity, covered behavior and remaining production TLS limits.
 
 The viewer also uses `node tests/browser-next-browser.mjs` (from the private `o-psi/webhelm` checkout) for real Chromium
 DOM replay and element input at desktop/mobile sizes and
@@ -631,6 +651,424 @@ existing Web test scripts; they do not establish live sign-in or provider behavi
 
 Run the browser client checks in the private `o-psi/webhelm` checkout; the public repository no longer contains those tests. The public repository does not contain those tests. See its README for setup and shared browser asset synchronization.
 
+### System lifecycle qualification remaining
+
+On disposable native Linux guests, qualify explicit system upgrade for active and
+inactive installs, exact root/gateway release PIDs and readiness, preserved paired
+identity, credentials and running independent voyages. Verify inactive-only rollback
+refuses candidates that were started; do not infer database-schema compatibility.
+Inject unit publication/readiness failure and interruption, observe retained journal
+and bounded refusal without replay. Service-removal uninstall must observe managed
+PIDs zero and disabled/absent exact units while retaining state, releases, provisioner
+and independent voyages. Root-local command tests do not qualify remote system updates.
+
+#### Concrete system lifecycle fixture sequence
+
+Use separate clean disposable native guests for active, inactive and interruption
+cases. Never convert a developer or production install for these checks. Unpack
+both checksum-verified full archives into root-owned `/root/release-old` and
+`/root/release-new`, with the new SemVer strictly greater and both manifest targets
+matching. Prepare the external key provisioner as above. Invoke the **new installer**
+against the old runtime for initial staging, so the baseline has the protected
+default execution contract (older fresh-install binaries did not provision it):
+
+```sh
+/root/release-new/bin/voyage-installer install --scope system \
+  --bin-dir /root/release-old/bin --execution-user voyageordinary \
+  --gateway-user voyageother --gateway-origin https://helm.example.test \
+  --credential-key /run/voyage-secrets/connections.key \
+  --credential-unit voyage-key-provision.service --no-start
+/root/release-new/bin/voyage-installer upgrade --scope system \
+  --bin-dir /root/release-new/bin --dry-run
+/root/release-new/bin/voyage-installer upgrade --scope system \
+  --bin-dir /root/release-new/bin
+/root/release-new/bin/voyage-installer status --scope system
+/root/release-new/bin/voyage-installer rollback --scope system
+/root/release-new/bin/voyage-installer status --scope system
+/root/release-new/bin/voyage-installer uninstall --scope system
+/root/release-new/bin/voyage-installer status --scope system
+```
+
+For the inactive sequence, assert both managed MainPIDs remain zero and unit-file
+states remain disabled; the upgraded units pin the new manifest release ID;
+rollback pins the old ID. Snapshot protected default identity UUIDs, execution
+account, external provisioner digest and retained control/runtime files before
+upgrade, then assert their exact retention after rollback/removal. Removal must
+leave both reviewed unit files absent and no managed PIDs, while retaining releases,
+private state and provisioner/key. A subsequent fresh install over retained state
+must refuse adoption rather than overwriting it.
+
+On a separate active guest replace `--no-start` with `--start`; establish pairing
+and exact retained authorization first. Upgrade must report the new root/gateway
+process executables with root/ordinary UIDs and public readiness. Verify pairing,
+public routing and retained identity again, including after an actual guest reboot.
+An explicit rollback must fail before publication, with unchanged current units,
+release and lifecycle record: candidate startup may have opened persistent state.
+A live independent Voyage fixture must retain the same incarnation and process
+start identity across supervisor upgrade/removal; a PID alone is insufficient.
+Do not claim that managed MainPID zero proves independent descendant cleanup.
+
+For interruption, launch upgrade under a bounded fixture controller, watch the
+atomic lifecycle journal and kill only its installer process after an observed
+nonterminal phase. Save the observed phase and subsequent exact journal. If the
+operation already completed before interruption, the injection did not establish
+the gate. A new upgrade/rollback/uninstall attempt must refuse the retained
+nonterminal operation without replay, unit changes or a second candidate start.
+A fault after the durable startup-attempt flag must retain that flag and refuse
+old-binary rollback. Do not manually erase the journal to resume an uncertain effect.
+Record exact source/archives, commands, exit statuses, managed PIDs and journal
+phases; these are additional native evidence, separate from Rust line coverage.
+
+## Protected administrator review transactions
+
+```sh
+umask 077
+cargo test -p vessel --locked execution_reviews:: -j 8
+cargo clippy -p vessel -p voyage-protocol --locked --all-targets --all-features -j 8 -- -D warnings
+```
+
+The transactional tests run as the ordinary developer identity, using in-memory
+SQLite and the existing private-directory fixture. They cover explicit owner
+selection/revision, exact replay/conflict, approval without process launch,
+stale/expired/current-identity refusal, cancelled late approval, independent and
+owner-wide grant revocation, truthful cleanup-pending receipts and transactional
+schema migration rollback. Ordinary root-operator refusal is checked before any
+mutation. A zero-match test filter is not passing coverage of this surface.
+
+These tests do not establish native root enrollment, host/account/release fact
+construction, administrator process launch, a public owner route or either
+client. Default public capability remains unavailable. Complete disposable native
+Linux authority, stale/duplicate/cancel/revoke/guardian cleanup and TUI/React
+journeys before claiming #344 acceptance. First explicit root owner enrollment
+activates protected catalogue schema 3; ordinary/user catalogues remain schema 2.
+Older schema-2-only binaries cannot consume activated schema 3, so actual
+compatible downgrade/rollback remains separately required.
+
+### Provider boundary coverage source increment (#353)
+
+The retained `chatgpt_oauth_boundary_tests.rs` and `multimodal_boundary_tests.rs`
+add bound-account OAuth refresh/revocation assertions, private legacy migration
+and logout fencing in an isolated subprocess, and image capability/provenance/
+metadata/aggregate-byte admission assertions. All HTTP endpoints are scripted
+numeric loopback and credentials are synthetic. Child HOME and XDG paths point
+only into the temporary fixture; the parent environment is not mutated. Image
+raster bytes are generated locally. Inference is forbidden in discovery fixtures.
+
+This increment is source preparation only under the user's coordinated final-test
+direction. It has not been compiled/executed or measured. No coverage percentage,
+live authentication, provider spend or native service behavior is established.
+The final integrated provider test pass must verify these cases along with the
+existing provider tests, and final workspace coverage must retain the full source
+and current object set. No denominator exclusions are introduced.
+
+### Execution-identity account and configuration source increment (#344)
+
+The private `identity-helper` and supervisor account/start/profile source is
+prepared for the final coordinated milestone pass. No test or build has run for
+this increment, following the operator's implementation-first direction. Prepared
+regressions cover private-file limits/ownership, symlinks/hardlinks, exact digest
+fencing, missing-file non-creation, separate identity profile state and exact
+actor/namespace-bound mutation receipts. These are not passing evidence.
+
+Final verification must additionally use actual dropped helpers and system/public
+routes in disposable native Linux: ordinary account listing/defaults/models and
+profiles, configured/account/settings creation, exact retry and not-admitted
+resolution, account and connection revocation, interrupted capture, changed
+configuration after capture, and observed guardian cleanup. The isolated provider
+must be synthetic. Keep production deployment/TLS and published exact-source
+archive qualification distinct. Do not execute a newer library test with an older
+Vessel helper and infer that it verifies the new public route.
+
+### Runtime coverage source pass after provider boundaries (#353)
+
+Additional source-prepared fixtures target retained HTML gaps in these areas:
+
+- Workflow collector: Linux PTY descriptors owned by an isolated test child,
+  hidden Unicode input, bounded validation retries, cancellation, timeout,
+  restored termios and post-collection signal monitoring. No human terminal is
+  attached. Child completion markers prevent zero-test filtering from passing.
+- Attachment owner: accepted-only workflow metadata, transient exact-run secret
+  bindings, refusal after execution starts, live-turn cleanup refusal and exact
+  actor reconciliation for simulated interrupted resources. Synthetic SQL state
+  changes exercise bookkeeping; they do not prove native process-tree cleanup.
+- Subagents: ordered inbox handoff, active followup identity, queued descendant
+  cancellation, full-inbox shutdown and released capacity after executor unwind.
+  The executor is synthetic and performs no provider, tool or worktree effects.
+- Extensions: a private child with fixture HOME/XDG paths, an explicitly owned
+  harmless process and host ledger. Bounded reads reject binary, oversized,
+  hardlinked and renamed private sources. Revoked authority refuses new workers;
+  aborted observer waiters retain pending obligations until process and workers
+  are actually drained. This is not executable sandbox/namespace qualification.
+- Filesystem tools: missing hashes, bad patch context/malformed hunks, cancelled
+  publication, non-following directory traversal and argument-safe ripgrep search.
+  Effects stay in private temporary roots; the Linux search fixture requires `rg`.
+
+All of these are **unexecuted source preparation** under the user's final combined
+validation direction. No new passing count, coverage percentage, denominator
+exclusion, unreachable-path classification or native acceptance is claimed.
+The source pass also catches subagent executor unwind and records an authored
+failure without exposing its payload or replaying it. It releases the execution
+slot; separate resource-cleanup ledgers remain authoritative and are not marked
+observed by this handler. Explicit cancellation still takes precedence.
+
+### Retired journal two-phase qualification pending
+
+The `transition-helper` source has not been compiled/executed. At the final
+integrated pass, verify private anonymous root-pipe admission, full namespace maps,
+original UID observation/freeze, live startup/execution-lock refusal, exact revision/
+history/config/pending digests, interruption without replay, Goal continuation
+withdrawal and immutable source receipt retries. Root must receive no conversation,
+SQLite content or target configuration bytes.
+
+On disposable native two-identity fixtures, publish target ownership through the
+root controller's safe descriptor path, then invoke target commit only in its
+pinned UID/GID and account namespace. Refuse wrong identities, changed private
+configuration, changed prepared facts and conflicting source/target command IDs.
+Verify SQL configuration/revision/receipt commit together, lost-output lookup never
+reapplies, and prepared-but-uncommitted runtime startup refuses. Preserve original
+canonical Session IDs/messages, uncertain effects and external cleanup obligations.
+Neither interruption nor the helper's successful receipt is native cleanup evidence.
+
+### Bound scope bridge qualification deferred to final integrated pass
+
+Verify kernel root-peer authentication before any secret write, two-second bounded
+connect/frame I/O, unavailable/malformed/oversized replies, exact session/incarnation/
+workspace/grant revision and expiry checks. Exercise live and suspended authorized
+requests with an explicit lease; refuse legacy user handles and bound requests
+without one. Verify per-dispatch revocation and account/history rights without
+ordinary-runtime reads of root-private grant files.
+
+Private lease cache verification must cover 0700 directory/0600 single-link records,
+nofollow reads, 64 KiB/64-record limits, exact binding keys, redacted Debug and absence
+from journal/history/events. Goal continuation must re-query current authority using
+the cached lease and current registration after a clean restart; identity/grant
+execution epochs must invalidate old leases. These are pending checks, not passing
+coverage or native evidence. No tests/compilation were run for this source increment.
+
+The supervisor counterpart also requires final native checks of the exact runtime
+UID, registration token/incarnation, root lease and protected grant epoch. Exercise
+ordinary restart with unchanged scope, ordinary-to-administrator and reverse
+transition with old tokens, connection/participant revocation, source/target
+namespace changes, supervisor restart with a retained Goal lease, and suspended
+observation without root-directory access. Preserve no-replay oracles and prove
+owned cleanup. Prepared source and successful source formatting do not establish
+these outcomes; no broker test was executed during implementation preparation.
+
+### Scope bridge adverse source cases (#353)
+
+Prepared cases now cover exact/stale grant and runtime metadata, expiry/workspace/
+owner/size refusal, ordinary abstract-socket peer rejection before any credential
+write, truncated/malformed/oversized frames and bounded idle reads. Cache cases
+assert 0700/0600, single-link/nofollow records, exact keys, capacity and redacted
+Debug; incoming bound requests cannot borrow a cached handle when the wire handle
+is missing. Clean-registration credential reuse requires new current metadata;
+a readable cache never proves a valid root execution epoch. The native wrong-peer
+case explicitly requires ordinary Linux UID and does not simulate UID 0 authority.
+
+These are source-only cases, not executed verification. Actual root broker epoch,
+parent/connection revocation and suspended/live roundtrips remain final integrated
+native gates. Existing legacy-file authority test construction was updated for the
+new AuthoritySource representation without weakening its assertions.
+
+### Identity-scoped enrollment and usage source qualification pending
+
+No tests or provider calls have run for the new ordinary system account worker.
+The final coordinated set must verify actual UID drop/private-root refusal before
+authority metadata, root-peer authentication, bounded channel failure, revocation
+between poll/exchange/publication, duplicate start waiters, socket loss with retained
+worker, negative-admission and interrupted-effect no-replay, supervisor restart,
+changed default identity, private-code exclusion and one usage refresh at a time.
+Prepared negative peer/descriptor cases are unexecuted. Use synthetic provider
+fixtures and disposable native hosts; skipped or inaccessible provider/host work
+is not passing evidence. Preserve existing user-service account behavior.
+
+### Helm account/profile/connected frontend coverage source pass (#353)
+
+A further unexecuted source pass targets the retained Helm account/profile and
+frontend/browser gaps. Profile cases exercise the actual scripted WebSocket
+loading sequence, optional account-label failure, nil host refusal, late replies
+for abandoned destinations, absent defaults and retained values after failure.
+Account cases cover exact usage identity/capability, private code disposal,
+closure without fictitious cancellation, hidden/busy/resize input fencing,
+unavailable transports and authored failure notices without private codes/URLs.
+
+The connected frontend seam retains production owner/configuration logic with an
+explicit fixture client: fresh configured start never submits, active resume
+refuses overrides, idle resume pins the observed revision/model and no-override
+resume retains the live owner. Viewer cases assert uncertain control poisoning,
+read-only mirror refusal and stale binding/one-use bootstrap boundaries. Synthetic
+peers bind numeric loopback; no real Vessel, provider or browser is contacted and
+no operator default configuration/storage is connected by these fixtures.
+
+Ordinary `Configure` and `Receipt` requests address the stable session and let
+Vessel select its current owner. The idle resume fixture changes observed owners
+while retaining the saved model or explicit override, exact mutation ID and
+observed revision fence. Receipt lookup preserves the exact session/command and
+rejects a different session; it remains readable after an owner restart. Live
+resource commands retain their separate exact incarnation fences. The coordinated
+run exposed two fixture assertions that incorrectly applied those live fences to
+ordinary configuration and receipt reads; the corrected assertions require the
+same public routing contract as production.
+
+The corrected fixture assertions require coordinated local execution and workspace
+coverage after integration. Source correction alone establishes no passing count,
+coverage improvement, native terminal acceptance or 100% reachability claim.
+Final integrated verification must include existing tests and the unchanged full
+workspace denominator. Execution UI hooks owned by the concurrent identity work
+were not modified by this pass.
+
+### Owned-PTY terminal and transport source journeys (#353)
+
+Additional unexecuted Linux cases run an isolated test child on a child-owned PTY
+with a scripted numeric-loopback peer. They prepare real attach/resize/snapshot/
+render/restoration paths for explicit detach, owner change after attach, already
+exited programs and observed exit. Only Ctrl+] is injected by the fixture; no human
+terminal or real program receives input. Mode restoration and completion markers
+must be observed in the final run. Unknown outcomes refuse composer resumption;
+restoration alone is not an explicit detach or remote cleanup observation.
+
+Transport source cases preserve exact receipts and private socket identity, refuse
+uncertain input retransmission after loss, and distinguish complete no-dispatch
+preparation from partial/positive effect claims. No native terminal acceptance or
+passing evidence is inferred from these source-only additions.
+
+### Notification and plain observer source journeys (#353)
+
+Eight additional unexecuted behavioral cases exercise explicit typed notification
+operations, exact mutation command identities, recipient-scoped seen/dismiss
+receipts, configure input and local bounds, and malformed watch pages. Scripted
+peers refuse any extra owner navigation, decision response, cancellation or unseen
+receipt. Plain observer cases prepare root-decision typed responses and changed-run
+refusals, event-stream loss/refusal/wrong-session observation refresh without
+resubmission, valid invalidation without refresh, and output identity/UTF-8 cursor
+failures leaving the previous cursor intact. Retained HTML for inbox, plain session
+and output is source guidance; it is not a measurement of these edited cases.
+
+No Cargo, runtime checks or coverage were run for this source increment. The final
+coordinated run must establish compilation, behavior and coverage over the same
+whole-workspace denominator, including all production targets and ignored-test
+accounting.
+
+### Passive inbox identity correlation source preparation (#353)
+
+The passive overview now refuses a receipt for a different requested event and
+refuses page entries pairing a receipt with a different notification event. Six
+additional unexecuted sources cover those fences, exact owner run/incarnation/
+decision references, unavailable owner states without fabricated authority, typed
+metadata/private-text refusal, page/inventory bounds, producer/budget uncertainty,
+and attention probes retaining unknown rather than inventing an unread count.
+Only the overview and its own new test module changed; execution UI hooks remain
+owned by the concurrent transition work. These edits still require the coordinated
+final compilation, runtime checks and workspace coverage measurement.
+
+Two further plain-interface source journeys exercise EOF, explicit quit, blank
+input and input failure through the actual chat event loop while scripted peers
+permit only observation. A second source matrix refuses malformed machine output
+without repeating an admitted command. These are prepared, not executed evidence.
+
+### Executable extension adapter acceptance source (#353)
+
+The actual `ExtensionTool` now has an isolated offline source journey with a
+scripted SDK peer and its own private resource ledger. Twelve scenarios prepare
+tool/command/lifecycle output acceptance, progress sanitization, read-only/approval/
+secret refusal before launch, wrong output owner, schema mismatch, split/private
+result refusal, output limits and unresolved cleanup. Quarantined attempts must
+not launch again, private contexts must be removed, and outcome/cleanup remain
+separate exact records. The fixture adapter launches no executable or OS process;
+positive release requires completion of its owned Tokio peer task. It does not
+establish native executable isolation, descendant cleanup or live-provider behavior.
+These source cases have not been executed and await the single final verification
+set. The current published coverage summary remains unchanged.
+### Bound initializer and opaque transfer source preparation (#353)
+
+Nine new unexecuted adversarial source cases cover private transfer bytes and
+hashes, symlink/hardlink/mode/source-directory refusals, initialization provenance
+conflicts, uncertain capture without default recapture, nil participant/self-branch
+references, metadata-only portable checkpoint observation, the separate 16 MiB
+opaque artifact bound, and retained source inode replacement during chunk reads.
+The small credential/provenance record limit remains 64 KiB; opaque signed
+transport artifacts use a separate bounded descriptor read instead of increasing
+that credential-cache denominator or weakening its private-file boundary.
+
+No Cargo/test/build/Clippy/coverage or native journey was run for this source
+increment. Formatting and diff checks are source checks only. Final acceptance
+requires the integrated implementation and unchanged whole-workspace coverage
+scope, including real bound initializer/transfer/restart fixtures and the exact
+transition recovery hooks; these prepared tests are not passing evidence.
+
+The system adoption helpers are hidden typed Vessel subcommands,
+`migration-user --directory ABS --pipe-fd FD` and
+`migration-control --directory ABS --pipe-fd FD`. They require their root-created
+private pipe and their own original-user/full-host authority checks; parsing a
+command line does not provide migration authority. The final disposable native
+adoption verification must use the same built Vessel as the installer, qualify
+quiescence/reboot, retained namespace and exact services, interrupted preparation/
+capture/freeze/install/fence recovery, explicit activation and refused legacy
+administrator promotion. Source registration alone is not passing evidence.
+
+### Offline binary entry and execution presentation cases (#353)
+
+Additional source cases exercise the actual Cargo binary entry points through
+`CARGO_BIN_EXE_helm`, `CARGO_BIN_EXE_vessel` and `CARGO_BIN_EXE_voyage`. The tests
+in `helm/tests/offline_main_cli_tests.rs`,
+`vessel/tests/offline_auth_main_tests.rs` and
+`voyage/tests/offline_runtime_main_tests.rs` isolate HOME/XDG state, exclude
+credentials from the inherited environment, and retain only LLVM's output
+profile destination for the final measurement. They cover generated documents,
+no-start/scoped route refusal, gateway validation before database/listener,
+invalid grant capture, runtime validation, bounded startup refusal, content-free
+catalogue refusal and exact resource-confirmation checks. None starts a service,
+contacts a provider or supplies human terminal input. Runtime subprocess cases
+have a ten-second deadline and bounded captured output.
+
+Execution presentation source cases additionally fence stale incarnation replies
+and preserve unknown operation IDs and unsent drafts without writing private
+receipt storage or dispatching approval. These cases were prepared from retained
+coverage evidence; they have not been run during the implementation-first pass.
+The final coordinated tests and workspace coverage measurement remain required.
+
+Retired user profile command IDs are now refused before both identity receipt
+lookup and the profile mutation transaction, through the same migration tombstone
+check as lifecycle receipts. Two prepared adversarial sources verify that old
+cached receipts cannot become current authority, validation callbacks do not run,
+and Save/Delete/SetDefault IDs cannot mutate either namespace after migration.
+The retained profile catalogue and original receipt remain intact. These sources
+are unexecuted pending the final coordinated verification.
+
+The next #353 source batch adds real Helm extension CLI lifecycle cases: packaging
+never replaces an archive, installation stays inactive, exact digest review binds
+activation, updates clear activation, stale deletion/revocation refuses, skill
+snapshot import stays inactive, and invalid package-index origins refuse before
+network admission. Model-facing GitHub adapter cases reject unknown approval/admin
+fields, malformed arguments, absent owning runs and disabled local capability
+without constructing remote requests or publication state.
+
+Private extension-store fault cases distinguish pre-rename failure (old bytes and
+cleaned temporary files) from post-rename lost response (committed candidate bytes,
+no rollback or automatic retry). Missing read-only paths remain absent, exact
+size bounds hold, and symlink/FIFO inputs refuse without following or waiting.
+These source cases add no coverage exclusions or measured percentages. The
+single coordinated verification/coverage pass is still pending.
+### Bound recovery and initializer integration audit source preparation (#353)
+
+The retained pre-change HTML identifies 36 uncovered cells in recover_command,
+38 in participant observation, 71 in lifecycle and 330 in bound lifecycle (line
+cells are source guidance only; current integrated totals require measurement).
+New private helper sources prepare refusal before file access on absent retirement,
+revoked authority or malformed actor/attestation references; isolated child-owned
+journals prepare exact metadata receipt replay/conflict, owned startup-fence refusal
+and no replay of claimed operator reconciliation with a missing receipt. Their
+HOME/XDG/host-resource ledger roots are private to the fixture child; no operator
+store or real provider is used. A separate real journal case prepares Goal fencing
+with unchanged objective and idempotent continuation denial.
+
+The synthetic helper check used by these journal cases tests private state
+semantics, not a positive Root transport or native administrator boundary. Final
+qualification still needs actual Root peer/UID drop/current owner callbacks,
+revoked execution grant versus cleanup permission, original administrator namespace,
+private Root result recovery after loss, per-resource uncertainty preservation,
+participant epoch rotation and bound polling/cancellation. No cases were executed,
+no exclusions were added, and no 100% coverage or acceptance claim is made.
 For #379 agent interaction, `npm test --prefix voyage/browser` includes real
 Chromium paging, native form/keyboard/drag actions, same- and cross-origin frames,
 stale-reference refusal, exact receipts and private diagnostics exclusion. Run
@@ -662,3 +1100,23 @@ the Chat automatic case proves unknown accounting keeps large evidence. Report
 those synthetic counts separately from real provider measurements and payload
 bytes. Counter traffic is separate from inference requests. These checks do not
 establish live-provider task quality or native macOS/Windows behavior.
+The grounded control sources also cover open shadow controls before light-DOM
+controls, exact paged handle identity, shadow-local accessible labels, nested
+hit testing, mutation/new-root invalidation and explicit traversal truncation.
+The Linux worker suite passed all 24 cases with no failures, cancellations or
+skips in 16.803 seconds after the final oversized-observation fix. The toolchain
+was Node 26.8.2, pinned Playwright 1.63.0 and Chromium 152.0.7977.82. The grounded
+case keeps its 60-second timeout. An earlier reproduction reached the wide
+observation in 3.259 seconds but cancelled at 60 seconds and did not finish
+cleanup until 265.735 seconds. Rendered text/control geometry are now withheld
+after the node walk truncates; the 100001-node fixture traps those reads and
+requires that neither runs. Its hidden subtree isolates traversal from enormous
+inline layout while visible controls before and after it exercise the boundary.
+
+The four real guardian crash/shutdown cases observed zero remaining live
+processes, zombies, process groups, socket descriptors/files and profile
+directories. Uncertain effect receipts remain retained; only cooperative shutdown
+releases the worker lock. Raw failing and corrected logs remain under ignored
+`target/verification-v103/browser-final/`. These checks cover the Linux worker and
+guardian, not the full Helm client journeys, root-bound public transport,
+production TLS, installers or other platforms.

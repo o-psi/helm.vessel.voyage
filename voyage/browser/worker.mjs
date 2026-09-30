@@ -9,7 +9,63 @@ import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
 
 class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
-const exposed = e => {const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return !!hit&&(hit===e||e.contains(hit));};
+const exposed = e => {
+  const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;
+  let hit=document.elementFromPoint(x,y);
+  for(let depth=0;depth<32&&hit?.shadowRoot;depth++){
+    const next=hit.shadowRoot.elementFromPoint(x,y);if(!next||next===hit)break;hit=next;
+  }
+  for(let node=hit;node;node=node.parentElement||node.getRootNode()?.host)if(node===e)return true;
+  return false;
+};
+
+// Runs only through the private task browser pipe. Collection and handle lookup
+// share this exact bounded list; Playwright's shadow-piercing selector order must
+// never be mixed with a light-DOM query's indices.
+const agentObservation = ({offset,limit,textOffset}) => {
+  const selector='a,button,input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[draggable="true"]';
+  let state=globalThis.__voyageAgentObservation;
+  if(!state?.refresh){
+    state={version:0,controls:[],roots:[]};
+    state.observer=new MutationObserver(()=>state.version++);
+    state.refresh=()=>{
+      if(state.observer.takeRecords().length)state.version++;
+      const controls=[],roots=[document],stack=document.documentElement?[{node:document.documentElement,depth:0}]:[];
+      let visited=0,shadowTruncated=false;
+      while(stack.length&&visited<100000){
+        const {node,depth}=stack.pop();visited++;
+        if(node.matches(selector))controls.push(node);
+        // Queue one sibling/child at a time so a wide document cannot allocate
+        // an unbounded pending list before the traversal budget takes effect.
+        if(node.nextElementSibling)stack.push({node:node.nextElementSibling,depth});
+        if(node.firstElementChild)stack.push({node:node.firstElementChild,depth});
+        if(node.shadowRoot){
+          if(depth>=32){shadowTruncated=true;continue;}
+          roots.push(node.shadowRoot);
+          if(node.shadowRoot.firstElementChild)stack.push({node:node.shadowRoot.firstElementChild,depth:depth+1});
+        }
+      }
+      const rootsChanged=roots.length!==state.roots.length||roots.some((root,i)=>root!==state.roots[i]);
+      if(rootsChanged||controls.length!==state.controls.length||controls.some((control,i)=>control!==state.controls[i]))state.version++;
+      if(rootsChanged){
+        state.observer.disconnect();
+        for(const root of roots)state.observer.observe(root,{subtree:true,childList:true,attributes:true,characterData:true});
+      }
+      state.roots=roots;state.controls=controls;state.nodesTruncated=stack.length>0;state.shadowTruncated=shadowTruncated;
+    };
+    globalThis.__voyageAgentObservation=state;
+  }
+  state.refresh();
+  if(!document.body)throw new Error('body unavailable');
+  // Reading innerText or control geometry forces rendered layout. Do not cross
+  // the node budget by laying out an explicitly truncated document afterwards.
+  // Such an observation has partial metadata but no grounded effect references.
+  const body=state.nodesTruncated?'':document.body.innerText;
+  return {version:state.version,text:body.slice(textOffset,textOffset+16384),text_total:body.length,text_truncated:state.nodesTruncated||textOffset+16384<body.length,
+    control_total:state.controls.length,controls_truncated:state.nodesTruncated||state.shadowTruncated,
+    nodes_truncated:state.nodesTruncated,
+    indices:state.nodesTruncated?[]:state.controls.slice(offset,offset+limit).map((_,i)=>offset+i)};
+};
 
 const controlSignature=e=>JSON.stringify({connected:e.isConnected,tag:e.tagName,attributes:[...e.attributes].slice(0,128).map(a=>[a.name,a.value.slice(0,16384)]),text:(e.innerText||'').slice(0,1024),disabled:e.disabled,readonly:e.readOnly,checked:e.checked,value:typeof e.value==='string'?e.value.slice(0,16384):null,optionCount:e.options?.length,options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>[o.value,o.selected,o.disabled]):null});
 const safeLocation=url=>{try{const u=new URL(url);u.username='';u.password='';return u.href.slice(0,8192);}catch{return '';}};
@@ -364,7 +420,7 @@ export class Worker {
     text(id,128);const h=this.refs.get(id);if(!h)beforeEffect('stale_reference');
     const binding=this.refBindings.get(h);
     if(!binding||Date.now()-binding.at>60000||binding.frame.isDetached()||this.frameId(binding.frame)!==binding.frameId)beforeEffect('stale_reference');
-    if(!await h.evaluate((e,version)=>e.isConnected&&globalThis.__voyageAgentObservation?.version===version,binding.version))beforeEffect('stale_reference');
+    if(!await h.evaluate((e,version)=>{const state=globalThis.__voyageAgentObservation;state?.refresh();return e.isConnected&&state?.version===version;},binding.version))beforeEffect('stale_reference');
     if(digest(await h.evaluate(controlSignature))!==binding.signature)beforeEffect('stale_reference');
     return h;
   }
@@ -386,38 +442,29 @@ export class Worker {
         const offset=number(a.offset??0,0,100000),limit=number(a.limit??64,1,128),textOffset=number(a.text_offset??0,0,2000000);
         // A mutation invalidates all references from this observation. This is
         // deliberately conservative; agents must inspect after dynamic changes.
-        const observed=await frame.evaluate(({offset,limit,textOffset})=>{
-          if(!globalThis.__voyageAgentObservation){
-            const state={version:0};new MutationObserver(()=>state.version++).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});
-            globalThis.__voyageAgentObservation=state;
-          }
-          if(!document.body)throw new Error('body unavailable');
-          const body=document.body.innerText;
-          const controls=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[draggable="true"]')];
-          return {version:globalThis.__voyageAgentObservation.version,text:body.slice(textOffset,textOffset+16384),text_total:body.length,text_truncated:textOffset+16384<body.length,control_total:controls.length,indices:controls.slice(offset,offset+limit).map((_,i)=>offset+i)};
-        },{offset,limit,textOffset});guard();
-        const elements=[];let elementBytes=0,nextOffset=offset+limit<observed.control_total?offset+limit:null;
-        const selector='a,button,input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[draggable="true"]';
+        const observed=await frame.evaluate(agentObservation,{offset,limit,textOffset});guard();
+        const elements=[];let elementBytes=0,nextOffset=!observed.nodes_truncated&&offset+limit<observed.control_total?offset+limit:null;
         for(const i of observed.indices){
-          const h=await frame.locator(selector).nth(i).elementHandle({timeout:3000});guard();if(!h)beforeEffect('stale_reference');
+          const handle=await frame.evaluateHandle(i=>globalThis.__voyageAgentObservation?.controls[i]??null,i),h=handle.asElement();guard();if(!h){await handle.dispose();beforeEffect('stale_reference');}
           const info=await h.evaluate(e=>{
             const style=getComputedStyle(e),rect=e.getBoundingClientRect();
             if(e.type==='hidden'||!rect.width||!rect.height||style.visibility==='hidden'||style.visibility==='collapse'||e.closest('[inert]'))return null;
-            const label=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
+            const root=e.getRootNode();
+            const label=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>root.getElementById?.(id)?.textContent||'').join(' ').trim();
             return {tag:e.tagName.toLowerCase(),type:e.getAttribute('type')||null,role:e.getAttribute('role')||({BUTTON:'button',A:'link',SELECT:'combobox',TEXTAREA:'textbox'}[e.tagName])||(e.type==='checkbox'?'checkbox':e.type==='radio'?'radio':'textbox'),
               text:(e.getAttribute('aria-label')||label||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||'').slice(0,256),
               checked:typeof e.checked==='boolean'?e.checked:null,selected:e.tagName==='SELECT'?[...e.selectedOptions].map(o=>o.label.slice(0,256)).slice(0,32):null,
               options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>({label:o.label.slice(0,256),value:o.value.slice(0,256),disabled:o.disabled})):null,
               options_truncated:e.tagName==='SELECT'&&e.options.length>64,
-              disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true,obscured:!((hit=>hit&&(hit===e||e.contains(hit)))(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)))};
+              disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true};
           });guard();
-          if(!info){await h.dispose();continue;}while(info.options?.length&&Buffer.byteLength(JSON.stringify(info))>16384){info.options.pop();info.options_truncated=true;}const size=Buffer.byteLength(JSON.stringify(info))+64;if(elementBytes+size>32768){await h.dispose();nextOffset=i;break;}elementBytes+=size;const ref=randomUUID();this.refs.set(ref,h);this.refBindings.set(h,{frame,frameId:this.frameId(frame),version:observed.version,at:Date.now(),signature:digest(await h.evaluate(controlSignature))});guard();elements.push({ref,...info});
+          if(!info){await h.dispose();continue;}info.obscured=!await h.evaluate(exposed);guard();while(info.options?.length&&Buffer.byteLength(JSON.stringify(info))>16384){info.options.pop();info.options_truncated=true;}const size=Buffer.byteLength(JSON.stringify(info))+64;if(elementBytes+size>32768){await h.dispose();nextOffset=i;break;}elementBytes+=size;const ref=randomUUID();this.refs.set(ref,h);this.refBindings.set(h,{frame,frameId:this.frameId(frame),version:observed.version,at:Date.now(),signature:digest(await h.evaluate(controlSignature))});guard();elements.push({ref,...info});
         }
         const frames=[];for(const child of page.frames().slice(1,33)){const id=this.frameId(child);this.agentFrames.set(id,child);frames.push({frame:id,parent:child.parentFrame()===page.mainFrame()?null:this.frameId(child.parentFrame()),url:safeLocation(child.url()).slice(0,512)});}
-        if(!await frame.evaluate(version=>globalThis.__voyageAgentObservation?.version===version,observed.version))beforeEffect('observation_changed');guard();
+        if(!await frame.evaluate(version=>{const state=globalThis.__voyageAgentObservation;state?.refresh();return state?.version===version;},observed.version))beforeEffect('observation_changed');guard();
         const title=(await page.title()).slice(0,256);guard();
         const location=new URL(frame.url());location.username='';location.password='';
-        return {document:{url:location.href.slice(0,8192),title,frame:frame===page.mainFrame()?null:this.frameId(frame)},text:observed.text,text_total:observed.text_total,text_truncated:observed.text_truncated,elements,control_total:observed.control_total,next_offset:nextOffset,frames,frames_truncated:page.frames().length>33,unsupported:['canvas and video require screenshot','closed shadow roots are not inspected'],downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
+        return {document:{url:location.href.slice(0,8192),title,frame:frame===page.mainFrame()?null:this.frameId(frame)},text:observed.text,text_total:observed.text_total,text_truncated:observed.text_truncated,elements,control_total:observed.control_total,controls_truncated:observed.controls_truncated,next_offset:nextOffset,frames,frames_truncated:page.frames().length>33,unsupported:['canvas and video require screenshot','closed shadow roots are not inspected',...(observed.controls_truncated?['control traversal limited to 100000 elements and 32 open shadow levels']:[]),...(observed.nodes_truncated?['rendered text and control references withheld because document traversal is incomplete']:[])],downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
       }
       case 'read':{
         const h=await observedRef(a.ref);guard();const offset=number(a.offset??0,0,2000000);

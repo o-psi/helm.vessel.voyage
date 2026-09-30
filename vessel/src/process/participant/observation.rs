@@ -1,5 +1,5 @@
 use super::*;
-use crate::process::routing;
+
 impl Supervisor {
     pub(crate) async fn observe_assignment(
         &self,
@@ -12,6 +12,13 @@ impl Supervisor {
                 && (!cancel || grant.rights.contains(&ProcessRight::Cancel)),
             "assignment observation or cancellation denied"
         );
+        if super::super::runtime_storage::has_bound_layout(&self.directory) {
+            let scope = super::super::accounts::Scope::Session(grant.clone());
+            scope.check(&self.directory, &grant.workspace, ProcessRight::History)?;
+            if cancel {
+                scope.check(&self.directory, &grant.workspace, ProcessRight::Cancel)?;
+            }
+        }
         let lock = self.assignment_lock(id).await?;
         let _assignment = lock.lock().await;
         let path = assignment_path(&self.directory, id);
@@ -65,7 +72,23 @@ impl Supervisor {
                 return Ok(serde_json::to_value(assignment.observation)?);
             }
         };
-        let directory = registry::directory(&self.directory, registration.session_id);
+        let directory =
+            match super::super::runtime_storage::directory(&self.directory, &registration).await {
+                Ok(directory) => directory,
+                Err(_) => {
+                    assignment.observation.state = "cleanup_unknown".into();
+                    assignment.observation.cleanup_observed = false;
+                    store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
+                    return Ok(serde_json::to_value(assignment.observation)?);
+                }
+            };
+        if registration.peer_uids.is_some() {
+            let scope = super::super::accounts::Scope::Session(grant.clone());
+            scope.check(&self.directory, &grant.workspace, ProcessRight::History)?;
+            if cancel {
+                scope.check(&self.directory, &grant.workspace, ProcessRight::Cancel)?;
+            }
+        }
         let mut snapshot = match self
             .forward_current(&directory, &registration, RuntimeCommand::Snapshot, None)
             .await
@@ -206,7 +229,7 @@ impl Supervisor {
                         .await;
                     let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                         loop {
-                            if routing::inspect(&directory, &registration).await.state
+                            if self.inspect_registration(&registration).await.state
                                 == ProcessState::Stopped
                             {
                                 return;

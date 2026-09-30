@@ -13,6 +13,10 @@ serde_json.workspace = true
 sha2 = "0.10"
 semver = "1"
 url = "2.5"
+base64 = "0.22"
+uuid.workspace = true
+voyage-protocol.workspace = true
+voyage-storage = { path = "../crates/voyage-storage" }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

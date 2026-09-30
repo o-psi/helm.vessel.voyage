@@ -552,3 +552,189 @@ async fn connection_tick_invalidates_both_channels_before_consuming_queued_code(
     assert!(app.accounts.usage_reply.is_none());
     unchanged(&app, t);
 }
+
+#[tokio::test]
+async fn usage_observation_is_exact_account_generation_connection_and_capability() {
+    let f = Fixture::new();
+    let (mut app, target, _connection) = setup(&f);
+    let b = super::tests::binding();
+    // Use the catalogue's exact IDs; synthetic binding() creates fresh IDs.
+    let p = app.accounts.picker.as_ref().unwrap();
+    let mut account = b;
+    account.account_id = p.catalogue.accounts[0].id;
+    account.connection_id = p.catalogue.connections[0].id;
+    account.identity_generation = p.catalogue.accounts[0].identity_generation;
+    account.connection_revision = p.catalogue.connections[0].revision;
+    let value = AccountUsageObservation {
+        account: account.clone(),
+        capability_revision: 1,
+        snapshot: None,
+        refresh_status: AccountUsageRefreshStatus::Unsupported,
+        attempted_at: Some(1),
+    };
+    reply(&mut app, Ok(Reply::Usage(value.clone()))).unwrap();
+    assert_eq!(app.accounts.picker.as_ref().unwrap().usage.len(), 1);
+    unchanged(&app, target);
+    for change in 0..4 {
+        let mut altered = value.clone();
+        match change {
+            0 => altered.account.identity_generation += 1,
+            1 => altered.account.connection_revision += 1,
+            2 => altered.capability_revision += 1,
+            _ => altered.account.account_id = Uuid::new_v4(),
+        };
+        assert!(reply(&mut app, Ok(Reply::Usage(altered))).is_err());
+        assert_eq!(app.accounts.picker.as_ref().unwrap().usage.len(), 1);
+        unchanged(&app, target);
+    }
+}
+#[tokio::test]
+async fn closing_private_enrollment_never_implies_host_cancellation_or_intent_erasure() {
+    let f = Fixture::new();
+    let (mut app, target, _connection) = setup(&f);
+    private(&mut app, EnrollmentState::Pending);
+    let p = app.accounts.picker.as_ref().unwrap();
+    let host = p.host.unwrap();
+    let workspace = p.workspace.clone();
+    let intent = p.intent.clone().unwrap();
+    let mut prefs = storage::load(host, &workspace).unwrap();
+    prefs.enrollment = Some(intent.clone());
+    storage::save(host, &workspace, &prefs).unwrap();
+    app.account_input(&Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Esc,
+        KeyModifiers::NONE,
+    )))
+    .unwrap();
+    assert!(app.accounts.picker.is_none());
+    assert!(app.accounts.reply.is_none());
+    assert!(app.accounts.usage_reply.is_none());
+    assert_eq!(
+        serde_json::to_value(
+            storage::load(host, &workspace)
+                .unwrap()
+                .enrollment
+                .unwrap()
+                .command
+        )
+        .unwrap(),
+        serde_json::to_value(intent.command).unwrap()
+    );
+    unchanged(&app, target);
+}
+#[tokio::test]
+async fn hidden_or_busy_account_panel_cannot_apply_keys_and_resize_clears_private_hit_targets() {
+    let f = Fixture::new();
+    let (mut app, target, _connection) = setup(&f);
+    private(&mut app, EnrollmentState::Pending);
+    app.accounts.visible.set(false);
+    let before = app.accounts.picker.as_ref().unwrap().selected;
+    for code in [KeyCode::Enter, KeyCode::Down, KeyCode::Char('d')] {
+        app.account_input(&Event::Key(crossterm::event::KeyEvent::new(
+            code,
+            KeyModifiers::NONE,
+        )))
+        .unwrap();
+    }
+    assert_eq!(app.accounts.picker.as_ref().unwrap().selected, before);
+    assert!(app.accounts.reply.is_none());
+    unchanged(&app, target);
+    app.accounts.visible.set(true);
+    app.account_input(&Event::Resize(80, 20)).unwrap();
+    assert!(!app.accounts.visible.get());
+    assert!(app.accounts.hits.borrow().is_empty());
+    unchanged(&app, target);
+}
+#[tokio::test]
+async fn quit_discards_private_codes_without_asserting_upstream_cancellation() {
+    let f = Fixture::new();
+    let (mut app, target, _connection) = setup(&f);
+    private(&mut app, EnrollmentState::Pending);
+    let id = app
+        .accounts
+        .picker
+        .as_ref()
+        .unwrap()
+        .intent
+        .as_ref()
+        .unwrap()
+        .command
+        .clone();
+    app.account_input(&Event::Key(crossterm::event::KeyEvent::new(
+        KeyCode::Char('q'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert!(app.quit);
+    let picker = app.accounts.picker.as_ref().unwrap();
+    assert!(picker.private.is_none());
+    assert_eq!(
+        serde_json::to_value(&picker.intent.as_ref().unwrap().command).unwrap(),
+        serde_json::to_value(id).unwrap()
+    );
+    unchanged(&app, target);
+}
+#[test]
+fn unavailable_or_removed_accounts_never_become_selectable_across_transport_choices() {
+    let f = Fixture::new();
+    let (mut app, target, _connection) = setup(&f);
+    let picker = app.accounts.picker.as_mut().unwrap();
+    picker.catalogue.connections[0].transports = vec![
+        Transport::OpenaiResponses,
+        Transport::OpenaiChat,
+        Transport::Anthropic,
+        Transport::ChatgptOauth,
+    ];
+    for state in [AccountState::SignInRequired, AccountState::Removed] {
+        picker.catalogue.accounts[0].state = state;
+        let choices = picker.choices();
+        assert!(choices.iter().all(|(_, b)| b.is_none()));
+        assert!(choices.iter().any(|(label, _)| label.contains(
+            if state == AccountState::Removed {
+                "Removed"
+            } else {
+                "Sign in required"
+            }
+        )));
+    }
+    picker.catalogue.accounts[0].state = AccountState::Ready;
+    picker.catalogue.accounts[0].availability = CredentialAvailability::EnvironmentUnavailable;
+    assert!(picker.choices().iter().all(|(_, b)| b.is_none()));
+    picker.catalogue.accounts[0].availability = CredentialAvailability::Available;
+    assert_eq!(
+        picker.choices().iter().filter(|(_, b)| b.is_some()).count(),
+        4
+    );
+    unchanged(&app, target);
+}
+#[test]
+fn enrollment_failure_notices_are_authored_and_never_echo_private_codes_or_urls() {
+    let f = Fixture::new();
+    let (mut app, _, _connection) = setup(&f);
+    for phase in [
+        EnrollmentPhase::RequestCode,
+        EnrollmentPhase::Poll,
+        EnrollmentPhase::Exchange,
+        EnrollmentPhase::Publication,
+    ] {
+        for kind in [
+            EnrollmentFailureKind::Timeout,
+            EnrollmentFailureKind::Connection,
+            EnrollmentFailureKind::Rejected,
+            EnrollmentFailureKind::InvalidResponse,
+            EnrollmentFailureKind::Storage,
+            EnrollmentFailureKind::Interrupted,
+        ] {
+            let mut value = private(&mut app, EnrollmentState::Uncertain);
+            value.failure = Some(EnrollmentFailure {
+                phase,
+                kind,
+                http_status: Some(503),
+            });
+            let message = enrollment_notice(&value);
+            assert!(message.contains("Failed while"));
+            assert!(!message.contains("FINAL-SYNTHETIC-CODE"));
+            assert!(!message.contains("https://"));
+            assert!(message.contains("503"));
+        }
+    }
+}

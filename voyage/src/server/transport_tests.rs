@@ -23,6 +23,7 @@ fn request(state: &State, command: RuntimeCommand) -> RuntimeRequest {
         incarnation: state.registration.incarnation,
         token: state.registration.token.clone(),
         authorization: None,
+        scope_authority: None,
         command,
     }
 }

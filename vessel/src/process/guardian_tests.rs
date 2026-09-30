@@ -407,6 +407,150 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
             .as_deref()
             .is_some_and(|message| message.contains("explicit execution identity"))
     );
+    // Public configured creation uses the protected ordinary default. It never
+    // reads root's account registry or accepts client-selected UID/grant facts.
+    RootDirectory::open(&control)
+        .unwrap()
+        .publish_new(
+            "default-execution.json".as_ref(),
+            &serde_json::to_vec(&identity).unwrap(),
+            16384,
+        )
+        .unwrap();
+    let public_session = Uuid::new_v4();
+    let public_command = Uuid::new_v4();
+    let public_start = VesselCommand::StartConfigured {
+        command_id: public_command,
+        session_id: public_session,
+        workspace: workspace.clone(),
+        config_path: config.clone(),
+    };
+    let owner_token = "e".repeat(64);
+    let owner = ConnectionGrant {
+        schema_version: 1,
+        full_access: true,
+        grant_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        vessel_id: crate::process::identity::public(&control)
+            .unwrap()
+            .vessel_id,
+        revision: 1,
+        rights: ProcessRight::all(),
+        accounts: vec![],
+        enrollment_connections: vec![],
+        expires_at_ms: u64::MAX,
+        revoked: false,
+        token_hash: crate::process::access::store::hash(&owner_token),
+        workspaces: vec![],
+    };
+    registry::private_directory(&control.join("access").join("connections")).unwrap();
+    crate::process::access::store::save(
+        &crate::process::access::store::connection_path(&control, owner.grant_id),
+        &owner,
+    )
+    .unwrap();
+    let owner_command = |command| VesselCommand::Granted {
+        expected_vessel_id: Some(owner.vessel_id),
+        grant_id: owner.grant_id,
+        token: owner_token.clone(),
+        command: Box::new(command),
+    };
+    let public_created = service_request(&control, owner_command(public_start.clone())).await;
+    assert!(public_created.error.is_none(), "{:?}", public_created.error);
+    assert_eq!(public_created.result["state"], "live");
+    let public_registration = database::registration(&control, public_session)
+        .await
+        .unwrap();
+    assert_eq!(public_registration.peer_uids.as_ref().unwrap().runtime, uid);
+    let public_binding = database::execution_binding(&control, public_session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(public_binding.identity, identity.identity);
+    assert_eq!(public_binding.account_context, identity.account_context);
+    assert!(public_binding.administrator_grant_id.is_none());
+    // Receipt replay does not consult a newly missing/default identity file.
+    // It observes the original incarnation rather than selecting or launching.
+    fs::rename(
+        control.join("default-execution.json"),
+        control.join("default-execution.saved"),
+    )
+    .unwrap();
+    let public_duplicate = service_request(&control, owner_command(public_start)).await;
+    fs::rename(
+        control.join("default-execution.saved"),
+        control.join("default-execution.json"),
+    )
+    .unwrap();
+    assert!(
+        public_duplicate.error.is_none(),
+        "{:?}",
+        public_duplicate.error
+    );
+    assert_eq!(
+        public_duplicate.result["incarnation"],
+        public_created.result["incarnation"]
+    );
+    let public_resolved = service_request(
+        &control,
+        VesselCommand::ResolveStart {
+            command_id: public_command,
+            session_id: public_session,
+            workspace: workspace.clone(),
+            config_path: Some(config.clone()),
+        },
+    )
+    .await;
+    assert!(
+        public_resolved.error.is_none(),
+        "{:?}",
+        public_resolved.error
+    );
+    assert_eq!(public_resolved.result["status"], "created");
+    assert_eq!(
+        public_resolved.result["process"]["incarnation"],
+        public_created.result["incarnation"]
+    );
+    // Resolving a not-admitted creation prevents its delayed public start.
+    let fenced_session = Uuid::new_v4();
+    let fenced_command = Uuid::new_v4();
+    let fenced = service_request(
+        &control,
+        VesselCommand::ResolveStart {
+            command_id: fenced_command,
+            session_id: fenced_session,
+            workspace: workspace.clone(),
+            config_path: Some(config.clone()),
+        },
+    )
+    .await;
+    assert_eq!(fenced.result["status"], "not_admitted");
+    let delayed = service_request(
+        &control,
+        VesselCommand::StartConfigured {
+            command_id: fenced_command,
+            session_id: fenced_session,
+            workspace: workspace.clone(),
+            config_path: config.clone(),
+        },
+    )
+    .await;
+    assert!(delayed.error.is_some());
+    assert!(
+        database::registration(&control, fenced_session)
+            .await
+            .is_err()
+    );
+    request_stop(&control, public_session, public_registration.incarnation).unwrap();
+    for _ in 0..200 {
+        if cleanup_observed(&control, public_session, public_registration.incarnation)
+            .unwrap_or(false)
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(cleanup_observed(&control, public_session, public_registration.incarnation).unwrap());
     service.kill().unwrap();
     service.wait().unwrap();
     assert!(guardian.try_wait().unwrap().is_none());
@@ -773,6 +917,8 @@ os._exit(0)
             std::sync::Arc::new(|_, _| false),
         ),
         enrollment_workers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        #[cfg(target_os = "linux")]
+        identity_enrollment_starts: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         assignment_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         lifecycle_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         registrations: database::Registrations::new(control.clone()),

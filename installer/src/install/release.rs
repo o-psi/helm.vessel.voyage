@@ -17,6 +17,62 @@ pub struct Manifest {
     pub binaries: BTreeMap<String, Binary>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub assets: BTreeMap<String, Binary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_compatibility: Option<UpdateCompatibility>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCompatibility {
+    pub schema_version: u32,
+    pub formats: BTreeMap<String, Vec<u32>>,
+    pub implementation_sha256: String,
+    pub build_inputs_sha256: String,
+}
+impl UpdateCompatibility {
+    pub fn validate(&self) -> Result<()> {
+        let expected = [
+            "catalogue_read",
+            "catalogue_write",
+            "journal_read",
+            "journal_write",
+            "process_protocol",
+            "vessel_protocol",
+            "execution_identity",
+        ];
+        ensure!(
+            self.schema_version == 1
+                && self.formats.len() == expected.len()
+                && expected
+                    .iter()
+                    .all(|name| self
+                        .formats
+                        .get(*name)
+                        .is_some_and(|values| !values.is_empty()
+                            && values.len() <= 64
+                            && values.windows(2).all(|w| w[0] < w[1])
+                            && values.iter().all(|value| *value > 0 && *value <= 10000)))
+                && [&self.implementation_sha256, &self.build_inputs_sha256]
+                    .iter()
+                    .all(|digest| digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))),
+            "invalid source format compatibility contract"
+        );
+        for (read, write) in [
+            ("catalogue_read", "catalogue_write"),
+            ("journal_read", "journal_write"),
+        ] {
+            ensure!(
+                self.formats[write]
+                    .iter()
+                    .all(|value| self.formats[read].contains(value)),
+                "writer format is not readable by its source contract"
+            );
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Binary {
@@ -79,10 +135,14 @@ impl Manifest {
                 target: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
                 binaries,
                 assets: BTreeMap::new(),
+                update_compatibility: None,
             })
         }
     }
     pub fn validate(&self) -> Result<()> {
+        if let Some(contract) = &self.update_compatibility {
+            contract.validate()?;
+        }
         ensure!(
             self.schema_version == 1,
             "Unsupported release manifest schema"
@@ -146,7 +206,15 @@ impl Manifest {
         Ok(())
     }
     pub fn id(&self) -> Result<String> {
-        Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(self)?)))
+        // Preserve release identities understood by already-published installers.
+        // System reviews pin the complete manifest separately, including its
+        // strict compatibility declaration, before any privileged effects.
+        let mut identity = self.clone();
+        identity.update_compatibility = None;
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&identity)?)
+        ))
     }
     pub fn verify(&self, root: &Path) -> Result<()> {
         self.verify_access(root, Access::Private)
@@ -446,6 +514,7 @@ mod system_tests {
             target: "x86_64-unknown-linux-gnu".into(),
             binaries,
             assets,
+            update_compatibility: None,
         };
         let release = root.join("releases").join(manifest.id().unwrap());
         manifest

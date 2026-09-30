@@ -214,8 +214,25 @@ vessel auth accounts add --connection CONNECTION_UUID --account work-api --env W
 ```
 
 The argument names the variable, not its value. The registry privately fingerprints
-the admitted value; a changed value fails closed. A supervisor's inherited environment
-may require restart after environment changes. Stored-key enrollment does not.
+the admitted value; a changed value fails closed. Resolution first uses that
+executing process's environment. On Linux, an ordinary identity whose process has
+no such variable can resolve it from its private
+`$XDG_CONFIG_HOME/helm/account-environment.json` (normally
+`~/.config/helm/account-environment.json`). This JSON object maps explicit variable
+names to values; its directory must be owned by that identity with mode 0700 and
+the file must be a single-link regular file with mode 0600. Symlinks, malformed
+files, unsafe permissions and changed values are refusals. Keep the file out of
+source control and human-visible diagnostic output.
+
+Only absence of that file permits a bounded read of the same ordinary UID's
+systemd user-manager environment, without service activation or interactive
+authorization. This supports independently launched system-mode Voyages after
+supervisor environment clearing and restart; it does not copy credentials into
+the privileged supervisor or between identities. A root identity has no ambient
+user-manager fallback and needs explicit process provisioning or a stored account.
+Setting a variable in an unrelated login shell does not provision the user manager
+or private file. Stored-key enrollment remains private to its executing identity.
+These paths are source-complete and await the combined v1.0.3 verification pass.
 An API key is a declared account context, not independently verified organization,
 identity, credit, or model entitlement. A compatible transport never permits sending
 that credential to a different endpoint.

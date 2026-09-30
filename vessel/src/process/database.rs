@@ -21,6 +21,13 @@ use voyage_protocol::process::{
     CatalogueMetadata, CatalogueSummary, ProcessInfo, ProcessRegistration,
 };
 
+#[cfg(target_os = "linux")]
+#[path = "database_execution_reviews.rs"]
+pub(super) mod execution_reviews;
+
+pub(super) const CATALOGUE_READ_SCHEMAS: &[i64] = &[1, 2, 3];
+pub(super) const CATALOGUE_WRITE_SCHEMAS: &[i64] = &[2, 3];
+
 const FILE: &str = "catalogue.sqlite3";
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -100,13 +107,20 @@ fn open_file(root: &Path, file: &str) -> Result<Connection> {
     let version: i64 = db.query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
         r.get(0)
     })?;
+    ensure!(
+        CATALOGUE_READ_SCHEMAS.contains(&version),
+        "unsupported supervisor database version"
+    );
     if version == 1 {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch(include_str!("database_v2_migration.sql"))?;
         tx.commit()?;
         fs::File::open(root)?.sync_all()?;
     } else {
-        ensure!(version == 2, "unsupported supervisor database version");
+        ensure!(
+            CATALOGUE_WRITE_SCHEMAS.contains(&version),
+            "unsupported supervisor database version"
+        );
     }
     Ok(db)
 }
@@ -204,6 +218,21 @@ fn save_tx(
     }
     Ok(())
 }
+pub(super) fn reject_retired_command(db: &Connection, id: Uuid) -> Result<()> {
+    let migrated:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='legacy_migration_commands')",[],|row|row.get(0))?;
+    if migrated {
+        ensure!(
+            !db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM legacy_migration_commands WHERE command_id=?1)",
+                [id.to_string()],
+                |row| row.get::<_, bool>(0)
+            )?,
+            "legacy command retired by scope migration; inspect its original outcome without replay"
+        );
+    }
+    Ok(())
+}
+
 fn record_tx(
     tx: &Transaction<'_>,
     namespace: &str,
@@ -215,6 +244,7 @@ fn record_tx(
         bytes.len() <= 16384,
         "lifecycle command exceeds receipt limit"
     );
+    reject_retired_command(tx, id)?;
     let saved: Option<Vec<u8>> = tx
         .query_row(
             "SELECT request FROM lifecycle_commands WHERE namespace=?1 AND command_id=?2",
@@ -420,6 +450,60 @@ pub async fn bound_observer_identity(
                 "observer administrator authority is unavailable"
             );
         }
+        Ok(identity)
+    })
+    .await
+}
+
+/// Original identity for nonexecuting offline bookkeeping only. Revocation or a
+/// disabled/new identity revision does not erase ownership of retained records.
+/// This function never establishes launch, run or account/provider authority.
+pub(super) async fn bound_cleanup_identity(
+    root: &Path,
+    registration: &ProcessRegistration,
+) -> Result<ConfiguredExecutionIdentity> {
+    let current = self::registration(root, registration.session_id).await?;
+    ensure!(
+        current.incarnation == registration.incarnation
+            && current.command_id == registration.command_id
+            && current.token == registration.token
+            && current.workspace == registration.workspace
+            && current.config_path == registration.config_path
+            && current.peer_uids == registration.peer_uids,
+        "cleanup registration changed"
+    );
+    let registration = registration.clone();
+    blocking(root, move |db| {
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [registration.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let binding: ExecutionBinding = serde_json::from_str(&saved)?;
+        ensure!(
+            binding.session_id == registration.session_id
+                && binding.incarnation == registration.incarnation
+                && registration.peer_uids.as_ref() == Some(&binding.peer_uids)
+                && binding.peer_uids.supervisor == unsafe { libc::geteuid() },
+            "cleanup execution binding changed"
+        );
+        let saved: String = db.query_row(
+            "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+            params![
+                binding.identity.id.to_string(),
+                binding.identity.revision.get()
+            ],
+            |row| row.get(0),
+        )?;
+        let identity: ConfiguredExecutionIdentity = serde_json::from_str(&saved)?;
+        ensure!(
+            identity.identity == binding.identity
+                && identity.account_context == binding.account_context
+                && identity.uid == binding.peer_uids.runtime
+                && binding.administrator_grant_id.is_some()
+                    == (identity.authority == AuthorityClass::Administrator),
+            "cleanup original identity unavailable"
+        );
         Ok(identity)
     })
     .await
@@ -1068,3 +1152,122 @@ pub async fn registration(root: &Path, session: Uuid) -> Result<ProcessRegistrat
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os = "linux")]
+pub async fn transition_bound(
+    root: &Path,
+    previous: &ProcessRegistration,
+    next: &ProcessRegistration,
+    binding: &ExecutionBinding,
+    bytes: Vec<u8>,
+    review: &voyage_protocol::execution_identity::ExecutionReview,
+) -> Result<()> {
+    let previous = previous.clone();
+    let next = next.clone();
+    let binding = binding.clone();
+    let review = review.clone();
+    blocking(root, move |db| {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: String = tx.query_row(
+            "SELECT registration FROM voyages WHERE session_id=?1",
+            [previous.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            current == serde_json::to_string(&previous)?
+                && next.session_id == previous.session_id
+                && next.incarnation != previous.incarnation
+                && next.restart_from == Some(previous.incarnation)
+                && next.peer_uids.as_ref() == Some(&binding.peer_uids)
+                && binding.incarnation == next.incarnation
+                && binding.session_id == next.session_id
+                && matches!(
+                    next.state,
+                    voyage_protocol::process::ProcessState::Starting
+                        | voyage_protocol::process::ProcessState::Stopped
+                ),
+            "execution transition admission changed"
+        );
+        let (saved_review, saved_receipt): (String, String) = tx.query_row(
+            "SELECT review,receipt FROM execution_reviews WHERE review_id=?1",
+            [review.review_id.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let saved_review: voyage_protocol::execution_identity::ExecutionReview =
+            serde_json::from_str(&saved_review)?;
+        let receipt: voyage_protocol::execution_identity::ExecutionReceipt =
+            serde_json::from_str(&saved_receipt)?;
+        let (vessel, authority): (String, u64) = tx.query_row(
+            "SELECT vessel_id,revision FROM administrator_authority WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let enrolled: bool = tx.query_row(
+            "SELECT enabled FROM administrative_owners WHERE principal_id=?1",
+            [review.facts.administrative_owner_id.to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            saved_review == review
+                && review.command_id == next.command_id
+                && review.facts.incarnation == next.incarnation
+                && review.facts.identity == binding.identity
+                && enrolled
+                && vessel == review.facts.vessel_id.to_string()
+                && authority == review.facts.authority_revision.get()
+                && matches!(
+                    receipt.outcome,
+                    voyage_protocol::execution_identity::ExecutionOutcome::Launching
+                        | voyage_protocol::execution_identity::ExecutionOutcome::Unconfirmed { .. }
+                ),
+            "transition review authority changed before atomic admission"
+        );
+        ensure!(
+            !record_tx(&tx, "commands", next.command_id, &bytes, true)?,
+            "execution transition already admitted"
+        );
+        let old: String = tx.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [previous.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let old: ExecutionBinding = serde_json::from_str(&old)?;
+        ensure!(
+            old.incarnation == previous.incarnation,
+            "source execution binding changed"
+        );
+        validate_binding_tx(&tx, &binding)?;
+        if let Some(id) = old.administrator_grant_id
+            && Some(id) != binding.administrator_grant_id
+        {
+            let mut hash = Sha256::new();
+            hash.update(b"voyage/transition-revocation/v1");
+            hash.update(next.command_id.as_bytes());
+            hash.update(id.as_bytes());
+            let value = hash.finalize();
+            let command = Uuid::from_bytes(value[..16].try_into()?);
+            tx.execute(
+                "INSERT OR IGNORE INTO administrator_revocations VALUES(?1,?2,?3)",
+                params![id.to_string(), command.to_string(), now()],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM execution_bindings WHERE session_id=?1",
+            [next.session_id.to_string()],
+        )?;
+        save_tx(&tx, &next, Some(&binding))?;
+        tx.execute(
+            "INSERT INTO execution_bindings VALUES(?1,?2,?3,?4,?5)",
+            params![
+                binding.session_id.to_string(),
+                binding.incarnation.to_string(),
+                binding.identity.id.to_string(),
+                binding.identity.revision.get(),
+                serde_json::to_string(&binding)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await
+}

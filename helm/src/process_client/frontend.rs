@@ -37,6 +37,28 @@ async fn open_inner(
     announce: bool,
 ) -> Result<(Client, ProcessInfo)> {
     let client = local::connect(super::cli::default_directory(), true).await?;
+    open_connected(
+        config,
+        workspace,
+        reference,
+        model_overridden,
+        configuration_explicit,
+        announce,
+        client,
+    )
+    .await
+}
+// Explicit client seam retains the production owner/configuration flow without
+// connecting an operator's default Vessel in local scripted fixtures.
+async fn open_connected(
+    config: &crate::Config,
+    workspace: Option<PathBuf>,
+    reference: Option<String>,
+    model_overridden: bool,
+    configuration_explicit: bool,
+    announce: bool,
+    client: Client,
+) -> Result<(Client, ProcessInfo)> {
     let resuming = reference.is_some();
     let process = match reference {
         Some(reference) => resume::open(&client, config, workspace, &reference).await?,

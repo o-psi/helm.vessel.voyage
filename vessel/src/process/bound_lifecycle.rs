@@ -18,6 +18,18 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
         info.state = ProcessState::Stopped;
         return info;
     }
+    if super::migration::dormant(root, registration.session_id, registration.incarnation)
+        .unwrap_or(false)
+        || super::execution_transition::dormant(
+            root,
+            registration.session_id,
+            registration.incarnation,
+        )
+        .unwrap_or(false)
+    {
+        info.state = ProcessState::Suspended;
+        return info;
+    }
     info.state = ProcessState::Unavailable;
     if let Ok(directory) = runtime_storage::directory(root, registration).await
         && let Ok(response) =
@@ -33,10 +45,24 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
 }
 
 impl Supervisor {
-    /// Initial admission for a caller that already holds a reviewed, protected
-    /// ordinary execution binding. No client transport invokes this until the
-    /// owner review and identity-scoped account path are complete.
-    #[allow(dead_code)]
+    pub(super) async fn bound_creation_lock(
+        &self,
+        session: Uuid,
+    ) -> Result<std::sync::Arc<tokio::sync::Mutex<()>>> {
+        ensure!(!session.is_nil(), "nil creation identity");
+        let mut locks = self.lifecycle_locks.lock().await;
+        ensure!(
+            locks.contains_key(&session) || locks.len() < 4096,
+            "bound creation retention limit reached"
+        );
+        Ok(locks
+            .entry(session)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone())
+    }
+    /// Admission with a supervisor-created ordinary execution binding. Public
+    /// configured creation selects only the protected default identity.
+    #[cfg(test)]
     pub(super) async fn start_bound_configured(
         &self,
         command_id: Uuid,
@@ -45,35 +71,94 @@ impl Supervisor {
         config_path: PathBuf,
         binding: ExecutionBinding,
     ) -> Result<serde_json::Value> {
+        let lock = self.bound_creation_lock(session_id).await?;
+        let _guard = lock.lock().await;
+        self.start_bound_configured_locked(command_id, session_id, workspace, config_path, binding)
+            .await
+    }
+
+    pub(super) async fn start_bound_configured_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+    ) -> Result<serde_json::Value> {
+        let original = VesselCommand::StartConfigured {
+            command_id,
+            session_id,
+            workspace: workspace.clone(),
+            config_path: config_path.clone(),
+        };
+        self.start_bound_request_locked(
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            binding,
+            original,
+        )
+        .await
+    }
+
+    pub(super) async fn start_bound_request_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+        command: VesselCommand,
+    ) -> Result<serde_json::Value> {
+        self.start_bound_initialized_request_locked(
+            command_id,
+            session_id,
+            workspace,
+            config_path,
+            binding,
+            None,
+            command,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn start_bound_initialized_request_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+        initialize: Option<RuntimeInitialization>,
+        command: VesselCommand,
+    ) -> Result<serde_json::Value> {
         ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
         ensure!(
             !command_id.is_nil()
                 && !session_id.is_nil()
                 && !binding.incarnation.is_nil()
                 && binding.session_id == session_id
-                && binding.peer_uids.supervisor == 0
-                && binding.administrator_grant_id.is_none(),
+                && binding.peer_uids.supervisor == 0,
             "invalid bound creation identity"
         );
         ensure!(
             workspace.is_absolute() && config_path.is_absolute(),
             "bound workspace and configuration must be absolute host paths"
         );
-        let command = VesselCommand::StartConfigured {
-            command_id,
-            session_id,
-            workspace: workspace.clone(),
-            config_path: config_path.clone(),
-        };
-        let lock = self
-            .lifecycle_locks
-            .lock()
-            .await
-            .entry(session_id)
-            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-            .clone();
-        let _guard = lock.lock().await;
         let mut registrations = self.registrations.lock().await?;
+        ensure!(
+            !super::start::resolution_record(
+                &self.directory,
+                "intent",
+                command_id,
+                &command,
+                false,
+            )
+            .await?,
+            "start command was fenced as not admitted"
+        );
         if super::registry::command_record(&self.directory, command_id, &command, false).await? {
             let previous = registrations.get(&session_id).ok_or_else(|| {
                 anyhow::anyhow!("bound creation outcome unconfirmed; inspect retained admission")
@@ -81,6 +166,7 @@ impl Supervisor {
             })?;
             ensure!(
                 previous.command_id == command_id
+                    && previous.initialize == initialize
                     && previous.config_path.as_ref() == Some(&config_path)
                     && previous.incarnation == binding.incarnation
                     && previous.peer_uids.as_ref() == Some(&binding.peer_uids)
@@ -103,8 +189,10 @@ impl Supervisor {
         runtime_storage::validate_bound_layout(&self.directory)?;
         let identity = database::configured_identity(&self.directory, &binding.identity).await?;
         ensure!(
-            identity.authority == AuthorityClass::Ordinary
-                && identity.account_context == binding.account_context
+            matches!(
+                (identity.authority, binding.administrator_grant_id),
+                (AuthorityClass::Ordinary, None) | (AuthorityClass::Administrator, Some(_))
+            ) && identity.account_context == binding.account_context
                 && identity.uid == binding.peer_uids.runtime,
             "bound creation identity changed"
         );
@@ -124,7 +212,7 @@ impl Supervisor {
             incarnation: binding.incarnation,
             command_id,
             restart_from: None,
-            initialize: None,
+            initialize,
             config_path: Some(config_path),
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
             peer_uids: Some(binding.peer_uids.clone()),
@@ -165,7 +253,10 @@ impl Supervisor {
         Ok(serde_json::to_value(info)?)
     }
 
-    async fn spawn_bound_guardian(&self, registration: &ProcessRegistration) -> Result<()> {
+    pub(super) async fn spawn_bound_guardian(
+        &self,
+        registration: &ProcessRegistration,
+    ) -> Result<()> {
         let vessel = self.binary.with_file_name("vessel");
         let mut process = tokio::process::Command::new(vessel);
         process
@@ -226,7 +317,11 @@ impl Supervisor {
             "ownership relinquished"
         );
         ensure!(
-            guardian::cleanup_observed(&self.directory, session_id, incarnation)?,
+            guardian::cleanup_observed(&self.directory, session_id, incarnation).unwrap_or(false)
+                || super::migration::dormant(&self.directory, session_id, incarnation)
+                    .unwrap_or(false)
+                || super::execution_transition::dormant(&self.directory, session_id, incarnation)
+                    .unwrap_or(false),
             "restart requires protected observed local cleanup"
         );
         let identity = database::bound_observer_identity(&self.directory, &previous).await?;
@@ -242,6 +337,21 @@ impl Supervisor {
         next.restart_from = Some(incarnation);
         next.token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         next.state = ProcessState::Starting;
+        if let Some(digest) = super::identity_start::launch_digest(&self.directory, &previous)? {
+            let path = next
+                .config_path
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("retained launch path missing"))?;
+            super::identity_start::pin_launch(
+                &self.directory,
+                command_id,
+                session_id,
+                path,
+                &digest,
+            )?;
+        }
+        super::execution_transition::carry_retained_digest(&self.directory, &previous, &next)?;
+        super::admin_execution::carry_namespace(&self.directory, &previous, &next, &identity)?;
         database::restart_bound(
             &self.directory,
             &previous,
@@ -318,7 +428,8 @@ impl Supervisor {
                 registration.incarnation,
             )?;
             if let Ok(directory) = runtime_storage::directory(&self.directory, registration).await {
-                let _ = routing::forward_authorized(
+                let _ = routing::forward_bound(
+                    &self.directory,
                     &directory,
                     registration,
                     RuntimeCommand::Stop,
@@ -377,15 +488,30 @@ impl Supervisor {
 
         // Bound configuration/account changes need their executing-identity
         // helpers; never inspect the supervisor's account namespace as fallback.
-        ensure!(
-            !matches!(command, RuntimeCommand::SetAccountInference { .. }),
-            "bound account selection requires identity-scoped account helpers"
-        );
+        if matches!(
+            command,
+            RuntimeCommand::SetAccountInference { .. }
+                | RuntimeCommand::SetInference { .. }
+                | RuntimeCommand::SetModel { .. }
+                | RuntimeCommand::SetAccess { .. }
+                | RuntimeCommand::Configure { .. }
+        ) {
+            let binding = database::execution_binding(&self.directory, registration.session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("bound identity unavailable"))?;
+            let identity =
+                database::configured_identity(&self.directory, &binding.identity).await?;
+            ensure!(
+                identity.uid != 0,
+                "administrator account settings require a fresh execution review"
+            );
+        }
         if matches!(command, RuntimeCommand::Stop) {
             return self.bound_stop(&registration, authorization).await;
         }
         let directory = runtime_storage::directory(&self.directory, &registration).await?;
-        let result = routing::forward_authorized(
+        let result = routing::forward_bound(
+            &self.directory,
             &directory,
             &registration,
             command.clone(),

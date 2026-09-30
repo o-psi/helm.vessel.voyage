@@ -2,6 +2,8 @@
 //! approve a prepared identity, never executable paths, commands or download URLs.
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+mod system;
 
 pub fn run(args: &[String]) -> anyhow::Result<()> {
     if args == ["protocol"] {
@@ -10,6 +12,9 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
+        if args.first().is_some_and(|s| s == "system") {
+            return system::run(&args[1..]);
+        }
         linux::run(args)
     }
     #[cfg(not(target_os = "linux"))]

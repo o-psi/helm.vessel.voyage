@@ -142,6 +142,9 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer system-assess --execution-user USER --gateway-user USER
   voyage-installer install --scope system --bin-dir ABS --execution-user USER --gateway-user USER --gateway-origin HTTPS_ORIGIN --credential-key /run/PATH --credential-unit NAME.service [--start | --no-start] [--dry-run]
   voyage-installer status --scope system
+  voyage-installer upgrade --scope system --bin-dir ABS [--dry-run]
+  voyage-installer rollback --scope system [--dry-run]
+  voyage-installer uninstall --scope system [--dry-run]
 
 upgrade defaults to the latest published GitHub release, downloaded and verified.
 --dev selects the latest public nightly prerelease; no source build is performed.
@@ -165,10 +168,16 @@ service-status, service-stop, service-uninstall
 system-assess is a read-only Linux host assessment. It never installs or enables
 the privileged Vessel. The system-scope install command supports only fresh,
 explicit, root-owned staging with a separately provisioned key and root/gateway
-units. It refuses existing installations and never adopts user state. It records
+units. Separate adopt-user prepare/review/apply/activate/rollback commands provide
+an explicit original-account handoff with reviewed boot retirement and dormant
+new incarnations. Reviewed preactivation rollback recovers interrupted staging
+without replaying uncertain activation or restoring live state. It records
 activation failure and removes its units only after observing stopped PIDs.
-System update, rollback and uninstall are not yet available: this increment is
-not a supported production installation or a completed privileged Vessel flow.
+Explicit system upgrade/rollback/uninstall and owner-approved remote system updates
+require explicit review. Active rollback requires identical code-owned format/
+implementation contracts in both archives. adopt-update-contract stages legacy
+system sources after quiescence; start --scope system activates the exact release;
+native qualification and complete privileged Vessel acceptance remain release gates.
 --help, --version");
 }
 

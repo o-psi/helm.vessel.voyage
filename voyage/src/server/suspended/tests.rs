@@ -101,6 +101,7 @@ async fn suspended_authentication_binds_all_envelope_fields() {
         incarnation: state.registration.incarnation,
         token: state.registration.token.clone(),
         authorization: None,
+        scope_authority: None,
         command: RuntimeCommand::Health,
     };
     authenticate(&state.registration, &original).unwrap();

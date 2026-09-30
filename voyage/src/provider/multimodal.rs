@@ -765,3 +765,7 @@ mod tests {
         assert!(discovered_modalities(&json!({"input_modalities":"image"})).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "multimodal_boundary_tests.rs"]
+mod boundary_tests;

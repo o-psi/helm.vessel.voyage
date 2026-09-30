@@ -23,8 +23,10 @@ async function connect(item, attach=true){
  p.op=async(action,extra={})=>{const operation={action,...(action==='status'?{}:{command_id:randomUUID(),binding:p.binding}),...extra};const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;return result;};
  if(!attach)return p;
  const status=await p.op('status');assert.equal(status.status.running,true,JSON.stringify(status));p.binding={...status.status.binding,attachment_id:randomUUID()};await p.op('attach');
- // Renew the second viewer's lease while the first runs its journey.
- p.leaseTimer=setInterval(()=>{void p.op('status').catch(()=>{});},5000);return p;
+ // The second attached viewer remains authorized while the first runs its
+ // journey. Match the production viewer's status lease renewal, without capture.
+ p.leaseTimer=setInterval(()=>{void p.op('status').catch(()=>{});},5000);
+ return p;
 }
 async function decoded(page, label){
  let state;
@@ -63,6 +65,33 @@ async function more(page,label){
 async function address(page,suffix){
  await page.waitForFunction(url=>document.querySelector('[aria-label="Website address"]').value===url,cfg.site+suffix);
  await decoded(page,'history '+suffix);
+}
+async function siteClasses(page){
+ await navigate(page,cfg.site+'/site-classes');
+ await page.waitForFunction(()=>{
+  const session=window.mounted.session,doc=session.replayer?.iframe.contentDocument;
+  const image=doc?.querySelector('#authenticated-asset');
+  return doc?.querySelector('#shadow')?.shadowRoot?.textContent.includes('Open shadow content')
+   && image?.complete && image.naturalWidth===40
+   && [...session.frames.values()].some(f=>f.player.iframe.contentDocument?.body?.textContent.includes('Cross-origin child content'));
+ });
+ const facts=await page.evaluate(()=>{
+  const session=window.mounted.session,doc=session.replayer.iframe.contentDocument;
+  const image=doc.querySelector('#authenticated-asset');
+  return {background:doc.defaultView.getComputedStyle(doc.body).backgroundColor,
+   shadow:doc.querySelector('#shadow').shadowRoot.textContent,
+   authenticated_image:image.complete&&image.naturalWidth===40,frames:session.frames.size};
+ });
+ assert.equal(facts.background,'rgb(17, 51, 85)','external stylesheet must be replayed');
+ assert.equal(facts.authenticated_image,true,'authenticated image must be delivered to mirror');
+ const started=performance.now();
+ await page.frameLocator('.browser-next-mirror iframe').getByRole('button',{name:'Change page',exact:true}).click();
+ await page.waitForFunction(()=>window.mounted.session.replayer.iframe.contentDocument.querySelector('#result').textContent==='Changed in task browser');
+ const latency=performance.now()-started;
+ const child=page.frameLocator('.browser-next-frame iframe').getByRole('button',{name:'Child action',exact:true});
+ await child.click();
+ await page.waitForFunction(()=>[...window.mounted.session.frames.values()].some(f=>f.player.iframe.contentDocument?.body?.textContent.includes('Child action observed')));
+ evidence.steps.push({site_classes:facts,task_dom_action:true,cross_origin_action:true,input_to_visible_ms:Math.round(latency)});save();
 }
 async function layout(page,label){
  for(const [size,width,height] of [['desktop',1280,800],['mobile',390,844]]){
@@ -190,6 +219,7 @@ try{
   await navigate(page,cfg.site+'/ordinary-first-action');
   await page.waitForFunction(()=>window.mounted.session.status?.mode==='human');
   evidence.steps.push({ordinary_navigation_claimed_human:true});save();
+  await siteClasses(page);
   await mode(page,'Browse privately','private');
   await navigate(page,cfg.site+'/history-one');
   await page.getByRole('group',{name:'Browser tabs',exact:true}).getByRole('button',{name:'Synthetic /history-one',exact:true}).waitFor();

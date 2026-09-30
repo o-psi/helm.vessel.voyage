@@ -64,6 +64,11 @@ pub fn prepare(source: Source, cancelled: &AtomicBool) -> Result<Prepared> {
 }
 
 #[cfg(target_os = "linux")]
+pub fn prepare_public(source: Source, cancelled: &AtomicBool, home: PathBuf) -> Result<Prepared> {
+    linux::prepare_at(source, cancelled, home, true)
+}
+
+#[cfg(target_os = "linux")]
 mod linux {
     use super::*;
     use anyhow::{Context, bail, ensure};
@@ -129,6 +134,16 @@ mod linux {
         let home = crate::fixture_tests::root().context("source test requires isolated fixture")?;
         #[cfg(not(test))]
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is required")?);
+        prepare_at(source, cancelled, home, false)
+    }
+
+    pub(super) fn prepare_at(
+        source: Source,
+        cancelled: &AtomicBool,
+        home: PathBuf,
+        public_only: bool,
+    ) -> Result<Prepared> {
+        ensure!(!cancelled.load(Ordering::Relaxed), "Upgrade cancelled");
         let cache = home.join(".cache/voyage/upgrades");
         crate::install::files::private_directory(&cache)?;
         let root = cache.join(format!(
@@ -162,13 +177,22 @@ mod linux {
             .env("HOME", &home)
             .env(
                 "PATH",
-                std::env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()),
+                if public_only {
+                    "/usr/bin:/bin".into()
+                } else {
+                    std::env::var_os("PATH")
+                        .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into())
+                },
             )
             .env("LANG", "C.UTF-8")
             .env(
                 "RUSTUP_HOME",
-                std::env::var_os("RUSTUP_HOME")
-                    .unwrap_or_else(|| home.join(".rustup").into_os_string()),
+                if public_only {
+                    home.join(".rustup").into_os_string()
+                } else {
+                    std::env::var_os("RUSTUP_HOME")
+                        .unwrap_or_else(|| home.join(".rustup").into_os_string())
+                },
             )
             .args(["-I", "-c", acquire])
             .arg(match source {
@@ -176,6 +200,11 @@ mod linux {
                 Source::Nightly => "nightly",
             })
             .arg(&prepared.root)
+            .arg(if public_only {
+                "public"
+            } else {
+                "existing-login"
+            })
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
             .stderr(log)

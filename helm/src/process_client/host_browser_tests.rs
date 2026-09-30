@@ -257,3 +257,116 @@ async fn preparation_refreshes_fence_once_without_changing_start_intent() {
         assert_eq!(a.stop.is_cancelled(), repeated);
     }
 }
+
+fn current_binding(a: &Adapter) -> HostBrowserBinding {
+    HostBrowserBinding {
+        incarnation: a.owner.lock().unwrap().0,
+        browser_id: Uuid::new_v4(),
+        attachment_id: Uuid::new_v4(),
+        tab_id: Uuid::new_v4(),
+        document_epoch: 1,
+        viewport_epoch: 1,
+        controller_epoch: 1,
+        capture_epoch: 1,
+    }
+}
+#[tokio::test]
+async fn unknown_read_only_mirror_failure_does_not_authorize_replay_or_poison_unrelated_controls() {
+    use crate::process_client::loopback_tests::{Peer, response, send};
+    use voyage_protocol::{duplex::ServerFrame, vessel::*};
+    let mut peer = Peer::open().await;
+    let mut a = adapter();
+    a.client = peer.client.clone();
+    a.socket = a.client.connection_state().borrow().socket_id.unwrap();
+    let binding = current_binding(&a);
+    let a = Arc::new(a);
+    let worker = a.clone();
+    let task = tokio::spawn(async move { worker.exchange(Op::Mirror { binding, since: 0 }).await });
+    let (id, _) = peer.command().await;
+    send(
+        &mut peer.socket,
+        ServerFrame::Reply {
+            request_id: id,
+            response: VesselResponse {
+                error: Some("synthetic read refusal".into()),
+                ..response(json!(null))
+            },
+        },
+    )
+    .await;
+    assert!(task.await.unwrap().is_err());
+    assert!(!a.stop.is_cancelled());
+    assert!(a.binding.lock().unwrap().is_none());
+}
+#[tokio::test]
+async fn unknown_control_failure_poisoning_prevents_a_second_effect_dispatch() {
+    use crate::process_client::loopback_tests::{Peer, response, send};
+    use voyage_protocol::{duplex::ServerFrame, vessel::*};
+    let mut peer = Peer::open().await;
+    let mut a = adapter();
+    a.client = peer.client.clone();
+    a.socket = a.client.connection_state().borrow().socket_id.unwrap();
+    let binding = current_binding(&a);
+    let a = Arc::new(a);
+    let worker = a.clone();
+    let task = tokio::spawn(async move {
+        worker
+            .exchange(Op::Close {
+                command_id: Uuid::new_v4(),
+                binding,
+            })
+            .await
+    });
+    let (id, _) = peer.command().await;
+    send(
+        &mut peer.socket,
+        ServerFrame::Reply {
+            request_id: id,
+            response: VesselResponse {
+                error: Some("uncertain synthetic effect".into()),
+                ..response(json!(null))
+            },
+        },
+    )
+    .await;
+    assert!(task.await.unwrap().is_err());
+    assert!(a.stop.is_cancelled());
+    assert!(a.exchange(Op::Status {}).await.is_err());
+}
+#[tokio::test]
+async fn stale_binding_refusal_occurs_before_transport_and_preserves_current_owner() {
+    let a = adapter();
+    let owner = *a.owner.lock().unwrap();
+    let mut binding = current_binding(&a);
+    binding.incarnation = Uuid::new_v4();
+    assert!(a.exchange(Op::Mirror { binding, since: 0 }).await.is_err());
+    assert_eq!(*a.owner.lock().unwrap(), owner);
+    assert!(!a.stop.is_cancelled());
+    assert!(
+        a.exchange(Op::Start {
+            command_id: Uuid::nil(),
+            incarnation: owner.0,
+            expected_revision: owner.1
+        })
+        .await
+        .is_err()
+    );
+    assert!(!a.stop.is_cancelled());
+}
+#[tokio::test]
+async fn viewer_context_bootstrap_is_one_use_even_after_terminal_output_flags_change() {
+    let a = Arc::new(adapter());
+    let mut h = headers();
+    h.insert("x-extra-private", "fixture".parse().unwrap());
+    let first = bootstrap(State(a.clone()), h.clone(), Bytes::from_static(b"one-use")).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert!(a.launch.lock().unwrap().is_none());
+    assert_eq!(
+        bootstrap(State(a.clone()), h, Bytes::from_static(b"one-use"))
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    a.stop.cancel();
+    assert_eq!(alive(State(a), headers()).await, StatusCode::FORBIDDEN);
+}

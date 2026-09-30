@@ -3,6 +3,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 
 fn authorization(state: &State) -> authorization::Authorization {
     authorization::Authorization {
+        scope_source: None,
+        browser_history: false,
         authority: None,
         actor: state.actor,
         grant: None,

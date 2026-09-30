@@ -424,9 +424,26 @@ Continuing identity/grant invalidation retires the owned process. Exact restart
 receipts never re-launch on retry. An internal root-only initial bound admission
 can reserve an ordinary identity and launch through that guardian; an exact retry
 observes the saved incarnation, including an unavailable admission after a crash
-before launch. No public command invokes that path yet. Supported initial service
-launch, owner identity controls, system installation and automatic bound recovery
-remain incomplete. Bound startup does not derive scoped Vessel
+before launch. A public `StartConfigured` now selects only the root-private
+`default-execution.json` ordinary identity and routes through the same admission.
+An authenticated full-access owner connection can invoke it; workspace-only
+connections cannot select host configuration. The independent Voyage process
+opens configuration and its home-scoped provider registry after dropping to the
+configured UID/GID/groups. The supervisor never substitutes its root login
+account. The ordinary-identity helper source now extends system `Start`,
+`StartAccount` and `StartSettings`, account/default/model observations and
+account-context-specific execution profiles. Capture retains an exact private
+request before creating a frozen launch file; fresh startup checks a root-protected
+configuration digest before resolving those bytes. The combined implementation
+also validates ordinary bound account changes/resolution in the registered
+runtime's namespace. Explicit enrolled-owner preparation of an ordinary transition
+configuration produces a separate target-owned stage and typed facts only.
+Administrator account changes retain the explicit review boundary. The source
+is awaiting final verification and hosted delivery. Identity-scoped enrollment and
+usage now have source paths using current private-pipe authority checks and
+original-attempt recovery, also awaiting that verification. Owner identity
+controls, production system adoption and automatic bound
+recovery remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.
 
@@ -480,9 +497,17 @@ increment can stage a root-owned manifest-verified release with ordinary-readabl
 browser assets, protected control/runtime roots and pinned root/gateway units. It
 refuses existing state, checks the external key provisioner and records activation
 and failed cleanup. A disposable Ubuntu VM passed a fresh install, scoped route,
-reboot and deliberately failed activation with observed unit rollback. System
-update, rollback, uninstall, public bound Voyage creation, owner/client controls
-and supported production activation remain unavailable.
+reboot and deliberately failed activation with observed unit rollback. Root-local lifecycle and remote updater increments are described below; ordinary
+account helpers, owner/client controls and supported production activation remain
+incomplete. Public configured bound
+creation is limited to the explicitly provisioned ordinary identity as described
+above; it does not provide administrator execution or client identity selection.
+A scope-aware remote updater now stages public artifacts and exact root-private
+system receipts, probes candidate compatibility without root execution, and
+launches an independent system-manager worker after exact owner approval. It
+pins unit/account/runtime identity facts through application. Interrupted effects
+remain unconfirmed; active/schema rollback compatibility and native qualification
+remain required. See [remote updates](remote-updates.md).
 The staged root gateway now refuses startup without its externally provisioned
 root-private tmpfs connection key. The root unit requires a named provisioning
 service. The fresh-install increment checks that exact external unit and native
@@ -1155,9 +1180,16 @@ process or guarantee access to existing descendants. The check requires Linux
 
 Execution identity/review/receipt contracts are staged in `voyage-protocol` for
 [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344). They are not an
-advertised capability or a callable administrator-execution API. The installer
-and supervisor still use the existing user-service/identity behavior; system
-installation, administrator review and identity transitions remain unimplemented.
+advertised capability or a callable administrator-execution API. An explicit
+root-operator `vessel administrative-owner` command now enrolls/revokes a named
+Helm principal with exact protected receipts and a pinned authority revision.
+Full-access pairing and OS login do not enroll administrators. Internal prepared
+review/approval/cancel/revoke transactions retain authority separately from
+receipts; approval records a grant without launching, and revocation reports a
+fence without claiming cleanup. The schema-3 extension is activated only by this
+explicit root operation; ordinary/user catalogue open stays at schema 2.
+Public owner review, administrator launch/transition, native qualification and
+client parity remain required. See the [privileged plan's current prerequisite](privileged-vessel-plan.md#protected-administrator-owner-and-review-prerequisite).
 
 ## Remote update admission
 
@@ -1167,6 +1199,29 @@ one Update click approves the displayed version and the client applies only afte
 the Vessel verifies a matching prepared receipt. See [remote updates](remote-updates.md)
 for the exact prepare/apply/receipt contract, fixed artifact sources, platform requirements
 and pre-updater bootstrap limitation. Live deployment evidence remains in #343.
+
+### Root-local system installer lifecycle increment
+
+Explicit `upgrade --scope system --bin-dir ABS` stages a newer verified release,
+retains configured ordinary identity/state and independent voyages, then publishes
+exact root/gateway units and observes active readiness. Protected lifecycle records
+block interrupted operation replay. `rollback --scope system` supports only a
+completed inactive upgrade whose candidate was never started. Active rollback is
+admitted only when both archives declare the identical strict code-owned format,
+implementation and build-input compatibility contract; old or changed contracts
+fail closed. Qualified activation failure restores source/units and observes
+readiness without replacing live state. `uninstall --scope system` removes reviewed managed services while
+retaining releases, private state, external provisioner/key and independent voyages.
+Fresh installation provisions a protected ordinary default-execution identity;
+upgrades preserve it. The user-scoped remote updater refuses root system invocation.
+These commands remain an implementation increment pending native qualification,
+remote system native qualification and owner/adoption acceptance. Explicit legacy
+system bootstrap and user-to-system adoption source paths are described in
+[remote updates](remote-updates.md); interrupted multistage adoption uses explicit preactivation rollback, with no
+forward-effect replay or unqualified active legacy fallback. Native verification
+is pending.
+
+### Grounded host-browser agent controls
 
 Host-browser agent tools additionally support paged role/label/state inspection,
 observed child-frame targets, native select/check, targeted keyboard input,

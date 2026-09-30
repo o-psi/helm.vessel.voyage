@@ -39,7 +39,8 @@ executing host. Helm does not transfer credentials. GitHub checksums provide
 integrity under repository publication authority; this does not add independent
 release-signature verification.
 
-Python 3.11+, curl and a working systemd user manager are required. Public
+Python 3.11+, curl and the applicable systemd manager are required (user manager
+for user installations; system manager for explicit system scope). Public
 nightlies currently target Linux x86-64 and glibc 2.39+; unsupported hosts are
 refused before installation. A managed update still requires owner approval of
 the displayed version and Vessel verification of the exact prepared artifact.
@@ -81,6 +82,119 @@ receipts live under `~/.local/share/voyage/install/updates`; raw acquisition log
 staging paths and use bounded failure summaries. Receipts are bounded to prevent unbounded
 admission. Prepared staging is removed on discard or successful completion.
 
+## Explicit Linux system scope
+
+A managed root supervisor now delegates owner-approved operations to
+`voyage-installer remote-update system`. System receipts and acquisition staging
+are root-private under `/var/lib/voyage/install/system-updates`; they are separate
+from user updater receipts. A system invocation never falls through to the user
+service manager or root's login account. Acquisition uses an explicit private
+staging home, fixed executable search paths and public GitHub HTTPS for both
+channels, without consulting inherited GitHub credentials.
+
+Preparation pins the installed release, exact root/gateway unit definitions,
+configured ordinary accounts, external credential provisioner and protected
+default identity/runtime layout. Downloaded loader and updater compatibility
+checks run in a bounded transient systemd service with a dynamic unprivileged
+identity, homes hidden, private networking and devices, no capabilities and no
+privilege gain. Candidate code is not run as root before exact approval.
+
+Application launches a separate root system-manager updater with a bounded
+lifetime. It rechecks the approved archive hashes and installation fingerprint,
+then invokes the reviewed system lifecycle transaction under its installation
+lock. Root/gateway services and private state retain their configured identities;
+independent voyages remain outside the supervisor lifetime. Exact approval or
+application retries observe the same receipt and never start another updater.
+Interrupted preparation/application remains a saved obligation requiring host
+inspection; reconnect does not automatically replay an uncertain effect.
+
+Active rollback requires both archives to contain the same strict, code-owned
+compatibility contract. The contract enumerates the actual catalogue/journal
+reader and writer versions and hashes their implementation plus build inputs.
+The verifier rejects missing contracts, unsupported formats, changed core code
+or mismatched contracts before stopping services. A qualified activation failure
+restores the exact retained units/source and observes readiness; it never restores
+a state backup while independent voyages write. A stopped updater is reconciled
+against exact reviewed candidate or previous source and readiness without replay.
+
+Older system archives without the contract require an explicit host-operator
+`adopt-update-contract --scope system --bin-dir ABS EXPECTED_RELEASE
+EXPECTED_INSTALLATION_FINGERPRINT`. This first stops the exact managed
+supervisor/gateway to fence new public admissions, then drains protected owners
+and freezes their journals through their executing identities. Guardian retirement
+is observed separately; supervisor stop is not cleanup evidence. It stages the
+new release inactive.
+`start --scope system EXPECTED_RELEASE` separately activates it. These are source
+implementation paths awaiting the coordinated native verification gate.
+
+### User installation adoption
+
+`adopt-user prepare UUID --scope system --bin-dir ABS --execution-user ORIGINAL
+--gateway-user DISTINCT --gateway-origin HTTPS --credential-key ROOT_RUN_KEY
+--credential-unit PROVISIONER.service --source-credential-key ORIGINAL_RUN_KEY
+--no-start` records the explicit source/account, reads and saves exact user-unit
+definition hashes before effects, then claims user-owner/service quiescence.
+A lost quiescence reply retains those unit pins; neither preparation nor status
+repeats the uncertain stop effect. An observed host reboot establishes local process retirement; it does
+not establish completion of external effects. After that reboot, `adopt-user
+review UUID` returns the exact review digest. `adopt-user apply UUID DIGEST`
+exports history and settings through a dropped-identity helper, interrupts retained
+work without replay, publishes new ordinary bindings/incarnations and stages an
+inactive root supervisor. Provider credentials remain in the original home. The
+original human connection-key provisioner must make the same runtime key available;
+this path neither invents nor copies provider credentials into root custody.
+
+Application owns an original-UID supervisor lease plus one exact source-freeze
+helper per voyage. Those helpers retain the original startup and execution locks
+through target publication and namespace fencing. Every stage checks positive
+owned-child liveness; a lost lease refuses further effects. Source authority,
+catalogue and preferences must still equal the reviewed snapshot after freeze.
+The bounded adoption transaction supports up to 64 sessions and ten minutes;
+larger or slower handoffs refuse with retained source and preactivation recovery.
+A recorded reboot alone is not the ownership fence. Review also pins the source
+directory device/inode, full target manifest metadata and both named accounts;
+held leases verify directory identity throughout publication and relocation.
+Separate source and system filesystems are supported by a bounded opaque export
+while those original-UID leases remain held. The source is atomically retained on
+its own filesystem inside a root-owned container; an immutable opaque archive is
+kept under root-private adoption retention. Root does not parse the old journals
+or provider registry. Temporary rollback traversal is limited to the original
+identity, while its retained name and the canonical source fence remain
+root-controlled.
+The retained source is sealed root-only before old guards release. Rollback takes
+root descriptor locks as metadata before temporarily enabling traversal, then
+passes those same lock descriptions into the original-UID helpers. Child closure
+does not unlock the parent's retained exclusion; every failure seals the container
+before the parent lock set releases. Source/session inode pins are rechecked after
+rename. A staged root fence has its inode recorded before publication, so partial namespace fencing has an exact
+recovery identity.
+
+`adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
+`adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including
+interrupted capture/freeze/partial installation and preparatory unit effects
+whose exact definitions were saved. Preparatory recovery requires observed boot
+retirement before the original services are restored. It refuses admitted target
+guardians or live/drifted system units, retains copied artifacts and restores the
+frozen user namespace and exact reviewed user services. It holds the original
+supervisor plus every startup/execution guard, verifies the retained opaque digest
+before source mutation, and clears each prepared marker through its exact abort
+UUID on the same retained private helper pipe. Interrupted work and withdrawn Goal
+continuation stay interrupted. The exact original source inode is renamed back;
+there is no reconstruction or overwrite fallback for missing/changed retention.
+Read-only lookup distinguishes an absent command from unavailable/corrupt storage.
+Repeating a pending rollback reconciles exact abort receipts and reversible file
+cleanup. User service restoration is claimed before its effect; a lost reply is reconciled by read-only readiness observation.
+Legacy human grants retain ordinary access and are permanently excluded from root
+administrator authority; fresh root pairing is required. New incarnations remain
+dormant until explicitly restarted, with no claim that old processes survived.
+
+`adopt-user status UUID` observes saved state and exact helper command identities
+without repeating uncertain effects. Forward continuation after partial adoption
+is refused; the concrete preactivation rollback path restores the retained user
+installation. Uncertain activation remains a saved source/readiness obligation
+and does not permit unqualified legacy rollback. Native verification remains a
+release gate; these source paths are not completed migration evidence.
+
 ## Initial adoption
 
 Versions released before this protocol cannot receive an update command they do
@@ -90,8 +204,7 @@ management; physical access is not a product requirement. Helm reports this
 boundary accurately and never turns a normal voyage into a privileged bootstrap
 executor. After adoption, subsequent compatible updates use the consent flow.
 
-The operator has deferred Tax-Axis's one-time bootstrap until remote access is
-available. See [delivery issue #343](https://github.com/o-psi/helm.vessel.voyage/issues/343)
+The operator moved Tax-Axis's one-time bootstrap to v1.1.0. See [delivery issue #343](https://github.com/o-psi/helm.vessel.voyage/issues/343)
 for actual deployed versions, browser checks and remaining obligations. The
 protocol/UI implementation alone does not establish deployment acceptance.
 
@@ -111,3 +224,15 @@ These offline checks cover authority refusal, exact approval/replay, expired or
 changed installation, uncertain dispatch, worker failure, artifact provenance,
 stale replies, draft retention and capability gating. Real installation,
 reconnection and shared-browser acceptance are recorded separately in #343.
+
+### Source-format preservation during adoption rollback
+
+The shipped `v1.0.2` journal schema is 12 and the current journal schema is 20.
+Source handoff opens an existing schema without invoking quiescent upgrade; it
+adds handoff metadata and interrupts runs while preserving that source schema and
+canonical session settings/history. Only copied target journals are committed or
+upgraded for the new runtime. Source catalogue export likewise uses a read-only
+SQLite connection and validates an admitted reader schema. This is source analysis,
+not proof that an old binary can restore a native installation. The coordinated
+release verification must exercise the shipped old reader against the retained
+frozen source, on both common and separate source/retention filesystems.

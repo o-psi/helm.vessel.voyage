@@ -193,6 +193,10 @@ pub enum ExecutionOutcome {
         reason: ExecutionFailure,
     },
     Cancelled,
+    /// Authority is fenced. This is not observed process or resource cleanup.
+    RevocationRequested {
+        administrator_grant_id: Uuid,
+    },
     /// An uncertain operation cannot automatically be retried or replaced.
     Unconfirmed {
         cleanup_obligations: Vec<Uuid>,

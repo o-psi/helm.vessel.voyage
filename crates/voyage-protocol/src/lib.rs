@@ -68,3 +68,15 @@ pub mod execution_profiles;
 pub mod execution_identity;
 
 pub mod context_accounting;
+pub mod execution_review_control;
+
+/// Private dropped-identity helper contracts, never a public authority surface.
+pub mod identity_helper;
+
+/// Private two-phase retired-runtime identity handoff; no public authority.
+pub mod execution_transition;
+
+/// Private runtime-to-supervisor current scope metadata.
+pub mod execution_scope;
+/// Strict private migration records; no source data confers root authority.
+pub mod migration;

@@ -305,3 +305,216 @@ async fn resume_rejects_malformed_catalogue_and_restart_reply() {
     peer.reply(id, json!(null)).await;
     assert!(task.await.unwrap().is_err());
 }
+
+#[tokio::test]
+async fn fresh_connected_open_captures_private_config_and_never_submits_a_run() {
+    let root = tempfile::tempdir().unwrap();
+    let mut peer = Peer::open().await;
+    let mut client = peer.client.clone();
+    client.directory = root.path().into();
+    let workspace = root.path().canonicalize().unwrap();
+    let expected = workspace.clone();
+    let task = tokio::spawn(async move {
+        open_connected(
+            &crate::Config::default(),
+            Some(workspace),
+            None,
+            false,
+            false,
+            false,
+            client,
+        )
+        .await
+    });
+    let (id, command) = peer.command().await;
+    let VesselCommand::StartConfigured {
+        command_id,
+        session_id,
+        workspace,
+        config_path,
+    } = command
+    else {
+        panic!("fresh configured start expected")
+    };
+    assert!(!command_id.is_nil());
+    assert_eq!(workspace, expected);
+    assert!(config_path.is_file());
+    let stored: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+    assert_eq!(
+        stored["workspace"],
+        serde_json::to_value(&expected).unwrap()
+    );
+    let incarnation = Uuid::new_v4();
+    peer.reply(id,json!({"session_id":session_id,"incarnation":incarnation,"workspace":expected,"state":"live"})).await;
+    let (_, process) = task.await.unwrap().unwrap();
+    assert_eq!(process.session_id, session_id);
+    assert_eq!(process.incarnation, incarnation);
+}
+#[tokio::test]
+async fn connected_resume_rejects_active_overrides_without_configuration_or_new_owner() {
+    for state in [
+        "accepted",
+        "running",
+        "awaiting_decision",
+        "cancel_requested",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let mut peer = Peer::open().await;
+        let mut client = peer.client.clone();
+        client.directory = root.path().into();
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let workspace = root.path().canonicalize().unwrap();
+        let reference = session.to_string();
+        let task = tokio::spawn(async move {
+            open_connected(
+                &crate::Config::default(),
+                None,
+                Some(reference),
+                true,
+                true,
+                false,
+                client,
+            )
+            .await
+        });
+        let (id, command) = peer.command().await;
+        assert!(matches!(command, VesselCommand::Catalogue));
+        peer.reply(id,json!([{"session_id":session,"incarnation":incarnation,"workspace":workspace,"state":"live"}])).await;
+        let (id, command) = peer.command().await;
+        assert!(matches!(command, VesselCommand::Voyage(_)));
+        peer.voyage_reply(
+            id,
+            session,
+            incarnation,
+            json!({"revision":7,"model":"old","run":{"state":state}}),
+        )
+        .await;
+        assert!(task.await.unwrap().is_err());
+        assert!(!root.path().join("launch").exists());
+    }
+}
+#[tokio::test]
+async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_pins_revision() {
+    for overridden in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let mut peer = Peer::open().await;
+        let mut client = peer.client.clone();
+        client.directory = root.path().into();
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let snapshot_owner = Uuid::new_v4();
+        let configure_owner = Uuid::new_v4();
+        let workspace = root.path().canonicalize().unwrap();
+        let reference = session.to_string();
+        let config = crate::Config {
+            model: "explicit-model".into(),
+            ..Default::default()
+        };
+        let task = tokio::spawn(async move {
+            open_connected(
+                &config,
+                None,
+                Some(reference),
+                overridden,
+                true,
+                false,
+                client,
+            )
+            .await
+        });
+        let (id, command) = peer.command().await;
+        assert!(matches!(command, VesselCommand::Catalogue));
+        peer.reply(id,json!([{"session_id":session,"incarnation":incarnation,"workspace":workspace,"state":"live"}])).await;
+        let (id, command) = peer.command().await;
+        assert!(matches!(
+            command,
+            VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation: None,
+                command: VoyageCommand::Snapshot,
+            }) if session_id == session
+        ));
+        peer.voyage_reply(
+            id,
+            session,
+            snapshot_owner,
+            json!({"revision":17,"model":"saved-model","run":{"state":"completed"}}),
+        )
+        .await;
+        let (id, command) = peer.command().await;
+        let VesselCommand::Voyage(VoyageRequest {
+            session_id,
+            incarnation: sent,
+            command:
+                VoyageCommand::Configure {
+                    command_id,
+                    expected_revision,
+                    config_path,
+                    ..
+                },
+            ..
+        }) = command
+        else {
+            panic!("configure expected")
+        };
+        assert_eq!(session_id, session);
+        // Configure addresses the canonical session. Vessel selects its current
+        // owner; the mutation keeps its command ID and observed revision fence.
+        assert_eq!(sent, None);
+        assert!(!command_id.is_nil());
+        assert_eq!(expected_revision, 17);
+        let stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
+        assert_eq!(
+            stored["config"]["model"],
+            if overridden {
+                "explicit-model"
+            } else {
+                "saved-model"
+            }
+        );
+        peer.voyage_reply(
+            id,
+            session,
+            configure_owner,
+            json!({"status":"applied","command_id":command_id,"revision":18}),
+        )
+        .await;
+        assert_eq!(task.await.unwrap().unwrap().1.session_id, session);
+    }
+}
+#[tokio::test]
+async fn connected_resume_without_overrides_preserves_live_process_and_does_not_read_configuration()
+{
+    let root = tempfile::tempdir().unwrap();
+    let mut peer = Peer::open().await;
+    let mut client = peer.client.clone();
+    client.directory = root.path().into();
+    let session = Uuid::new_v4();
+    let inc = Uuid::new_v4();
+    let reference = session.to_string();
+    let task = tokio::spawn(async move {
+        open_connected(
+            &crate::Config::default(),
+            None,
+            Some(reference),
+            false,
+            false,
+            false,
+            client,
+        )
+        .await
+    });
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Catalogue));
+    peer.reply(
+        id,
+        json!([{"session_id":session,"incarnation":inc,"workspace":root.path(),"state":"live"}]),
+    )
+    .await;
+    let (_, process) = task.await.unwrap().unwrap();
+    assert_eq!(process.incarnation, inc);
+    assert!(!root.path().join("launch").exists());
+}

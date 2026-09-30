@@ -376,3 +376,7 @@ impl Interrupt {
 #[cfg(test)]
 #[path = "prompt_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "prompt_pty_tests.rs"]
+mod pty_tests;

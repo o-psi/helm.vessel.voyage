@@ -358,3 +358,133 @@ async fn browser_revision_rejects_malformed_and_misbound_snapshots() {
         assert!(task.await.unwrap().is_err());
     }
 }
+
+#[tokio::test]
+async fn uncertain_private_write_closes_with_unknown_outcome_without_resending_input() {
+    use crate::process_client::loopback_tests::Peer;
+    use voyage_protocol::vessel::*;
+    let mut peer = Peer::open().await;
+    let socket = peer.client.connection_state().borrow().socket_id.unwrap();
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let run = Uuid::new_v4();
+    let terminal = Uuid::new_v4();
+    let client = peer.client.clone();
+    let task = tokio::spawn(async move {
+        client
+            .private_terminal(
+                socket,
+                session,
+                incarnation,
+                run,
+                terminal,
+                TerminalAction::Write {
+                    bytes: b"PRIVATE-FIXTURE-INPUT".to_vec(),
+                },
+            )
+            .await
+    });
+    let (_, command) = peer.command().await;
+    let VesselCommand::Voyage(VoyageRequest {
+        command:
+            VoyageCommand::Terminal {
+                operation: TerminalAction::Write { bytes },
+                ..
+            },
+        ..
+    }) = command
+    else {
+        panic!("privatewrite expected")
+    };
+    assert_eq!(bytes, b"PRIVATE-FIXTURE-INPUT");
+    peer.socket.close(None).await.unwrap();
+    assert!(task.await.unwrap().is_err());
+    assert!(
+        peer.client
+            .private_terminal(
+                socket,
+                session,
+                incarnation,
+                run,
+                terminal,
+                TerminalAction::Write {
+                    bytes: b"must-not-send".to_vec()
+                }
+            )
+            .await
+            .is_err()
+    );
+}
+#[tokio::test]
+async fn receipt_read_follows_current_owner_with_exact_session_and_command() {
+    use crate::process_client::loopback_tests::Peer;
+    use serde_json::json;
+    use voyage_protocol::vessel::*;
+    for wrong_session in [false, true] {
+        let mut peer = Peer::open().await;
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let current_owner = Uuid::new_v4();
+        let command_id = Uuid::new_v4();
+        let client = peer.client.clone();
+        let task = tokio::spawn(async move {
+            client
+                .voyage_observed(session, incarnation, VoyageCommand::Receipt { command_id })
+                .await
+        });
+        let (id, command) = peer.command().await;
+        // A receipt observes one retained command in the stable session journal;
+        // it must remain readable after an owner restart without repeating effects.
+        assert!(
+            matches!(command,VesselCommand::Voyage(VoyageRequest{session_id,incarnation:None,command:VoyageCommand::Receipt{command_id:c}}) if session_id==session&&c==command_id)
+        );
+        let receipt = json!({"status":"accepted","command_id":command_id});
+        peer.voyage_reply(
+            id,
+            if wrong_session {
+                Uuid::new_v4()
+            } else {
+                session
+            },
+            current_owner,
+            receipt.clone(),
+        )
+        .await;
+        let result = task.await.unwrap();
+        if wrong_session {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("identity mismatch")
+            );
+        } else {
+            assert_eq!(result.unwrap(), (receipt, current_owner));
+        }
+    }
+}
+#[tokio::test]
+async fn browser_preparation_never_accepts_a_partial_or_positive_effect_claim_as_not_dispatched() {
+    use crate::process_client::loopback_tests::Peer;
+    use serde_json::json;
+    use voyage_protocol::host_browser::HostBrowserOperation as Op;
+    let mut peer = Peer::open().await;
+    let socket = peer.client.connection_state().borrow().socket_id.unwrap();
+    let session = Uuid::new_v4();
+    let owner = Uuid::new_v4();
+    for value in [
+        json!({"status":"prepared"}),
+        json!({"status":"prepared","not_dispatched":false}),
+        json!({"status":"prepared","not_dispatched":"true"}),
+    ] {
+        let client = peer.client.clone();
+        let task = tokio::spawn(async move {
+            client
+                .host_browser_observed(socket, session, owner, Op::Status {})
+                .await
+        });
+        let (id, _) = peer.command().await;
+        peer.voyage_reply(id, session, Uuid::new_v4(), value).await;
+        assert!(task.await.unwrap().is_err());
+    }
+}

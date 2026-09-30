@@ -4,6 +4,11 @@ use anyhow::Result;
 
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
+        "execution",
+        "Review execution identity and administrator authorization",
+        "identities | prepare ID REVISION | check | approve | cancel | revoke | review REVIEW_UUID",
+    ),
+    (
         "goal",
         "Review persistent Goal, usage and continuation",
         "set OBJECTIVE | edit OBJECTIVE | limits RUNS TOKENS SECONDS NO_PROGRESS_TURNS | pause | resume | clear",
@@ -222,6 +227,7 @@ fn opens_directly(name: &str) -> bool {
     matches!(
         name,
         "help"
+            | "execution"
             | "goal"
             | "actions"
             | "preferences"

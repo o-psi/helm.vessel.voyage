@@ -49,6 +49,224 @@ fn apply(f: &Fixture, command: &VesselCommand) -> ProfileCatalogue {
 }
 
 #[test]
+fn migrated_profile_command_cannot_resolve_into_current_namespace_receipt() {
+    let fixture = Fixture::new();
+    let namespace = format!("{}:1", Uuid::new_v4());
+    let command = save(
+        &fixture,
+        profile("Kept private ordinary preference"),
+        0,
+        true,
+    );
+    let before = transact_namespace(
+        &fixture.0,
+        Some(&namespace),
+        None,
+        Some((&command, "owner")),
+        || Ok(()),
+    )
+    .unwrap();
+    let VesselCommand::SaveProfile { command_id, .. } = command.clone() else {
+        unreachable!()
+    };
+    let db = database::open(&fixture.0).unwrap();
+    db.execute_batch("CREATE TABLE legacy_migration_commands(command_id TEXT PRIMARY KEY)")
+        .unwrap();
+    db.execute(
+        "INSERT INTO legacy_migration_commands VALUES(?1)",
+        [command_id.to_string()],
+    )
+    .unwrap();
+    let error = identity_replay(&fixture.0, &namespace, "owner", &command)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("legacy command retired"));
+    assert!(
+        transact_namespace(
+            &fixture.0,
+            Some(&namespace),
+            None,
+            Some((&command, "owner")),
+            || panic!("retired receipt must not revalidate or execute")
+        )
+        .is_err()
+    );
+    assert_eq!(
+        transact_namespace(&fixture.0, Some(&namespace), None, None, || Ok(())).unwrap(),
+        before
+    );
+    assert!(
+        db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM execution_profile_commands WHERE id=?1)",
+            [command_id.to_string()],
+            |row| row.get::<_, bool>(0)
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn migrated_profile_mutations_refuse_before_new_validation_or_namespace_writes() {
+    let fixture = Fixture::new();
+    let namespace = format!("{}:1", Uuid::new_v4());
+    let retained = profile("Original ordinary default");
+    let before = transact_namespace(
+        &fixture.0,
+        Some(&namespace),
+        Some(retained.clone()),
+        None,
+        || Ok(()),
+    )
+    .unwrap();
+    let commands = [
+        save(&fixture, retained.clone(), before.revision, true),
+        delete(&fixture, retained.id, before.revision),
+        VesselCommand::SetDefaultProfile {
+            command_id: Uuid::new_v4(),
+            workspace: fixture.0.clone(),
+            expected_revision: before.revision,
+            profile_id: retained.id,
+        },
+    ];
+    let db = database::open(&fixture.0).unwrap();
+    db.execute_batch("CREATE TABLE legacy_migration_commands(command_id TEXT PRIMARY KEY)")
+        .unwrap();
+    for command in &commands {
+        let id = match command {
+            VesselCommand::SaveProfile { command_id, .. }
+            | VesselCommand::DeleteProfile { command_id, .. }
+            | VesselCommand::SetDefaultProfile { command_id, .. } => *command_id,
+            _ => unreachable!(),
+        };
+        db.execute(
+            "INSERT INTO legacy_migration_commands VALUES(?1)",
+            [id.to_string()],
+        )
+        .unwrap();
+        assert!(identity_replay(&fixture.0, &namespace, "new-root-owner", command).is_err());
+        for scope in [Some(namespace.as_str()), None] {
+            assert!(
+                transact_namespace(
+                    &fixture.0,
+                    scope,
+                    None,
+                    Some((command, "new-root-owner")),
+                    || panic!("old command must not enter its new authority")
+                )
+                .is_err()
+            );
+        }
+    }
+    assert_eq!(
+        transact_namespace(&fixture.0, Some(&namespace), None, None, || Ok(())).unwrap(),
+        before
+    );
+    let count: i64 = db
+        .query_row(
+            "SELECT count(*) FROM execution_profile_commands",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn execution_identity_profiles_preserve_namespace_and_exact_command_receipts() {
+    let f = Fixture::new();
+    let ordinary = format!("{}:1", Uuid::new_v4());
+    let administrator = format!("{}:1", Uuid::new_v4());
+    let command = save(&f, profile("Ordinary only"), 0, true);
+    let saved = transact_namespace(
+        &f.0,
+        Some(&ordinary),
+        None,
+        Some((&command, "human")),
+        || Ok(()),
+    )
+    .unwrap();
+    assert_eq!(saved.revision, 1);
+    assert_eq!(
+        transact_namespace(&f.0, Some(&administrator), None, None, || Ok(())).unwrap(),
+        ProfileCatalogue::default()
+    );
+    assert_eq!(
+        transact(&f.0, None, None).unwrap(),
+        ProfileCatalogue::default()
+    );
+    let replay = transact_namespace(
+        &f.0,
+        Some(&ordinary),
+        None,
+        Some((&command, "human")),
+        || anyhow::bail!("revoked account must not be reopened for a receipt"),
+    )
+    .unwrap();
+    assert_eq!(replay, saved);
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&administrator),
+            None,
+            Some((&command, "human")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&ordinary),
+            None,
+            Some((&command, "another human")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        transact_namespace(&f.0, Some(&ordinary), None, None, || Ok(())).unwrap(),
+        saved
+    );
+}
+
+#[test]
+fn stale_identity_profile_mutation_does_not_change_another_identity_or_its_receipts() {
+    let f = Fixture::new();
+    let namespace = format!("{}:1", Uuid::new_v4());
+    let command = save(&f, profile("Pinned"), 0, true);
+    let saved = transact_namespace(
+        &f.0,
+        Some(&namespace),
+        None,
+        Some((&command, "owner")),
+        || Ok(()),
+    )
+    .unwrap();
+    let stale = save(&f, profile("Stale"), 0, true);
+    assert!(
+        transact_namespace(
+            &f.0,
+            Some(&namespace),
+            None,
+            Some((&stale, "owner")),
+            || Ok(())
+        )
+        .is_err()
+    );
+    assert_eq!(
+        transact_namespace(&f.0, Some(&namespace), None, None, || Ok(())).unwrap(),
+        saved
+    );
+    let db = database::open(&f.0).unwrap();
+    let count: u64 = db
+        .query_row("SELECT count(*) FROM execution_profile_commands", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[test]
 fn bootstrap_waits_for_account_then_occurs_only_once() {
     let f = Fixture::new();
     assert_eq!(

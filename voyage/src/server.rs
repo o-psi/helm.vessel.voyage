@@ -169,11 +169,31 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             };
             let config = match initial {
                 Some(settings) => {
+                    if admitted.is_some()
+                        && let Ok(expected) = std::env::var("VOYAGE_BOUND_RETAINED_CONFIG_DIGEST")
+                    {
+                        ensure!(
+                            settings.len() <= 65536
+                                && expected.len() == 64
+                                && crate::identity_helper::config_digest(settings.as_bytes())
+                                    == expected,
+                            "reviewed retained configuration changed before startup"
+                        );
+                    }
                     serde_json::from_str::<crate::launch_config::LaunchConfig>(&settings)?
                         .resolve(&workspace)?
                 }
                 None => {
-                    let mut config = bootstrap::load_config(args.config.as_deref(), &workspace)?;
+                    let expected_digest = if admitted.is_some() {
+                        std::env::var("VOYAGE_BOUND_CONFIG_DIGEST").ok()
+                    } else {
+                        None
+                    };
+                    let mut config = bootstrap::load_config_with_digest(
+                        args.config.as_deref(),
+                        &workspace,
+                        expected_digest.as_deref(),
+                    )?;
                     if registration.initialize.is_none() {
                         match Journal::open(directory.join("journal"))?.load_session(args.session) {
                             Ok(_) => {}

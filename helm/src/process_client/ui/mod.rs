@@ -9,6 +9,7 @@ mod browser;
 mod completion;
 mod controls;
 mod discovery;
+mod execution;
 mod explore;
 mod export;
 mod goals;

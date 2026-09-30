@@ -16,19 +16,53 @@ pub(super) struct Authorization {
     pub actor: LocalActor,
     pub grant: Option<GrantBinding>,
     pub owner_connection: bool,
+    pub scope_source: Option<AuthoritySource>,
+    pub browser_history: bool,
 }
 
+#[derive(Clone)]
+pub(super) enum AuthoritySource {
+    UserFile {
+        path: PathBuf,
+        binding: GrantBinding,
+        session: Uuid,
+    },
+    Broker {
+        registration: Box<ProcessRegistration>,
+        handle: voyage_protocol::execution_scope::ExecutionScopeHandle,
+        binding: GrantBinding,
+    },
+}
+impl std::fmt::Debug for AuthoritySource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthoritySource([private])")
+    }
+}
+impl AuthoritySource {
+    fn current(&self) -> Result<ProcessGrant> {
+        match self {
+            Self::UserFile {
+                path,
+                binding,
+                session,
+            } => read_current(path, binding, *session),
+            Self::Broker {
+                registration,
+                handle,
+                binding,
+            } => crate::execution_scope_client::current(registration, handle, binding),
+        }
+    }
+}
 #[derive(Debug)]
 struct GrantAuthority {
-    path: PathBuf,
-    binding: GrantBinding,
-    session: uuid::Uuid,
+    source: AuthoritySource,
     account: Option<voyage_protocol::accounts::AccountBinding>,
     browser_history: bool,
 }
 impl crate::policy::ExecutionAuthority for GrantAuthority {
     fn check(&self) -> Result<()> {
-        let grant = read_current(&self.path, &self.binding, self.session)?;
+        let grant = self.source.current()?;
         ensure!(
             grant.rights.contains(&ProcessRight::Execute),
             "execution grant withdrawn"
@@ -46,14 +80,12 @@ impl crate::policy::ExecutionAuthority for GrantAuthority {
 
 #[derive(Debug)]
 struct ScopedRightAuthority {
-    path: PathBuf,
-    binding: GrantBinding,
-    session: Uuid,
+    source: AuthoritySource,
     right: ProcessRight,
 }
 impl crate::policy::ExecutionAuthority for ScopedRightAuthority {
     fn check(&self) -> Result<()> {
-        let grant = read_current(&self.path, &self.binding, self.session)?;
+        let grant = self.source.current()?;
         ensure!(
             grant.rights.contains(&self.right),
             "scoped operation grant withdrawn"
@@ -77,32 +109,65 @@ pub(super) fn authorize_parts(
     directory: &Path,
 ) -> Result<Authorization> {
     let Some(binding) = &request.authorization else {
+        ensure!(
+            request.scope_authority.is_none(),
+            "scope handle requires an explicit grant"
+        );
         return Ok(Authorization {
+            scope_source: None,
+            browser_history: false,
             owner_connection: false,
             authority: None,
             actor,
             grant: None,
         });
     };
-    ensure!(
-        directory.file_name().and_then(|v| v.to_str())
-            == Some(registration.session_id.to_string().as_str()),
-        "grant runtime directory mismatch"
-    );
-    let sessions = directory
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("missing supervisor directory"))?;
-    ensure!(
-        sessions.file_name().and_then(|v| v.to_str()) == Some("sessions"),
-        "grant runtime not supervised"
-    );
-    let root = sessions
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("missing supervisor directory"))?;
-    let path = root
-        .join("access/grants")
-        .join(format!("{}.json", binding.grant_id));
-    let grant = read_current(&path, binding, registration.session_id)?;
+    let source = if let Some(peers) = &registration.peer_uids {
+        ensure!(peers.supervisor == 0, "bound authority supervisor mismatch");
+        #[cfg(unix)]
+        ensure!(
+            peers.runtime == unsafe { libc::geteuid() },
+            "bound runtime operating identity mismatch"
+        );
+        let handle = request
+            .scope_authority
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("bound scope authority unavailable"))?;
+        AuthoritySource::Broker {
+            registration: Box::new(registration.clone()),
+            handle,
+            binding: binding.clone(),
+        }
+    } else {
+        ensure!(
+            request.scope_authority.is_none(),
+            "user runtime refuses execution scope handles"
+        );
+        ensure!(
+            directory.file_name().and_then(|v| v.to_str())
+                == Some(registration.session_id.to_string().as_str()),
+            "grant runtime directory mismatch"
+        );
+        let sessions = directory
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing supervisor directory"))?;
+        ensure!(
+            sessions.file_name().and_then(|v| v.to_str()) == Some("sessions"),
+            "grant runtime not supervised"
+        );
+        let root = sessions
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("missing supervisor directory"))?;
+        let path = root
+            .join("access/grants")
+            .join(format!("{}.json", binding.grant_id));
+        AuthoritySource::UserFile {
+            path,
+            binding: binding.clone(),
+            session: registration.session_id,
+        }
+    };
+    let grant = source.current()?;
     ensure!(
         grant.workspace == registration.workspace,
         "session grant workspace mismatch"
@@ -157,6 +222,9 @@ pub(super) fn authorize_parts(
             "participant cancellation requires cancel grant"
         );
     }
+    if let AuthoritySource::Broker { handle, .. } = &source {
+        crate::execution_scope_client::cache_validated(directory, binding, handle)?;
+    }
     let mut actor = actor;
     actor.principal_id = grant.principal_id;
     Ok(Authorization {
@@ -168,16 +236,12 @@ pub(super) fn authorize_parts(
                     | voyage_protocol::process::RuntimeCommand::WorkspaceChanges { .. }
             ) {
                 Arc::new(ScopedRightAuthority {
-                    path: path.clone(),
-                    binding: binding.clone(),
-                    session: registration.session_id,
+                    source: source.clone(),
                     right,
                 }) as Arc<dyn crate::policy::ExecutionAuthority>
             } else {
                 Arc::new(GrantAuthority {
-                    path,
-                    binding: binding.clone(),
-                    session: registration.session_id,
+                    source: source.clone(),
                     account: None,
                     browser_history,
                 })
@@ -185,6 +249,8 @@ pub(super) fn authorize_parts(
         ),
         actor,
         grant: Some(binding.clone()),
+        scope_source: Some(source),
+        browser_history,
     })
 }
 
@@ -376,28 +442,37 @@ pub(super) fn account_authority(
     authorization: &mut Authorization,
     config: &crate::Config,
 ) -> Result<()> {
+    bind_config(&state.registration, authorization, config)
+}
+/// Bind a frozen account without deriving any privileged control-root path.
+pub(super) fn bind_config(
+    registration: &ProcessRegistration,
+    authorization: &mut Authorization,
+    config: &crate::Config,
+) -> Result<()> {
     config.validate_account()?;
     let Some(binding) = &authorization.grant else {
         return Ok(());
     };
-    let root = state
-        .directory
-        .parent()
-        .and_then(Path::parent)
-        .ok_or_else(|| anyhow::anyhow!("missing grant root"))?;
-    let path = root
-        .join("access/grants")
-        .join(format!("{}.json", binding.grant_id));
-    let grant = read_current(&path, binding, state.registration.session_id)?;
+    let source = authorization
+        .scope_source
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("execution scope unavailable"))?;
+    let grant = source.current()?;
+    ensure!(
+        grant.grant_id == binding.grant_id
+            && grant.principal_id == binding.principal_id
+            && grant.revision == binding.revision
+            && grant.session_id == registration.session_id,
+        "execution scope binding differs"
+    );
     if let Some(account) = &config.account {
         check_account(&grant, account)?;
     }
     authorization.authority = Some(Arc::new(GrantAuthority {
-        path,
-        binding: binding.clone(),
-        session: state.registration.session_id,
+        source,
         account: config.account.clone(),
-        browser_history: false,
+        browser_history: authorization.browser_history,
     }));
     Ok(())
 }

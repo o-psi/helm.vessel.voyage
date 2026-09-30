@@ -100,6 +100,9 @@ responsibility for its integration and outcome.
   broad quality jobs without a new user request. This does not remove applicable
   local verification obligations. A successful compile or checksum is not proof
   of passing tests, working installation or native behavior on another platform.
+  The retired hosted quality workflows are removed. Use the current local
+  commands in [docs/quality.md](docs/quality.md), not historical
+  `scripts/check-quality` workflow dispatches or restored copies of that runner.
 
 ### Publish and own build follow-through
 
@@ -244,7 +247,10 @@ versioned installation, upgrades, rollback and user-service provisioning.
 Follow [remote updates](docs/remote-updates.md) when changing owner-approved
 self-updates: preserve pinned review, exact durable receipts, independent updater
 execution, service readiness, rollback and capability-gated client admission.
-Native private-storage changes require platform-specific security verification.
+Native private-storage changes require platform-specific security verification. Administrator-owner enrollment is a separate explicit root/operator
+operation documented in [the privileged Vessel plan](docs/privileged-vessel-plan.md#protected-administrator-owner-and-review-prerequisite).
+Never infer it from pairing or login. Keep public administrator review unavailable
+until its complete current-facts, launch and both-client path is verified.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use
 `./scripts/local-git` and do not initialize replacement metadata. If the wrapper
@@ -256,6 +262,18 @@ Never reset, clean, force-push, stage unrelated files or overwrite concurrent ed
 implicitly. Keep tests and quality validation local; use the build-only GitHub
 workflow and follow-through rules above for hosted compilation and downloads.
 Preserve existing release artifacts and follow [docs/releasing.md](docs/releasing.md).
+
+## Local agent benchmarks
+
+Use the opt-in [Harbor adapter](eval/voyage_harbor/README.md) for explicitly requested
+Terminal-Bench evaluations. Keep the real Helm–Vessel–Voyage path, pinned task/source
+and adapter identities, fresh isolated trial state, independently graded outcomes,
+finite run/resource bounds and observed cleanup. Obtain live-provider/account and
+budget authorization before inference. Report task rewards separately from setup,
+provider, timeout and cleanup failures; partial pilots are not full leaderboard scores.
+Keep raw traces private, publish only sanitized evidence, and retain unresolved
+obligations in the GitHub issue. This does not restore retired broad suites, authorize
+hosted quality jobs, or relax runtime policy to make benchmark tasks pass.
 
 ## Code coverage history
 

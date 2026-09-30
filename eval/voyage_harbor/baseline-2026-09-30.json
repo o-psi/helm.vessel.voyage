@@ -1,0 +1,905 @@
+{
+  "schema_version": 1,
+  "experiment_id": "tb21-pilot-20260930-v2 / voyage-medium-high-xhigh-v2",
+  "integration_issue": "https://github.com/o-psi/helm.vessel.voyage/issues/397",
+  "tool_versions": {
+    "harbor": "0.23.0",
+    "python": "3.12.14",
+    "uv": "0.12.20",
+    "docker": "29.8.1 rootless",
+    "compose": "5.5.1"
+  },
+  "dataset_url": "https://github.com/harbor-framework/terminal-bench-2-1",
+  "manifest": {
+    "tasks": [
+      "adaptive-rejection-sampler",
+      "cancel-async-tasks",
+      "db-wal-recovery",
+      "extract-elf",
+      "fix-code-vulnerability",
+      "git-multibranch",
+      "build-cython-ext",
+      "break-filter-js-from-html",
+      "log-summary-date-ranges",
+      "query-optimize"
+    ],
+    "efforts": [
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "model": "gpt-6.1-sol",
+    "trials": 30,
+    "dataset_commit": "7131e4375048a0e408a8fb404b5f499d726b695b",
+    "runtime": {
+      "source": "675f12ed1f05b03f6fc45828993f95fec8e55b85",
+      "version": "1.0.2",
+      "rust": "1.94.1",
+      "platform": "Linux x86_64 Debian 12",
+      "features": [
+        "reqwest/rustls-tls-native-roots"
+      ],
+      "binaries": {
+        "helm": "39f96c6101be0520ee6fdbc4d68eac2557747afd1a1ee401f00eb860973a68bd",
+        "vessel": "3e2b80ea4f6703d14a158c5892ec172f1687ba0bba9c90ff2c0c04bd0752f2e4",
+        "voyage": "942534c13bd408da00ac33b39ead4698713830cc6d9eca6c1009cd47f3270f30"
+      }
+    },
+    "adapter_sha256": {
+      "__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "relay.py": "f481be9a76f68ed3b47ab7f442a4bd4588656cd606665adca8242bbfab91467d",
+      "agent.py": "f9f0db3e66a2feef75c3e25ecca4e048fbff118cc7ddcd903965e3991f3afb6d",
+      "runner.py": "5497fdf09dd881a9de54ca1d334e8825eb6b1f5542daf7797788878001930da5",
+      "broker.py": "0517df6df80c56893b40dabfe0c6f5914321fa8f27b107d240d92a4a64a87674",
+      "run.py": "3fd1fcade69f938f17b74f451e2b7fc1469f64ae9894b116f69da4d3c4154862",
+      "report.py": "cb8af942324fb23b7cfb6d7d89aa8392b88b27a96736a0d6c803f1a790258a7b"
+    },
+    "resource_policy": "task-declared CPU/memory/time; no override",
+    "retries": 0,
+    "per_effort_concurrency": 1,
+    "total_concurrency": 3,
+    "cost_policy": "authorized existing ChatGPT subscription; no spending cap requested; USD cost unknown",
+    "status": "terminal",
+    "started_at_utc": "2026-09-30T20:48:12Z",
+    "controller_exit_code": 0,
+    "finished_at_utc": "2026-09-30T22:17:55Z"
+  },
+  "groups": {
+    "medium": {
+      "finished": 10,
+      "graded": 10,
+      "solved": 7,
+      "exceptions": 1,
+      "cleanup_observed": 10,
+      "canonical_completed": 9,
+      "solved_and_canonical_completed": 7,
+      "median_agent_seconds": 146.5365,
+      "observed_usage": {
+        "input_tokens": 1974120,
+        "output_tokens": 33871,
+        "cached_input_tokens": 1050112,
+        "reasoning_output_tokens": 4578
+      },
+      "trials_with_unknown_usage": 0,
+      "observed_completed_requests": 106
+    },
+    "high": {
+      "finished": 10,
+      "graded": 10,
+      "solved": 7,
+      "exceptions": 3,
+      "cleanup_observed": 10,
+      "canonical_completed": 7,
+      "solved_and_canonical_completed": 5,
+      "median_agent_seconds": 187.452,
+      "observed_usage": {
+        "input_tokens": 4715845,
+        "output_tokens": 69109,
+        "cached_input_tokens": 2137216,
+        "reasoning_output_tokens": 16806
+      },
+      "trials_with_unknown_usage": 1,
+      "observed_completed_requests": 185
+    },
+    "xhigh": {
+      "finished": 10,
+      "graded": 10,
+      "solved": 6,
+      "exceptions": 4,
+      "cleanup_observed": 10,
+      "canonical_completed": 6,
+      "solved_and_canonical_completed": 4,
+      "median_agent_seconds": 590.4435,
+      "observed_usage": {
+        "input_tokens": 9059529,
+        "output_tokens": 146034,
+        "cached_input_tokens": 3974656,
+        "reasoning_output_tokens": 69869
+      },
+      "trials_with_unknown_usage": 0,
+      "observed_completed_requests": 338
+    }
+  },
+  "trials": [
+    {
+      "task": "adaptive-rejection-sampler",
+      "effort": "xhigh",
+      "reward": 0.0,
+      "exception_type": "AgentTimeoutError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 902.192,
+      "usage": {
+        "input_tokens": 820584,
+        "output_tokens": 37173,
+        "cached_input_tokens": 272896,
+        "reasoning_output_tokens": 19401,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 44,
+      "trial_id": "6a38a4b1-6dc6-434c-b1a4-6732f98e931c"
+    },
+    {
+      "task": "adaptive-rejection-sampler",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": "AgentTimeoutError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 902.275,
+      "usage": {
+        "input_tokens": 596050,
+        "output_tokens": 24902,
+        "cached_input_tokens": 284928,
+        "reasoning_output_tokens": 8354,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 29,
+      "trial_id": "35099dd2-af3b-4077-a876-e735f74ae89a"
+    },
+    {
+      "task": "adaptive-rejection-sampler",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 468.493,
+      "usage": {
+        "input_tokens": 269216,
+        "output_tokens": 10146,
+        "cached_input_tokens": 160256,
+        "reasoning_output_tokens": 1818,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 14,
+      "trial_id": "03faf34b-f937-4a8b-8f3f-47ad3893e065"
+    },
+    {
+      "task": "break-filter-js-from-html",
+      "effort": "medium",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 14.888,
+      "usage": {
+        "input_tokens": 11953,
+        "output_tokens": 21,
+        "cached_input_tokens": 11648,
+        "reasoning_output_tokens": 0,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 1,
+      "trial_id": "d084a743-ebf4-4871-b4bf-575fc2082151"
+    },
+    {
+      "task": "break-filter-js-from-html",
+      "effort": "xhigh",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 22.113,
+      "usage": {
+        "input_tokens": 24213,
+        "output_tokens": 43,
+        "cached_input_tokens": 23296,
+        "reasoning_output_tokens": 0,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 2,
+      "trial_id": "afe7769e-2d84-47e5-9a11-faa219f0685f"
+    },
+    {
+      "task": "break-filter-js-from-html",
+      "effort": "high",
+      "reward": 0.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 22.868,
+      "usage": {
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "reasoning_output_tokens": null,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 0,
+      "trial_id": "37724206-029c-4596-a6e2-a810c0779b14"
+    },
+    {
+      "task": "build-cython-ext",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 395.945,
+      "usage": {
+        "input_tokens": 809085,
+        "output_tokens": 7563,
+        "cached_input_tokens": 372864,
+        "reasoning_output_tokens": 371,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 35,
+      "trial_id": "369e7f60-3182-45cd-92f0-7a0fa06caa73"
+    },
+    {
+      "task": "build-cython-ext",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": "AgentTimeoutError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 902.296,
+      "usage": {
+        "input_tokens": 3564856,
+        "output_tokens": 29607,
+        "cached_input_tokens": 1501824,
+        "reasoning_output_tokens": 11413,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 98,
+      "trial_id": "affa513a-89c5-4105-ac03-9f941ddee540"
+    },
+    {
+      "task": "build-cython-ext",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 530.248,
+      "usage": {
+        "input_tokens": 2777266,
+        "output_tokens": 17411,
+        "cached_input_tokens": 1064320,
+        "reasoning_output_tokens": 3480,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 82,
+      "trial_id": "b7490733-5766-4d34-bcf4-2a311c3558e6"
+    },
+    {
+      "task": "cancel-async-tasks",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 121.425,
+      "usage": {
+        "input_tokens": 63922,
+        "output_tokens": 2943,
+        "cached_input_tokens": 42624,
+        "reasoning_output_tokens": 1183,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "47a1655e-c5b8-4380-9ff4-6a04edbc56d4"
+    },
+    {
+      "task": "cancel-async-tasks",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 76.314,
+      "usage": {
+        "input_tokens": 50291,
+        "output_tokens": 1656,
+        "cached_input_tokens": 23296,
+        "reasoning_output_tokens": 329,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 4,
+      "trial_id": "34da93a8-c6c9-4f45-80f8-a5135999a9a3"
+    },
+    {
+      "task": "cancel-async-tasks",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 226.603,
+      "usage": {
+        "input_tokens": 64514,
+        "output_tokens": 2310,
+        "cached_input_tokens": 11648,
+        "reasoning_output_tokens": 252,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "e4f74a21-a654-49ef-bc0a-c9eca48aa9fc"
+    },
+    {
+      "task": "db-wal-recovery",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 56.226,
+      "usage": {
+        "input_tokens": 75951,
+        "output_tokens": 1047,
+        "cached_input_tokens": 58496,
+        "reasoning_output_tokens": 31,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 6,
+      "trial_id": "3e8bbdc3-cc9a-4f5a-a093-3a3a2750df75"
+    },
+    {
+      "task": "db-wal-recovery",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 58.183,
+      "usage": {
+        "input_tokens": 63581,
+        "output_tokens": 1324,
+        "cached_input_tokens": 58240,
+        "reasoning_output_tokens": 113,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "ee4af591-0c61-4a6e-9735-8fd84c0c5a94"
+    },
+    {
+      "task": "db-wal-recovery",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 90.457,
+      "usage": {
+        "input_tokens": 85985,
+        "output_tokens": 2134,
+        "cached_input_tokens": 69888,
+        "reasoning_output_tokens": 411,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 6,
+      "trial_id": "51cb2c70-f828-4cc2-b179-1eb83a4e8b4f"
+    },
+    {
+      "task": "extract-elf",
+      "effort": "xhigh",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 769.659,
+      "usage": {
+        "input_tokens": 529646,
+        "output_tokens": 20542,
+        "cached_input_tokens": 298880,
+        "reasoning_output_tokens": 13297,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 30,
+      "trial_id": "776ccfee-e12f-4cea-8549-62611e60039a"
+    },
+    {
+      "task": "extract-elf",
+      "effort": "high",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 184.138,
+      "usage": {
+        "input_tokens": 94598,
+        "output_tokens": 5241,
+        "cached_input_tokens": 58496,
+        "reasoning_output_tokens": 1174,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 6,
+      "trial_id": "d7e8e17e-2a81-41c5-b2b5-9235165b8767"
+    },
+    {
+      "task": "extract-elf",
+      "effort": "medium",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 154.825,
+      "usage": {
+        "input_tokens": 96638,
+        "output_tokens": 4050,
+        "cached_input_tokens": 61824,
+        "reasoning_output_tokens": 1014,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 6,
+      "trial_id": "7edde10f-fced-4e27-8e8d-8c893a0bd15e"
+    },
+    {
+      "task": "fix-code-vulnerability",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 74.268,
+      "usage": {
+        "input_tokens": 204514,
+        "output_tokens": 1075,
+        "cached_input_tokens": 81536,
+        "reasoning_output_tokens": 47,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 11,
+      "trial_id": "962388ba-76cf-41e2-a429-b7734b5dd85a"
+    },
+    {
+      "task": "fix-code-vulnerability",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": "NonZeroAgentExitCodeError",
+      "canonical_completed": false,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 611.544,
+      "usage": {
+        "input_tokens": 2058409,
+        "output_tokens": 18135,
+        "cached_input_tokens": 710912,
+        "reasoning_output_tokens": 10630,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 71,
+      "trial_id": "cfef1923-b1b8-45f0-84b3-8ec1115be2a5"
+    },
+    {
+      "task": "fix-code-vulnerability",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 190.766,
+      "usage": {
+        "input_tokens": 417496,
+        "output_tokens": 3459,
+        "cached_input_tokens": 203008,
+        "reasoning_output_tokens": 683,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 20,
+      "trial_id": "9e47618f-1836-46b5-8472-e1c514dbaf03"
+    },
+    {
+      "task": "git-multibranch",
+      "effort": "high",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 316.725,
+      "usage": {
+        "input_tokens": 311052,
+        "output_tokens": 7590,
+        "cached_input_tokens": 164736,
+        "reasoning_output_tokens": 1390,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 16,
+      "trial_id": "00bd20a6-a62c-46ce-8a53-1204d3e3a6d0"
+    },
+    {
+      "task": "git-multibranch",
+      "effort": "xhigh",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 569.343,
+      "usage": {
+        "input_tokens": 993276,
+        "output_tokens": 12758,
+        "cached_input_tokens": 569088,
+        "reasoning_output_tokens": 4599,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 41,
+      "trial_id": "a3a30f42-a744-4b6a-8ec8-9ed4a715a8ca"
+    },
+    {
+      "task": "git-multibranch",
+      "effort": "medium",
+      "reward": 0.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 138.248,
+      "usage": {
+        "input_tokens": 111629,
+        "output_tokens": 2941,
+        "cached_input_tokens": 54272,
+        "reasoning_output_tokens": 338,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 7,
+      "trial_id": "22b48a9c-e0de-4a7f-b97f-ce9fc11be1b9"
+    },
+    {
+      "task": "log-summary-date-ranges",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 72.278,
+      "usage": {
+        "input_tokens": 70332,
+        "output_tokens": 1705,
+        "cached_input_tokens": 58240,
+        "reasoning_output_tokens": 73,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "dc5f3172-e5c6-4c56-9b2d-eecd474145ad"
+    },
+    {
+      "task": "log-summary-date-ranges",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 78.281,
+      "usage": {
+        "input_tokens": 88161,
+        "output_tokens": 2068,
+        "cached_input_tokens": 58624,
+        "reasoning_output_tokens": 0,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "1892db7e-b849-4c93-a516-6d9ed005064b"
+    },
+    {
+      "task": "log-summary-date-ranges",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 82.225,
+      "usage": {
+        "input_tokens": 86760,
+        "output_tokens": 1433,
+        "cached_input_tokens": 64896,
+        "reasoning_output_tokens": 0,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 5,
+      "trial_id": "cde71003-15f9-49b7-96e2-c9ddcd3f341e"
+    },
+    {
+      "task": "query-optimize",
+      "effort": "high",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 257.671,
+      "usage": {
+        "input_tokens": 317350,
+        "output_tokens": 5458,
+        "cached_input_tokens": 221568,
+        "reasoning_output_tokens": 1283,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 18,
+      "trial_id": "290d0c84-8d43-4e0d-8e66-7e7efd5c8cd0"
+    },
+    {
+      "task": "query-optimize",
+      "effort": "xhigh",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 727.583,
+      "usage": {
+        "input_tokens": 848306,
+        "output_tokens": 20994,
+        "cached_input_tokens": 427008,
+        "reasoning_output_tokens": 8862,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 36,
+      "trial_id": "55a7edfe-d670-4eb4-87a0-7e09dcefe68b"
+    },
+    {
+      "task": "query-optimize",
+      "effort": "medium",
+      "reward": 1.0,
+      "exception_type": null,
+      "canonical_completed": true,
+      "runtime_cleanup": "observed-runtime-cleanup",
+      "elapsed_seconds": 159.988,
+      "usage": {
+        "input_tokens": 243860,
+        "output_tokens": 3285,
+        "cached_input_tokens": 172672,
+        "reasoning_output_tokens": 707,
+        "cost_usd": null
+      },
+      "observed_completed_requests": 16,
+      "trial_id": "750ca92e-2c28-4d92-9296-5110025e1f91"
+    }
+  ],
+  "limitations": [
+    "10-task pilot, one attempt per task/effort; not a full leaderboard score",
+    "USD subscription cost is unknown; token counts describe observed completed responses",
+    "Runtime build adds system certificate roots for the task-local credential relay",
+    "Native platform behavior outside these Linux containers is not certified",
+    "Preselected subset without random sampling; same account, shared PC, mutable upstream service and network conditions; no statistical ranking",
+    "Baseline Rust source is pinned 675f12ed, not the newer main source published during this experiment",
+    "Failed/unfinished response usage may be missing, including when a trial has some completed-response usage; observed totals are lower-bound evidence",
+    "Run finalization removes persistent shell services; this configuration is unsuitable for post-run service-based capability scoring",
+    "Initial pilot was cancelled and marked invalid because Docker exec timeout detached the agent; its rows are excluded"
+  ],
+  "task_environments": {
+    "adaptive-rejection-sampler": {
+      "reference": "alexgshaw/adaptive-rejection-sampler:20251031",
+      "image_id": "sha256:985bed39e8448bc95f138b5f766b59003a95c4be171c96af8e76448338f3dd8f",
+      "repo_digests": [
+        "alexgshaw/adaptive-rejection-sampler@sha256:985bed39e8448bc95f138b5f766b59003a95c4be171c96af8e76448338f3dd8f"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "cancel-async-tasks": {
+      "reference": "alexgshaw/cancel-async-tasks:20251031",
+      "image_id": "sha256:84c7fae6b256dcc56a350790e2a9715eefc7dad662a9d8e8a472363aa71ef18d",
+      "repo_digests": [
+        "alexgshaw/cancel-async-tasks@sha256:84c7fae6b256dcc56a350790e2a9715eefc7dad662a9d8e8a472363aa71ef18d"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "db-wal-recovery": {
+      "reference": "alexgshaw/db-wal-recovery:20251031",
+      "image_id": "sha256:0e33ea5ec823975d1bd6c3778395c9f94251dd88f571146057bff6adb7e4594e",
+      "repo_digests": [
+        "alexgshaw/db-wal-recovery@sha256:0e33ea5ec823975d1bd6c3778395c9f94251dd88f571146057bff6adb7e4594e"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "extract-elf": {
+      "reference": "alexgshaw/extract-elf:20251031",
+      "image_id": "sha256:6932e4cb318464307eacd497ef8dc617eaf551b6a90231f815ec0b911895cfed",
+      "repo_digests": [
+        "alexgshaw/extract-elf@sha256:6932e4cb318464307eacd497ef8dc617eaf551b6a90231f815ec0b911895cfed"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "fix-code-vulnerability": {
+      "reference": "alexgshaw/fix-code-vulnerability:20251031",
+      "image_id": "sha256:cac325252991f823713b2d0441502972901dd782bd67f66c03d9b1e410dac5c0",
+      "repo_digests": [
+        "alexgshaw/fix-code-vulnerability@sha256:cac325252991f823713b2d0441502972901dd782bd67f66c03d9b1e410dac5c0"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "git-multibranch": {
+      "reference": "alexgshaw/git-multibranch:20251031",
+      "image_id": "sha256:5bc449921c138295f6ddd8dca2977319fee2ce523811dbe56cec4ca663385fb5",
+      "repo_digests": [
+        "alexgshaw/git-multibranch@sha256:5bc449921c138295f6ddd8dca2977319fee2ce523811dbe56cec4ca663385fb5"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "build-cython-ext": {
+      "reference": "alexgshaw/build-cython-ext:20251031",
+      "image_id": "sha256:3612a38fadb89a96f74a1a951fb0b0af734198fd160571eeaba6401593234594",
+      "repo_digests": [
+        "alexgshaw/build-cython-ext@sha256:3612a38fadb89a96f74a1a951fb0b0af734198fd160571eeaba6401593234594"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "break-filter-js-from-html": {
+      "reference": "alexgshaw/break-filter-js-from-html:20251031",
+      "image_id": "sha256:d7bfb45e47cf10d2e21dc520239215498f4eba9c1ab2d0cd7d647985dddb4fa8",
+      "repo_digests": [
+        "alexgshaw/break-filter-js-from-html@sha256:d7bfb45e47cf10d2e21dc520239215498f4eba9c1ab2d0cd7d647985dddb4fa8"
+      ],
+      "agent_timeout_sec": 1200.0,
+      "verifier_timeout_sec": 1200.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "log-summary-date-ranges": {
+      "reference": "alexgshaw/log-summary-date-ranges:20251031",
+      "image_id": "sha256:cbeb6ba905c2fec294f16cd5e16e3ea7f2e04d38ac2484d51a11de262aa7dc51",
+      "repo_digests": [
+        "alexgshaw/log-summary-date-ranges@sha256:cbeb6ba905c2fec294f16cd5e16e3ea7f2e04d38ac2484d51a11de262aa7dc51"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 900.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    },
+    "query-optimize": {
+      "reference": "alexgshaw/query-optimize:20251031",
+      "image_id": "sha256:28de7da87004eab5b29bd5eaf1823579bc5b73ccea4b80349a5623185770da14",
+      "repo_digests": [
+        "alexgshaw/query-optimize@sha256:28de7da87004eab5b29bd5eaf1823579bc5b73ccea4b80349a5623185770da14"
+      ],
+      "agent_timeout_sec": 900.0,
+      "verifier_timeout_sec": 1800.0,
+      "cpus": 1,
+      "memory_mb": 2048
+    }
+  },
+  "measured_adapter_identity": {
+    "frozen_hashes": "manifest.adapter_sha256",
+    "initial_delivery_commit": "623cf19e16c14ec33892e0fe4e95a9deb691b3ae",
+    "differences_from_frozen_snapshot": [
+      "formatting and unused import removal",
+      "cleanup_only local variable rename and extra timeout Stop receipt retention"
+    ],
+    "ast_matches_after_normalizing_those_changes": {
+      "__init__.py": true,
+      "relay.py": true,
+      "agent.py": true,
+      "runner.py": true,
+      "broker.py": true,
+      "run.py": true,
+      "report.py": true
+    },
+    "later_normal_cleanup_guard_not_used_in_measurement": "1f285ad8378ccad690bed72bd209f2c738e18ccb"
+  },
+  "run_settings": {
+    "account": "same existing ChatGPT subscription account for all efforts; identity withheld",
+    "provider": "native chatgpt-oauth",
+    "access": "unrestricted inside disposable task container only",
+    "command_timeout_seconds": 120,
+    "provider_response_timeout_ms": 120000,
+    "provider_stream_idle_ms": 180000,
+    "context_window_override": 0,
+    "retry_scope": "zero Harbor trial retries; native provider retry policy retained",
+    "monetary_cost_usd": null
+  },
+  "controls": {
+    "synthetic_oracle_reward": 1,
+    "synthetic_noop_reward": 0,
+    "native_mock_reward": 1,
+    "live_medium_smoke_reward": 1,
+    "forced_deadline": "cancelled canonical state; exact-incarnation cleanup observed before grading",
+    "normal_cleanup_fault": "actual cleanup retained, summary changed to unknown; RuntimeError and no verifier execution",
+    "service_lifecycle": "HTTP service verified live by native shell, dead after canonical completion before explicit adapter Stop",
+    "unauthorized_relay_token_route_model": "refused before provider dispatch"
+  },
+  "teardown": {
+    "all_30_runtime_cleanups_observed": true,
+    "docker_ps_a_empty_after_controller_exit": true,
+    "owned_brokers_stopped_and_scoped_socket_tokens_removed": true,
+    "rootless_docker_user_service_retained": true
+  },
+  "resource_observation": {
+    "driver": "systemd cgroup v2 rootless",
+    "query_container_cpu_max": "100000 100000",
+    "query_container_memory_max_bytes": 2147483648,
+    "limits_witness_scope": "query-optimize container; task-declared resource settings used for all trials",
+    "io_and_storage_enforcement": "not certified"
+  },
+  "failure_findings": [
+    {
+      "task": "break-filter-js-from-html",
+      "efforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "category": "provider_stream_request_failure",
+      "cause": "unknown; public runtime reports provider request failure at HTTP 200; not classified as refusal"
+    },
+    {
+      "task": "extract-elf",
+      "efforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "category": "incorrect_solution",
+      "cause": "0% reference-address coverage; verifier requires at least 75%"
+    },
+    {
+      "task": "git-multibranch",
+      "efforts": [
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "category": "persistent_service_lifetime_incompatibility",
+      "cause": "SSH refused during verification after model observed working SSH/Nginx; offline control confirms native cleanup removes services before explicit adapter Stop"
+    },
+    {
+      "task": "adaptive-rejection-sampler",
+      "efforts": [
+        "high",
+        "xhigh"
+      ],
+      "category": "agent_timeout",
+      "cause": "900-second deadline; high artifact passes grader, xhigh fails"
+    },
+    {
+      "task": "build-cython-ext",
+      "efforts": [
+        "xhigh"
+      ],
+      "category": "agent_timeout",
+      "cause": "900-second deadline; artifact passes grader"
+    },
+    {
+      "task": "build-cython-ext",
+      "efforts": [
+        "high"
+      ],
+      "category": "canonical_incomplete",
+      "cause": "artifact passes grader; runtime seals incomplete despite completion text; underlying readiness cause not established"
+    },
+    {
+      "task": "fix-code-vulnerability",
+      "efforts": [
+        "xhigh"
+      ],
+      "category": "canonical_incomplete",
+      "cause": "artifact passes grader; runtime seals incomplete despite completion text; underlying readiness cause not established"
+    }
+  ]
+}

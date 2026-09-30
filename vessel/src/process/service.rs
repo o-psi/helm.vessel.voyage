@@ -29,6 +29,9 @@ pub(super) struct Supervisor {
     pub(super) model_slots: Arc<Semaphore>,
     pub(super) devices: voyage_runtime::accounts::device::DeviceService,
     pub(super) enrollment_workers: Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>,
+    #[cfg(target_os = "linux")]
+    pub(super) identity_enrollment_starts:
+        Mutex<HashMap<Uuid, tokio::sync::watch::Receiver<super::identity_enrollment::Started>>>,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: super::database::Registrations,
@@ -95,10 +98,14 @@ pub async fn serve_configured(
         model_slots: Arc::new(Semaphore::new(4)),
         devices: super::accounts::device_service(directory.clone())?,
         enrollment_workers: Mutex::new(HashMap::new()),
+        #[cfg(target_os = "linux")]
+        identity_enrollment_starts: Mutex::new(HashMap::new()),
         registrations: super::database::Registrations::new(directory.clone()),
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
     });
+    #[cfg(target_os = "linux")]
+    let mut scope_authority = super::scope_authority::start(&directory)?;
     let gateway_listener = gateway
         .as_ref()
         .map(|config| -> Result<_> {
@@ -145,6 +152,17 @@ pub async fn serve_configured(
             local_boundary,
         ))
         .with_state(state);
+    let scope_failure = async {
+        #[cfg(target_os = "linux")]
+        {
+            super::scope_authority::wait(&mut scope_authority).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            std::future::pending::<Result<()>>().await
+        }
+    };
+    tokio::pin!(scope_failure);
     let served: Result<()> = if let Some(mut task) = gateway_task {
         let outcome = tokio::select! {
             result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => {
@@ -156,15 +174,16 @@ pub async fn serve_configured(
                     Ok(Err(error)) => Err(error),
                     Err(error) => Err(error.into()),
                 }
-            }
+            },
+            result = &mut scope_failure => result,
         };
         task.abort();
         outcome
     } else {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
-            .map_err(Into::into)
+        tokio::select! {
+            result = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()) => result.map_err(Into::into),
+            result = &mut scope_failure => result,
+        }
     };
     notification_delivery.abort();
     catalogue_refresh.abort();
@@ -892,6 +911,9 @@ impl Supervisor {
             | VesselCommand::UpdateStatus { .. }
             | VesselCommand::UpdateApply { .. }
             | VesselCommand::UpdateDiscard { .. }) => self.update(command).await,
+            VesselCommand::Execution { .. } => anyhow::bail!(
+                "execution review requires a separately enrolled authenticated administrative-owner connection"
+            ),
             VesselCommand::Capabilities => Ok(
                 json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sqlite_catalogue","catalogue_changes","notifications","sessionless_models","provider_accounts","execution_profiles","account_start","private_account_enrollment","catalogue","start","start_configured","start_settings","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","execution_budget","workspace_changes","skills_catalog","workspace_file_catalog","goals","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"running_release":super::updates::running_release(),"remote_updates":super::updates::supported(&self.directory),"capacity":null,"max_connections":64}),
             ),

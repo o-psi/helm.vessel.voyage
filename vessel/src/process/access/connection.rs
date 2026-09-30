@@ -9,6 +9,63 @@ use voyage_protocol::process::*;
 use voyage_protocol::vessel::{VESSEL_API_VERSION, VoyageCommand};
 
 impl Supervisor {
+    async fn administrative_authority(&self, grant: &ConnectionGrant) -> Result<u64> {
+        #[cfg(target_os = "linux")]
+        {
+            crate::process::database::execution_reviews::authority(&self.directory, grant).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = grant;
+            anyhow::bail!("administrator execution is unavailable on this platform")
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    pub(in crate::process) async fn execution_connection(
+        &self,
+        _grant: &ConnectionGrant,
+        registration: &ProcessRegistration,
+        _observe_revoked: bool,
+    ) -> Result<()> {
+        ordinary(registration)
+    }
+    #[cfg(target_os = "linux")]
+    pub(in crate::process) async fn execution_connection(
+        &self,
+        grant: &ConnectionGrant,
+        registration: &ProcessRegistration,
+        observe_revoked: bool,
+    ) -> Result<()> {
+        if registration
+            .peer_uids
+            .as_ref()
+            .is_none_or(|uids| uids.runtime != 0)
+        {
+            return ordinary(registration);
+        }
+        ensure!(
+            grant.full_access,
+            "administrator Voyage requires its explicit enrolled owner"
+        );
+        crate::process::database::execution_reviews::authority(&self.directory, grant).await?;
+        let binding =
+            crate::process::database::execution_binding(&self.directory, registration.session_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("administrator binding unavailable"))?;
+        let id = binding
+            .administrator_grant_id
+            .ok_or_else(|| anyhow::anyhow!("administrator authorization missing"))?;
+        let authorization =
+            crate::process::database::administrator_grant(&self.directory, id).await?;
+        ensure!(
+            authorization.administrative_owner_id == grant.principal_id
+                && authorization.vessel_id == grant.vessel_id
+                && authorization.session_id == registration.session_id
+                && (observe_revoked || authorization.revoked_at_ms.is_none()),
+            "administrator Voyage authority unavailable"
+        );
+        Ok(())
+    }
     pub(super) async fn connected(
         &self,
         id: Uuid,
@@ -40,9 +97,52 @@ impl Supervisor {
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": self.connection_workspaces(&grant).await?,
                 "running_release": crate::process::updates::running_release(),
-                "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory),
-                "features": ["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","skills_catalog","workspace_file_catalog","goals","start_settings"]
+                "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory)
+                    && (!crate::process::runtime_storage::has_bound_layout(&self.directory)
+                        || self.administrative_authority(&grant).await.is_ok()),
+                "features": ({let mut features=vec!["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","skills_catalog","workspace_file_catalog","goals","start_settings"];if crate::process::runtime_storage::has_bound_layout(&self.directory){features.push("execution_identity");}features})
             })),
+            VesselCommand::Execution { operation } => {
+                use voyage_protocol::execution_review_control::ExecutionOperation;
+                match &operation {
+                    ExecutionOperation::Inventory
+                    | ExecutionOperation::Review { .. }
+                    | ExecutionOperation::Status { .. } => has(ProcessRight::Observe)?,
+                    ExecutionOperation::PrepareTransition { .. }
+                    | ExecutionOperation::ReconcileTransition { .. } => {
+                        has(ProcessRight::Observe)?;
+                        has(ProcessRight::Lifecycle)?;
+                        has(ProcessRight::Cancel)?;
+                        has(ProcessRight::Execute)?;
+                        has(ProcessRight::Decide)?;
+                    }
+                    ExecutionOperation::Prepare { .. } | ExecutionOperation::Approve { .. } => {
+                        has(ProcessRight::Create)?;
+                        has(ProcessRight::Execute)?;
+                        has(ProcessRight::Decide)?;
+                    }
+                    ExecutionOperation::Control { .. } => has(ProcessRight::Lifecycle)?,
+                }
+                if !matches!(
+                    &operation,
+                    ExecutionOperation::Inventory | ExecutionOperation::Status { .. }
+                ) {
+                    ensure!(
+                        grant.full_access,
+                        "execution identity review requires explicit account-owner connection"
+                    );
+                }
+                store::current_connection(&self.directory, &grant)?;
+                #[cfg(target_os = "linux")]
+                {
+                    self.execution_operation(&grant, operation).await
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    let _ = operation;
+                    anyhow::bail!("execution identity is unavailable on this platform")
+                }
+            }
             command @ (VesselCommand::UpdatePrepare { .. }
             | VesselCommand::UpdateStatus { .. }
             | VesselCommand::UpdateApply { .. }
@@ -52,6 +152,9 @@ impl Supervisor {
                     "Updating Vessel requires account-owner authority"
                 );
                 store::current_connection(&self.directory, &grant)?;
+                if crate::process::runtime_storage::has_bound_layout(&self.directory) {
+                    self.administrative_authority(&grant).await?;
+                }
                 self.update(command).await
             }
             command @ (VesselCommand::Accounts { .. }
@@ -96,10 +199,11 @@ impl Supervisor {
                 for entry in source {
                     if (grant.full_access
                         || grant.workspaces.iter().any(|w| w.path == entry.workspace))
+                        && let Ok(registration) = self.registration(entry.session_id).await
                         && self
-                            .registration(entry.session_id)
+                            .execution_connection(&grant, &registration, true)
                             .await
-                            .is_ok_and(|registration| ordinary(&registration).is_ok())
+                            .is_ok()
                     {
                         entries.push(entry);
                     }
@@ -126,7 +230,12 @@ impl Supervisor {
                 config_path,
             } => {
                 has(ProcessRight::Create)?;
-                ensure!(config_path.is_none(), "host configuration denied");
+                ensure!(
+                    config_path.is_none()
+                        || (grant.full_access
+                            && crate::process::runtime_storage::has_bound_layout(&self.directory)),
+                    "host configuration denied"
+                );
                 approved(&grant, &workspace)?;
                 if let Ok(existing) = self.registration(session_id).await {
                     ordinary(&existing)?;
@@ -136,14 +245,49 @@ impl Supervisor {
                     );
                 }
                 // Resolve binds the original Start, never a second lifecycle payload.
-                let original = VesselCommand::Start {
-                    command_id,
-                    session_id,
-                    workspace: workspace.clone(),
+                let original = match &config_path {
+                    Some(path) => VesselCommand::StartConfigured {
+                        command_id,
+                        session_id,
+                        workspace: workspace.clone(),
+                        config_path: path.clone(),
+                    },
+                    None => VesselCommand::Start {
+                        command_id,
+                        session_id,
+                        workspace: workspace.clone(),
+                    },
                 };
                 self.bind_connection_operation(&grant, command_id, &original)
                     .await?;
-                self.resolve_start(command_id, session_id, workspace, None)
+                self.resolve_start(command_id, session_id, workspace, config_path)
+                    .await
+            }
+            VesselCommand::StartConfigured {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+            } => {
+                ensure!(
+                    grant.full_access
+                        && crate::process::runtime_storage::has_bound_layout(&self.directory),
+                    "configured system creation requires owner authority"
+                );
+                has(ProcessRight::Create)?;
+                approved(&grant, &workspace)?;
+                if let Ok(existing) = self.registration(session_id).await {
+                    ordinary(&existing)?;
+                    ensure!(
+                        existing.workspace == workspace,
+                        "session workspace conflict"
+                    );
+                }
+                self.bind_connection_operation(&grant, command_id, &operation)
+                    .await?;
+                self.connection_session(&grant, session_id, &workspace)?;
+                store::current_connection(&self.directory, &grant)?;
+                self.start(command_id, session_id, workspace, Some(config_path))
                     .await
             }
             VesselCommand::Start {
@@ -180,13 +324,22 @@ impl Supervisor {
                     session_id,
                     workspace,
                 };
-                self.start_initialized(command_id, session_id, canonical, None, None, original)
+                if crate::process::runtime_storage::has_bound_layout(&self.directory) {
+                    self.start_identity_request(
+                        original,
+                        crate::process::accounts::Scope::Connection(grant.clone()),
+                    )
                     .await
+                } else {
+                    self.start_initialized(command_id, session_id, canonical, None, None, original)
+                        .await
+                }
             }
             VesselCommand::Inspect { session_id } => {
                 has(ProcessRight::Observe)?;
                 let registration = self.registration(session_id).await?;
-                ordinary(&registration)?;
+                self.execution_connection(&grant, &registration, true)
+                    .await?;
                 approved(&grant, &registration.workspace)?;
                 let info = self.inspect_registration(&registration).await;
                 store::current_connection(&self.directory, &grant)?;
@@ -215,7 +368,8 @@ impl Supervisor {
                     has(ProcessRight::Cancel)?;
                 }
                 let registration = self.registration(request.session_id).await?;
-                ordinary(&registration)?;
+                self.execution_connection(&grant, &registration, false)
+                    .await?;
                 let binding =
                     self.connection_session(&grant, request.session_id, &registration.workspace)?;
                 self.voyage(request, Some(binding)).await
@@ -226,7 +380,8 @@ impl Supervisor {
             } => {
                 has(ProcessRight::Lifecycle)?;
                 let registration = self.registration(session_id).await?;
-                ordinary(&registration)?;
+                self.execution_connection(&grant, &registration, true)
+                    .await?;
                 let binding =
                     self.connection_session(&grant, session_id, &registration.workspace)?;
                 crate::process::api::reply(self.stop(session_id, incarnation, Some(binding)).await?)
@@ -261,7 +416,40 @@ impl Supervisor {
                 self.bind_connection_operation(&grant, *command_id, &operation)
                     .await?;
                 store::current_connection(&self.directory, &grant)?;
-                self.branch(command).await
+                self.branch_scoped(
+                    command,
+                    crate::process::accounts::Scope::Connection(grant.clone()),
+                )
+                .await
+            }
+            command @ VesselCommand::Recover { .. } => {
+                ensure!(
+                    grant.full_access,
+                    "offline recovery requires explicit account-owner connection"
+                );
+                has(ProcessRight::History)?;
+                has(ProcessRight::Lifecycle)?;
+                let VesselCommand::Recover {
+                    command_id,
+                    session_id,
+                    ..
+                } = &command
+                else {
+                    unreachable!()
+                };
+                let registration = self.registration(*session_id).await?;
+                self.bind_connection_operation(&grant, *command_id, &operation)
+                    .await?;
+                store::current_connection(&self.directory, &grant)?;
+                if registration.peer_uids.is_some() {
+                    self.recover_bound(
+                        command,
+                        crate::process::accounts::Scope::Connection(grant.clone()),
+                    )
+                    .await
+                } else {
+                    self.recover(command).await
+                }
             }
             VesselCommand::Restart {
                 command_id,
@@ -305,7 +493,12 @@ impl Supervisor {
             }
         }
         if paths.is_empty() {
-            paths.insert(std::fs::canonicalize(std::env::current_dir()?)?);
+            let default = if crate::process::runtime_storage::has_bound_layout(&self.directory) {
+                crate::process::default_execution::protected_default(&self.directory)?.home
+            } else {
+                std::env::current_dir()?
+            };
+            paths.insert(std::fs::canonicalize(default)?);
         }
         Ok(paths
             .into_iter()
@@ -373,6 +566,11 @@ impl Supervisor {
         digest.update(b"voyage/connection-session/v1\0");
         digest.update(grant.grant_id.as_bytes());
         digest.update(session_id.as_bytes());
+        if let Some(epoch) = super::execution_epoch::current(&self.directory, session_id)? {
+            digest.update(b"system-execution-epoch/v1\0");
+            digest.update(epoch.as_bytes());
+            digest.update(grant.revision.to_be_bytes());
+        }
         let bytes: [u8; 32] = digest.finalize().into();
         let id = Uuid::from_bytes(bytes[..16].try_into()?);
         let binding = GrantBinding {
@@ -420,31 +618,32 @@ impl Supervisor {
                     < 16384,
                 "session authority capacity exhausted"
             );
-            store::save(
-                &path,
-                &ProcessGrant {
-                    full_access: grant.full_access,
-                    grant_id: id,
-                    principal_id: grant.principal_id,
-                    session_id,
-                    workspace: workspace.to_owned(),
+            let derived = ProcessGrant {
+                full_access: grant.full_access,
+                grant_id: id,
+                principal_id: grant.principal_id,
+                session_id,
+                workspace: workspace.to_owned(),
+                revision: grant.revision,
+                rights,
+                accounts: grant.accounts.clone(),
+                enrollment_connections: grant.enrollment_connections.clone(),
+                expires_at_ms: grant.expires_at_ms,
+                revoked: false,
+                token_hash: String::new(),
+                parent_grant: None,
+                participant_binding: None,
+                connection_binding: Some(GrantBinding {
+                    grant_id: grant.grant_id,
                     revision: grant.revision,
-                    rights,
-                    accounts: grant.accounts.clone(),
-                    enrollment_connections: grant.enrollment_connections.clone(),
-                    expires_at_ms: grant.expires_at_ms,
-                    revoked: false,
-                    token_hash: String::new(),
-                    parent_grant: None,
-                    participant_binding: None,
-                    connection_binding: Some(GrantBinding {
-                        grant_id: grant.grant_id,
-                        revision: grant.revision,
-                        principal_id: grant.principal_id,
-                    }),
-                },
-            )?;
+                    principal_id: grant.principal_id,
+                }),
+            };
+            super::execution_epoch::pin(&self.directory, &derived)?;
+            store::save(&path, &derived)?;
         }
+        let current: ProcessGrant = store::load(&path)?;
+        super::execution_epoch::check(&self.directory, &current)?;
         Ok(binding)
     }
 }
