@@ -13,7 +13,7 @@ use std::{
 pub struct Directory {
     path: PathBuf,
     file: File,
-    parent: File,
+    created_parent: Option<File>,
 }
 
 fn checked(file: File, directory: bool) -> io::Result<File> {
@@ -48,7 +48,7 @@ fn open_at(dir: &File, name: &str, flags: i32) -> io::Result<File> {
     }
     Ok(unsafe { File::from_raw_fd(fd) })
 }
-fn walk(path: &Path) -> Result<File> {
+fn walk(path: &Path, traversal_only: bool) -> Result<File> {
     ensure!(path.is_absolute(), "local actor directory must be absolute");
     let mut current = fs::OpenOptions::new()
         .read(true)
@@ -64,13 +64,16 @@ fn walk(path: &Path) -> Result<File> {
                 // A protected runtime parent grants traversal, not listing.
                 // Keep final directories readable for their durability barrier.
                 #[cfg(target_os = "linux")]
-                let access = if components.peek().is_some() {
+                let access = if traversal_only || components.peek().is_some() {
                     libc::O_PATH
                 } else {
                     libc::O_RDONLY
                 };
                 #[cfg(not(target_os = "linux"))]
-                let access = libc::O_RDONLY;
+                let access = {
+                    let _ = traversal_only;
+                    libc::O_RDONLY
+                };
                 let fd = unsafe {
                     libc::openat(
                         current.as_raw_fd(),
@@ -95,28 +98,43 @@ impl Directory {
         let parent = walk(
             path.parent()
                 .context("local actor directory needs a parent")?,
+            true,
         )?;
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .context("invalid local actor directory name")?;
-        let c_name = CString::new(name)?;
-        let made = unsafe { libc::mkdirat(parent.as_raw_fd(), c_name.as_ptr(), 0o700) };
-        if made != 0 {
-            let error = io::Error::last_os_error();
-            ensure!(
-                error.kind() == io::ErrorKind::AlreadyExists,
-                "cannot create local actor directory: {error}"
-            );
-        }
-        let file = checked(
-            open_at(&parent, name, libc::O_RDONLY | libc::O_DIRECTORY)?,
-            true,
-        )?;
+        let (file, created_parent) =
+            match open_at(&parent, name, libc::O_RDONLY | libc::O_DIRECTORY) {
+                Ok(file) => (checked(file, true)?, None),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    // Creating this namespace entry requires a readable parent for
+                    // its fsync barrier, obtained before the mkdir effect. An existing
+                    // protected runtime leaf needs only traversal of its root parent.
+                    let durability = open_at(&parent, ".", libc::O_RDONLY | libc::O_DIRECTORY)?;
+                    let c_name = CString::new(name)?;
+                    let made = unsafe { libc::mkdirat(parent.as_raw_fd(), c_name.as_ptr(), 0o700) };
+                    if made != 0 {
+                        let error = io::Error::last_os_error();
+                        ensure!(
+                            error.kind() == io::ErrorKind::AlreadyExists,
+                            "cannot create local actor directory: {error}"
+                        );
+                    }
+                    (
+                        checked(
+                            open_at(&parent, name, libc::O_RDONLY | libc::O_DIRECTORY)?,
+                            true,
+                        )?,
+                        if made == 0 { Some(durability) } else { None },
+                    )
+                }
+                Err(error) => return Err(error.into()),
+            };
         let directory = Self {
             path: path.into(),
             file,
-            parent,
+            created_parent,
         };
         directory.sync()?;
         directory.verify()?;
@@ -127,6 +145,7 @@ impl Directory {
         let parent = walk(
             path.parent()
                 .context("local actor directory needs a parent")?,
+            true,
         )?;
         let name = path
             .file_name()
@@ -139,7 +158,7 @@ impl Directory {
         let directory = Self {
             path: path.into(),
             file,
-            parent,
+            created_parent: None,
         };
         directory.verify()?;
         Ok(directory)
@@ -160,7 +179,7 @@ impl Directory {
         Ok(lock)
     }
     pub fn verify(&self) -> Result<()> {
-        let current = checked(walk(&self.path)?, true)?;
+        let current = checked(walk(&self.path, false)?, true)?;
         let a = current.metadata()?;
         let b = self.file.metadata()?;
         ensure!(
@@ -216,7 +235,9 @@ impl Directory {
     }
     pub fn sync(&self) -> Result<()> {
         self.file.sync_all()?;
-        self.parent.sync_all()?;
+        if let Some(parent) = &self.created_parent {
+            parent.sync_all()?;
+        }
         Ok(())
     }
     /// Replace a private record under the caller's exclusive directory lock.
@@ -304,6 +325,85 @@ impl Directory {
             "local actor publication failed: {}",
             io::Error::last_os_error()
         );
+        self.sync()?;
+        self.verify()?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod traversal_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    struct RestorePermissions(PathBuf);
+    impl Drop for RestorePermissions {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[test]
+    fn existing_private_leaf_reads_and_publishes_under_traversal_only_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("protected");
+        let leaf = parent.join("runtime");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&leaf).unwrap();
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o700)).unwrap();
+        let _restore = RestorePermissions(parent.clone());
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o111)).unwrap();
+        let reader = Directory::open_existing(&leaf).unwrap();
+        assert_eq!(reader.read("absent.json").unwrap(), None);
+        let writer = Directory::open(&leaf).unwrap();
+        let _guard = writer.lock().unwrap();
+        writer
+            .publish_new("receipt.json", b"retained private receipt")
+            .unwrap();
+        writer.sync().unwrap();
+        assert_eq!(
+            reader.read("receipt.json").unwrap().unwrap(),
+            b"retained private receipt"
+        );
+        assert_eq!(fs::metadata(&parent).unwrap().mode() & 0o777, 0o111);
+    }
+    #[test]
+    fn missing_leaf_requires_parent_durability_access_before_creation() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        fs::create_dir(&parent).unwrap();
+        let _restore = RestorePermissions(parent.clone());
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o333)).unwrap();
+        let leaf = parent.join("new");
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(Directory::open(&leaf).is_err());
+            assert!(!leaf.exists());
+        }
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).unwrap();
+        let created = Directory::open(&leaf).unwrap();
+        created
+            .publish_new("receipt.json", b"durable creation")
+            .unwrap();
+        created.sync().unwrap();
+        assert_eq!(fs::metadata(&leaf).unwrap().mode() & 0o777, 0o700);
+        assert_eq!(
+            created.read("receipt.json").unwrap().unwrap(),
+            b"durable creation"
+        );
+    }
+    #[test]
+    fn traversal_capability_does_not_admit_shared_leaf_or_symlink_ancestor() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        let leaf = parent.join("runtime");
+        fs::create_dir(&parent).unwrap();
+        fs::create_dir(&leaf).unwrap();
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(Directory::open_existing(&leaf).is_err());
+        fs::set_permissions(&leaf, fs::Permissions::from_mode(0o700)).unwrap();
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&parent, &alias).unwrap();
+        assert!(Directory::open_existing(&alias.join("runtime")).is_err());
+        let file = parent.join("not-directory");
+        fs::write(&file, b"private").unwrap();
+        assert!(Directory::open_existing(&file).is_err());
     }
 }
