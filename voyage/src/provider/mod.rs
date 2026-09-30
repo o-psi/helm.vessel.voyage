@@ -1,3 +1,4 @@
+pub(crate) mod context_accounting;
 mod coordination;
 pub mod goal_meter;
 pub(crate) mod multimodal;
@@ -199,6 +200,8 @@ pub struct ModelInfo {
     pub observed_at_ms: Option<u64>,
     #[serde(default)]
     pub input_modalities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_capacity: Option<voyage_protocol::context_accounting::ModelContextCapacity>,
 }
 
 impl ModelInfo {
@@ -217,6 +220,7 @@ impl ModelInfo {
             default_service_tier: None,
             observed_at_ms: None,
             input_modalities: vec!["text".into()],
+            context_capacity: None,
         }
     }
 }
@@ -480,6 +484,19 @@ pub trait Provider: Send + Sync {
     /// when the operator has left local token limits disabled.
     fn context_window(&self, _model: &str) -> Option<usize> {
         None
+    }
+    /// Counts the same encoded input as dispatch, never serialized byte size.
+    /// Unsupported endpoints and uncountable components remain explicitly unknown.
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        Ok(context_accounting::unknown(
+            request,
+            "unsupported",
+            None,
+            "counting_unavailable",
+        ))
     }
     /// Whether new canonical user input is honored at every request boundary.
     fn supports_steering(&self) -> bool {
@@ -826,10 +843,31 @@ struct BoundProvider {
 }
 #[async_trait]
 impl Provider for BoundProvider {
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        let mut count = native_from_config(&self.config, self.redactor.clone())?
+            .input_tokens(request)
+            .await?;
+        check_provider_authority(&self.config.provider_authority)?;
+        self.config.validate_account().map_err(|_| {
+            ProviderError::Authentication("selected account changed during counting".into())
+        })?;
+        count.scope.account = self.config.account.clone();
+        Ok(count)
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        native_from_config(&self.config, self.redactor.clone())?
+        let mut models = native_from_config(&self.config, self.redactor.clone())?
             .models()
-            .await
+            .await?;
+        for model in &mut models {
+            if let Some(capacity) = &mut model.context_capacity {
+                capacity.scope.account = self.config.account.clone();
+            }
+        }
+        Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         native_from_config(&self.config, self.redactor.clone())?

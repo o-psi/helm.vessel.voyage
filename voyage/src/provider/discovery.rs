@@ -42,6 +42,8 @@ pub(crate) async fn models(
             ));
         }
         let mut model = ModelInfo::minimal(id);
+        model.context_capacity =
+            super::context_accounting::catalog_capacity(item, id, "openai_compatible", endpoint);
         model.input_modalities = super::multimodal::discovered_modalities(item)?;
         models.push(model);
     }

@@ -66,3 +66,5 @@ pub mod execution_profiles;
 
 /// Staged execution-identity contracts; not yet an advertised capability.
 pub mod execution_identity;
+
+pub mod context_accounting;

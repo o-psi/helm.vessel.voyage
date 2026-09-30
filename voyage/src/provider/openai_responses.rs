@@ -46,14 +46,72 @@ impl OpenAiResponsesProvider {
 
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
+        let body = request_body(request.clone(), true)?;
+        let Some(input) = super::context_accounting::responses_input(&body) else {
+            return Ok(super::context_accounting::unknown(
+                request,
+                "openai_responses",
+                Some(&self.base_url),
+                "unclassified_input_component",
+            ));
+        };
+        let response = tokio::time::timeout(super::context_accounting::TIMEOUT, async {
+            let response = super::endpoint_http_client(&self.client, &self.base_url)
+                .post(format!("{}/responses/input_tokens", self.base_url))
+                .apply_key(&self.api_key.resolve()?)
+                .json(&input)
+                .send()
+                .await
+                .map_err(map_transport)?;
+            if matches!(response.status().as_u16(), 404 | 405 | 501) {
+                return Ok(None);
+            }
+            checked_json(response).await.map(Some)
+        })
+        .await
+        .map_err(|_| ProviderError::Timeout("input token count timed out".into()))??;
+        match response {
+            Some(response) if response["object"] != "response.input_tokens" => Err(
+                ProviderError::InvalidResponse("invalid input token counter response".into()),
+            ),
+            Some(response) => super::context_accounting::counted(
+                request,
+                "openai_responses",
+                &self.base_url,
+                &input,
+                &response,
+                voyage_protocol::context_accounting::CountPrecision::ProviderExact,
+                "responses_input_tokens",
+            ),
+            None => Ok(super::context_accounting::unknown(
+                request,
+                "openai_responses",
+                Some(&self.base_url),
+                "counting_endpoint_unavailable",
+            )),
+        }
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
-            .await?
-            .ok_or_else(|| {
-                ProviderError::InvalidResponse(
-                    "model-list unavailable; use a manual model ID".into(),
-                )
-            })
+        let mut models =
+            super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
+                .await?
+                .ok_or_else(|| {
+                    ProviderError::InvalidResponse(
+                        "model-list unavailable; use a manual model ID".into(),
+                    )
+                })?;
+        for model in &mut models {
+            if let Some(capacity) = &mut model.context_capacity {
+                capacity.scope.transport = "openai_responses".into();
+            }
+        }
+        Ok(models)
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {

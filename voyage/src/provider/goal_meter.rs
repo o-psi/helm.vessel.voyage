@@ -326,6 +326,19 @@ pub(super) struct MeteredProvider {
 
 #[async_trait]
 impl Provider for MeteredProvider {
+    async fn input_tokens(
+        &self,
+        request: &ModelRequest,
+    ) -> Result<voyage_protocol::context_accounting::RequestTokenCount, ProviderError> {
+        self.meter.check_budget().map_err(|_| refused())?;
+        tokio::time::timeout(
+            self.meter.remaining_time(),
+            self.inner.input_tokens(request),
+        )
+        .await
+        .map_err(|_| refused())?
+    }
+
     fn context_window(&self, model: &str) -> Option<usize> {
         self.inner.context_window(model)
     }

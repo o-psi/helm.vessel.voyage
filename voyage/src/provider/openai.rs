@@ -65,13 +65,20 @@ impl OpenAiProvider {
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
-            .await?
-            .ok_or_else(|| {
-                ProviderError::InvalidResponse(
-                    "model-list unavailable; use a manual model ID".into(),
-                )
-            })
+        let mut models =
+            super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
+                .await?
+                .ok_or_else(|| {
+                    ProviderError::InvalidResponse(
+                        "model-list unavailable; use a manual model ID".into(),
+                    )
+                })?;
+        for model in &mut models {
+            if let Some(capacity) = &mut model.context_capacity {
+                capacity.scope.transport = "openai_chat".into();
+            }
+        }
+        Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         super::validate_native_endpoint(&self.base_url)?;

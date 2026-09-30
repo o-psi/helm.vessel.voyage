@@ -116,6 +116,12 @@ impl Provider for ChatGptOAuth {
                     )?,
                     observed_at_ms: Some(super::catalog::now_ms()),
                     input_modalities: super::multimodal::discovered_modalities(entry)?,
+                    context_capacity: super::context_accounting::catalog_capacity(
+                        entry,
+                        &id,
+                        "chatgpt_oauth",
+                        &self.endpoints.models,
+                    ),
                     id,
                 })
             })
