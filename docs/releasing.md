@@ -8,6 +8,11 @@ Linux architecture cutover is implemented; platform/deployment limits are record
 
 ## Planned release sequence
 
+The `release/v1.0.3-integration` review branch has stable-baseline candidate
+versions 1.0.3 and a [candidate guide](releases-v1.0.3.md). This prepares the
+coordinated release verification; it does not create a stable tag, publish assets
+or change the current stable download.
+
 The next planned releases are **v1.0.3**, then **v1.1.0**. The latter requires
 [complete removal of legacy Helm–Vessel snapshot transport](event-only-v1.1.0.md)
 in both Helm clients. Keep the nightly target on v1.0.3 until that stable release
