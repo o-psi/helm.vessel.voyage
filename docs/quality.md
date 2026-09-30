@@ -949,3 +949,17 @@ Two further plain-interface source journeys exercise EOF, explicit quit, blank
 input and input failure through the actual chat event loop while scripted peers
 permit only observation. A second source matrix refuses malformed machine output
 without repeating an admitted command. These are prepared, not executed evidence.
+
+### Executable extension adapter acceptance source (#353)
+
+The actual `ExtensionTool` now has an isolated offline source journey with a
+scripted SDK peer and its own private resource ledger. Twelve scenarios prepare
+tool/command/lifecycle output acceptance, progress sanitization, read-only/approval/
+secret refusal before launch, wrong output owner, schema mismatch, split/private
+result refusal, output limits and unresolved cleanup. Quarantined attempts must
+not launch again, private contexts must be removed, and outcome/cleanup remain
+separate exact records. The fixture adapter launches no executable or OS process;
+positive release requires completion of its owned Tokio peer task. It does not
+establish native executable isolation, descendant cleanup or live-provider behavior.
+These source cases have not been executed and await the single final verification
+set. The current published coverage summary remains unchanged.
