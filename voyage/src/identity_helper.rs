@@ -7,6 +7,8 @@ use voyage_protocol::identity_helper::*;
 const PRIVATE_CONFIG_BYTES: usize = 65_536;
 #[cfg(target_os = "linux")]
 mod authority;
+#[cfg(all(test, unix))]
+mod coverage_tests;
 mod initialization;
 mod recovery;
 

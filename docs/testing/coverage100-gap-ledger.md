@@ -9,25 +9,36 @@ standard test/dependency exclusions. No module exclusions were added. Web/JavaSc
 Python process checks, doctests, native other-platform runs and branch coverage are
 not represented by this line percentage.
 
-## Latest separately published baseline
+## Current audited baseline
 
-Concurrent browser-controls delivery #379 published a newer full-workspace record
-in `675f12ed1f05b03f6fc45828993f95fec8e55b85`, measuring clean source
-`782354d2eaba298d50d10baeecd4bc524ab35d71` on September 30:
-**89,290 / 116,781 lines (76.459356%)**, 8,111 / 11,013 functions and
-140,542 / 192,137 regions; **2,039 passed, zero failed, eight ignored**.
-Its report retained all 504 prior workspace files, the same standard-library
-source and 16 distinct current object hashes, with no new exclusions. The record
-adds 136 covered and 128 measured lines relative to the checkpoint below.
+The full default-feature workspace measurement on clean source
+`202544f765d416e8e778f8748742465bfb4759c2`, recorded in `coverage/latest.json`
+and integrated on main, passed **2,235 tests, zero failures, eight ignored**:
+**94,702 / 130,212 lines (72.729088%)**, 8,576 / 11,907 functions and
+149,536 / 215,511 regions. **35,510 line gaps remain**, including one known
+standard-library line. This does not meet #353's reachable-production objective.
 
-The release integration branch incorporates that delivery, but its identity,
-adoption, recovery, browser-shadow and prepared coverage changes are newer and
-remain unmeasured. This baseline is evidence for its named source only. No new
-tests or coverage were run by the release coordinator during the user's current
-implementation-first hold; the final combined measurement is still required.
-`coverage/latest.json` records the published measurement, not the current release
-branch's coverage. The detailed area table below is the retained September 29 gap
-map; it has not been silently regenerated or presented as current edited totals.
+The current-object audit retains all **533 current workspace source files**, all
+**504 previously measured files**, and the same standard-library source. Its
+17 distinct objects include every one of the 14 executed workspace test targets
+and the three production binaries used by integration tests. The default export
+mixed 69 cached objects and 1,289 source mappings and was rejected. Later ordinary
+builds replaced public Helm/Voyage binary paths; the exact instrumented measured
+objects were recovered through their unchanged hash/size/timestamp-matching deps
+aliases. Source and profile provenance, the rejected export and full audit remain
+under ignored `target/coverage-report/v103-final-clean` (#251).
+
+Compared with the earlier published clean-source record `782354d`, this adds
+5,412 covered lines and 13,431 measured lines, dropping 3.730268 percentage points.
+New identity, adoption, recovery and supervisor behavior expands the unexecuted
+denominator. No source exclusion or narrower object selection was used to raise
+the percentage. New work after this named source requires another coordinated
+measurement; prepared assertions below are not passing results or new percentages.
+
+The retained detailed export `coverage353-current-detailed.json` uses exactly the
+audited objects, profile and ignore scope and reproduces the audited totals. It
+adds segment/function addresses for selecting behavior gaps without running tests
+or builds. Summary-only exports do not provide those addresses.
 
 ## Historical audited checkpoint and area map
 
@@ -56,7 +67,7 @@ from shared objects changing during builds. It predates the root-local lifecycle
 and public configured-start increments; their final numbers require the parent's
 combined measurement. `coverage/latest.json` remains authoritative.
 
-## Largest remaining areas
+## Historical September 29 areas
 
 These are reachable test gaps unless a specific environment restriction is named.
 They must not be relabeled untestable merely because fixtures are difficult.
@@ -89,6 +100,55 @@ They must not be relabeled untestable merely because fixtures are difficult.
 | `helm/src/main.rs` | 163 | 478 |
 | `voyage/src/accounts.rs` | 158 | 775 |
 
+## Current largest areas and concrete next assertions
+
+This map is derived from the audited September 30 current-source export above.
+Directory rows aggregate that directory only; the identity-helper row also
+includes its same-named entry file. An unexecuted line is not proof of an
+unreachable branch or a missing assertion. Native requirements remain required
+evidence, without being removed from this denominator.
+
+| Area | Uncovered lines | Total lines |
+|---|---:|---:|
+| `helm/src/process_client/` | 8,890 | 33,605 |
+| `vessel/src/process/` | 8,776 | 18,166 |
+| `installer/src/` | 3,899 | 7,258 |
+| `voyage/src/server/` | 1,740 | 5,338 |
+| `voyage/src/attachment/` | 1,634 | 12,360 |
+| `voyage/src/tools/` | 1,393 | 7,865 |
+| `voyage/src/github/` | 788 | 3,137 |
+| `voyage/src/identity_helper.rs` and `identity_helper/` | 700 | 1,503 |
+| `voyage/src/subagent/` | 478 | 2,402 |
+| `voyage/src/provider/` | 473 | 5,747 |
+| `voyage/src/extensions/` | 384 | 1,995 |
+
+The largest individually unexecuted modules are system adoption (1,623 lines),
+Vessel migration (1,064), identity transition (893), administrative execution
+(647), and identity-account supervision (526). Do not treat them as passing
+because ordinary metadata or fixture checks succeeded. Their scoped admission,
+durable exact-effect claims, credential separation, boot/service publication,
+retired-owner transfer and rollback paths require meaningful local fault
+assertions plus the applicable disposable native journeys.
+
+The new identity-helper preparation exercises real ordinary private registries
+under isolated child process HOME/XDG directories: scoped account/default and
+transport visibility, actor-bound retained enrollment metadata, denied/stale
+bindings, profile secrecy, private configuration review, exact frozen retry,
+missing publication retention, immutable base settings and participant provenance.
+Two scripted loopback model-catalog journeys assert the selected endpoint and
+capability-change refusal; they do not execute inference or call a live provider.
+Inherited provider variables and credentials are cleared; only the coverage file
+destination is retained when instrumented. Root-peer network/enrollment/default
+mutations still need native evidence and are not replaced by these fixtures.
+
+The prepared scope-authority cases assert exact current-grant matching/revocation,
+refusal of unprotected minting and malformed request identities, bounded local
+framing/timeout with fixed sanitized refusal, and observed cleanup of an owned
+Tokio task. They retain the production root/epoch/UID gates. They do not establish
+successful root service startup, positive cross-UID lease delivery or native
+process cleanup. These new source assertions have not been executed or measured;
+the parent coordinates their final verification and coverage with concurrent work.
+
 ## Environment-specific evidence still required
 
 - Protected Linux control-store owner separation: the ignored native-root test
@@ -118,7 +178,7 @@ export and current-object audit beside it. Earlier evidence under
 is historical. These ignored artifacts are local evidence, not portable source files. Issue #353 remains open
 until the target is actually met or the operator changes scope.
 
-## Reachability and evidence ledger for the next pass
+## Historical September 29 reachability and evidence ledger
 
 The summary-only export does not include uncovered line addresses or branch
 execution. Classifications below come from source responsibilities and existing

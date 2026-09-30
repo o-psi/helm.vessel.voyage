@@ -26,6 +26,9 @@ use voyage_storage::protected_linux::RootDirectory;
 
 const MAX_FRAME: usize = 16_384;
 const DEADLINE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+#[path = "scope_authority_tests.rs"]
+mod tests;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
