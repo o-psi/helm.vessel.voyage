@@ -210,3 +210,135 @@ async fn session_submit_snapshots_revision_before_admitting() {
     drop(connection);
     peer.finish().await;
 }
+
+#[tokio::test]
+async fn explicit_root_decisions_use_typed_response_and_refuse_changed_runs() {
+    let s = Uuid::new_v4();
+    let i = Uuid::from_u128(2);
+    let r = Uuid::new_v4();
+    let d = Uuid::new_v4();
+    for (verb, result) in [("approve", "approved"), ("deny", "denied")] {
+        let peer = Peer::new(vec![
+            (wire(V::Inspect { session_id:s }), info(s,i)),
+            (json!({"op":"respond","session_id":s,"incarnation":i,"expected_revision":23,"run_id":r,"decision_id":d,"response":{"root_grant":result}}), json!({"status":"applied"})),
+        ]).await;
+        let connection = session::Connection::open(&peer.client, s).await.unwrap();
+        let mut snapshot = json!({"revision":23,"run":{"run_id":r},"decisions":[{"decision_id":d,"run_id":r,"request":{"kind":"root_grant"}}]});
+        command(&connection, &snapshot, &format!("/{verb} {d}"))
+            .await
+            .unwrap();
+        snapshot["decisions"][0]["run_id"] = json!(Uuid::new_v4());
+        assert!(
+            command(&connection, &snapshot, &format!("/{verb} {d}"))
+                .await
+                .is_err()
+        );
+        snapshot["decisions"][0]["run_id"] = json!(r);
+        assert!(
+            command(&connection, &snapshot, &format!("/answer {d} private text"))
+                .await
+                .is_err()
+        );
+        drop(connection);
+        peer.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn event_loss_refreshes_observation_without_resubmitting_or_cancelling() {
+    use futures_util::StreamExt;
+    use voyage_protocol::vessel::{VESSEL_API_VERSION, VesselEvent};
+    let s = Uuid::new_v4();
+    let i = Uuid::from_u128(2);
+    for mode in [
+        "ended",
+        "transport_error",
+        "wrong_session",
+        "refused",
+        "unknown",
+    ] {
+        let peer = Peer::new(vec![
+            (wire(V::Inspect { session_id: s }), info(s, i)),
+            (
+                json!({"op":"snapshot","session_id":s}),
+                json!({"observation_cursor":29}),
+            ),
+            (wire(V::Capabilities), json!({"features":[]})),
+        ])
+        .await;
+        let connection = session::Connection::open(&peer.client, s).await.unwrap();
+        let mut values = Vec::new();
+        if mode == "transport_error" {
+            values.push(Err(anyhow::anyhow!("synthetic disconnected observer")));
+        } else if mode != "ended" {
+            values.push(Ok(VesselEvent {
+                protocol: VESSEL_API_VERSION,
+                session_id: if mode == "wrong_session" {
+                    Uuid::new_v4()
+                } else {
+                    s
+                },
+                incarnation: i,
+                result: json!({}),
+                error: matches!(mode, "refused" | "unknown")
+                    .then(|| "observer refused\u{1b}[31m".to_owned()),
+                outcome_unknown: mode == "unknown",
+            }));
+        }
+        let mut events = Some(futures_util::stream::iter(values).boxed());
+        connection.wait_update(&mut events).await.unwrap();
+        assert!(
+            events.is_none(),
+            "unsupported fresh subscription falls back to observation polling"
+        );
+        drop(connection);
+        peer.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn valid_invalidation_does_not_refresh_or_mutate_the_owner() {
+    use futures_util::StreamExt;
+    use voyage_protocol::vessel::{VESSEL_API_VERSION, VesselEvent};
+    let s = Uuid::new_v4();
+    let i = Uuid::from_u128(2);
+    let peer = Peer::new(vec![(wire(V::Inspect { session_id: s }), info(s, i))]).await;
+    let connection = session::Connection::open(&peer.client, s).await.unwrap();
+    let event = VesselEvent {
+        protocol: VESSEL_API_VERSION,
+        session_id: s,
+        incarnation: i,
+        result: json!({"cursor":30}),
+        error: None,
+        outcome_unknown: false,
+    };
+    let mut events = Some(futures_util::stream::iter(vec![Ok(event)]).boxed());
+    connection.wait_update(&mut events).await.unwrap();
+    assert!(events.is_some());
+    drop(connection);
+    peer.finish().await;
+}
+
+#[tokio::test]
+async fn output_identity_errors_leave_cursor_unadvanced_and_do_not_retry() {
+    let s = Uuid::new_v4();
+    let i = Uuid::from_u128(2);
+    let r = Uuid::new_v4();
+    for value in [
+        json!({"run_id":Uuid::new_v4(),"offset":11,"data":"secret fixture","next_offset":25,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":10,"data":"a","next_offset":11,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":11,"data":"é","next_offset":12,"has_more":false,"state":"completed"}),
+    ] {
+        let peer = Peer::new(vec![
+            (wire(V::Inspect { session_id: s }), info(s, i)),
+            (json!({"op":"run_output","run_id":r,"offset":11}), value),
+        ])
+        .await;
+        let connection = session::Connection::open(&peer.client, s).await.unwrap();
+        let mut cursor = 11;
+        assert!(output::drain(&connection, r, &mut cursor).await.is_err());
+        assert_eq!(cursor, 11);
+        drop(connection);
+        peer.finish().await;
+    }
+}

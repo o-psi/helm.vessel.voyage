@@ -915,3 +915,20 @@ Transport source cases preserve exact receipts and private socket identity, refu
 uncertain input retransmission after loss, and distinguish complete no-dispatch
 preparation from partial/positive effect claims. No native terminal acceptance or
 passing evidence is inferred from these source-only additions.
+
+### Notification and plain observer source journeys (#353)
+
+Eight additional unexecuted behavioral cases exercise explicit typed notification
+operations, exact mutation command identities, recipient-scoped seen/dismiss
+receipts, configure input and local bounds, and malformed watch pages. Scripted
+peers refuse any extra owner navigation, decision response, cancellation or unseen
+receipt. Plain observer cases prepare root-decision typed responses and changed-run
+refusals, event-stream loss/refusal/wrong-session observation refresh without
+resubmission, valid invalidation without refresh, and output identity/UTF-8 cursor
+failures leaving the previous cursor intact. Retained HTML for inbox, plain session
+and output is source guidance; it is not a measurement of these edited cases.
+
+No Cargo, runtime checks or coverage were run for this source increment. The final
+coordinated run must establish compilation, behavior and coverage over the same
+whole-workspace denominator, including all production targets and ignored-test
+accounting.
