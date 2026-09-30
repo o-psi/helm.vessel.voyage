@@ -127,7 +127,7 @@ mod linux {
         let mut journal = crate::attachment::journal::Journal::open(directory.join("journal"))?;
         let guard = journal.acquire_execution(request.session_id)?;
         if matches!(
-            request.operation,
+            &request.operation,
             TransitionOperation::RetainConfiguration { .. }
         ) {
             let value = journal.retain_transition_configuration(&guard)?;

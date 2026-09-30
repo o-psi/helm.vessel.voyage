@@ -122,6 +122,7 @@ pub struct AbortedTransitionReceipt {
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransitionResponse {
     Facts { facts: RetiredJournalFacts },
+    Configuration { path: PathBuf, digest: String },
     Prepared { receipt: PreparedTransitionReceipt },
     Committed { receipt: TransitionReceipt },
     Aborted { receipt: AbortedTransitionReceipt },
