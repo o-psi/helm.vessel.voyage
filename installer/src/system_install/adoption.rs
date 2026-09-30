@@ -758,6 +758,10 @@ fn apply(review: &mut Review) -> Result<()> {
     let dir = directory(review.operation_id)?.join("frozen-source");
     let opts = options(review);
     let plan = Plan::prepare(&opts)?;
+    ensure!(
+        hash(&plan.record)? == hash(&review.planned_installation)?,
+        "installation units/provisioner/account facts changed since exact adoption review"
+    );
     leases_current(&mut owner, &mut leases)?;
     apply_install(plan, &opts)?;
     leases_current(&mut owner, &mut leases)?;

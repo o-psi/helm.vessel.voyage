@@ -220,7 +220,20 @@ fn snapshot(root: &Path, held: bool) -> Result<Snapshot> {
     } else {
         Some(registry::lock(root)?)
     };
-    let db = database::open(root)?;
+    // Legacy rollback must retain its original catalogue reader/writer format.
+    // Parse approved ordinary data read-only; never migrate the source catalogue.
+    let path = root.join("catalogue.sqlite3");
+    let _source = source_file(&path)?;
+    let db =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let version: i64 =
+        db.query_row("SELECT version FROM schema_version WHERE id=1", [], |row| {
+            row.get(0)
+        })?;
+    ensure!(
+        database::CATALOGUE_READ_SCHEMAS.contains(&version),
+        "unsupported legacy catalogue reader format"
+    );
     let mut statement = db.prepare("SELECT registration FROM voyages ORDER BY session_id")?;
     let sessions = statement
         .query_map([], |row| row.get::<_, String>(0))?
