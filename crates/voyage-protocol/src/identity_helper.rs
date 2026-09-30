@@ -170,7 +170,7 @@ pub enum IdentityHelperResponse {
         value: serde_json::Value,
     },
     /// No configuration, filesystem, credential or subprocess diagnostics.
-    Unavailable,
+    Unavailable {},
 }
 
 /// Root supplies positive retirement proof over its authenticated private pipe.

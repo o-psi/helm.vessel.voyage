@@ -661,14 +661,14 @@ pub async fn run() -> Result<()> {
             }
         };
         #[cfg(not(unix))]
-        let response = IdentityHelperResponse::Unavailable;
+        let response = IdentityHelperResponse::Unavailable {};
         Ok::<_, anyhow::Error>(response)
     })
     .await;
     // Errors are deliberately collapsed, including parser and filesystem errors.
     let response = match result {
         Ok(Ok(response)) => response,
-        _ => IdentityHelperResponse::Unavailable,
+        _ => IdentityHelperResponse::Unavailable {},
     };
     write_frame(&mut tokio::io::stdout(), &response).await?;
     Ok(())
@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn helper_failure_frame_cannot_include_private_diagnostics_or_configuration() {
-        let encoded = serde_json::to_value(IdentityHelperResponse::Unavailable).unwrap();
+        let encoded = serde_json::to_value(IdentityHelperResponse::Unavailable {}).unwrap();
         assert_eq!(encoded, serde_json::json!({"result":"unavailable"}));
         let malformed = serde_json::json!({"result":"unavailable","error":"secret configuration"});
         assert!(serde_json::from_value::<IdentityHelperResponse>(malformed).is_err());
