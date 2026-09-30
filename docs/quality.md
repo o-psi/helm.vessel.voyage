@@ -932,3 +932,15 @@ No Cargo, runtime checks or coverage were run for this source increment. The fin
 coordinated run must establish compilation, behavior and coverage over the same
 whole-workspace denominator, including all production targets and ignored-test
 accounting.
+
+### Passive inbox identity correlation source preparation (#353)
+
+The passive overview now refuses a receipt for a different requested event and
+refuses page entries pairing a receipt with a different notification event. Six
+additional unexecuted sources cover those fences, exact owner run/incarnation/
+decision references, unavailable owner states without fabricated authority, typed
+metadata/private-text refusal, page/inventory bounds, producer/budget uncertainty,
+and attention probes retaining unknown rather than inventing an unread count.
+Only the overview and its own new test module changed; execution UI hooks remain
+owned by the concurrent transition work. These edits still require the coordinated
+final compilation, runtime checks and workspace coverage measurement.

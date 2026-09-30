@@ -151,6 +151,10 @@ fn render(operation: &NotificationOperation, value: Value) -> Result<String> {
                 output.push_str("No visible notifications in this page.\n");
             }
             for entry in page.entries {
+                ensure!(
+                    entry.receipt.event_id == entry.notification.event_id,
+                    "notification receipt event mismatch"
+                );
                 output.push_str(&format!(
                     "Sequence: {} · {:?}\n{}\n",
                     entry.receipt.sequence,
@@ -160,9 +164,13 @@ fn render(operation: &NotificationOperation, value: Value) -> Result<String> {
             }
             output.push_str(&format!("Next cursor: {} · More: {}\n/inbox list {} {}\n\nReading does not mark seen. Rescan from 0 to refresh receipts.\n", page.next_after, page.has_more, destination_id, page.next_after));
         }
-        NotificationOperation::Receipt { .. } => {
+        NotificationOperation::Receipt { event_id, .. } => {
             let receipt: NotificationReceipt =
                 serde_json::from_value(value).context("invalid notification receipt")?;
+            ensure!(
+                receipt.event_id == *event_id,
+                "notification receipt event mismatch"
+            );
             output.push_str(&format!("Event: {}\nReceipt: {:?}\n\nThis is destination receipt state, not owner resolution or proof of human reading.\n", receipt.event_id, receipt.state));
         }
         NotificationOperation::Open { event_id, .. } => {
@@ -375,3 +383,7 @@ mod tests {
         assert!(metadata(&notification).contains("synthetic test, not a run outcome"));
     }
 }
+
+#[cfg(test)]
+#[path = "inbox_boundary_tests.rs"]
+mod boundary_tests;
