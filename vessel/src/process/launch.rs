@@ -190,6 +190,63 @@ pub(super) fn protected_binary(binary: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Bind review to the actual protected executable bytes, not only file metadata.
+#[cfg(target_os = "linux")]
+pub(super) fn protected_binary_digest(binary: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::{
+        io::Read,
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
+    };
+    protected_binary(binary)?;
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(binary)?;
+    let before = file.metadata()?;
+    ensure!(
+        before.is_file()
+            && before.uid() == 0
+            && before.nlink() == 1
+            && before.mode() & 0o6022 == 0
+            && before.mode() & 0o111 != 0
+            && before.len() <= 1024 * 1024 * 1024,
+        "protected executable changed or exceeds review bound"
+    );
+    let mut digest = Sha256::new();
+    let mut buffer = [0; 65536];
+    let mut total = 0u64;
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        ensure!(
+            total <= before.len(),
+            "protected executable grew during review"
+        );
+        digest.update(&buffer[..count]);
+    }
+    let after = file.metadata()?;
+    let current = std::fs::symlink_metadata(binary)?;
+    ensure!(
+        total == before.len()
+            && after.dev() == before.dev()
+            && after.ino() == before.ino()
+            && after.len() == before.len()
+            && after.mtime() == before.mtime()
+            && after.mtime_nsec() == before.mtime_nsec()
+            && after.ctime() == before.ctime()
+            && after.ctime_nsec() == before.ctime_nsec()
+            && current.dev() == before.dev()
+            && current.ino() == before.ino(),
+        "protected executable identity changed during review"
+    );
+    protected_binary(binary)?;
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 pub fn launch(binary: &Path, directory: &Path, registration: &ProcessRegistration) -> Result<()> {
     ensure!(
         registration.peer_uids.is_none(),

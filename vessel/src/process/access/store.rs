@@ -126,7 +126,7 @@ pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {
     ensure!(grant.expires_at_ms > now()?, "access expired");
     Ok(())
 }
-pub(super) fn credential_path(root: &Path, id: Uuid) -> PathBuf {
+pub(in crate::process) fn credential_path(root: &Path, id: Uuid) -> PathBuf {
     directory(root)
         .join("credentials")
         .join(format!("{id}.json"))

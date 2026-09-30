@@ -237,7 +237,7 @@ impl Supervisor {
             workspace: intent.source.workspace.clone(),
             host_identity_digest: host,
             policy_digest: policy,
-            release_digest: super::launch::protected_binary(&self.binary)?,
+            release_digest: super::launch::protected_binary_digest(&self.binary)?,
             pending_work_digest: digest(source)?,
         })
     }
@@ -609,7 +609,7 @@ impl Supervisor {
             let mut immutable = current.clone();
             immutable.state = intent.source.state;
             ensure!(
-                immutable == intent.source,
+                serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
                 "source registration changed during reconciliation"
             );
         }
@@ -905,7 +905,7 @@ impl Supervisor {
             let mut immutable = current.clone();
             immutable.state = intent.source.state;
             ensure!(
-                immutable == intent.source,
+                serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
                 "source registration changed during reconciliation"
             );
         }
@@ -922,7 +922,7 @@ impl Supervisor {
         let mut immutable = previous.clone();
         immutable.state = intent.source.state;
         ensure!(
-            immutable == intent.source,
+            serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
             "source admission changed during handoff"
         );
         self.transition_authority(grant, intent, approved).await?;

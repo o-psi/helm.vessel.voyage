@@ -308,8 +308,9 @@ impl Supervisor {
         database::store_identity(&self.directory, &record.identity).await?;
         let authority = database::execution_reviews::authority(&self.directory, grant).await?;
         let preflight = facts(&self.binary, &record, workspace).await?;
-        let release = super::launch::protected_binary(&self.binary)?;
-        let supervisor = super::launch::protected_binary(&self.binary.with_file_name("vessel"))?;
+        let release = super::launch::protected_binary_digest(&self.binary)?;
+        let supervisor =
+            super::launch::protected_binary_digest(&self.binary.with_file_name("vessel"))?;
         let host = hash(
             b"voyage/administrator-host/v1\0",
             &serde_json::to_vec(&(
@@ -767,7 +768,7 @@ pub(super) async fn verify_running(
     );
     ensure!(
         host == facts.host_identity_digest
-            && super::launch::protected_binary(
+            && super::launch::protected_binary_digest(
                 registration
                     .executable
                     .as_deref()

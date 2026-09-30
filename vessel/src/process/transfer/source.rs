@@ -326,8 +326,8 @@ mod boundary_tests {
     use std::os::unix::fs::PermissionsExt;
     #[test]
     fn opaque_signed_artifact_read_pins_inode_before_transport() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("artifact.json");
+        let root = crate::process::test_support::Fixture::new();
+        let path = root.0.join("artifact.json");
         std::fs::write(&path, b"opaque bytes").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let meta = std::fs::metadata(&path).unwrap();
@@ -337,7 +337,7 @@ mod boundary_tests {
             read_artifact(&path, uid, Some(&pin)).unwrap(),
             b"opaque bytes"
         );
-        let replacement = root.path().join("replacement");
+        let replacement = root.0.join("replacement");
         std::fs::write(&replacement, b"opaque bytes").unwrap();
         std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::rename(replacement, &path).unwrap();
@@ -348,15 +348,15 @@ mod boundary_tests {
     }
     #[test]
     fn opaque_read_refuses_links_shared_modes_and_ancestor_redirection() {
-        let root = tempfile::tempdir().unwrap();
-        let original = root.path().join("source");
+        let root = crate::process::test_support::Fixture::new();
+        let original = root.0.join("source");
         std::fs::create_dir(&original).unwrap();
         std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o700)).unwrap();
         let file = original.join("artifact.json");
         std::fs::write(&file, b"opaque").unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
         let uid = unsafe { libc::geteuid() };
-        let redirected = root.path().join("alias");
+        let redirected = root.0.join("alias");
         std::os::unix::fs::symlink(&original, &redirected).unwrap();
         assert!(read_artifact(&redirected.join("artifact.json"), uid, None).is_err());
         let link = original.join("linked");
