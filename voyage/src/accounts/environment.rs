@@ -1,5 +1,5 @@
 //! Resolve only the executing user's named environment credential. Values stay
-//! in that identity and never enter root IPC, diagnostics or configuration.
+//! in that identity and never enter root IPC, diagnostics or LaunchConfig.
 use anyhow::{Result, ensure};
 
 pub(super) fn resolve(name: &str) -> Result<String> {
@@ -110,7 +110,7 @@ mod linux {
             unsafe { libc::geteuid() } == uid,
             "executing identity changed"
         );
-        let values: BTreeMap<String, String> = serde_json::from_slice(&bytes)?;
+        let values = private_assignments(&bytes)?;
         ensure!(
             values.len() <= 256 && values.keys().all(|name| valid_name(name)),
             "private environment bounds exceeded"
@@ -120,6 +120,38 @@ mod linux {
         }
         directory.verify()?;
         Ok(Some(values))
+    }
+
+    fn private_assignments(bytes: &[u8]) -> Result<BTreeMap<String, String>> {
+        struct Assignments;
+        impl<'de> serde::de::Visitor<'de> for Assignments {
+            type Value = BTreeMap<String, String>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("bounded unique environment assignments")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Self::Value, M::Error> {
+                use serde::de::Error;
+                let mut values = BTreeMap::new();
+                while let Some((name, value)) = map.next_entry::<String, String>()? {
+                    if values.len() >= 256 || !valid_name(&name) || checked(value.clone()).is_err()
+                    {
+                        return Err(M::Error::custom("invalid environment assignments"));
+                    }
+                    if values.insert(name, value).is_some() {
+                        return Err(M::Error::custom("duplicate environment assignment"));
+                    }
+                }
+                Ok(values)
+            }
+        }
+        use serde::Deserializer;
+        let mut decoder = serde_json::Deserializer::from_slice(bytes);
+        let values = decoder.deserialize_map(Assignments)?;
+        decoder.end()?;
+        Ok(values)
     }
 
     fn trusted_executable(path: &Path) -> Result<()> {
@@ -318,6 +350,8 @@ mod linux {
             assert_eq!(values.get("API_KEY").unwrap(), "opaque=a $(not-executed)");
             assert!(!values.contains_key("UNPROVISIONED"));
             std::fs::write(&path, b"{broken").unwrap();
+            assert!(read_private_file(&root, uid).is_err());
+            std::fs::write(&path, br#"{"API_KEY":"first","API_KEY":"second"}"#).unwrap();
             assert!(read_private_file(&root, uid).is_err());
             std::fs::write(&path, br#"{}"#).unwrap();
             assert!(read_private_file(&root, uid).unwrap().unwrap().is_empty());
