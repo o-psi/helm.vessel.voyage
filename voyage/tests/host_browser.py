@@ -52,10 +52,14 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/javascript' if self.path.endswith(('.mjs', '.js')) else 'text/css' if self.path.endswith('.css') else 'text/html')
             self.send_header('Content-Length', str(len(data)))
             self.end_headers(); self.wfile.write(data); return
+        if self.path == '/agent-frame':
+            data = b'<body><input aria-label="Frame input"><button>Frame apply</button></body>'
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        extras = ('<select aria-label="Agent choice"><option value="a">Alpha</option><option value="b">Beta</option></select><input type="checkbox" aria-label="Agent agree"><button ondblclick="this.textContent=\'Agent doubled\'">Agent double</button><iframe src="/agent-frame"></iframe>' if self.server.agent_interactions else '')
         data = ('<!doctype html><title>Synthetic ' + html.escape(self.path) + '</title><body style="background:#1b6579;color:white;font:48px sans-serif">'
-                '<h1>Synthetic voyage browser</h1><p>' + html.escape(self.path) + '</p><input autofocus>' +
+                '<h1 style="font-size:24px">Synthetic voyage browser</h1><p>' + html.escape(self.path) + '</p><input autofocus>' +
                 ('<script>setTimeout(()=>{document.querySelector("input").value=prompt("Synthetic modal","")||""},400)</script>' if self.path == '/modal' else '') +
-                '<canvas id="c" width="300" height="80"></canvas><script>let n=0;setInterval(()=>{'
+                extras + '<canvas id="c" width="300" height="80"></canvas><script>let n=0;setInterval(()=>{'
                 'let x=c.getContext("2d");x.fillStyle=n++%2?"orange":"blue";x.fillRect(0,0,300,80);},100)</script>').encode()
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
@@ -75,7 +79,45 @@ class Fixture(http.server.BaseHTTPRequestHandler):
                 delta = {'tool_calls': [{'index': 0, 'id': 'navigate-'+label, 'type': 'function',
                          'function': {'name': 'host_browser', 'arguments': json.dumps({
                              'action': 'navigate', 'url': self.server.site+'/'+label})}}]}
+            elif self.server.agent_interactions and len(tools) <= 17:
+                step = len(tools)
+                def observed():
+                    values = [json.loads(m['content']) for m in reversed(tools) if m['content'].startswith('{')]
+                    return next(v for v in values if isinstance(v, dict) and 'elements' in v)
+                def reference(label):
+                    return next(e['ref'] for e in observed()['elements'] if e['text'] == label)
+                actions = {
+                    1: lambda: {'action': 'inspect', 'limit': 16},
+                    2: lambda: {'action': 'fill', 'reference': next(e['ref'] for e in observed()['elements'] if e['tag'] == 'input'), 'text': 'Agent grounded input'},
+                    3: lambda: {'action': 'inspect'},
+                    4: lambda: {'action': 'select', 'reference': reference('Agent choice'), 'value': 'b'},
+                    5: lambda: {'action': 'inspect'},
+                    6: lambda: {'action': 'check', 'reference': reference('Agent agree'), 'checked': True},
+                    7: lambda: {'action': 'inspect'},
+                    8: lambda: {'action': 'key', 'reference': reference('Agent agree'), 'key': 'Escape'},
+                    9: lambda: {'action': 'inspect'},
+                    10: lambda: {'action': 'double_click', 'reference': reference('Agent double')},
+                    11: lambda: {'action': 'inspect'},
+                    12: lambda: {'action': 'inspect', 'frame': next(f['frame'] for f in observed()['frames'] if f['url'].endswith('/agent-frame'))},
+                    13: lambda: {'action': 'fill', 'reference': reference('Frame input'), 'text': 'Agent child input'},
+                    14: lambda: {'action': 'diagnostics'},
+                    15: lambda: {'action': 'history', 'direction': 'reload'},
+                    16: lambda: {'action': 'inspect'},
+                    17: lambda: {'action': 'read', 'reference': reference('Agent double')},
+                }
+                # Native state, observed by the runtime, must agree before reload.
+                if step == 12:
+                    state = observed()['elements']
+                    assert next(e for e in state if e['text'] == 'Agent choice')['selected'] == ['Beta']
+                    assert next(e for e in state if e['text'] == 'Agent agree')['checked'] is True
+                    assert any(e['text'] == 'Agent doubled' for e in state)
+                action = actions[step]()
+                delta = {'tool_calls': [{'index': 0, 'id': f'agent-{label}-{step}', 'type': 'function',
+                    'function': {'name': 'host_browser', 'arguments': json.dumps(action)}}]}
             else:
+                if self.server.agent_interactions:
+                    assert len(tools) == 18
+                    assert json.loads(tools[-1]['content'])['text'] == 'Agent double'
                 self.server.arrived[label] = tools[-1]
                 assert self.server.release.wait(240), 'human journey barrier timeout'
                 delta = {'content': 'Synthetic browser journey finished.'}
@@ -95,6 +137,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--agent-interactions', action='store_true', help='Exercise #379 agent controls before both Helm viewers')
     parser.add_argument('--node', type=Path, default=Path('/usr/bin/node'))
     parser.add_argument('--evidence-dir', type=Path, help='Existing ignored target directory for pre-private screenshots (runtime evidence uses short /tmp path)')
     parser.add_argument('--binaries', type=Path, required=True)
@@ -138,6 +181,7 @@ def main():
     for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js'):
         server.modules['/web/resources/js/'+name] = web_resources/name
     server.site = f'http://127.0.0.1:{server.server_port}'
+    server.agent_interactions = args.agent_interactions
     server.requests, server.errors, server.visits, server.arrived = [], [], [], {}
     server.release = threading.Event()
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
@@ -198,7 +242,7 @@ def main():
         endpoint = f'http://127.0.0.1:{port}'
         gateway = subprocess.Popen([str(binaries/'vessel'), '--bind', f'127.0.0.1:{port}',
             '--database', str(root/'gateway.db'), '--process-directory', str(directory),
-            '--public-origin', endpoint, '--allow-insecure-loopback'], env=env, cwd=workspace, stdout=log, stderr=log)
+            '--allow-insecure-loopback', endpoint], env=env, cwd=workspace, stdout=log, stderr=log)
         time.sleep(1)
         assert gateway.poll() is None, 'gateway exited'
         connection = json.loads(cli('auth', 'accounts', 'connect', '--label', 'synthetic', '--endpoint',
@@ -226,7 +270,10 @@ def main():
             item = {'session': session, 'label': label}; report['sessions'].append(item)
             snap = voyage(session, op='snapshot')
             voyage(session, op='submit', command_id=uid(), expected_revision=snap['revision'], expires_at_ms=int(time.time()*1000)+60000, prompt=label)
-        wait(lambda: len(server.arrived) == 2, 70)
+        def agent_arrived():
+            assert not server.errors, server.errors
+            return len(server.arrived) == 2
+        wait(agent_arrived, 70)
         (root/'provider-before-viewer.json').write_text(json.dumps({'arrived': server.arrived, 'visits': server.visits}, indent=2))
         for item in report['sessions']:
             inspection = request({'op': 'inspect', 'session_id': item['session']})
@@ -312,7 +359,7 @@ def main():
                 inspection = wait(lambda: (info if (info := request({
                     'op': 'inspect', 'session_id': item['session']}))['state'] == 'suspended' else None), 70)
                 assert inspection['incarnation'] != item['incarnation'], 'no actual owner preparation observed'
-        assert len(server.requests) == 4, 'viewer preparation must not invoke provider or replay the run'
+        assert len(server.requests) == (38 if args.agent_interactions else 4), 'viewer preparation must not invoke provider or replay the run'
         assert not server.errors, server.errors
         report['actions'] = 'passed'
     except Exception:

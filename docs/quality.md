@@ -630,3 +630,10 @@ existing Web test scripts; they do not establish live sign-in or provider behavi
 ### Separate Helm Web source
 
 Run the browser client checks in the private `o-psi/webhelm` checkout; the public repository no longer contains those tests. The public repository does not contain those tests. See its README for setup and shared browser asset synchronization.
+
+For #379 agent interaction, `npm test --prefix voyage/browser` includes real
+Chromium paging, native form/keyboard/drag actions, same- and cross-origin frames,
+stale-reference refusal, exact receipts and private diagnostics exclusion. Run
+`python3 voyage/tests/host_browser.py --agent-interactions --binaries /absolute/path/to/built/bin --web-resources /absolute/path/to/webhelm/resources/js --ws /absolute/path/to/ws`
+for the scripted agent loop followed by both existing Helm viewer journeys and
+observed cleanup. This adds no paid provider calls or hosted quality jobs.

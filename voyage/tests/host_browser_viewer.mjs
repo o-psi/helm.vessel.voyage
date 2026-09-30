@@ -22,7 +22,9 @@ async function connect(item, attach=true){
  p.command=async command=>{const response=await p.exchange({protocol:1,command:{...command,session_id:item.session,incarnation:item.incarnation}});assert.equal(response.error,null,JSON.stringify(response));const reply=response.result;assert.ok(reply.error==null,JSON.stringify(reply));return reply.result;};
  p.op=async(action,extra={})=>{const operation={action,...(action==='status'?{}:{command_id:randomUUID(),binding:p.binding}),...extra};const result=await p.command({op:'host_browser',operation});if(result.status?.binding)p.binding=result.status.binding;return result;};
  if(!attach)return p;
- const status=await p.op('status');assert.equal(status.status.running,true,JSON.stringify(status));p.binding={...status.status.binding,attachment_id:randomUUID()};await p.op('attach');return p;
+ const status=await p.op('status');assert.equal(status.status.running,true,JSON.stringify(status));p.binding={...status.status.binding,attachment_id:randomUUID()};await p.op('attach');
+ // Renew the second viewer's lease while the first runs its journey.
+ p.leaseTimer=setInterval(()=>{void p.op('status').catch(()=>{});},5000);return p;
 }
 async function decoded(page, label){
  let state;
@@ -236,6 +238,7 @@ try{
  evidence.actions='passed';
 }catch(e){evidence.failure={name:e.name,message:String(e.message).replace(/(?:file|https?):\/\/[^\s\"']+/g,'[private URL omitted]')};process.exitCode=1;}
 finally{
+ for(const p of peers)clearInterval(p.leaseTimer);
  for(const p of peers){try{evidence.pre_teardown.push({session:p.item.session,...await p.op('status')});}catch(e){evidence.pre_teardown.push({error:String(e)});} }save();
  for(const p of peers){try{if(!p.binding||evidence.cleanup[p.item.session]?.closed){p.ws.close();continue;}const current=await p.op('status');if(current.status.running){if(!p.binding?.attachment_id||p.binding.attachment_id==='00000000-0000-0000-0000-000000000000'){p.binding={...current.status.binding,attachment_id:randomUUID()};await p.op('attach');}await p.op('close');}const s=await p.op('status');assert.equal(s.status.running,false);evidence.cleanup[p.item.session]=s;}catch(e){evidence.cleanup[p.item.session]={error:String(e)};process.exitCode=1;}p.ws.close();}
  if(browser)await browser.close();if(!process.exitCode&&evidence.actions==='passed')evidence.journey='passed';save();

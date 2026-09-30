@@ -1167,3 +1167,11 @@ one Update click approves the displayed version and the client applies only afte
 the Vessel verifies a matching prepared receipt. See [remote updates](remote-updates.md)
 for the exact prepare/apply/receipt contract, fixed artifact sources, platform requirements
 and pre-updater bootstrap limitation. Live deployment evidence remains in #343.
+
+Host-browser agent tools additionally support paged role/label/state inspection,
+observed child-frame targets, native select/check, targeted keyboard input,
+double-click/drag, history navigation, bounded element-text reads and content-free
+error counts. Fresh references expire after document/control/DOM/property changes
+or sixty seconds; private input remains fenced. See [host-browser](host-browser.md#agent-inspection-and-interaction-379)
+for limits and [quality](quality.md) for offline verification commands. Arbitrary
+site fidelity and native macOS/Windows operation remain separate qualification.

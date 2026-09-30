@@ -11,8 +11,11 @@ class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
 const exposed = e => {const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,hit=document.elementFromPoint(x,y);return !!hit&&(hit===e||e.contains(hit));};
 
+const controlSignature=e=>JSON.stringify({connected:e.isConnected,tag:e.tagName,attributes:[...e.attributes].slice(0,128).map(a=>[a.name,a.value.slice(0,16384)]),text:(e.innerText||'').slice(0,1024),disabled:e.disabled,readonly:e.readOnly,checked:e.checked,value:typeof e.value==='string'?e.value.slice(0,16384):null,optionCount:e.options?.length,options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>[o.value,o.selected,o.disabled]):null});
+const safeLocation=url=>{try{const u=new URL(url);u.username='';u.password='';return u.href.slice(0,8192);}catch{return '';}};
 const MAX_TEXT=16384, MAX_BYTES=2*1024*1024;
 const text=(v,max=MAX_TEXT)=>{if(typeof v!=='string'||Buffer.byteLength(v)>max)refuse('invalid_text');return v;};
+const beforeText=(v,max=MAX_TEXT)=>{try{return text(v,max);}catch(e){if(e instanceof Refusal)beforeEffect(e.code);throw e;}};
 const number=(v,min,max)=>{if(!Number.isInteger(v)||v<min||v>max)refuse('invalid_number');return v;};
 const identifier=v=>{if(typeof v!=='string'||!UUID.test(v))refuse('invalid_id');return v;};
 const bounded=async(p,ms=12000)=>{let timer;try{return await Promise.race([p,new Promise((_,r)=>{timer=setTimeout(()=>r(new Refusal('operation_timeout')),ms);})]);}finally{clearTimeout(timer);}};
@@ -20,12 +23,12 @@ const bounded=async(p,ms=12000)=>{let timer;try{return await Promise.race([p,new
 export class Worker {
   constructor(){
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
-    this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
-    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();
+    this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
+    this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
   }
   status(){return {viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,downloads:[...this.downloads].filter(([,d])=>d.owner===this.controller).map(([id,d])=>({id,name:d.name})),browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){const epochs={...req.epochs};if(['join','mirror','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
-  invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();}
+  invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();this.agentFrames.clear();}
   advance(...keys){for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;this.frameVisuals.clear();}this.invalidate();}
   checkAgent(){if(this.mode!=='agent')refuse('agent_fenced');}
   guard(stamp){if(stamp!==this.epochs.control)refuse('control_fenced');}
@@ -131,7 +134,7 @@ export class Worker {
         if(req.claim===true)return this.claimInput(req);
         const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}
       }
-      case 'agent':this.agentActive++;this.agentAction=['inspect','navigate','click','fill','scroll','tabs','screenshot','upload','download'].includes(req.action?.kind)?req.action.kind:null;try{return await this.agent(req.action);}finally{this.agentActive--;this.agentAction=null;}
+      case 'agent':this.agentActive++;this.agentAction=['inspect','read','diagnostics','navigate','history','click','double_click','fill','key','select','check','drag','scroll','tabs','screenshot','upload','download'].includes(req.action?.kind)?req.action.kind:null;try{return await this.agent(req.action);}finally{this.agentActive--;this.agentAction=null;}
       default:refuse('unknown_operation');
     }
   }
@@ -164,12 +167,14 @@ export class Worker {
   idFor(page){for(const [id,p]of this.tabs)if(p===page)return id;}
   registerPage(page){
     if(this.tabs.size>=16){void page.close();return;}
-    const id=randomUUID();this.tabs.set(id,page);
+    const id=randomUUID();this.tabs.set(id,page);this.pageErrors.set(page,{console:0,page:0});
+    page.on('console',m=>{if(this.mode==='agent'&&m.type()==='error')this.pageErrors.get(page).console=Math.min(100000,this.pageErrors.get(page).console+1);});
+    page.on('pageerror',()=>{if(this.mode==='agent')this.pageErrors.get(page).page=Math.min(100000,this.pageErrors.get(page).page+1);});
     page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())this.metadata.set(id,{...this.metadata.get(id),loading:true});});
     page.on('load',()=>{this.metadata.set(id,{...this.metadata.get(id),loading:false});});
     page.on('dialog',dialog=>{if(page===this.page)this.dialog=dialog;else void dialog.dismiss().catch(()=>{});});
     page.on('response',response=>{const effect=this.cacheAsset(response);this.assetEffects.add(effect);void effect.finally(()=>this.assetEffects.delete(effect));});
-    page.on('framenavigated',frame=>{this.frameIds.set(frame,randomUUID());if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}});
+    page.on('framenavigated',frame=>{this.frameIds.set(frame,randomUUID());if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}else if(page===this.page)this.invalidate();});
     page.on('close',()=>{this.metadata.delete(id);this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');}});
     page.on('download',download=>{void this.recordDownload(download);});
   }
@@ -337,7 +342,7 @@ export class Worker {
   }
   async fence(keepViewers=[]){
     this.advance('control','capture');this.downloads.clear();for(const f of this.fenceWaiters)f();this.fenceWaiters.clear();
-    this.agentCursor=null;this.agentAction=null;
+    this.agentCursor=null;this.agentAction=null;for(const page of this.tabs.values())this.pageErrors.set(page,{console:0,page:0});
     await Promise.all([this.stopMirrors(),this.page&&!this.page.isClosed()?this.context.newCDPSession(this.page).then(async c=>{try{await c.send('Page.stopLoading');}finally{await c.detach();}}).catch(()=>{}):null]);
     // Acknowledgement means the old effect settled, not merely its raced reply.
     try{await bounded(Promise.allSettled([...this.effects]),5000);}catch{this.closing=true;await this.task?.close();await Promise.allSettled([...this.effects]);refuse('effect_quarantined');}
@@ -346,44 +351,107 @@ export class Worker {
     this.requireOpen();this.checkAgent();const stamp=this.epochs.control;
     let cancel;const fenced=new Promise((_,reject)=>{cancel=()=>reject(new Refusal('control_fenced'));this.fenceWaiters.add(cancel);});
     const effect=this.perform(action,stamp).catch(error=>{
-      if(!['inspect','screenshot'].includes(action?.kind))throw error;
+      if(!['inspect','read','diagnostics','screenshot'].includes(action?.kind))throw error;
       // A failed read has no external effect to replay. Keep authority fences
       // strict, discard partial references, and let the caller observe again.
       this.guard(stamp);this.checkAgent();this.requireOpen();this.invalidate();
+      if(error instanceof BeforeEffect)throw error;
       beforeEffect('observation_unavailable');
     });this.effects.add(effect);void effect.finally(()=>this.effects.delete(effect)).catch(()=>{});
     try{const value=await bounded(Promise.race([effect,fenced]));this.guard(stamp);this.checkAgent();return value;}finally{this.fenceWaiters.delete(cancel);await effect.catch(()=>{});}
   }
-  async ref(id){text(id,128);const h=this.refs.get(id);if(!h)beforeEffect('stale_reference');return h;}
+  async ref(id){
+    text(id,128);const h=this.refs.get(id);if(!h)beforeEffect('stale_reference');
+    const binding=this.refBindings.get(h);
+    if(!binding||Date.now()-binding.at>60000||binding.frame.isDetached()||this.frameId(binding.frame)!==binding.frameId)beforeEffect('stale_reference');
+    if(!await h.evaluate((e,version)=>e.isConnected&&globalThis.__voyageAgentObservation?.version===version,binding.version))beforeEffect('stale_reference');
+    if(digest(await h.evaluate(controlSignature))!==binding.signature)beforeEffect('stale_reference');
+    return h;
+  }
+  async observedFrame(id){
+    if(id===undefined||id===null)return this.page.mainFrame();
+    const frame=this.agentFrames.get(identifier(id));
+    if(!frame||frame.isDetached()||this.frameId(frame)!==id)beforeEffect('stale_frame');
+    return frame;
+  }
   async perform(a,stamp){
     if(!a||typeof a!=='object')refuse('invalid_action');const page=this.page,documentEpoch=this.epochs.document;
-    const guard=()=>{this.guard(stamp);if(page!==this.page)refuse('tab_changed');if(documentEpoch!==this.epochs.document)refuse('document_changed');};
+    const frameIdentities=new Map();
+    const observedRef=async id=>{const h=await this.ref(id),binding=this.refBindings.get(h);frameIdentities.set(binding.frame,binding.frameId);return h;};
+    const guard=()=>{this.guard(stamp);if(page!==this.page)refuse('tab_changed');if(documentEpoch!==this.epochs.document)refuse('document_changed');for(const [frame,id]of frameIdentities)if(frame.isDetached()||this.frameId(frame)!==id)refuse('frame_changed');};
     switch(a.kind){
       case 'navigate':origin(text(a.url,8192));await page.goto(a.url,{waitUntil:'domcontentloaded'});return null;
       case 'inspect':{
-        this.invalidate();
-        const body=await page.locator('body').innerText({timeout:3000});guard();
-        const handles=await page.$$('a,button,input,textarea,select,[role="button"],[contenteditable="true"]');guard();const elements=[];
-        for(const h of handles){
-          if(elements.length>=128){await h.dispose();continue;}
+        const frame=await this.observedFrame(a.frame);frameIdentities.set(frame,this.frameId(frame));guard();this.invalidate();
+        const offset=number(a.offset??0,0,100000),limit=number(a.limit??64,1,128),textOffset=number(a.text_offset??0,0,2000000);
+        // A mutation invalidates all references from this observation. This is
+        // deliberately conservative; agents must inspect after dynamic changes.
+        const observed=await frame.evaluate(({offset,limit,textOffset})=>{
+          if(!globalThis.__voyageAgentObservation){
+            const state={version:0};new MutationObserver(()=>state.version++).observe(document,{subtree:true,childList:true,attributes:true,characterData:true});
+            globalThis.__voyageAgentObservation=state;
+          }
+          if(!document.body)throw new Error('body unavailable');
+          const body=document.body.innerText;
+          const controls=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[draggable="true"]')];
+          return {version:globalThis.__voyageAgentObservation.version,text:body.slice(textOffset,textOffset+16384),text_total:body.length,text_truncated:textOffset+16384<body.length,control_total:controls.length,indices:controls.slice(offset,offset+limit).map((_,i)=>offset+i)};
+        },{offset,limit,textOffset});guard();
+        const elements=[];let elementBytes=0,nextOffset=offset+limit<observed.control_total?offset+limit:null;
+        const selector='a,button,input,textarea,select,[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[contenteditable="true"],[draggable="true"]';
+        for(const i of observed.indices){
+          const h=await frame.locator(selector).nth(i).elementHandle({timeout:3000});guard();if(!h)beforeEffect('stale_reference');
           const info=await h.evaluate(e=>{
             const style=getComputedStyle(e),rect=e.getBoundingClientRect();
             if(e.type==='hidden'||!rect.width||!rect.height||style.visibility==='hidden'||style.visibility==='collapse'||e.closest('[inert]'))return null;
             const label=(e.getAttribute('aria-labelledby')||'').split(/\s+/).map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
-            return {tag:e.tagName.toLowerCase(),type:e.getAttribute('type')||null,
+            return {tag:e.tagName.toLowerCase(),type:e.getAttribute('type')||null,role:e.getAttribute('role')||({BUTTON:'button',A:'link',SELECT:'combobox',TEXTAREA:'textbox'}[e.tagName])||(e.type==='checkbox'?'checkbox':e.type==='radio'?'radio':'textbox'),
               text:(e.getAttribute('aria-label')||label||Array.from(e.labels||[]).map(l=>l.innerText).join(' ')||e.innerText||e.getAttribute('placeholder')||e.getAttribute('name')||'').slice(0,256),
+              checked:typeof e.checked==='boolean'?e.checked:null,selected:e.tagName==='SELECT'?[...e.selectedOptions].map(o=>o.label.slice(0,256)).slice(0,32):null,
+              options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>({label:o.label.slice(0,256),value:o.value.slice(0,256),disabled:o.disabled})):null,
+              options_truncated:e.tagName==='SELECT'&&e.options.length>64,
               disabled:e.matches(':disabled')||e.getAttribute('aria-disabled')==='true',readonly:e.readOnly===true,obscured:!((hit=>hit&&(hit===e||e.contains(hit)))(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)))};
           });guard();
-          if(!info){await h.dispose();continue;}const ref=randomUUID();this.refs.set(ref,h);elements.push({ref,...info});
+          if(!info){await h.dispose();continue;}const size=Buffer.byteLength(JSON.stringify(info))+64;if(elementBytes+size>32768){await h.dispose();nextOffset=i;break;}elementBytes+=size;const ref=randomUUID();this.refs.set(ref,h);this.refBindings.set(h,{frame,frameId:this.frameId(frame),version:observed.version,at:Date.now(),signature:digest(await h.evaluate(controlSignature))});guard();elements.push({ref,...info});
         }
+        const frames=[];for(const child of page.frames().slice(1,33)){const id=this.frameId(child);this.agentFrames.set(id,child);frames.push({frame:id,parent:child.parentFrame()===page.mainFrame()?null:this.frameId(child.parentFrame()),url:safeLocation(child.url()).slice(0,512)});}
+        if(!await frame.evaluate(version=>globalThis.__voyageAgentObservation?.version===version,observed.version))beforeEffect('observation_changed');guard();
         const title=(await page.title()).slice(0,256);guard();
-        const location=new URL(page.url());location.username='';location.password='';
-        // Document identity sorts before large control lists in Rust's JSON
-        // projection, so bounded model previews retain the navigation result.
-        return {document:{url:location.href.slice(0,8192),title},text:body.slice(0,MAX_TEXT),elements,downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
+        const location=new URL(frame.url());location.username='';location.password='';
+        return {document:{url:location.href.slice(0,8192),title,frame:frame===page.mainFrame()?null:this.frameId(frame)},text:observed.text,text_total:observed.text_total,text_truncated:observed.text_truncated,elements,control_total:observed.control_total,next_offset:nextOffset,frames,frames_truncated:page.frames().length>33,unsupported:['canvas and video require screenshot','closed shadow roots are not inspected'],downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
+      }
+      case 'read':{
+        const h=await observedRef(a.ref);guard();const offset=number(a.offset??0,0,2000000);
+        const result=await h.evaluate((e,offset)=>{const content=e.innerText||e.textContent||'';return {tag:e.tagName.toLowerCase(),text:content.slice(offset,offset+16384),total:content.length,truncated:offset+16384<content.length};},offset);guard();return result;
+      }
+      case 'diagnostics':{
+        // Page log text can contain secrets. Return content-free error categories.
+        return {errors:this.pageErrors?.get(page)||{console:0,page:0},scope:'current tab since last control fence; log content withheld',dialog:!!this.dialog};
+      }
+      case 'history':{
+        if(!['back','forward','reload'].includes(a.direction))beforeEffect('invalid_history');
+        await page[a.direction==='back'?'goBack':a.direction==='forward'?'goForward':'reload']({waitUntil:'domcontentloaded',timeout:3000});return null;
+      }
+      case 'key':{
+        const key=beforeText(a.key,128);if(!/^(?:(?:ControlOrMeta|Control|Alt|Shift|Meta)\+)*(?:[A-Za-z0-9]|Tab|Enter|Escape|Space|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown)$/.test(key))beforeEffect('invalid_key');
+        const h=await observedRef(a.ref);guard();if(!await h.isVisible()||!await h.isEnabled())beforeEffect('element_unavailable');guard();
+        await h.press(key,{timeout:3000});return null;
+      }
+      case 'select':case 'check':case 'double_click':case 'drag':{
+        const h=await observedRef(a.ref);guard();if(!await h.isVisible()||!await h.isEnabled())beforeEffect('element_unavailable');guard();
+        if(!await h.evaluate(exposed))beforeEffect('element_obscured');guard();
+        if(a.kind==='select'){
+          const value=beforeText(a.value,256);if(!await h.evaluate((e,value)=>e.tagName==='SELECT'&&[...e.options].some(o=>o.value===value&&!o.disabled),value))beforeEffect('unsupported_select');guard();await h.selectOption(value,{timeout:3000});
+        }else if(a.kind==='check'){
+          if(typeof a.checked!=='boolean'||!await h.evaluate(e=>e.tagName==='INPUT'&&['checkbox','radio'].includes(e.type)))beforeEffect('unsupported_check');if(!a.checked&&await h.evaluate(e=>e.type==='radio'))beforeEffect('unsupported_radio_uncheck');guard();await h.setChecked(a.checked,{timeout:3000});
+        }else if(a.kind==='double_click')await h.dblclick({timeout:3000});
+        else{
+          const target=await observedRef(a.target);guard();if(!await target.isVisible()||!await target.evaluate(exposed))beforeEffect('element_obscured');guard();
+          const from=await h.boundingBox(),to=await target.boundingBox();guard();if(!from||!to)beforeEffect('element_hidden');
+          await page.mouse.move(from.x+from.width/2,from.y+from.height/2);guard();await page.mouse.down();try{guard();await page.mouse.move(to.x+to.width/2,to.y+to.height/2,{steps:10});guard();}finally{await page.mouse.up();}
+        }return null;
       }
       case 'click':case 'fill':{
-        const h=await this.ref(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
+        const h=await observedRef(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
         if(!await h.isEnabled())beforeEffect('element_disabled');guard();
         if(a.kind==='fill'&&!await h.isEditable())beforeEffect('element_not_editable');guard();
         if(!await h.evaluate(exposed))beforeEffect('element_obscured');guard();
@@ -402,7 +470,7 @@ export class Worker {
       }
       case 'tabs':return this.tabAction(a,stamp);
       case 'upload':{
-        const h=await this.ref(a.ref);guard();const name=text(a.name,255);if(!name||name!==path.basename(name)||name.includes('\\'))refuse('invalid_filename');const mimeType=text(a.mime_type,128);const raw=text(a.data_base64,Math.ceil(MAX_BYTES/3)*4);if(!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw))refuse('invalid_base64');const buffer=Buffer.from(raw,'base64');if(buffer.length>MAX_BYTES)refuse('upload_limit');await h.setInputFiles({name,mimeType,buffer},{timeout:3000});return null;
+        const h=await observedRef(a.ref);guard();const name=text(a.name,255);if(!name||name!==path.basename(name)||name.includes('\\'))refuse('invalid_filename');const mimeType=text(a.mime_type,128);const raw=text(a.data_base64,Math.ceil(MAX_BYTES/3)*4);if(!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(raw))refuse('invalid_base64');const buffer=Buffer.from(raw,'base64');if(buffer.length>MAX_BYTES)refuse('upload_limit');await h.setInputFiles({name,mimeType,buffer},{timeout:3000});return null;
       }
       case 'download':{identifier(a.download_id);const d=this.downloads.get(a.download_id);if(!d||d.owner!=='agent')refuse('download_missing');this.downloads.delete(a.download_id);return d;}
       default:refuse('invalid_action');

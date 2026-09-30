@@ -24,10 +24,11 @@ test('two isolated workers: upload/download, key, viewport, tabs, proxied WebSoc
  await a.page.evaluate(()=>{localStorage.setItem('isolation','A');document.cookie='isolation=A';});
  assert.equal(await b.page.evaluate(()=>localStorage.getItem('isolation')),null);assert.equal(await b.page.evaluate(()=>document.cookie),'');
  const mismatch=await b.request({id:randomUUID(),op:'agent',browser:a.browser,epochs:a.epochs,action:{kind:'inspect'}});assert.equal(mismatch.error.code,'stale_binding');
- let inspection=await ca('agent',{action:{kind:'inspect'}});const upload=inspection.elements.find(e=>e.text==='upload').ref;
+ let inspection=await ca('agent',{action:{kind:'inspect'}});let upload=inspection.elements.find(e=>e.text==='upload').ref;
  await ca('agent',{action:{kind:'upload',ref:upload,name:'synthetic.txt',mime_type:'text/plain',data_base64:Buffer.from('upload sentinel').toString('base64')}});
  assert.deepEqual(await a.page.locator('input[type=file]').evaluate(async e=>[e.files[0].name,await e.files[0].text()]),['synthetic.txt','upload sentinel']);
  assert.equal(await b.page.locator('input[type=file]').evaluate(e=>e.files.length),0);
+ inspection=await ca('agent',{action:{kind:'inspect'}});upload=inspection.elements.find(e=>e.text==='upload').ref;
  const bad=await a.request({id:randomUUID(),op:'agent',...a.status(),action:{kind:'upload',ref:upload,name:'../escape',mime_type:'text/plain',data_base64:''}});assert.equal(bad.error.code,'invalid_filename');
  await ca('agent',{action:{kind:'click',ref:inspection.elements.find(e=>e.tag==='a').ref}});
  for(let i=0;i<50&&!a.downloads.size;i++)await sleep(50);assert.equal(a.downloads.size,1);assert.equal(b.downloads.size,0);
@@ -92,7 +93,7 @@ test('inspection labels visible controls and pre-effect refusal keeps browser us
  await call('agent',{action:{kind:'fill',ref:input.ref,text:'Voyage'}});assert.equal(await w.page.locator('#q').inputValue(),'Voyage');
  await w.page.locator('#q').evaluate(e=>e.hidden=true);
  const id=randomUUID();const reply=await w.request({id,op:'agent',...w.status(),action:{kind:'fill',ref:input.ref,text:'must not appear'}});
- assert.deepEqual(reply.error,{code:'element_hidden',state:'refused'});assert.equal(w.journal.records.get(id).state,'refused');
+ assert.deepEqual(reply.error,{code:'stale_reference',state:'refused'});assert.equal(w.journal.records.get(id).state,'refused');
  await w.page.locator('#q').evaluate(e=>e.hidden=false);found=await call('agent',{action:{kind:'inspect'}});
  await call('agent',{action:{kind:'fill',ref:found.elements.find(e=>e.type==='search').ref,text:'Recovered'}});
  assert.equal(await w.page.locator('#q').inputValue(),'Recovered');

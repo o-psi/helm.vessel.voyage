@@ -27,3 +27,36 @@ Linux browser admission starts with four slots and allows up to sixteen on hosts
 For older or otherwise unmatched slots that lack this automatic proof, inspect the suspended session, its `journal/host-browser/worker.lock` PID and all browser descendants on the executing host. Once cleanup is independently observed, run `voyage host-resources browser-capacity SESSION_UUID --session-dir SESSION_DIRECTORY --confirm SESSION_UUID --observed-no-descendants --reason 'observed worker and browser descendants absent'`. The command holds the session startup and guardian locks, verifies its suspended and cleanup-observed records and dead worker PID, records an audit, retains the old worker lock under a recovery name, and reclaims only that session's slots. Never run it for an active session or use an absent PID alone as proof that descendants stopped. The CLI only supports Linux process evidence.
 
 The Linux worker uses `voyage/browser/worker.mjs`, `mirror-source.mjs`, the vendored rrweb 2.1.6 runtime and its license, and `guardian.py`. The vendored runtime must expose `globalThis.rrweb` in both a classic script and a Vite-imported module; otherwise the Web viewer receives mirror data but cannot replay it. The shared viewer is `helm/browser-view/viewer.mjs` and `viewer.css`, loaded by both Helm clients. `packaging/browser_assets.py` inventories every shipped browser asset. The exact local checks and their scope are in [quality](quality.md). The GitHub issue holds the delivered commit, build artifact and remaining qualification evidence.
+
+### Agent inspection and interaction (#379)
+
+The `host_browser` tool uses the same Voyage-owned browser and authority fences.
+`inspect` accepts optional `offset`/`limit` for controls (default 64, maximum 128)
+and `text_offset` for 16,384-character text pages. Counts, next offsets, truncation
+and unsupported content are explicit. Offsets index all candidate controls,
+including hidden controls, so a page may contain fewer visible elements than its
+limit. Choose a smaller limit when the tool output budget is small. Each inspection
+replaces previous element references. The observation reports roles, labels,
+native selected/checked states and at most 64 select options.
+
+Inspection reports at most 32 short-lived child-frame IDs. Passing an observed
+`frame` ID reads that same- or cross-origin child through the worker's private
+Playwright pipe. Frame navigation, document/tab/control changes, DOM mutations,
+changed control properties and a sixty-second reference lifetime invalidate targets.
+Reinspect after dynamic changes; unsupported or stale targets refuse before action.
+Closed shadow roots are not inspected. Canvas/video use screenshot evidence.
+
+`key` targets an observed reference and accepts ordinary keys and modifier chords;
+`select` accepts a native option value, and `check` sets a native checkbox/radio
+state (radio unchecking is refused). `double_click` and `drag` use observed source
+and target references. `history` supports back, forward and reload. These are
+effects governed by the existing access mode, approval and network policy.
+`read` returns paged text of an observed element; it does not expose input values
+or arbitrary HTML/evaluation. `diagnostics` reports bounded console-error and
+page-error counts for the current tab since its last control fence. Log text is
+withheld because websites can print secrets; private/human activity is excluded.
+
+Operations retain exact receipts; an uncertain effect is never retried automatically.
+An unavailable observation can be retried independently of a prior effect. The
+worker's content-free receipts never contain element text, form input or log text.
+These operations do not provide arbitrary JavaScript, CDP or filesystem access.
