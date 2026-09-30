@@ -773,3 +773,35 @@ configuration after capture, and observed guardian cleanup. The isolated provide
 must be synthetic. Keep production deployment/TLS and published exact-source
 archive qualification distinct. Do not execute a newer library test with an older
 Vessel helper and infer that it verifies the new public route.
+
+### Runtime coverage source pass after provider boundaries (#353)
+
+Additional source-prepared fixtures target retained HTML gaps in these areas:
+
+- Workflow collector: Linux PTY descriptors owned by an isolated test child,
+  hidden Unicode input, bounded validation retries, cancellation, timeout,
+  restored termios and post-collection signal monitoring. No human terminal is
+  attached. Child completion markers prevent zero-test filtering from passing.
+- Attachment owner: accepted-only workflow metadata, transient exact-run secret
+  bindings, refusal after execution starts, live-turn cleanup refusal and exact
+  actor reconciliation for simulated interrupted resources. Synthetic SQL state
+  changes exercise bookkeeping; they do not prove native process-tree cleanup.
+- Subagents: ordered inbox handoff, active followup identity, queued descendant
+  cancellation, full-inbox shutdown and released capacity after executor unwind.
+  The executor is synthetic and performs no provider, tool or worktree effects.
+- Extensions: a private child with fixture HOME/XDG paths, an explicitly owned
+  harmless process and host ledger. Bounded reads reject binary, oversized,
+  hardlinked and renamed private sources. Revoked authority refuses new workers;
+  aborted observer waiters retain pending obligations until process and workers
+  are actually drained. This is not executable sandbox/namespace qualification.
+- Filesystem tools: missing hashes, bad patch context/malformed hunks, cancelled
+  publication, non-following directory traversal and argument-safe ripgrep search.
+  Effects stay in private temporary roots; the Linux search fixture requires `rg`.
+
+All of these are **unexecuted source preparation** under the user's final combined
+validation direction. No new passing count, coverage percentage, denominator
+exclusion, unreachable-path classification or native acceptance is claimed.
+The source pass also catches subagent executor unwind and records an authored
+failure without exposing its payload or replaying it. It releases the execution
+slot; separate resource-cleanup ledgers remain authoritative and are not marked
+observed by this handler. Explicit cancellation still takes precedence.

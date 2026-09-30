@@ -1,6 +1,7 @@
 use super::{AgentBudget, AgentId, AgentPolicy, AgentRecord, AgentStatus, AgentTreeStore};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -727,7 +728,12 @@ impl SubagentRuntime {
         let result = tokio::select! {
             biased;
             _=control.cancel.cancelled()=>End::Cancelled,
-            r=self.inner.executor.execute(context)=>End::Result(r)
+            r=std::panic::AssertUnwindSafe(async { self.inner.executor.execute(context).await }).catch_unwind()=>End::Result(match r {
+                Ok(result)=>result,
+                // The executor future ended, but neither its payload nor dropped
+                // resource owners establish cleanup. Their ledgers stay separate.
+                Err(_)=>Err("subagent executor interrupted".into()),
+            })
         };
         // Provider cancellation may make its future return an error in the same
         // poll as the token becomes ready. Preserve the operator's cancellation.
@@ -1230,3 +1236,7 @@ mod tests;
 #[cfg(test)]
 #[path = "runtime/supervision_contract_tests.rs"]
 mod supervision_contract_tests;
+
+#[cfg(test)]
+#[path = "runtime/boundary_tests.rs"]
+mod boundary_tests;

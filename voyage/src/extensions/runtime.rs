@@ -902,3 +902,7 @@ mod coverage_tests;
 #[cfg(test)]
 #[path = "runtime_final_tests.rs"]
 mod final_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "runtime_boundary_tests.rs"]
+mod boundary_tests;

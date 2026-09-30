@@ -984,3 +984,7 @@ mod process_coverage_tests;
 
 #[cfg(test)]
 mod goal_control_tests;
+
+#[cfg(test)]
+#[path = "runtime/coverage_boundary_tests.rs"]
+mod coverage_boundary_tests;
