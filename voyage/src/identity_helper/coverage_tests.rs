@@ -369,8 +369,15 @@ async fn enrollment_provenance(f: &Fixture) {
     // This is controlled retained publication metadata, not an upstream OAuth
     // success claim. It exercises the helper's provenance/actor filter only.
     let directory = Directory::open_existing(&f.root.join("data/helm/accounts")).unwrap();
-    let mut database: serde_json::Value =
-        serde_json::from_slice(&directory.read("registry.json").unwrap().unwrap()).unwrap();
+    // Registry records use the production 64 KiB transaction bound. The actor
+    // identity convenience reader has a separate, much smaller record limit.
+    let mut database: serde_json::Value = serde_json::from_slice(
+        &directory
+            .read_bounded("registry.json", 65_536)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
     let enrollment_id = Uuid::new_v4();
     database["enrollments"].as_array_mut().unwrap().push(serde_json::json!({
         "request":{"command_id":Uuid::new_v4(),"enrollment_id":enrollment_id,"connection_id":connection.id,"alias":"enrolled","label":"Synthetic enrolled account","actor":f.scope.actor},
