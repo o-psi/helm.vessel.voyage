@@ -12,6 +12,9 @@ pub enum UserRequest {
     RestoreServices {
         definitions: std::collections::BTreeMap<String, String>,
     },
+    ObserveRestoredServices {
+        definitions: std::collections::BTreeMap<String, String>,
+    },
     Export,
     ProviderFingerprint,
     PrepareConfig {
@@ -67,6 +70,9 @@ pub enum Frame {
     },
     Quiescent {
         incarnations_retired: bool,
+    },
+    RestoredServices {
+        ready: bool,
     },
     Complete,
 }

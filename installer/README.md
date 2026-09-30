@@ -335,6 +335,7 @@ unprivileged identity. Worker status reconciles observed stopped workers against
 exact candidate/previous source and readiness without replay. See
 [remote updates](../docs/remote-updates.md) for qualified active rollback,
 `adopt-update-contract`, `start --scope system` and explicit `adopt-user`
-prepare/review/apply/activate/rollback commands. Interrupted multistage user
-adoption still requires operator recovery; native qualification and full recovery
-remain release gates. Source implementation is not verification evidence.
+prepare/review/apply/activate/rollback commands. Interrupted preactivation adoption supports explicit reviewed rollback while
+retaining copied state. Lost service replies are observed without replay; uncertain
+activation forbids unqualified legacy fallback. Native qualification remains a
+release gate. Source implementation is not verification evidence.

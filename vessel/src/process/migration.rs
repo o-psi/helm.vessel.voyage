@@ -462,6 +462,48 @@ pub async fn user(args: UserArgs) -> Result<()> {
             }
             write_frame(&mut channel, &Frame::Complete)?;
         }
+        UserRequest::ObserveRestoredServices { definitions } => {
+            ensure!(
+                !definitions.is_empty() && definitions.len() <= 16,
+                "ordinary restored-unit observation limit"
+            );
+            let mut ready = true;
+            for (unit, expected) in definitions {
+                ensure!(
+                    unit_fingerprint(&unit).await? == expected,
+                    "restored user unit configuration changed"
+                );
+                let mut command = tokio::process::Command::new("/usr/bin/systemctl");
+                command
+                    .args([
+                        "--user",
+                        "show",
+                        "--property=ActiveState,MainPID,Job",
+                        &unit,
+                    ])
+                    .stdin(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .kill_on_drop(true);
+                let output =
+                    tokio::time::timeout(Duration::from_secs(10), command.output()).await??;
+                ensure!(
+                    output.status.success() && output.stdout.len() <= 16384,
+                    "user service observation unavailable"
+                );
+                let text = String::from_utf8(output.stdout)?;
+                let properties = text
+                    .lines()
+                    .filter_map(|line| line.split_once('='))
+                    .collect::<std::collections::BTreeMap<_, _>>();
+                ready &= properties.get("ActiveState") == Some(&"active")
+                    && properties.get("Job") == Some(&"")
+                    && properties
+                        .get("MainPID")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .is_some_and(|p| p > 1);
+            }
+            write_frame(&mut channel, &Frame::RestoredServices { ready })?;
+        }
         UserRequest::ProviderFingerprint => {
             let home = PathBuf::from(std::env::var_os("HOME").context("original home missing")?);
             write_frame(

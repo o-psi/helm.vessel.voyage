@@ -140,17 +140,22 @@ original human connection-key provisioner must make the same runtime key availab
 this path neither invents nor copies provider credentials into root custody.
 
 `adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
-`adopt-user rollback UUID DIGEST` is restricted to the dormant preactivation stage
-and restores the retained frozen user namespace and exact reviewed user services.
+`adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including
+interrupted capture/freeze/partial installation. It refuses admitted target
+guardians or live/drifted system units, retains copied artifacts and restores the
+frozen user namespace and exact reviewed user services. Repeating a pending
+rollback resumes only reversible file cleanup. User service restoration is claimed
+before its effect; a lost reply is reconciled by read-only readiness observation.
 Legacy human grants retain ordinary access and are permanently excluded from root
 administrator authority; fresh root pairing is required. New incarnations remain
 dormant until explicitly restarted, with no claim that old processes survived.
 
 `adopt-user status UUID` observes saved state and exact helper command identities
-without repeating uncertain effects. Interrupted multistage adoption currently
-retains a host-operator recovery obligation; automatic or phase-resumable recovery
-across partial install/import/fencing is not implemented. This is remaining release
-acceptance, alongside native verification, rather than a completed migration claim.
+without repeating uncertain effects. Forward continuation after partial adoption
+is refused; the concrete preactivation rollback path restores the retained user
+installation. Uncertain activation remains a saved source/readiness obligation
+and does not permit unqualified legacy rollback. Native verification remains a
+release gate; these source paths are not completed migration evidence.
 
 ## Initial adoption
 

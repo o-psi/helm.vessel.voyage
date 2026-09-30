@@ -34,6 +34,7 @@ struct Review {
     source_boot: Uuid,
     bin: PathBuf,
     release: String,
+    planned_installation: Record,
     gateway_user: String,
     origin: String,
     key: PathBuf,
@@ -707,7 +708,8 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 groups: account.groups,
                 source_boot: boot()?,
                 bin: opts.bin,
-                release: plan.record.release,
+                release: plan.record.release.clone(),
+                planned_installation: plan.record,
                 gateway_user: opts.gateway_user,
                 origin: opts.origin,
                 key: opts.credential_key,
@@ -732,6 +734,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 &review.groups,
                 review.source_boot,
                 &review.release,
+                &review.planned_installation,
                 &review.gateway_user,
                 &review.origin,
                 &review.key,
@@ -777,6 +780,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 &review.groups,
                 review.source_boot,
                 &review.release,
+                &review.planned_installation,
                 &review.gateway_user,
                 &review.origin,
                 &review.key,
@@ -817,6 +821,27 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                         save(&review)?;
                     }
                 }
+            }
+            if review.phase == "rollback-services-requested"
+                && !directory(id)?.join("retained-user-vessel").try_exists()?
+                && !review
+                    .source_directory
+                    .join("system-adoption-fence.json")
+                    .try_exists()?
+                && !Path::new(UNIT_ROOT).join(ROOT_UNIT).try_exists()?
+                && !Path::new(UNIT_ROOT).join(GATEWAY_UNIT).try_exists()?
+                && matches!(
+                    user_request(
+                        &review,
+                        &UserRequest::ObserveRestoredServices {
+                            definitions: review.source_definitions.clone()
+                        }
+                    )?,
+                    Frame::RestoredServices { ready: true }
+                )
+            {
+                review.phase = "rolled-back".into();
+                save(&review)?;
             }
             // Lookup only: never repeat a freeze, commit, install, activation or
             // user-service restoration after a lost reply.
@@ -916,8 +941,17 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             ensure!(args.len() == 3, "rollback requires exact adoption review");
             let mut review = load(id)?;
             ensure!(
-                review.receipt_digest == args[2] && review.phase == "dormant-installed",
-                "legacy rollback is only available before activation; no guessed old-format fallback"
+                review.receipt_digest == args[2]
+                    && matches!(
+                        review.phase.as_str(),
+                        "ready"
+                            | "capturing-retired-source"
+                            | "freezing-source"
+                            | "installing-dormant-system"
+                            | "dormant-installed"
+                            | "rollback-requested"
+                    ),
+                "legacy rollback is restricted to exact reviewed preactivation adoption; no active or uncertain activation fallback"
             );
             recheck(&review)?;
             let current_provider = match user_request(&review, &UserRequest::ProviderFingerprint)? {
@@ -928,36 +962,97 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 Some(current_provider) == review.provider_fingerprint,
                 "original provider namespace changed; retained old source must not guess credential/state compatibility"
             );
-            let fence: serde_json::Value = serde_json::from_slice(&files::read(
-                &review.source_directory.join("system-adoption-fence.json"),
-                16384,
-            )?)?;
-            ensure!(
-                fence["operation_id"] == serde_json::to_value(review.operation_id)?,
-                "legacy namespace fence changed"
-            );
+            // Every accepted phase precedes any service activation. An observed
+            // live service or guardian invalidates this preactivation recovery.
+            let target_guardians = Path::new(CONTROL).join("guardians");
+            for (session, incarnation) in &review.target_incarnations {
+                ensure!(
+                    !target_guardians
+                        .join(session.to_string())
+                        .join(incarnation.to_string())
+                        .join("admission.json")
+                        .try_exists()?,
+                    "target voyage was admitted; legacy rollback requires format compatibility rather than preactivation recovery"
+                );
+            }
+            for (name, content) in [
+                (ROOT_UNIT, &review.planned_installation.root_unit),
+                (GATEWAY_UNIT, &review.planned_installation.gateway_unit),
+            ] {
+                let unit = Path::new(UNIT_ROOT).join(name);
+                if unit.try_exists()? {
+                    service::files::check_path(&unit, 0)?;
+                    ensure!(
+                        files::read(&unit, 128 * 1024)? == content.as_bytes(),
+                        "partial adoption unit differs from pinned review"
+                    );
+                    ensure!(
+                        query(name, "MainPID")? == "0" && query(name, "DropInPaths")?.is_empty(),
+                        "partial adoption service retirement/effective unit uncertain"
+                    );
+                }
+            }
             review.phase = "rollback-requested".into();
             save(&review)?;
-            let plan = lifecycle::installed_for_adoption()?;
-            rollback_units(&plan)?;
-            let mut retained = plan.record.clone();
-            retained.phase = "uninstalled-retained".into();
-            lifecycle::save_for_adoption(&retained)?;
-            for entry in fs::read_dir(review.source_directory.join("sessions"))? {
-                let path = entry?.path();
-                ensure!(
-                    fs::symlink_metadata(&path)?.file_type().is_symlink(),
-                    "unexpected legacy alias during rollback"
-                );
-                fs::remove_file(path)?;
+            for (name, content) in [
+                (GATEWAY_UNIT, &review.planned_installation.gateway_unit),
+                (ROOT_UNIT, &review.planned_installation.root_unit),
+            ] {
+                let path = Path::new(UNIT_ROOT).join(name);
+                if path.try_exists()? {
+                    ctl(&["disable", name])?;
+                    service::files::remove_reviewed(&path, content)?;
+                }
             }
-            fs::remove_dir(review.source_directory.join("sessions"))?;
-            fs::remove_file(review.source_directory.join("system-adoption-fence.json"))?;
-            fs::remove_dir(&review.source_directory)?;
-            fs::rename(
-                directory(review.operation_id)?.join("retained-user-vessel"),
-                &review.source_directory,
-            )?;
+            ctl(&["daemon-reload"])?;
+            if Path::new(CONFIG_ROOT)
+                .join("system-install.json")
+                .try_exists()?
+            {
+                let mut retained = review.planned_installation.clone();
+                retained.phase = "uninstalled-retained".into();
+                lifecycle::save_for_adoption(&retained)?;
+            }
+            let retained = directory(review.operation_id)?.join("retained-user-vessel");
+            if retained.try_exists()? {
+                if review.source_directory.try_exists()? {
+                    service::files::check_path(&review.source_directory, 0)?;
+                    let aliases = review.source_directory.join("sessions");
+                    if aliases.try_exists()? {
+                        for entry in fs::read_dir(&aliases)? {
+                            let path = entry?.path();
+                            let name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .context("invalid compatibility alias")?;
+                            let session = Uuid::parse_str(name)?;
+                            ensure!(
+                                review.target_incarnations.contains_key(&session)
+                                    && fs::symlink_metadata(&path)?.file_type().is_symlink()
+                                    && fs::read_link(&path)?
+                                        == Path::new(RUNTIME).join(session.to_string()),
+                                "unexpected legacy alias during rollback"
+                            );
+                            fs::remove_file(path)?;
+                        }
+                        fs::remove_dir(aliases)?;
+                    }
+                    let fence = review.source_directory.join("system-adoption-fence.json");
+                    if fence.try_exists()? {
+                        let value: serde_json::Value =
+                            serde_json::from_slice(&files::read(&fence, 16384)?)?;
+                        ensure!(
+                            value["operation_id"] == serde_json::to_value(review.operation_id)?,
+                            "legacy fence identity changed"
+                        );
+                        fs::remove_file(fence)?;
+                    }
+                    fs::remove_dir(&review.source_directory)?;
+                }
+                fs::rename(retained, &review.source_directory)?;
+            }
+            review.phase = "rollback-services-requested".into();
+            save(&review)?;
             // The original user control/history installation is retained, frozen
             // and never overwritten by a root backup. Restore its reviewed units
             // under that original account, keeping interrupted work interrupted.
@@ -973,6 +1068,25 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 ),
                 "original user source restore unconfirmed"
             );
+            let deadline = Instant::now() + Duration::from_secs(45);
+            loop {
+                if matches!(
+                    user_request(
+                        &review,
+                        &UserRequest::ObserveRestoredServices {
+                            definitions: review.source_definitions.clone()
+                        }
+                    )?,
+                    Frame::RestoredServices { ready: true }
+                ) {
+                    break;
+                }
+                ensure!(
+                    Instant::now() < deadline,
+                    "original user readiness remains unconfirmed; status observes without starting again"
+                );
+                std::thread::sleep(Duration::from_millis(200));
+            }
             review.phase = "rolled-back".into();
             save(&review)?;
             output(&review);

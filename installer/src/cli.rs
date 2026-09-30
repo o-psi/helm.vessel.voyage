@@ -170,7 +170,8 @@ the privileged Vessel. The system-scope install command supports only fresh,
 explicit, root-owned staging with a separately provisioned key and root/gateway
 units. Separate adopt-user prepare/review/apply/activate/rollback commands provide
 an explicit original-account handoff with reviewed boot retirement and dormant
-new incarnations. Partial adoption recovery remains a release obligation. It records
+new incarnations. Reviewed preactivation rollback recovers interrupted staging
+without replaying uncertain activation or restoring live state. It records
 activation failure and removes its units only after observing stopped PIDs.
 Explicit system upgrade/rollback/uninstall and owner-approved remote system updates
 require explicit review. Active rollback requires identical code-owned format/

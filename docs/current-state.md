@@ -1217,5 +1217,6 @@ upgrades preserve it. The user-scoped remote updater refuses root system invocat
 These commands remain an implementation increment pending native qualification,
 remote system native qualification and owner/adoption acceptance. Explicit legacy
 system bootstrap and user-to-system adoption source paths are described in
-[remote updates](remote-updates.md); interrupted multistage user-adoption recovery
-remains incomplete and no native verification claim is made.
+[remote updates](remote-updates.md); interrupted multistage adoption uses explicit preactivation rollback, with no
+forward-effect replay or unqualified active legacy fallback. Native verification
+is pending.
