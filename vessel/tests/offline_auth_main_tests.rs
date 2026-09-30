@@ -290,3 +290,50 @@ fn invalid_account_operations_fail_before_any_provider_request() {
         serde_json::json!([])
     );
 }
+
+#[test]
+fn generated_shell_documents_never_initialize_a_service_database() {
+    let cli=Cli::new();
+    for shell in ["bash","zsh","fish","powershell","elvish"] {
+        let document=cli.ok(&["--log-format","json","completions",shell]);
+        assert!(document.contains("vessel"));
+        assert!(document.contains("local-serve"));
+    }
+    let manpage=cli.ok(&["manpage"]).replace("\\-", "-");
+    assert!(manpage.contains("local-serve"));
+    assert!(!cli.0.path().join("vessel.db").exists());
+}
+
+#[cfg(target_os="linux")]
+#[test]
+fn invalid_grant_lifetime_and_rights_never_publish_a_credential_request() {
+    let cli=Cli::new();
+    let directory=cli.0.path().join("absent-vessel");
+    let output=cli.0.path().join("grant.json");
+    let session=uuid::Uuid::new_v4().to_string();let principal=uuid::Uuid::new_v4().to_string();
+    for (extra,message) in [(["--ttl-seconds","0"],"within 30 days"),(["--rights","invented-root-authority"],"unknown variant")] {
+        let mut args=vec!["process-grant","--directory",directory.to_str().unwrap(),"--output",output.to_str().unwrap(),"--session",&session,"--principal",&principal,"--workspace",cli.0.path().to_str().unwrap(),"--endpoint","https://offline.invalid"];
+        args.extend(extra);cli.fails(&args,message);
+        assert!(!output.exists());assert!(!output.with_extension("pending-grant.json").exists());assert!(!directory.exists());
+    }
+}
+
+#[cfg(target_os="linux")]
+#[test]
+fn connection_inventory_does_not_initialize_missing_control_state() {
+    let cli=Cli::new();let directory=cli.0.path().join("not-provisioned");
+    let output=cli.run(&["list-connections","--directory",directory.to_str().unwrap()]);
+    assert!(!output.status.success());assert!(!directory.exists());
+    assert!(output.stdout.is_empty(),"failure must not publish a partial credential inventory");
+}
+
+#[cfg(target_os="linux")]
+#[test]
+fn gateway_origin_validation_fails_before_database_or_listener() {
+    let cli=Cli::new();let directory=cli.0.path().join("unopened-process-root");
+    let database=cli.0.path().join("must-not-create.db");
+    // public_origin is the optional positional origin in the actual Cli parser.
+    cli.fails(&["--database",database.to_str().unwrap(),"--process-directory",directory.to_str().unwrap(),"--bind","0.0.0.0:9480","https://offline.invalid"],"loopback behind");
+    cli.fails(&["--database",database.to_str().unwrap(),"--process-directory",directory.to_str().unwrap(),"--bind","localhost:9480","https://offline.invalid"],"literal loopback");
+    assert!(!database.exists());assert!(!directory.exists());
+}

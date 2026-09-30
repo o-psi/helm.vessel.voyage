@@ -539,3 +539,40 @@ fn connected_configuration_rejection_precedes_network_and_config_loading() {
         );
     }
 }
+
+#[test]
+fn explicitly_disabled_start_never_initializes_an_absent_vessel() {
+    let cli = Cli::new();
+    let absent = cli.0.path().join("absent-vessel");
+    cli.fails(&["connect", "--directory", absent.to_str().unwrap(), "--no-start", "list"],
+        "automatic startup is disabled");
+    assert!(!absent.exists(), "a read-only connection refusal must not start or initialize Vessel");
+}
+
+#[test]
+fn route_count_and_selection_fail_before_opening_scoped_credentials() {
+    let cli = Cli::new();
+    let missing = cli.0.path().join("never-opened-access.json");
+    let path = missing.to_str().unwrap();
+    let mut args = vec!["connect"];
+    for _ in 0..17 { args.extend(["--access-file", path]); }
+    args.push("list");
+    cli.fails(&args, "at most 16 grant routes");
+    cli.fails(&["connect", "--access-file", path, "--access-file", path, "list"],
+        "single selected Vessel");
+    assert!(!missing.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn connected_private_directory_refuses_other_user_write_before_discovery() {
+    use std::os::unix::fs::PermissionsExt;
+    let cli = Cli::new();
+    let directory = cli.0.path().join("unsafe-vessel");
+    fs::create_dir(&directory).unwrap();
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+    let output = cli.run(&["connect", "--directory", directory.to_str().unwrap(), "--no-start", "list"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("private"));
+    assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
+}

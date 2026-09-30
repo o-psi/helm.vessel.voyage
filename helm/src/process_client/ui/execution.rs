@@ -103,3 +103,7 @@ fn forget(target:Target)->Result<()>{
 }
 #[cfg(not(unix))]
 fn forget(_target:Target)->Result<()>{Ok(())}
+
+#[cfg(test)]
+#[path = "execution_boundary_tests.rs"]
+mod boundary_tests;

@@ -989,3 +989,24 @@ adoption verification must use the same built Vessel as the installer, qualify
 quiescence/reboot, retained namespace and exact services, interrupted preparation/
 capture/freeze/install/fence recovery, explicit activation and refused legacy
 administrator promotion. Source registration alone is not passing evidence.
+
+### Offline binary entry and execution presentation cases (#353)
+
+Additional source cases exercise the actual Cargo binary entry points through
+`CARGO_BIN_EXE_helm`, `CARGO_BIN_EXE_vessel` and `CARGO_BIN_EXE_voyage`. The tests
+in `helm/tests/offline_main_cli_tests.rs`,
+`vessel/tests/offline_auth_main_tests.rs` and
+`voyage/tests/offline_runtime_main_tests.rs` isolate HOME/XDG state, exclude
+credentials from the inherited environment, and retain only LLVM's output
+profile destination for the final measurement. They cover generated documents,
+no-start/scoped route refusal, gateway validation before database/listener,
+invalid grant capture, runtime validation, bounded startup refusal, content-free
+catalogue refusal and exact resource-confirmation checks. None starts a service,
+contacts a provider or supplies human terminal input. Runtime subprocess cases
+have a ten-second deadline and bounded captured output.
+
+Execution presentation source cases additionally fence stale incarnation replies
+and preserve unknown operation IDs and unsent drafts without writing private
+receipt storage or dispatching approval. These cases were prepared from retained
+coverage evidence; they have not been run during the implementation-first pass.
+The final coordinated tests and workspace coverage measurement remain required.
