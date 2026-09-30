@@ -169,9 +169,15 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             };
             let config = match initial {
                 Some(settings) => {
-                    if admitted.is_some(){
-                        if let Ok(expected)=std::env::var("VOYAGE_BOUND_RETAINED_CONFIG_DIGEST"){
-                            ensure!(settings.len()<=65536&&expected.len()==64&&crate::identity_helper::config_digest(settings.as_bytes())==expected,"reviewed retained configuration changed before startup");
+                    if admitted.is_some() {
+                        if let Ok(expected) = std::env::var("VOYAGE_BOUND_RETAINED_CONFIG_DIGEST") {
+                            ensure!(
+                                settings.len() <= 65536
+                                    && expected.len() == 64
+                                    && crate::identity_helper::config_digest(settings.as_bytes())
+                                        == expected,
+                                "reviewed retained configuration changed before startup"
+                            );
                         }
                     }
                     serde_json::from_str::<crate::launch_config::LaunchConfig>(&settings)?

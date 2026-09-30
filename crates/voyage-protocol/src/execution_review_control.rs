@@ -46,39 +46,51 @@ pub struct SavedExecutionReview {
 
 /// Human-visible operations use configured references only; never UID/env/paths.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag="action",rename_all="snake_case",deny_unknown_fields)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ExecutionOperation {
     Inventory,
     Prepare {
-        review_id:Uuid,
-        command_id:Uuid,
-        session_id:Uuid,
-        workspace:std::path::PathBuf,
-        identity:super::execution_identity::IdentityRef,
+        review_id: Uuid,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: std::path::PathBuf,
+        identity: super::execution_identity::IdentityRef,
     },
     PrepareTransition {
-        review_id:Uuid,
-        command_id:Uuid,
-        session_id:Uuid,
-        source_incarnation:Uuid,
-        identity:super::execution_identity::IdentityRef,
-        stop_source:bool,
+        review_id: Uuid,
+        command_id: Uuid,
+        session_id: Uuid,
+        source_incarnation: Uuid,
+        identity: super::execution_identity::IdentityRef,
+        stop_source: bool,
     },
-    Approve { approval:super::execution_identity::ReviewApproval },
-    Review { review_id:Uuid },
-    Control { control:ExecutionReviewControl },
+    Approve {
+        approval: super::execution_identity::ReviewApproval,
+    },
+    Review {
+        review_id: Uuid,
+    },
+    Control {
+        control: ExecutionReviewControl,
+    },
     /// Explicitly reconcile retained metadata; never repeat uncertain launch.
-    ReconcileTransition { review_id:Uuid, command_id:Uuid, digest:String },
-    Status { session_id:Uuid },
+    ReconcileTransition {
+        review_id: Uuid,
+        command_id: Uuid,
+        digest: String,
+    },
+    Status {
+        session_id: Uuid,
+    },
 }
-#[derive(Clone,Debug,Serialize,Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionStatus {
-    pub session_id:Uuid,
-    pub incarnation:Uuid,
-    pub identity:super::execution_identity::IdentitySummary,
-    pub observed:Option<super::execution_identity::ObservedExecution>,
-    pub process_state:super::process::ProcessState,
-    pub administrator_authorized:bool,
-    pub cleanup_observed:bool,
+    pub session_id: Uuid,
+    pub incarnation: Uuid,
+    pub identity: super::execution_identity::IdentitySummary,
+    pub observed: Option<super::execution_identity::ObservedExecution>,
+    pub process_state: super::process::ProcessState,
+    pub administrator_authorized: bool,
+    pub cleanup_observed: bool,
 }

@@ -544,9 +544,20 @@ fn connected_configuration_rejection_precedes_network_and_config_loading() {
 fn explicitly_disabled_start_never_initializes_an_absent_vessel() {
     let cli = Cli::new();
     let absent = cli.0.path().join("absent-vessel");
-    cli.fails(&["connect", "--directory", absent.to_str().unwrap(), "--no-start", "list"],
-        "automatic startup is disabled");
-    assert!(!absent.exists(), "a read-only connection refusal must not start or initialize Vessel");
+    cli.fails(
+        &[
+            "connect",
+            "--directory",
+            absent.to_str().unwrap(),
+            "--no-start",
+            "list",
+        ],
+        "automatic startup is disabled",
+    );
+    assert!(
+        !absent.exists(),
+        "a read-only connection refusal must not start or initialize Vessel"
+    );
 }
 
 #[test]
@@ -555,11 +566,22 @@ fn route_count_and_selection_fail_before_opening_scoped_credentials() {
     let missing = cli.0.path().join("never-opened-access.json");
     let path = missing.to_str().unwrap();
     let mut args = vec!["connect"];
-    for _ in 0..17 { args.extend(["--access-file", path]); }
+    for _ in 0..17 {
+        args.extend(["--access-file", path]);
+    }
     args.push("list");
     cli.fails(&args, "at most 16 grant routes");
-    cli.fails(&["connect", "--access-file", path, "--access-file", path, "list"],
-        "single selected Vessel");
+    cli.fails(
+        &[
+            "connect",
+            "--access-file",
+            path,
+            "--access-file",
+            path,
+            "list",
+        ],
+        "single selected Vessel",
+    );
     assert!(!missing.exists());
 }
 
@@ -571,73 +593,323 @@ fn connected_private_directory_refuses_other_user_write_before_discovery() {
     let directory = cli.0.path().join("unsafe-vessel");
     fs::create_dir(&directory).unwrap();
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
-    let output = cli.run(&["connect", "--directory", directory.to_str().unwrap(), "--no-start", "list"]);
+    let output = cli.run(&[
+        "connect",
+        "--directory",
+        directory.to_str().unwrap(),
+        "--no-start",
+        "list",
+    ]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("private"));
     assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
 }
 
-fn declarative_package(cli:&Cli,text:&str)->std::path::PathBuf{
-    use sha2::{Digest,Sha256};
-    let directory=cli.0.path().join("offline-package");fs::create_dir_all(&directory).unwrap();
-    fs::write(directory.join("guide.md"),text).unwrap();
-    let manifest=serde_json::json!({"format":1,"id":"offline-guide","version":"1.0.0","helm":env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0,"capabilities":["model_context"],"contents":[{"path":"guide.md","kind":"skill","sha256":format!("{:x}",Sha256::digest(text.as_bytes()))}],"entrypoints":["guide.md"]});
-    fs::write(directory.join("manifest.json"),serde_json::to_vec(&manifest).unwrap()).unwrap();directory
+fn declarative_package(cli: &Cli, text: &str) -> std::path::PathBuf {
+    use sha2::{Digest, Sha256};
+    let directory = cli.0.path().join("offline-package");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("guide.md"), text).unwrap();
+    let manifest = serde_json::json!({"format":1,"id":"offline-guide","version":"1.0.0","helm":env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0,"capabilities":["model_context"],"contents":[{"path":"guide.md","kind":"skill","sha256":format!("{:x}",Sha256::digest(text.as_bytes()))}],"entrypoints":["guide.md"]});
+    fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    directory
 }
 
 #[test]
-fn extension_cli_pack_install_review_and_resource_never_execute_code(){
-    let cli=Cli::new();let text="Offline guidance\n\u{1b}[31mnot terminal authority\u{1b}[0m";let source=declarative_package(&cli,text);let archive=cli.0.path().join("guide.helmpkg");
-    let digest=cli.ok(&["extension","pack",source.to_str().unwrap(),archive.to_str().unwrap()]);assert_eq!(digest.trim().len(),64);
-    let before=fs::read(&archive).unwrap();assert!(!cli.run(&["extension","pack",source.to_str().unwrap(),archive.to_str().unwrap()]).status.success());assert_eq!(fs::read(&archive).unwrap(),before);
-    assert_eq!(cli.ok(&["extension","install",archive.to_str().unwrap()]).trim(),digest.trim());
-    let installed=cli.json(&["extension","inspect","offline-guide"]);assert_eq!(installed["active"],false);assert_eq!(installed["execution_reviewed"],false);
-    let output=cli.ok(&["extension","resource","offline-guide","guide.md"]);assert!(!output.contains('\u{1b}'));assert_eq!(serde_json::from_str::<String>(&output).unwrap(),text);
-    assert!(cli.json(&["extension","execution-grants"]).as_object().unwrap().is_empty());
+fn extension_cli_pack_install_review_and_resource_never_execute_code() {
+    let cli = Cli::new();
+    let text = "Offline guidance\n\u{1b}[31mnot terminal authority\u{1b}[0m";
+    let source = declarative_package(&cli, text);
+    let archive = cli.0.path().join("guide.helmpkg");
+    let digest = cli.ok(&[
+        "extension",
+        "pack",
+        source.to_str().unwrap(),
+        archive.to_str().unwrap(),
+    ]);
+    assert_eq!(digest.trim().len(), 64);
+    let before = fs::read(&archive).unwrap();
+    assert!(
+        !cli.run(&[
+            "extension",
+            "pack",
+            source.to_str().unwrap(),
+            archive.to_str().unwrap()
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(fs::read(&archive).unwrap(), before);
+    assert_eq!(
+        cli.ok(&["extension", "install", archive.to_str().unwrap()])
+            .trim(),
+        digest.trim()
+    );
+    let installed = cli.json(&["extension", "inspect", "offline-guide"]);
+    assert_eq!(installed["active"], false);
+    assert_eq!(installed["execution_reviewed"], false);
+    let output = cli.ok(&["extension", "resource", "offline-guide", "guide.md"]);
+    assert!(!output.contains('\u{1b}'));
+    assert_eq!(serde_json::from_str::<String>(&output).unwrap(), text);
+    assert!(
+        cli.json(&["extension", "execution-grants"])
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
     assert!(!cli.0.path().join("runtime.sock").exists());
 }
 
 #[test]
-fn extension_cli_enable_update_and_remove_are_exact_digest_fenced(){
-    let cli=Cli::new();let directory=declarative_package(&cli,"first reviewed bytes");let source=directory.to_str().unwrap();let digest=cli.ok(&["extension","install",source]);let digest=digest.trim();
-    assert!(!cli.run(&["extension","enable","offline-guide","--expected",&"0".repeat(64)]).status.success());assert_eq!(cli.json(&["extension","inspect","offline-guide"])["active"],false);
-    cli.ok(&["extension","enable","offline-guide","--expected",digest]);assert_eq!(cli.json(&["extension","inspect","offline-guide"])["active"],true);
-    let updated=declarative_package(&cli,"replacement bytes require another review");
-    assert!(!cli.run(&["extension","update","offline-guide",updated.to_str().unwrap(),"--expected",&"0".repeat(64)]).status.success());assert_eq!(cli.json(&["extension","inspect","offline-guide"])["digest"],digest);
-    let replacement=cli.ok(&["extension","update","offline-guide",updated.to_str().unwrap(),"--expected",digest]);let replacement=replacement.trim();assert_ne!(replacement,digest);assert_eq!(cli.json(&["extension","inspect","offline-guide"])["active"],false);
-    assert!(!cli.run(&["extension","remove","offline-guide","--expected",digest]).status.success());cli.ok(&["extension","remove","offline-guide","--expected",replacement]);assert!(cli.json(&["extension","list"]).as_array().unwrap().is_empty());
+fn extension_cli_enable_update_and_remove_are_exact_digest_fenced() {
+    let cli = Cli::new();
+    let directory = declarative_package(&cli, "first reviewed bytes");
+    let source = directory.to_str().unwrap();
+    let digest = cli.ok(&["extension", "install", source]);
+    let digest = digest.trim();
+    assert!(
+        !cli.run(&[
+            "extension",
+            "enable",
+            "offline-guide",
+            "--expected",
+            &"0".repeat(64)
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        cli.json(&["extension", "inspect", "offline-guide"])["active"],
+        false
+    );
+    cli.ok(&["extension", "enable", "offline-guide", "--expected", digest]);
+    assert_eq!(
+        cli.json(&["extension", "inspect", "offline-guide"])["active"],
+        true
+    );
+    let updated = declarative_package(&cli, "replacement bytes require another review");
+    assert!(
+        !cli.run(&[
+            "extension",
+            "update",
+            "offline-guide",
+            updated.to_str().unwrap(),
+            "--expected",
+            &"0".repeat(64)
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        cli.json(&["extension", "inspect", "offline-guide"])["digest"],
+        digest
+    );
+    let replacement = cli.ok(&[
+        "extension",
+        "update",
+        "offline-guide",
+        updated.to_str().unwrap(),
+        "--expected",
+        digest,
+    ]);
+    let replacement = replacement.trim();
+    assert_ne!(replacement, digest);
+    assert_eq!(
+        cli.json(&["extension", "inspect", "offline-guide"])["active"],
+        false
+    );
+    assert!(
+        !cli.run(&["extension", "remove", "offline-guide", "--expected", digest])
+            .status
+            .success()
+    );
+    cli.ok(&[
+        "extension",
+        "remove",
+        "offline-guide",
+        "--expected",
+        replacement,
+    ]);
+    assert!(
+        cli.json(&["extension", "list"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
-fn declarative_cli_cannot_gain_executable_review_or_orphan_authority(){
-    let cli=Cli::new();let source=declarative_package(&cli,"model context only");let digest=cli.ok(&["extension","install",source.to_str().unwrap()]);
-    for capability in["execute","host.file.read","invented-shell"]{assert!(!cli.run(&["extension","review-executable","offline-guide","--expected",digest.trim(),"--capability",capability]).status.success());}
-    let installed=cli.json(&["extension","inspect","offline-guide"]);assert_eq!(installed["active"],false);assert_eq!(installed["execution_reviewed"],false);assert!(cli.json(&["extension","execution-grants"]).as_object().unwrap().is_empty());
-    let binding=installed["binding"].as_str().unwrap();assert!(!cli.run(&["extension","revoke-execution",binding,"--expected",digest.trim()]).status.success());
+fn declarative_cli_cannot_gain_executable_review_or_orphan_authority() {
+    let cli = Cli::new();
+    let source = declarative_package(&cli, "model context only");
+    let digest = cli.ok(&["extension", "install", source.to_str().unwrap()]);
+    for capability in ["execute", "host.file.read", "invented-shell"] {
+        assert!(
+            !cli.run(&[
+                "extension",
+                "review-executable",
+                "offline-guide",
+                "--expected",
+                digest.trim(),
+                "--capability",
+                capability
+            ])
+            .status
+            .success()
+        );
+    }
+    let installed = cli.json(&["extension", "inspect", "offline-guide"]);
+    assert_eq!(installed["active"], false);
+    assert_eq!(installed["execution_reviewed"], false);
+    assert!(
+        cli.json(&["extension", "execution-grants"])
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+    let binding = installed["binding"].as_str().unwrap();
+    assert!(
+        !cli.run(&[
+            "extension",
+            "revoke-execution",
+            binding,
+            "--expected",
+            digest.trim()
+        ])
+        .status
+        .success()
+    );
 }
 
 #[test]
-fn extension_cli_activation_revocation_is_separate_from_package_retention(){
-    let cli=Cli::new();let source=declarative_package(&cli,"reviewed context");let digest=cli.ok(&["extension","install",source.to_str().unwrap()]);let digest=digest.trim();cli.ok(&["extension","enable","offline-guide","--expected",digest]);
-    let installed=cli.json(&["extension","inspect","offline-guide"]);let binding=installed["binding"].as_str().unwrap();let grants=cli.json(&["extension","grants"]);assert_eq!(grants[binding],digest);
-    assert!(!cli.run(&["extension","revoke-grant",binding,"--expected",&"0".repeat(64)]).status.success());assert_eq!(cli.json(&["extension","inspect","offline-guide"])["active"],true);
-    cli.ok(&["extension","revoke-grant",binding,"--expected",digest]);let retained=cli.json(&["extension","inspect","offline-guide"]);assert_eq!(retained["active"],false);assert_eq!(retained["digest"],digest);
-    assert!(!cli.run(&["extension","revoke-grant",binding,"--expected",digest]).status.success());
+fn extension_cli_activation_revocation_is_separate_from_package_retention() {
+    let cli = Cli::new();
+    let source = declarative_package(&cli, "reviewed context");
+    let digest = cli.ok(&["extension", "install", source.to_str().unwrap()]);
+    let digest = digest.trim();
+    cli.ok(&["extension", "enable", "offline-guide", "--expected", digest]);
+    let installed = cli.json(&["extension", "inspect", "offline-guide"]);
+    let binding = installed["binding"].as_str().unwrap();
+    let grants = cli.json(&["extension", "grants"]);
+    assert_eq!(grants[binding], digest);
+    assert!(
+        !cli.run(&[
+            "extension",
+            "revoke-grant",
+            binding,
+            "--expected",
+            &"0".repeat(64)
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        cli.json(&["extension", "inspect", "offline-guide"])["active"],
+        true
+    );
+    cli.ok(&["extension", "revoke-grant", binding, "--expected", digest]);
+    let retained = cli.json(&["extension", "inspect", "offline-guide"]);
+    assert_eq!(retained["active"], false);
+    assert_eq!(retained["digest"], digest);
+    assert!(
+        !cli.run(&["extension", "revoke-grant", binding, "--expected", digest])
+            .status
+            .success()
+    );
 }
 
 #[test]
-fn skill_cli_import_requires_the_exact_snapshot_and_stays_inactive(){
-    let cli=Cli::new();let directory=cli.0.path().join("skill-guide");fs::create_dir(&directory).unwrap();fs::write(directory.join("SKILL.md"),"---\nname: skill-guide\ndescription: Offline source fixture\n---\nReviewed instructions only.\n").unwrap();
-    let snapshot=cli.json(&["extension","inspect-skill",directory.to_str().unwrap()]);let digest=snapshot["digest"].as_str().unwrap();
-    assert!(!cli.run(&["extension","import-skill",directory.to_str().unwrap(),"--expected",&"0".repeat(64)]).status.success());assert!(cli.json(&["extension","list"]).as_array().unwrap().is_empty());
-    cli.ok(&["extension","import-skill",directory.to_str().unwrap(),"--expected",digest]);let installed=cli.json(&["extension","inspect","skill-guide"]);assert_eq!(installed["active"],false);assert_eq!(installed["execution_reviewed"],false);
-    fs::write(directory.join("SKILL.md"),"---\nname: skill-guide\ndescription: Changed bytes\n---\nChanged instructions.\n").unwrap();assert!(!cli.run(&["extension","import-skill",directory.to_str().unwrap(),"--expected",digest]).status.success());assert_eq!(cli.json(&["extension","inspect","skill-guide"])["digest"],installed["digest"]);
+fn skill_cli_import_requires_the_exact_snapshot_and_stays_inactive() {
+    let cli = Cli::new();
+    let directory = cli.0.path().join("skill-guide");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("SKILL.md"),"---\nname: skill-guide\ndescription: Offline source fixture\n---\nReviewed instructions only.\n").unwrap();
+    let snapshot = cli.json(&["extension", "inspect-skill", directory.to_str().unwrap()]);
+    let digest = snapshot["digest"].as_str().unwrap();
+    assert!(
+        !cli.run(&[
+            "extension",
+            "import-skill",
+            directory.to_str().unwrap(),
+            "--expected",
+            &"0".repeat(64)
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        cli.json(&["extension", "list"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    cli.ok(&[
+        "extension",
+        "import-skill",
+        directory.to_str().unwrap(),
+        "--expected",
+        digest,
+    ]);
+    let installed = cli.json(&["extension", "inspect", "skill-guide"]);
+    assert_eq!(installed["active"], false);
+    assert_eq!(installed["execution_reviewed"], false);
+    fs::write(
+        directory.join("SKILL.md"),
+        "---\nname: skill-guide\ndescription: Changed bytes\n---\nChanged instructions.\n",
+    )
+    .unwrap();
+    assert!(
+        !cli.run(&[
+            "extension",
+            "import-skill",
+            directory.to_str().unwrap(),
+            "--expected",
+            digest
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        cli.json(&["extension", "inspect", "skill-guide"])["digest"],
+        installed["digest"]
+    );
 }
 
 #[test]
-fn extension_fetch_rejects_untrusted_origin_before_network_or_install(){
-    let cli=Cli::new();let index=cli.0.path().join("local-index.json");
-    for origin in["http://127.0.0.1:1/index","file:///not-a-package","https://user:private-canary@offline.invalid/index","https://offline.invalid/index?secret=private-canary"]{
-        fs::write(&index,serde_json::to_vec(&serde_json::json!({"format":1,"url":origin,"sha256":"a".repeat(64)})).unwrap()).unwrap();let output=cli.run(&["extension","fetch",index.to_str().unwrap(),"offline-guide"]);assert!(!output.status.success());assert!(!String::from_utf8_lossy(&output.stderr).contains("private-canary"));assert!(cli.json(&["extension","list"]).as_array().unwrap().is_empty());
+fn extension_fetch_rejects_untrusted_origin_before_network_or_install() {
+    let cli = Cli::new();
+    let index = cli.0.path().join("local-index.json");
+    for origin in [
+        "http://127.0.0.1:1/index",
+        "file:///not-a-package",
+        "https://user:private-canary@offline.invalid/index",
+        "https://offline.invalid/index?secret=private-canary",
+    ] {
+        fs::write(
+            &index,
+            serde_json::to_vec(
+                &serde_json::json!({"format":1,"url":origin,"sha256":"a".repeat(64)}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = cli.run(&[
+            "extension",
+            "fetch",
+            index.to_str().unwrap(),
+            "offline-guide",
+        ]);
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-canary"));
+        assert!(
+            cli.json(&["extension", "list"])
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

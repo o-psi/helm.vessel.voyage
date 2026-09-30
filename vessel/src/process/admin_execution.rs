@@ -179,12 +179,23 @@ pub(super) fn carry_namespace(
     next: &ProcessRegistration,
     identity: &ConfiguredExecutionIdentity,
 ) -> Result<()> {
-    if identity.authority != AuthorityClass::Administrator { return Ok(()); }
-    ensure!(next.session_id == previous.session_id && next.restart_from == Some(previous.incarnation) && next.config_path == previous.config_path && next.peer_uids == previous.peer_uids,"administrator restart identity changed");
-    runtime_namespace(root,previous,identity)?;
-    let record=provision(root)?;
-    ensure!(record.identity==*identity,"administrator restart provision changed");
-    pin_namespace(root,next.session_id,next.command_id,&record)
+    if identity.authority != AuthorityClass::Administrator {
+        return Ok(());
+    }
+    ensure!(
+        next.session_id == previous.session_id
+            && next.restart_from == Some(previous.incarnation)
+            && next.config_path == previous.config_path
+            && next.peer_uids == previous.peer_uids,
+        "administrator restart identity changed"
+    );
+    runtime_namespace(root, previous, identity)?;
+    let record = provision(root)?;
+    ensure!(
+        record.identity == *identity,
+        "administrator restart provision changed"
+    );
+    pin_namespace(root, next.session_id, next.command_id, &record)
 }
 
 pub(super) async fn facts(

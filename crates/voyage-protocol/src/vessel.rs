@@ -556,7 +556,9 @@ pub enum VesselCommand {
         command: Box<VesselCommand>,
     },
     Capabilities,
-    Execution { operation:crate::execution_review_control::ExecutionOperation },
+    Execution {
+        operation: crate::execution_review_control::ExecutionOperation,
+    },
     /// Owner-only managed-host update; paths and arbitrary commands are excluded.
     UpdatePrepare {
         operation_id: Uuid,

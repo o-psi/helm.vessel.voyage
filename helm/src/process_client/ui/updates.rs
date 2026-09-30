@@ -24,7 +24,7 @@ impl App {
             | Update::Completion { target, .. }
             | Update::Terminals { target, .. }
             | Update::Control { target, .. }
-            | Update::Execution {target,..}
+            | Update::Execution { target, .. }
             | Update::Event { target, .. }
             | Update::Snapshot { target, .. }
             | Update::Command { target, .. } => Some(target.route),
@@ -59,7 +59,11 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
-            Update::Execution{target,incarnation,result}=>self.execution_arrived(target,incarnation,result),
+            Update::Execution {
+                target,
+                incarnation,
+                result,
+            } => self.execution_arrived(target, incarnation, result),
             Update::GoalOwner { target, id, owner } => self.goal_owner(target, id, owner),
             Update::Inspection(_) => unreachable!(),
             Update::InboxAttention { route: _, count } => {

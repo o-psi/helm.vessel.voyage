@@ -160,8 +160,11 @@ impl Client {
             .is_some_and(|features| features.iter().any(|feature| feature == "duplex_socket"))
     }
 
-    pub(super) async fn execution(&self,operation:voyage_protocol::execution_review_control::ExecutionOperation)->Result<Value>{
-        self.exchange(VesselCommand::Execution{operation}).await
+    pub(super) async fn execution(
+        &self,
+        operation: voyage_protocol::execution_review_control::ExecutionOperation,
+    ) -> Result<Value> {
+        self.exchange(VesselCommand::Execution { operation }).await
     }
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
         self.socket.exchange(self, command).await

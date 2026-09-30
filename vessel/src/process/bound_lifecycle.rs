@@ -351,7 +351,7 @@ impl Supervisor {
             )?;
         }
         super::execution_transition::carry_retained_digest(&self.directory, &previous, &next)?;
-        super::admin_execution::carry_namespace(&self.directory,&previous,&next,&identity)?;
+        super::admin_execution::carry_namespace(&self.directory, &previous, &next, &identity)?;
         database::restart_bound(
             &self.directory,
             &previous,

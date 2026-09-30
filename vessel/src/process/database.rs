@@ -218,10 +218,17 @@ fn save_tx(
     }
     Ok(())
 }
-pub(super) fn reject_retired_command(db:&Connection,id:Uuid)->Result<()> {
+pub(super) fn reject_retired_command(db: &Connection, id: Uuid) -> Result<()> {
     let migrated:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='legacy_migration_commands')",[],|row|row.get(0))?;
     if migrated {
-        ensure!(!db.query_row("SELECT EXISTS(SELECT 1 FROM legacy_migration_commands WHERE command_id=?1)",[id.to_string()],|row|row.get::<_,bool>(0))?,"legacy command retired by scope migration; inspect its original outcome without replay");
+        ensure!(
+            !db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM legacy_migration_commands WHERE command_id=?1)",
+                [id.to_string()],
+                |row| row.get::<_, bool>(0)
+            )?,
+            "legacy command retired by scope migration; inspect its original outcome without replay"
+        );
     }
     Ok(())
 }
@@ -237,7 +244,7 @@ fn record_tx(
         bytes.len() <= 16384,
         "lifecycle command exceeds receipt limit"
     );
-    reject_retired_command(tx,id)?;
+    reject_retired_command(tx, id)?;
     let saved: Option<Vec<u8>> = tx
         .query_row(
             "SELECT request FROM lifecycle_commands WHERE namespace=?1 AND command_id=?2",
