@@ -213,7 +213,7 @@ def execute():
         raise Failure('Automatic upgrades support Linux x86_64/aarch64 only.')
     global AUTHENTICATED
     os.environ['GH_PROMPT_DISABLED'] = '1'
-    AUTHENTICATED = MODE == 'latest' and github_login()
+    AUTHENTICATED = MODE == 'latest' and (len(sys.argv) < 4 or sys.argv[3] != 'public') and github_login()
     target = f'{arch}-unknown-linux-gnu'
     if MODE not in ('latest', 'nightly'):
         raise Failure('Unsupported acquisition mode.')

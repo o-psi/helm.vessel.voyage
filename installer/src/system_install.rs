@@ -33,13 +33,15 @@ struct Options {
     credential_unit: String,
     start: bool,
     dry_run: bool,
+    // Set only by the root-reviewed adoption flow, never ordinary install flags.
+    adoption_source: Option<PathBuf>,
 }
 
 impl Options {
     fn parse(args: &[String]) -> Result<Self> {
         ensure!(
             args.first().map(String::as_str) == Some("install"),
-            "system scope currently requires an explicit fresh install; update, rollback and adoption are not yet available"
+            "fresh system install requires install; existing state needs an explicit system lifecycle command, and adoption remains unavailable"
         );
         let mut bin = None;
         let mut execution_user = None;
@@ -138,6 +140,7 @@ impl Options {
             credential_unit: credential_unit.context("system install needs --credential-unit")?,
             start,
             dry_run,
+            adoption_source: None,
         })
     }
 }
@@ -221,7 +224,8 @@ impl Plan {
                 "{name} home must be an owned ordinary directory"
             );
             ensure!(
-                !account.home.join(".local/share/voyage/install").exists(),
+                !account.home.join(".local/share/voyage/install").exists()
+                    || (name == &options.execution_user && options.adoption_source.is_some()),
                 "an existing user installation needs separate reviewed adoption"
             );
         }
@@ -770,6 +774,16 @@ fn default_execution(record: &Record) -> Result<serde_json::Value> {
 mod lifecycle;
 
 pub(super) fn run(args: &[String]) -> Result<()> {
+    if args.first().is_some_and(|s| s == "adopt-user") {
+        return adoption::run(&args[1..]);
+    }
+
+    if args.first().is_some_and(|s| s == "start") {
+        return lifecycle::start_reviewed_system(args);
+    }
+    if args.first().is_some_and(|s| s == "adopt-update-contract") {
+        return lifecycle::adopt_contract(args);
+    }
     if matches!(
         args.first().map(String::as_str),
         Some("upgrade" | "rollback" | "uninstall")
@@ -939,3 +953,23 @@ mod tests {
         }
     }
 }
+
+pub(crate) use lifecycle::{RemoteFacts, remote_review};
+pub(crate) fn remote_apply(bin: &Path, fingerprint: &str) -> Result<()> {
+    lifecycle::run_reviewed(
+        &[
+            "upgrade".into(),
+            "--scope".into(),
+            "system".into(),
+            "--bin-dir".into(),
+            bin.to_string_lossy().into_owned(),
+        ],
+        Some(fingerprint),
+    )
+}
+
+pub(crate) fn remote_host() -> Result<()> {
+    root_host()
+}
+
+mod adoption;

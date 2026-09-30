@@ -116,19 +116,22 @@ fn validate_operation(op: &Operation) -> Result<()> {
         "invalid lifecycle record"
     );
     ensure!(
-        matches!(op.kind.as_str(), "upgrade" | "rollback" | "uninstall")
-            && matches!(
-                op.phase.as_str(),
-                "prepared"
-                    | "staging"
-                    | "stopping"
-                    | "publishing"
-                    | "activating"
-                    | "unresolved-activation"
-                    | "saving"
-                    | "complete"
-            )
-            && (op.kind == "uninstall") == op.candidate.is_none(),
+        matches!(
+            op.kind.as_str(),
+            "upgrade" | "rollback" | "uninstall" | "adopt" | "start"
+        ) && matches!(
+            op.phase.as_str(),
+            "prepared"
+                | "staging"
+                | "stopping"
+                | "publishing"
+                | "activating"
+                | "unresolved-activation"
+                | "restoring-compatible-source"
+                | "rolled-back"
+                | "saving"
+                | "complete"
+        ) && (op.kind == "uninstall") == op.candidate.is_none(),
         "invalid lifecycle operation or candidate"
     );
     ensure!(
@@ -173,7 +176,8 @@ fn validate_operation(op: &Operation) -> Result<()> {
     }
     ensure!(
         !op.candidate_start_attempted
-            || (op.kind == "upgrade" && op.candidate.as_ref().is_some_and(|r| r.phase == "active")),
+            || (matches!(op.kind.as_str(), "upgrade" | "rollback" | "start")
+                && op.candidate.as_ref().is_some_and(|r| r.phase == "active")),
         "candidate startup record conflicts with operation identity"
     );
     ensure!(
@@ -186,7 +190,7 @@ fn validate_operation(op: &Operation) -> Result<()> {
 fn completed(op: &Operation) -> Result<()> {
     validate_operation(op)?;
     ensure!(
-        op.phase == "complete",
+        matches!(op.phase.as_str(), "complete" | "rolled-back"),
         "system lifecycle remains unresolved; inspect exact services and retained records; no operation is automatically replayed"
     );
     Ok(())
@@ -339,6 +343,9 @@ fn candidate(old: &Plan, source: &Path) -> Result<Plan> {
         record.release != old.record.release && manifest.target == old.manifest.target,
         "upgrade needs a different release for the installed target"
     );
+    if old.record.phase == "active" {
+        compatible_manifests(&old.manifest, &manifest)?;
+    }
     let units = system_service::Plan {
         release_root: RELEASE_ROOT.into(),
         bin: Path::new(RELEASE_ROOT)
@@ -367,6 +374,10 @@ fn candidate(old: &Plan, source: &Path) -> Result<Plan> {
 }
 
 pub(super) fn run(args: &[String]) -> Result<()> {
+    run_reviewed(args, None)
+}
+
+pub(crate) fn run_reviewed(args: &[String], expected: Option<&str>) -> Result<()> {
     let arguments = Arguments::parse(args)?;
     root_host()?;
     service::files::check_path(&Path::new(CONTROL_PARENT).join("install/lock"), 0)?;
@@ -380,7 +391,20 @@ pub(super) fn run(args: &[String]) -> Result<()> {
         .transpose()?;
     if arguments.kind == "rollback" {
         let op = read_operation()?.context("no retained system upgrade")?;
-        rollback_eligible(&op, &old.record)?;
+        if rollback_eligible(&op, &old.record).is_err() {
+            ensure!(
+                op.kind == "upgrade"
+                    && op.phase == "complete"
+                    && op.previous.phase == "active"
+                    && old.record.phase == "active"
+                    && op
+                        .candidate
+                        .as_ref()
+                        .is_some_and(|r| r.release == old.record.release),
+                "rollback is not a retained completed source transition"
+            );
+            compatible_manifests(&retained_manifest(&op.previous)?, &old.manifest)?;
+        }
     }
     println!(
         "System {}: release {} ({})",
@@ -399,6 +423,12 @@ pub(super) fn run(args: &[String]) -> Result<()> {
         serde_json::to_vec(&renewed.record)? == serde_json::to_vec(&old.record)?,
         "installation changed since review"
     );
+    if let Some(expected) = expected {
+        ensure!(
+            installation_fingerprint(&renewed)? == expected,
+            "system installation changed since remote approval"
+        );
+    }
     let mut op = Operation {
         schema_version: 1,
         kind: arguments.kind.clone(),
@@ -411,10 +441,9 @@ pub(super) fn run(args: &[String]) -> Result<()> {
         let previous = read_operation()?
             .context("retained upgrade disappeared")?
             .previous;
-        ensure!(
-            previous.phase == "inactive",
-            "previous release was active; rollback requires schema review"
-        );
+        if previous.phase == "active" {
+            compatible_manifests(&retained_manifest(&previous)?, &old.manifest)?;
+        }
         let root = Path::new(RELEASE_ROOT)
             .join("releases")
             .join(&previous.release);
@@ -488,7 +517,20 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 let stopped = stop().is_ok();
                 op.phase = "unresolved-activation".into();
                 write_operation(&op)?;
-                return Err(error.context(format!("candidate activation failed; stopped={stopped}; old binary is not restarted without schema compatibility review")));
+                if stopped && compatible_manifests(&old.manifest, &plan.manifest).is_ok() {
+                    // Both exact archives use identical code-owned state/wire
+                    // implementations. No live checkpoint or backup is restored.
+                    op.phase = "restoring-compatible-source".into();
+                    write_operation(&op)?;
+                    publish(&old.record, &plan.record)?;
+                    verify_unit_syntax()?;
+                    activate(&old)?;
+                    save(&old.record)?;
+                    op.phase = "rolled-back".into();
+                    write_operation(&op)?;
+                    return Err(error.context("candidate failed; exact compatible previous source and readiness restored without replaying update or replacing live state"));
+                }
+                return Err(error.context(format!("candidate activation failed; stopped={stopped}; previous source not qualified for safe state-format rollback")));
             }
         } else {
             inactive()?;
@@ -730,4 +772,202 @@ mod tests {
         assert!(!valid_release(&"a".repeat(65)));
         assert!(!valid_release("../../etc"));
     }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RemoteFacts {
+    pub current_release: String,
+    pub current_version: String,
+    pub fingerprint: String,
+    pub active: bool,
+    pub candidate_release: Option<String>,
+    pub candidate_version: Option<String>,
+    pub candidate_fingerprint: Option<String>,
+    pub manifest_digest: String,
+}
+
+fn installation_fingerprint(plan: &Plan) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"voyage/system-update-installation/v1\0");
+    hash.update(serde_json::to_vec(&plan.record)?);
+    hash.update(serde_json::to_vec(&plan.manifest)?);
+    for name in ["default-execution.json", "runtime-layout.json"] {
+        let path = Path::new(CONTROL).join(name);
+        service::files::check_path(&path, 0)?;
+        let meta = fs::symlink_metadata(&path)?;
+        ensure!(
+            meta.is_file() && meta.uid() == 0 && meta.mode() & 0o077 == 0 && meta.nlink() == 1,
+            "system identity/layout record is not root-private"
+        );
+        hash.update(name.as_bytes());
+        hash.update(files::read(&path, 16384)?);
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+pub(crate) fn remote_review(bin: Option<&Path>) -> Result<RemoteFacts> {
+    root_host()?;
+    if let Some(op) = read_operation()? {
+        ensure!(
+            matches!(op.phase.as_str(), "complete" | "rolled-back"),
+            "system lifecycle remains unresolved; no remote operation is replayed"
+        );
+    }
+    let plan = installed()?;
+    let next = bin.map(|source| candidate(&plan, source)).transpose()?;
+    Ok(RemoteFacts {
+        current_release: plan.record.release.clone(),
+        current_version: plan.record.version.clone(),
+        fingerprint: installation_fingerprint(&plan)?,
+        active: plan.record.phase == "active",
+        candidate_release: next.as_ref().map(|p| p.record.release.clone()),
+        candidate_version: next.as_ref().map(|p| p.record.version.clone()),
+        candidate_fingerprint: next.as_ref().map(installation_fingerprint).transpose()?,
+        manifest_digest: {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(serde_json::to_vec(&plan.manifest)?))
+        },
+    })
+}
+
+fn compatible_manifests(previous: &Manifest, candidate: &Manifest) -> Result<()> {
+    previous.validate()?;
+    candidate.validate()?;
+    let contract = previous.update_compatibility.as_ref().context("installed archive has no source format contract; explicit quiescent adoption is required before active update")?;
+    let next = candidate
+        .update_compatibility
+        .as_ref()
+        .context("candidate archive has no source format contract")?;
+    ensure!(
+        contract == next && previous.target == candidate.target,
+        "state/wire implementations or build inputs differ; explicit quiescent forward adoption is required, not automatic old-binary rollback"
+    );
+    Ok(())
+}
+fn retained_manifest(record: &Record) -> Result<Manifest> {
+    let root = Path::new(RELEASE_ROOT)
+        .join("releases")
+        .join(&record.release);
+    let manifest: Manifest =
+        serde_json::from_slice(&files::read(&root.join("release.json"), 1024 * 1024)?)?;
+    ensure!(
+        manifest.id()? == record.release && manifest.version == record.version,
+        "retained rollback source changed"
+    );
+    manifest.verify_system(&root)?;
+    Ok(manifest)
+}
+
+pub(super) fn installed_for_adoption() -> Result<Plan> {
+    installed()
+}
+pub(super) fn save_for_adoption(record: &Record) -> Result<()> {
+    save(record)
+}
+
+pub(super) fn start_reviewed_system(args: &[String]) -> Result<()> {
+    ensure!(
+        args.len() == 4 && args[0] == "start" && args[1] == "--scope" && args[2] == "system",
+        "system start requires --scope system EXPECTED_RELEASE"
+    );
+    root_host()?;
+    let _lock = files::lock(&Path::new(CONTROL_PARENT).join("install/lock"))?;
+    report_pending()?;
+    let mut plan = installed()?;
+    ensure!(
+        plan.record.phase == "inactive" && plan.record.release == args[3],
+        "system start review changed"
+    );
+    plan.manifest
+        .update_compatibility
+        .as_ref()
+        .context("legacy source requires explicit contract adoption before activation")?
+        .validate()?;
+    super::adoption::system_quiescent(&plan.source, false)?;
+    let mut operation = Operation {
+        schema_version: 1,
+        kind: "start".into(),
+        phase: "prepared".into(),
+        previous: plan.record.clone(),
+        candidate: Some(plan.record.clone()),
+        candidate_start_attempted: false,
+    };
+    operation.candidate.as_mut().unwrap().phase = "active".into();
+    write_operation(&operation)?;
+    operation.phase = "activating".into();
+    operation.candidate_start_attempted = true;
+    write_operation(&operation)?;
+    if let Err(error) = activate(&plan) {
+        let _ = stop();
+        operation.phase = "unresolved-activation".into();
+        write_operation(&operation)?;
+        return Err(error);
+    }
+    plan.record.phase = "active".into();
+    plan.record.start_requested = true;
+    save(&plan.record)?;
+    operation.phase = "complete".into();
+    write_operation(&operation)?;
+    Ok(())
+}
+pub(super) fn adopt_contract(args: &[String]) -> Result<()> {
+    ensure!(
+        args.len() == 7
+            && args[0] == "adopt-update-contract"
+            && args[1] == "--scope"
+            && args[2] == "system"
+            && args[3] == "--bin-dir",
+        "contract adoption requires --scope system --bin-dir ROOT_ABS EXPECTED_RELEASE EXPECTED_INSTALLATION_FINGERPRINT"
+    );
+    root_host()?;
+    let source = PathBuf::from(&args[4]);
+    service::files::check_path(&source, 0)?;
+    let proposed = Manifest::inspect(&source)?;
+    proposed
+        .update_compatibility
+        .as_ref()
+        .context("target archive has no actual source format contract")?
+        .validate()?;
+    let _lock = files::lock(&Path::new(CONTROL_PARENT).join("install/lock"))?;
+    report_pending()?;
+    let old = installed()?;
+    ensure!(
+        old.record.release == args[5] && installation_fingerprint(&old)? == args[6],
+        "contract adoption review no longer matches installation"
+    );
+    // Explicit host approval authorizes draining existing independent owners.
+    // The protected guardian, not a user checkpoint, proves local retirement.
+    let mut retired = old.record.clone();
+    retired.phase = "inactive".into();
+    retired.start_requested = false;
+    let mut next_source = old;
+    next_source.source = source.clone();
+    let mut operation = Operation {
+        schema_version: 1,
+        kind: "adopt".into(),
+        phase: "prepared".into(),
+        previous: next_source.record.clone(),
+        candidate: Some(retired.clone()),
+        candidate_start_attempted: false,
+    };
+    write_operation(&operation)?;
+    operation.phase = "stopping".into();
+    write_operation(&operation)?;
+    super::adoption::system_quiescent(&source, true)?;
+    stop()?;
+    save(&retired)?;
+    operation.phase = "complete".into();
+    write_operation(&operation)?;
+    drop(_lock);
+    // Root is now quiescent. The ordinary locked upgrade stages only an inactive
+    // candidate; explicit start later migrates formats and never revives old work.
+    run(&[
+        "upgrade".into(),
+        "--scope".into(),
+        "system".into(),
+        "--bin-dir".into(),
+        source.to_string_lossy().into_owned(),
+    ])
 }

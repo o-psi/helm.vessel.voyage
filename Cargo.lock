@@ -4019,6 +4019,7 @@ name = "voyage-installer"
 version = "1.0.2"
 dependencies = [
  "anyhow",
+ "base64",
  "crossterm",
  "libc",
  "ratatui",
@@ -4028,6 +4029,9 @@ dependencies = [
  "sha2",
  "signal-hook",
  "url",
+ "uuid",
+ "voyage-protocol",
+ "voyage-storage",
 ]
 
 [[package]]

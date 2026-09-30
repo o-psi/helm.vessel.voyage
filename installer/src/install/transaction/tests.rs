@@ -52,6 +52,7 @@ impl Fixture {
             target: format!("linux-{}", std::env::consts::ARCH),
             binaries,
             assets: BTreeMap::new(),
+            update_compatibility: None,
         };
         files::write_new(
             &source.parent().unwrap().join("release.json"),

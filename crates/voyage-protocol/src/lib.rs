@@ -77,3 +77,5 @@ pub mod execution_transition;
 
 /// Private runtime-to-supervisor current scope metadata.
 pub mod execution_scope;
+/// Strict private migration records; no source data confers root authority.
+pub mod migration;

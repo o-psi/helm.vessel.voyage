@@ -156,6 +156,7 @@ pub fn release(f: &Fixture, name: &str, version: &str) -> PathBuf {
         target: format!("linux-{}", std::env::consts::ARCH),
         binaries,
         assets: std::collections::BTreeMap::new(),
+        update_compatibility: None,
     };
     fs::write(
         bin.parent().unwrap().join("release.json"),

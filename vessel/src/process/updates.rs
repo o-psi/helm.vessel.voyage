@@ -10,6 +10,10 @@ use std::{
 use voyage_protocol::vessel::VesselCommand;
 
 fn installer(directory: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if super::runtime_storage::has_bound_layout(directory) {
+        return system_installer(directory);
+    }
     ensure!(cfg!(target_os = "linux"), "Remote updates require Linux");
     let home = PathBuf::from(std::env::var_os("HOME").context("HOME missing")?);
     let state = std::env::var_os("XDG_STATE_HOME")
@@ -31,6 +35,36 @@ fn installer(directory: &Path) -> Result<PathBuf> {
     ensure!(updater.is_file(), "Installed updater unavailable");
     Ok(updater)
 }
+
+#[cfg(target_os = "linux")]
+fn system_installer(directory: &Path) -> Result<PathBuf> {
+    ensure!(
+        unsafe { libc::geteuid() } == 0 && directory == Path::new("/var/lib/voyage/vessel"),
+        "system updates require the managed root supervisor"
+    );
+    let _control = voyage_storage::protected_linux::RootDirectory::open(directory)?;
+    let config = voyage_storage::protected_linux::RootDirectory::open(Path::new("/etc/voyage"))?;
+    let record: Value =
+        serde_json::from_slice(&config.read("system-install.json".as_ref(), 65536)?)?;
+    let release = record["release"]
+        .as_str()
+        .context("system release missing")?;
+    ensure!(
+        record["schema_version"] == 1
+            && record["phase"] == "active"
+            && release.len() == 64
+            && release.bytes().all(|b| b.is_ascii_hexdigit()),
+        "system installation is not active"
+    );
+    let bin = Path::new("/opt/voyage/releases").join(release).join("bin");
+    ensure!(
+        std::env::current_exe()?.canonicalize()? == bin.join("vessel"),
+        "running system Vessel differs from the managed installation"
+    );
+    let updater = bin.join("voyage-installer");
+    super::launch::protected_binary(&updater)?;
+    Ok(updater)
+}
 pub(super) fn supported(directory: &Path) -> bool {
     installer(directory).is_ok()
 }
@@ -45,6 +79,9 @@ pub(super) fn running_release() -> Option<String> {
 impl super::service::Supervisor {
     pub(super) async fn update(&self, command: VesselCommand) -> Result<Value> {
         let mut args = vec!["remote-update".to_string()];
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            args.push("system".into());
+        }
         match command {
             VesselCommand::UpdatePrepare {
                 operation_id,
@@ -72,6 +109,9 @@ impl super::service::Supervisor {
             _ => anyhow::bail!("Invalid update operation"),
         }
         let mut command = tokio::process::Command::new(installer(&self.directory)?);
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            command.env_clear().env("PATH", "/usr/bin:/bin");
+        }
         command
             .args(args)
             .stdin(Stdio::null())
@@ -85,5 +125,18 @@ impl super::service::Supervisor {
             "Updater refused the operation; check its existing status before retrying"
         );
         Ok(serde_json::from_slice(&result.stdout)?)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod remote_update_tests {
+    #[test]
+    fn ordinary_supervisor_cannot_acquire_system_updater_authority() {
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let error =
+            super::system_installer(std::path::Path::new("/var/lib/voyage/vessel")).unwrap_err();
+        assert!(error.to_string().contains("managed root supervisor"));
     }
 }

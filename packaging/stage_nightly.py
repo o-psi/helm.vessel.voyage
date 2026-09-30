@@ -8,6 +8,7 @@ import re
 import stat
 
 import browser_assets
+import update_compatibility
 
 
 BINARIES = ("helm", "vessel", "voyage", "voyage-installer")
@@ -35,6 +36,7 @@ def stage(root: Path, version: str, source: Path) -> None:
         "target": "x86_64-unknown-linux-gnu",
         "binaries": binaries,
         "assets": assets,
+        "update_compatibility": update_compatibility.contract(Path(__file__).resolve().parent.parent),
     }
     with (root / "release.json").open("x") as output:
         json.dump(manifest, output, indent=2, sort_keys=True)

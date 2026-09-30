@@ -297,13 +297,13 @@ Both units pin the new release; active installations require root/gateway PID an
 public readiness observations before completion. Inactive installations remain
 inactive. No identity, provider credential or user installation is inferred.
 
-An interrupted transaction blocks another mutation. The installer never replays
-an uncertain service effect. Candidate startup failure stops both managed services
-and retains the release and unresolved record. It does **not** run an older binary
-over state the candidate may have migrated. `rollback --scope system [--dry-run]`
-therefore supports only a completed inactive upgrade whose candidate was never
-started. Active/schema rollback needs an explicit compatibility contract and remains
-a release gate. Stopping the supervisor is not proof that independent voyages ended.
+An interrupted transaction blocks another mutation and never replays an uncertain
+service effect. Active upgrade/rollback requires both archives to declare the
+identical validated code-owned reader/writer, implementation and build-input
+contract. Qualified activation failure restores the retained source and exact
+units, observes readiness and retains journals in place. Missing/changed contracts
+fail closed. Inactive-only rollback remains available where the candidate never
+started. Stopping the supervisor does not prove independent voyages ended.
 
 `uninstall --scope system [--dry-run]` stops the managed root/gateway processes,
 observes their PIDs at zero, disables/removes only the exact reviewed units and
@@ -311,10 +311,10 @@ retains all releases, private control/runtime/gateway state, credential provisio
 and its key. This is service removal, not destructive session cleanup or adoption.
 Reinstallation over retained state is refused pending a reviewed adoption inventory.
 
-The existing remote updater is scoped to user installations. A root invocation
-with a system installation record is refused before updater journal/service effects;
-remote system prepare/review/apply remains unavailable. Native lifecycle tests and
-full updater admission are still required for #380 acceptance.
+The user remote updater refuses root system invocation before journal/service
+effects. Explicit `remote-update system` now provides a separate protected
+prepare/review/apply path, described below. Native lifecycle/updater qualification
+remain required for #380 acceptance.
 
 Fresh system installation also publishes a root-private `default-execution.json`
 with fresh host-local identity/account-context UUIDs and the explicitly configured
@@ -322,3 +322,19 @@ ordinary account. Primary GID is excluded from supplementary groups; root group
 membership is refused. Upgrades preserve this identity record rather than creating
 a new authority binding. Public configured start admission is separately verified
 by Vessel; this file does not grant administrator execution or provider credentials.
+
+
+### System remote update increment
+
+Managed system Vessel owner connections can invoke typed preparation/status/
+approval/discard operations through `voyage-installer remote-update system`.
+Acquisition and receipts use protected system state and public downloads; the
+independent system-manager worker rechecks the exact reviewed installation before
+running the scope-aware lifecycle. Candidate compatibility probes use a dynamic
+unprivileged identity. Worker status reconciles observed stopped workers against
+exact candidate/previous source and readiness without replay. See
+[remote updates](../docs/remote-updates.md) for qualified active rollback,
+`adopt-update-contract`, `start --scope system` and explicit `adopt-user`
+prepare/review/apply/activate/rollback commands. Interrupted multistage user
+adoption still requires operator recovery; native qualification and full recovery
+remain release gates. Source implementation is not verification evidence.

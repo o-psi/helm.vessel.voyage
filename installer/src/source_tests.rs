@@ -137,3 +137,15 @@ fn acquisition_error_details_are_sanitized_and_bounded() {
     assert_eq!(error.chars().count(), 2048);
     assert!(!error.chars().any(char::is_control));
 }
+
+#[test]
+fn system_acquisition_uses_explicit_home_public_mode_and_fixed_environment() {
+    let f = Fixture::new();
+    set_acquire(&format!(
+        "{SUCCESS}\nimport os\nassert sys.argv[3]=='public'\nassert os.environ['HOME']==str(root.parents[3])\nassert os.environ['PATH']=='/usr/bin:/bin'\nassert 'GH_TOKEN' not in os.environ\nassert 'GITHUB_TOKEN' not in os.environ\n"
+    ));
+    let prepared = prepare_public(Source::Latest, &AtomicBool::new(false), f.root.clone()).unwrap();
+    assert!(prepared.staging_root().starts_with(&f.root));
+    drop(prepared);
+    assert!(prepare_public(Source::Latest, &AtomicBool::new(true), f.root.clone()).is_err());
+}

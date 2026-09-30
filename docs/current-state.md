@@ -497,11 +497,17 @@ increment can stage a root-owned manifest-verified release with ordinary-readabl
 browser assets, protected control/runtime roots and pinned root/gateway units. It
 refuses existing state, checks the external key provisioner and records activation
 and failed cleanup. A disposable Ubuntu VM passed a fresh install, scoped route,
-reboot and deliberately failed activation with observed unit rollback. System
-update, rollback, uninstall, ordinary account helpers, owner/client controls
-and supported production activation remain unavailable. Public configured bound
+reboot and deliberately failed activation with observed unit rollback. Root-local lifecycle and remote updater increments are described below; ordinary
+account helpers, owner/client controls and supported production activation remain
+incomplete. Public configured bound
 creation is limited to the explicitly provisioned ordinary identity as described
 above; it does not provide administrator execution or client identity selection.
+A scope-aware remote updater now stages public artifacts and exact root-private
+system receipts, probes candidate compatibility without root execution, and
+launches an independent system-manager worker after exact owner approval. It
+pins unit/account/runtime identity facts through application. Interrupted effects
+remain unconfirmed; active/schema rollback compatibility and native qualification
+remain required. See [remote updates](remote-updates.md).
 The staged root gateway now refuses startup without its externally provisioned
 root-private tmpfs connection key. The root unit requires a named provisioning
 service. The fresh-install increment checks that exact external unit and native
@@ -1200,10 +1206,16 @@ Explicit `upgrade --scope system --bin-dir ABS` stages a newer verified release,
 retains configured ordinary identity/state and independent voyages, then publishes
 exact root/gateway units and observes active readiness. Protected lifecycle records
 block interrupted operation replay. `rollback --scope system` supports only a
-completed inactive upgrade whose candidate was never started; active/schema rollback
-is refused. `uninstall --scope system` removes reviewed managed services while
+completed inactive upgrade whose candidate was never started. Active rollback is
+admitted only when both archives declare the identical strict code-owned format,
+implementation and build-input compatibility contract; old or changed contracts
+fail closed. Qualified activation failure restores source/units and observes
+readiness without replacing live state. `uninstall --scope system` removes reviewed managed services while
 retaining releases, private state, external provisioner/key and independent voyages.
 Fresh installation provisions a protected ordinary default-execution identity;
 upgrades preserve it. The user-scoped remote updater refuses root system invocation.
 These commands remain an implementation increment pending native qualification,
-remote system update admission, schema compatibility and owner/adoption acceptance.
+remote system native qualification and owner/adoption acceptance. Explicit legacy
+system bootstrap and user-to-system adoption source paths are described in
+[remote updates](remote-updates.md); interrupted multistage user-adoption recovery
+remains incomplete and no native verification claim is made.

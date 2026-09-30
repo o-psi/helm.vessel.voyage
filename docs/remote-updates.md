@@ -39,7 +39,8 @@ executing host. Helm does not transfer credentials. GitHub checksums provide
 integrity under repository publication authority; this does not add independent
 release-signature verification.
 
-Python 3.11+, curl and a working systemd user manager are required. Public
+Python 3.11+, curl and the applicable systemd manager are required (user manager
+for user installations; system manager for explicit system scope). Public
 nightlies currently target Linux x86-64 and glibc 2.39+; unsupported hosts are
 refused before installation. A managed update still requires owner approval of
 the displayed version and Vessel verification of the exact prepared artifact.
@@ -81,6 +82,76 @@ receipts live under `~/.local/share/voyage/install/updates`; raw acquisition log
 staging paths and use bounded failure summaries. Receipts are bounded to prevent unbounded
 admission. Prepared staging is removed on discard or successful completion.
 
+## Explicit Linux system scope
+
+A managed root supervisor now delegates owner-approved operations to
+`voyage-installer remote-update system`. System receipts and acquisition staging
+are root-private under `/var/lib/voyage/install/system-updates`; they are separate
+from user updater receipts. A system invocation never falls through to the user
+service manager or root's login account. Acquisition uses an explicit private
+staging home, fixed executable search paths and public GitHub HTTPS for both
+channels, without consulting inherited GitHub credentials.
+
+Preparation pins the installed release, exact root/gateway unit definitions,
+configured ordinary accounts, external credential provisioner and protected
+default identity/runtime layout. Downloaded loader and updater compatibility
+checks run in a bounded transient systemd service with a dynamic unprivileged
+identity, homes hidden, private networking and devices, no capabilities and no
+privilege gain. Candidate code is not run as root before exact approval.
+
+Application launches a separate root system-manager updater with a bounded
+lifetime. It rechecks the approved archive hashes and installation fingerprint,
+then invokes the reviewed system lifecycle transaction under its installation
+lock. Root/gateway services and private state retain their configured identities;
+independent voyages remain outside the supervisor lifetime. Exact approval or
+application retries observe the same receipt and never start another updater.
+Interrupted preparation/application remains a saved obligation requiring host
+inspection; reconnect does not automatically replay an uncertain effect.
+
+Active rollback requires both archives to contain the same strict, code-owned
+compatibility contract. The contract enumerates the actual catalogue/journal
+reader and writer versions and hashes their implementation plus build inputs.
+The verifier rejects missing contracts, unsupported formats, changed core code
+or mismatched contracts before stopping services. A qualified activation failure
+restores the exact retained units/source and observes readiness; it never restores
+a state backup while independent voyages write. A stopped updater is reconciled
+against exact reviewed candidate or previous source and readiness without replay.
+
+Older system archives without the contract require an explicit host-operator
+`adopt-update-contract --scope system --bin-dir ABS EXPECTED_RELEASE
+EXPECTED_INSTALLATION_FINGERPRINT`. This drains protected owners, freezes their
+journals through their executing identities and stages the new release inactive.
+`start --scope system EXPECTED_RELEASE` separately activates it. These are source
+implementation paths awaiting the coordinated native verification gate.
+
+### User installation adoption
+
+`adopt-user prepare UUID --scope system --bin-dir ABS --execution-user ORIGINAL
+--gateway-user DISTINCT --gateway-origin HTTPS --credential-key ROOT_RUN_KEY
+--credential-unit PROVISIONER.service --source-credential-key ORIGINAL_RUN_KEY
+--no-start` records the explicit source/account and requests user-owner/service
+quiescence. An observed host reboot establishes local process retirement; it does
+not establish completion of external effects. After that reboot, `adopt-user
+review UUID` returns the exact review digest. `adopt-user apply UUID DIGEST`
+exports history and settings through a dropped-identity helper, interrupts retained
+work without replay, publishes new ordinary bindings/incarnations and stages an
+inactive root supervisor. Provider credentials remain in the original home. The
+original human connection-key provisioner must make the same runtime key available;
+this path neither invents nor copies provider credentials into root custody.
+
+`adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
+`adopt-user rollback UUID DIGEST` is restricted to the dormant preactivation stage
+and restores the retained frozen user namespace and exact reviewed user services.
+Legacy human grants retain ordinary access and are permanently excluded from root
+administrator authority; fresh root pairing is required. New incarnations remain
+dormant until explicitly restarted, with no claim that old processes survived.
+
+`adopt-user status UUID` observes saved state and exact helper command identities
+without repeating uncertain effects. Interrupted multistage adoption currently
+retains a host-operator recovery obligation; automatic or phase-resumable recovery
+across partial install/import/fencing is not implemented. This is remaining release
+acceptance, alongside native verification, rather than a completed migration claim.
+
 ## Initial adoption
 
 Versions released before this protocol cannot receive an update command they do
@@ -90,8 +161,7 @@ management; physical access is not a product requirement. Helm reports this
 boundary accurately and never turns a normal voyage into a privileged bootstrap
 executor. After adoption, subsequent compatible updates use the consent flow.
 
-The operator has deferred Tax-Axis's one-time bootstrap until remote access is
-available. See [delivery issue #343](https://github.com/o-psi/helm.vessel.voyage/issues/343)
+The operator moved Tax-Axis's one-time bootstrap to v1.1.0. See [delivery issue #343](https://github.com/o-psi/helm.vessel.voyage/issues/343)
 for actual deployed versions, browser checks and remaining obligations. The
 protocol/UI implementation alone does not establish deployment acceptance.
 
