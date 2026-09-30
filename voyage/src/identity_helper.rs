@@ -330,6 +330,13 @@ async fn account_operation(
             let descriptor = use_account(&scope, &registry, &account, workspace)?;
             Ok(json!({"account":account,"capability_revision":descriptor.capability_revision}))
         }
+        IdentityHelperOperation::ObserveAccountIntent { scope, account } => {
+            ensure!(
+                allowed(&scope, &registry, &account, workspace),
+                "account intent observation denied"
+            );
+            Ok(json!({"permitted":true}))
+        }
         IdentityHelperOperation::ValidateProfile { scope, profile } => {
             validate_profile(&scope, workspace, &profile)?;
             Ok(json!({"valid":true,"account":profile.account}))

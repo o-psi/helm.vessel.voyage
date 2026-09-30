@@ -38,6 +38,10 @@ pub enum IdentityHelperOperation {
         scope: IdentityAccountScope,
         account: AccountBinding,
     },
+    ObserveAccountIntent {
+        scope: IdentityAccountScope,
+        account: AccountBinding,
+    },
     ValidateProfile {
         scope: IdentityAccountScope,
         profile: crate::execution_profiles::ExecutionProfile,

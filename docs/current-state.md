@@ -435,6 +435,10 @@ account. The ordinary-identity helper source now extends system `Start`,
 account-context-specific execution profiles. Capture retains an exact private
 request before creating a frozen launch file; fresh startup checks a root-protected
 configuration digest before resolving those bytes. The combined implementation
+also validates ordinary bound account changes/resolution in the registered
+runtime's namespace. Explicit enrolled-owner preparation of an ordinary transition
+configuration produces a separate target-owned stage and typed facts only.
+Administrator account changes retain the explicit review boundary. The source
 is awaiting final verification and hosted delivery. Identity-scoped enrollment and
 usage, owner identity controls, production system adoption and automatic bound
 recovery remain incomplete. Bound startup does not derive scoped Vessel

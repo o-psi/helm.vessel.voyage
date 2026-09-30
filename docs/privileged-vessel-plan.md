@@ -143,6 +143,19 @@ missing frozen file. This source increment is awaiting the final coordinated
 milestone verification, including actual native public creation and revocation.
 Identity-scoped enrollment/usage, administrator review/transition and both-client
 identity controls remain implementation work.
+
+Ordinary bound account changes and exact command resolution now validate the
+registered runtime's account namespace through its dropped helper, rather than
+the supervisor or a subsequently changed default identity. Receipt observation
+checks continuing permission without requiring a logged-out account to become
+usable again. Administrator account changes require a fresh explicit review.
+For a reviewed transition to an ordinary identity, an enrolled administrator
+owner can prepare a separate private configuration stage under the target UID.
+Only its path, account/capability references and digests cross back to Vessel;
+target configuration contents are not disclosed to the old identity. Owner,
+identity, grant and file facts are rechecked before returning the stage. These
+source paths await the same combined verification and do not establish completed
+transition or adoption behavior.
 A disposable native Ubuntu fixture exercised live creation, duplicate/conflicting
 receipts, cleanup and the crash-after-admission/no-relaunch boundary. #380 retains
 the installer and native end-to-end gates.

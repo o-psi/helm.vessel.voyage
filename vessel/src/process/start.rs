@@ -279,6 +279,16 @@ impl Supervisor {
                 workspace: workspace.clone(),
             },
         };
+        #[cfg(target_os = "linux")]
+        let config_path =
+            if config_path.is_none() && super::runtime_storage::has_bound_layout(&self.directory) {
+                Some(
+                    super::runtime_storage::planned_bound_directory(&self.directory, session_id)?
+                        .join("launch.json"),
+                )
+            } else {
+                config_path
+            };
         self.resolve_start_original(command_id, session_id, workspace, config_path, original)
             .await
     }
