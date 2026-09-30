@@ -700,7 +700,12 @@ pub async fn user(args: UserArgs) -> Result<()> {
                 .collect::<Vec<_>>();
             let mut hash = Sha256::new();
             hash.update(serde_json::to_vec(&snapshot)?);
-            write_frame(&mut channel, &Frame::Snapshot { snapshot })?;
+            write_frame(
+                &mut channel,
+                &Frame::Snapshot {
+                    snapshot: Box::new(snapshot),
+                },
+            )?;
             let mut total = 0u64;
             for id in ids {
                 let directory = registry::directory(&args.directory, id);
@@ -838,7 +843,7 @@ pub async fn control(args: ControlArgs) -> Result<()> {
     let mut channel = pipe(args.pipe_fd)?;
     let request: ControlRequest = read_frame(&mut channel)?;
     let import = match request {
-        ControlRequest::Import { import } => import,
+        ControlRequest::Import { import } => *import,
         ControlRequest::Quiescence { drain } => {
             let _root = voyage_storage::protected_linux::RootDirectory::open(&args.directory)?;
             let path = args.directory.join("catalogue.sqlite3");

@@ -52,7 +52,7 @@ pub struct Snapshot {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Frame {
     Snapshot {
-        snapshot: Snapshot,
+        snapshot: Box<Snapshot>,
     },
     File {
         session_id: Uuid,
@@ -113,6 +113,6 @@ pub struct Import {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlRequest {
-    Import { import: Import },
+    Import { import: Box<Import> },
     Quiescence { drain: bool },
 }

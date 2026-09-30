@@ -828,7 +828,7 @@ fn observe_snapshot(
         write(&mut channel, &UserRequest::Export)?;
     }
     let snapshot = match read::<Frame>(&mut channel)? {
-        Frame::Snapshot { snapshot } => snapshot,
+        Frame::Snapshot { snapshot } => *snapshot,
         _ => bail!("ordinary source snapshot missing"),
     };
     ensure!(
@@ -1154,7 +1154,7 @@ fn apply(review: &mut Review) -> Result<()> {
     write(
         &mut channel,
         &ControlRequest::Import {
-            import: Import {
+            import: Box::new(Import {
                 operation_id: review.operation_id,
                 review_digest: review.receipt_digest.clone(),
                 source_boot: review.source_boot,
@@ -1166,7 +1166,7 @@ fn apply(review: &mut Review) -> Result<()> {
                     .join(&review.release)
                     .join("bin/voyage"),
                 target_incarnations: review.target_incarnations.clone(),
-            },
+            }),
         },
     )?;
     ensure!(
