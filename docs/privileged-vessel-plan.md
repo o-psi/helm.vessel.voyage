@@ -820,6 +820,15 @@ cleanup. Root orchestration must additionally verify that target ownership/bindi
 admission has not occurred; after publication the target must finish or undergo
 explicit repair. Copied directories cannot use this source abort receipt.
 
+A retired helper can retain its frozen configuration into the fixed private
+`migration-config.json` within its own runtime directory. This path is never
+chosen by a client and publication is create-only; an existing different capture
+is refused. Only the identity-scoped helper reads SQLite/settings and writes the
+0600 capture, returning path and domain-separated digest to root. The operation
+holds both private startup/session fences and creates no run, provider call or
+continuation. Root still establishes prior observed retirement before requesting
+this metadata-only capture for system quiescence/adoption.
+
 ## Bound runtime execution-scope metadata bridge
 
 Bound authorized requests now carry an explicit root-minted opaque scope lease.

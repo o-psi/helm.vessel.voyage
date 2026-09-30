@@ -22,6 +22,9 @@ pub enum TransitionOperation {
     Observe {
         directory: PathBuf,
     },
+    RetainConfiguration {
+        directory: PathBuf,
+    },
     SourceFreeze {
         directory: PathBuf,
         command_id: Uuid,
@@ -53,6 +56,7 @@ impl TransitionOperation {
     pub fn directory(&self) -> &std::path::Path {
         match self {
             Self::Observe { directory }
+            | Self::RetainConfiguration { directory }
             | Self::SourceFreeze { directory, .. }
             | Self::TargetCommit { directory, .. }
             | Self::Lookup { directory, .. }

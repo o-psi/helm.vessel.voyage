@@ -383,6 +383,15 @@ impl Journal {
         }
         Ok(())
     }
+    pub(crate) fn retain_transition_configuration(&self, guard: &ExecutionGuard) -> Result<String> {
+        self.check_guard(guard, guard.session_id)?;
+        let value = settings(&self.connection, guard.session_id)?;
+        ensure!(
+            value.len() <= MAX_TARGET_CONFIG,
+            "retained configuration exceeds bound"
+        );
+        Ok(value)
+    }
     pub(crate) fn retired_transition(
         &mut self,
         guard: &ExecutionGuard,
@@ -404,6 +413,9 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let response = match &request.operation {
+            TransitionOperation::RetainConfiguration { .. } => {
+                anyhow::bail!("configuration retention requires private helper")
+            }
             TransitionOperation::Observe { .. } => TransitionResponse::Facts {
                 facts: facts(&tx, request.session_id, request.source_incarnation)?,
             },

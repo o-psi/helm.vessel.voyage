@@ -126,6 +126,25 @@ mod linux {
         startup.try_lock()?;
         let mut journal = crate::attachment::journal::Journal::open(directory.join("journal"))?;
         let guard = journal.acquire_execution(request.session_id)?;
+        if matches!(
+            request.operation,
+            TransitionOperation::RetainConfiguration { .. }
+        ) {
+            let value = journal.retain_transition_configuration(&guard)?;
+            let bytes = value.as_bytes();
+            if let Some(existing) =
+                _directory.read_bounded("migration-config.json", MAX_TARGET_CONFIG)?
+            {
+                ensure!(existing == bytes, "retained source configuration changed");
+            } else {
+                _directory.publish_new("migration-config.json", bytes)?;
+            }
+            _directory.verify()?;
+            return Ok(TransitionResponse::Configuration {
+                path: directory.join("migration-config.json"),
+                digest: crate::identity_helper::config_digest(bytes),
+            });
+        }
         let mut configuration = None;
         if let TransitionOperation::TargetCommit {
             expected,
