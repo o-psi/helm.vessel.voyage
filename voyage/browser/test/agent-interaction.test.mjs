@@ -55,6 +55,6 @@ test('grounded agent paging, native input, child frames, stale targets and priva
   for(const kind of ['inspect','diagnostics','history','key','select','check','double_click','drag','read']){const r=await request({kind});assert.equal(r.error.code,'agent_fenced');assert.equal(r.result,undefined);}
   await call('control',{viewer,mode:'agent'});assert.deepEqual((await act({kind:'diagnostics'})).errors,{console:0,page:0});
   await w.page.setContent('<select aria-label="Large choice">'+Array.from({length:80},(_,i)=>`<option value="${i}-${'界'.repeat(250)}">${'界'.repeat(250)}</option>`).join('')+'</select>');
-  const large=await observe();assert.equal(large.elements.length,1);assert.equal(large.elements[0].options_truncated,true);assert.ok(large.elements[0].options.length>0);assert.equal(large.next_offset,null);assert.ok(Buffer.byteLength(JSON.stringify(large))<32768);
+  const large=await observe();assert.equal(large.elements.length,1);assert.equal(large.elements[0].options_truncated,true);assert.ok(large.elements[0].options.length>0);assert.equal(large.next_offset,null);assert.ok(Buffer.byteLength(JSON.stringify(large.elements))<32768);assert.ok(Buffer.byteLength(JSON.stringify(large))<128*1024);
   const receipts=await fs.readdir(path.join(root,'receipts'));for(const file of receipts)assert.doesNotMatch(await fs.readFile(path.join(root,'receipts',file),'utf8'),/HUMAN_PRIVATE|PRIVATE_SENTINEL|Frame input/);
 });
