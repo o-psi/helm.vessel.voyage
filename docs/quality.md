@@ -230,6 +230,15 @@ names without file contents, excludes symlinks and dependency directories, and
 reports incomplete traversal. The Web composer unit and production-bundle browser
 checks exercise filename insertion without an automatic submit.
 
+The same process journey now qualifies `workspace_file`: explicit regular-text
+preview through a suspended owner, untracked files without staging, bounded
+Unicode truncation, symlink/traversal/binary/directory refusals, History-only
+refusal and independent WorkspaceRead admission. It must retain the original
+incarnation, canonical history and provider-request count. The Web Files journey
+checks explicit selection before content reads, draft retention without Send,
+connection/capability fences and desktop/mobile layout. Prepared source is not
+passing evidence; retain the actual run result before claiming qualification.
+
 The offline [conversation and file-editing check](test-conversation-files.md)
 verifies a normal task through Vessel-supervised voyage processes: read and patch
 a file, save the reply, then continue with retained context and read the edited
@@ -668,7 +677,10 @@ Use separate clean disposable native guests for active, inactive and interruptio
 cases. Never convert a developer or production install for these checks. Unpack
 both checksum-verified full archives into root-owned `/root/release-old` and
 `/root/release-new`, with the new SemVer strictly greater and both manifest targets
-matching. Prepare the external key provisioner as above. Invoke the **new installer**
+matching. Stable manifest versions may use the published `vMAJOR.MINOR.PATCH`
+spelling; comparison normalizes that one prefix while retaining the exact original
+manifest, release ID and receipt version. Include equal-version, prerelease,
+downgrade and malformed-prefix refusal. Prepare the external key provisioner as above. Invoke the **new installer**
 against the old runtime for initial staging, so the baseline has the protected
 default execution contract (older fresh-install binaries did not provision it):
 
@@ -1096,3 +1108,15 @@ releases the worker lock. Raw failing and corrected logs remain under ignored
 `target/verification-v103/browser-final/`. These checks cover the Linux worker and
 guardian, not the full Helm client journeys, root-bound public transport,
 production TLS, installers or other platforms.
+
+### Traversal-only runtime parent regression
+
+The native USER adoption journey exposed a leaf-storage failure under the root-owned
+`0711` runtime parent. Linux private-directory opening now uses an `O_PATH` parent
+capability for existing leaves, still validating the leaf's own UID, type and private
+mode. Publishing a private file syncs its owning directory after the atomic rename. Creating a new directory
+first obtains a readable parent handle, then retains and syncs that parent barrier;
+missing durability access refuses before `mkdir`. Focused cases cover existing-leaf
+read/publication, creation refusal and shared-leaf/symlink refusal. Final native
+qualification must retry the original-UID target handoff on the corrected binary;
+these source cases do not establish other operating-system behavior.

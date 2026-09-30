@@ -268,6 +268,7 @@ fn allowed(command: &VesselCommand) -> bool {
             }
             VoyageCommand::GoalRead
             | VoyageCommand::WorkspaceChanges { .. }
+            | VoyageCommand::WorkspaceFile { .. }
             | VoyageCommand::GoalUpdate { .. }
             | VoyageCommand::Snapshot
             | VoyageCommand::Decisions

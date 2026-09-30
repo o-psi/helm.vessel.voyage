@@ -74,6 +74,18 @@ bounded or unreadable results as incomplete. It returns no contents. Selecting a
 name inserts a request into the unsent draft; any later file read uses current
 Voyage policy. The catalogue is an observation, not a durable file reference.
 
+The additive `workspace_file` capability enables the Files dock and explicit
+untracked-file preview in Changes. Selection reads at most 64 KiB of UTF-8 text
+through the executing Voyage, with current WorkspaceRead authority and local
+policy; it neither starts a run nor requires a Git repository. Only regular
+workspace-relative files are accepted. Linked paths, traversal and binary text
+refuse, and a changed connection or incarnation withholds the observation.
+Truncation is visible; the returned preview digest covers the observed prefix,
+not an unobserved whole file. Adding a reference preserves the existing unsent
+draft and pictures. It does not submit, attach file bytes or authorize a later
+agent read. Old Vessels retain the explicit operator Inspect path. Production
+availability requires deployment of both the compatible Vessel and Web source.
+
 Profile setup uses a compact overview with separate searchable profile, account and
 model screens. Each profile row has a three-dot menu for edit, duplicate, default
 and delete; the fixed header keeps Create profile (+) available even in empty or

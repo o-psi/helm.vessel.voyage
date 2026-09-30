@@ -210,6 +210,12 @@ async fn inspect(
 ) -> Result<Value> {
     match command.clone() {
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(owner.goal().await?)?),
+        RuntimeCommand::WorkspaceFile { ref path } => {
+            let config = config(owner, registration, directory).await?;
+            let policy =
+                crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)?;
+            super::workspace_file::read(policy.policy(), path).await
+        }
         RuntimeCommand::WorkspaceChanges { scope, ref path } => {
             let config = config(owner, registration, directory).await?;
             let policy =
@@ -229,7 +235,7 @@ async fn inspect(
         RuntimeCommand::Health => Ok(json!({"pid":null,"session_id":registration.session_id,
             "incarnation":registration.incarnation,"suspended":true,
             "capabilities":["notification_events","provider_attempts","snapshot","history","message_chunk","run_output","submit",
-                "workspace_changes",
+                "workspace_changes","workspace_file",
                 "skills_catalog",
                 "workspace_file_catalog",
                 "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_account_inference","set_access","decisions",

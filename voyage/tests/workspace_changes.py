@@ -4,6 +4,7 @@ Run after building vessel and voyage: python3 voyage/tests/workspace_changes.py 
 Uses a synthetic account and contacts no paid provider.
 """
 import argparse
+import hashlib
 from pathlib import Path
 import subprocess
 
@@ -34,6 +35,7 @@ def main():
             "commit", "-qm", "base")
         fixture.start()
         assert "workspace_changes" in fixture.request({"op": "capabilities"})["features"]
+        assert "workspace_file" in fixture.request({"op": "capabilities"})["features"]
         assert "skills_catalog" in fixture.request({"op": "capabilities"})["features"]
         assert "workspace_file_catalog" in fixture.request({"op": "capabilities"})["features"]
         session = fixture.session()
@@ -63,6 +65,21 @@ def main():
         requests = len(fixture.provider.bodies)
         (fixture.workspace / "tracked.txt").write_text("after\n")
         (fixture.workspace / "new.txt").write_text("untracked\n")
+        preview = fixture.command(session, {"op": "workspace_file", "path": "new.txt"})
+        assert preview["text"] == "untracked\n" and not preview["truncated"], preview
+        assert preview["preview_sha256"] == hashlib.sha256(b"untracked\n").hexdigest()
+        assert (fixture.workspace / "new.txt").read_text() == "untracked\n"
+        for denied_path in ("linked.txt", "../outside", "/etc/passwd", "node_modules"):
+            refused_file = fixture.command(session, {"op": "workspace_file", "path": denied_path},
+                                           allow_error=True)
+            assert refused_file["error"], (denied_path, refused_file)
+        (fixture.workspace / "binary.dat").write_bytes(b"a\x00b")
+        assert fixture.command(session, {"op": "workspace_file", "path": "binary.dat"},
+                               allow_error=True)["error"]
+        (fixture.workspace / "large.txt").write_text("€" * 30000)
+        large = fixture.command(session, {"op": "workspace_file", "path": "large.txt"})
+        assert large["truncated"] and len(large["text"].encode()) <= 65536
+        assert large["observed_bytes"] == len(large["text"].encode())
         status = fixture.command(session, {"op": "workspace_changes", "scope": "status"})
         assert status["path"] == "." and not status["truncated"]
         assert " M tracked.txt\0" in status["text"] and "?? new.txt\0" in status["text"], status
@@ -81,6 +98,8 @@ def main():
             history = gateway.grant(session, ["observe", "history"])
             denied = gateway.call(history, session, {"op": "workspace_changes", "scope": "status"})
             assert denied.get("error"), "History grant read executing workspace"
+            denied_preview = gateway.call(history, session, {"op": "workspace_file", "path": "new.txt"})
+            assert denied_preview.get("error"), "History grant read a workspace file"
             denied_skills = gateway.call(history, session, {"op": "controls", "run_id": None,
                                                            "section": "skills"})
             assert denied_skills.get("error"), "History grant discovered executing-host skill paths"
@@ -90,6 +109,8 @@ def main():
             reader = gateway.grant(session, ["observe", "workspace_read"])
             allowed = gateway.call(reader, session, {"op": "workspace_changes", "scope": "status"})
             assert allowed.get("error") is None and "?? new.txt\0" in allowed["result"]["text"], allowed
+            scoped_preview = gateway.call(reader, session, {"op": "workspace_file", "path": "new.txt"})
+            assert scoped_preview.get("error") is None and scoped_preview["result"]["text"] == "untracked\n", scoped_preview
             refused = gateway.call(reader, session, {"op": "history", "offset": 0, "limit": 1})
             assert refused.get("error"), "Workspace read grant acquired conversation history"
             listed = gateway.call(reader, session, {"op": "controls", "run_id": None,
@@ -107,11 +128,13 @@ def main():
         assert len(fixture.provider.bodies) == requests, "Changes read admitted inference"
         fixture.record("workspace-changes-suspended-read", {
             "session": session, "incarnation": identity["incarnation"],
-            "status_paths": 2, "diff_bytes": len(diff["text"].encode()),
+            "status_paths": len([record for record in status["text"].split("\0") if record]), "diff_bytes": len(diff["text"].encode()),
             "conversation_unchanged": True, "provider_requests": 0,
             "history_grant_denied": True, "workspace_read_grant_admitted": True,
             "skill_metadata_only": True,
             "file_names_only": True,
+            "explicit_bounded_file_preview": True,
+            "file_preview_preserves_suspended_owner": True,
         })
         print("workspace changes process journey PASS", flush=True)
     finally:

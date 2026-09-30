@@ -118,6 +118,9 @@ pub struct VoyageReply {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
     GoalRead,
+    WorkspaceFile {
+        path: String,
+    },
     WorkspaceChanges {
         scope: crate::process::WorkspaceChangeScope,
         path: Option<String>,

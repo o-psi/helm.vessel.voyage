@@ -22,6 +22,9 @@ pub enum WorkspaceChangeScope {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
     GoalRead,
+    WorkspaceFile {
+        path: String,
+    },
     WorkspaceChanges {
         scope: WorkspaceChangeScope,
         path: Option<String>,
@@ -364,6 +367,7 @@ impl RuntimeCommand {
                 | Self::Snapshot
                 | Self::GoalRead
                 | Self::WorkspaceChanges { .. }
+                | Self::WorkspaceFile { .. }
                 | Self::ProviderAttempts { .. }
                 | Self::History { .. }
                 | Self::MessageChunk { .. }

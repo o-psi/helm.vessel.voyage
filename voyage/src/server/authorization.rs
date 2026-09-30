@@ -234,6 +234,7 @@ pub(super) fn authorize_parts(
                 &request.command,
                 voyage_protocol::process::RuntimeCommand::HostBrowser { .. }
                     | voyage_protocol::process::RuntimeCommand::WorkspaceChanges { .. }
+                    | voyage_protocol::process::RuntimeCommand::WorkspaceFile { .. }
             ) {
                 Arc::new(ScopedRightAuthority {
                     source: source.clone(),

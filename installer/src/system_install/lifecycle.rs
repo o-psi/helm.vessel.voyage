@@ -323,6 +323,12 @@ fn save(record: &Record) -> Result<()> {
     files::atomic_json(Path::new(CONFIG), record)?;
     files::atomic_json(Path::new(TRANSACTION), record)
 }
+// Published stable manifests retain their tag-style `v` prefix. Comparison
+// normalizes one prefix without rewriting manifest/receipt identity.
+fn version_advances(candidate: &str, installed: &str) -> Result<bool> {
+    let parse = |value: &str| semver::Version::parse(value.strip_prefix('v').unwrap_or(value));
+    Ok(parse(candidate)? > parse(installed)?)
+}
 fn candidate(old: &Plan, source: &Path) -> Result<Plan> {
     service::files::check_path(source, 0)?;
     ensure!(
@@ -334,7 +340,7 @@ fn candidate(old: &Plan, source: &Path) -> Result<Plan> {
     let manifest = Manifest::inspect(source)?;
     let mut record = old.record.clone();
     ensure!(
-        semver::Version::parse(&manifest.version)? > semver::Version::parse(&old.manifest.version)?,
+        version_advances(&manifest.version, &old.manifest.version)?,
         "system upgrade must advance the installed version"
     );
     record.release = manifest.id()?;
@@ -736,6 +742,34 @@ mod tests {
         missing_attempt.candidate = None;
         validate_operation(&missing_attempt).unwrap();
         assert!(rollback_eligible(&missing_attempt, &op.previous).is_err());
+    }
+    #[test]
+    fn published_tag_versions_compare_without_rewriting_identity_or_allowing_downgrade() {
+        for (candidate, installed) in [
+            ("v1.0.3", "1.0.3-nightly.20260930.36781952422.1"),
+            ("1.0.3", "v1.0.2"),
+            ("v1.0.3", "v1.0.2"),
+        ] {
+            assert!(version_advances(candidate, installed).unwrap());
+        }
+        for (candidate, installed) in [
+            ("v1.0.3", "1.0.3"),
+            ("1.0.3", "v1.0.3"),
+            ("v1.0.2", "1.0.3-nightly.20260930.36781952422.1"),
+            ("1.0.3-beta.1", "v1.0.3"),
+        ] {
+            assert!(!version_advances(candidate, installed).unwrap());
+        }
+        for malformed in ["vv1.0.3", "vnext", "1.0", "v1.0.03", ""] {
+            assert!(version_advances(malformed, "1.0.2").is_err());
+            assert!(version_advances("1.0.3", malformed).is_err());
+        }
+        let original = record('a', "inactive");
+        let mut tagged = original.clone();
+        tagged.version = "v1.0.3".into();
+        assert!(version_advances(&tagged.version, "1.0.2").unwrap());
+        assert_eq!(tagged.version, "v1.0.3");
+        assert_eq!(tagged.release, original.release);
     }
     #[test]
     fn lifecycle_needs_explicit_scope_and_exact_arguments() {

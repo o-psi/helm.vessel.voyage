@@ -35,6 +35,18 @@ pub(super) async fn dispatch_admitted(
 
     match command {
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
+        RuntimeCommand::WorkspaceFile { path } => {
+            let config = state.config.read().await.clone();
+            let policy = crate::runtime_policy::RuntimePolicy::resolve(
+                &config,
+                &state.registration.workspace,
+            )?;
+            let result = super::workspace_file::read(policy.policy(), &path).await?;
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            Ok(result)
+        }
         RuntimeCommand::WorkspaceChanges { scope, path } => {
             let config = state.config.read().await.clone();
             let policy = crate::runtime_policy::RuntimePolicy::resolve(
@@ -287,6 +299,7 @@ pub(super) async fn dispatch_admitted(
                 "notification_events",
                 "snapshot",
                 "workspace_changes",
+                "workspace_file",
                 "skills_catalog",
                 "workspace_file_catalog",
                 "read_artifact",

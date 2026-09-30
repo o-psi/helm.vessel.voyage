@@ -12,6 +12,7 @@ impl RuntimeCommand {
             self,
             Self::Snapshot
                 | Self::WorkspaceChanges { .. }
+                | Self::WorkspaceFile { .. }
                 | Self::History { .. }
                 | Self::MessageChunk { .. }
                 | Self::RunOutput { .. }
@@ -98,3 +99,35 @@ mod notification_tests {
 
 mod catalogue;
 pub use catalogue::*;
+
+#[cfg(test)]
+mod workspace_file_tests {
+    use super::*;
+
+    #[test]
+    fn file_observation_requires_read_authority_without_mutation_or_execution() {
+        let command: RuntimeCommand = serde_json::from_value(serde_json::json!({
+            "op":"workspace_file","path":"docs/notes.md"
+        }))
+        .unwrap();
+        assert_eq!(
+            required_process_right(&command),
+            Some(ProcessRight::WorkspaceRead)
+        );
+        assert!(command.observes_saved());
+        assert!(command.observes_suspended());
+        assert!(command.mutation_id().is_none());
+        let public: crate::vessel::VoyageCommand =
+            serde_json::from_value(serde_json::to_value(&command).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(public).unwrap()["path"],
+            "docs/notes.md"
+        );
+        for field in ["program", "arguments", "root", "execution_identity"] {
+            let mut value = serde_json::to_value(&command).unwrap();
+            value[field] = serde_json::json!("injected");
+            assert!(serde_json::from_value::<RuntimeCommand>(value.clone()).is_err());
+            assert!(serde_json::from_value::<crate::vessel::VoyageCommand>(value).is_err());
+        }
+    }
+}
