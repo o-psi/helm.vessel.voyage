@@ -158,3 +158,10 @@ inflate scores. Treat service-dependent task outcomes as a compatibility finding
 The first matrix exposed and retained the timeout-detach flaw; it was cancelled
 and marked invalid. The corrected matrix uses a fresh adapter snapshot and fresh
 containers. Do not merge invalid pilot rows into the final comparison.
+
+## Full Terminal-Bench 4 request
+
+See [full-run preparation](full-run.md) and [the pinned plan](tb4-plan.json) for
+#398. The 330-trial medium-only run is not started; required H100 execution resources
+and Harbor authentication remain unresolved. The ten-task `run.py` entry point above
+is the TB2.1 pilot and must not be used to claim a full TB4 run.

@@ -13,6 +13,80 @@ ROOT = Path("/var/lib/voyage-benchmark")
 LOG = Path("/logs/agent")
 
 
+def public_history(run, session, snapshot, seconds=120):
+    """Read complete public messages through Helm with revision-bound byte cursors."""
+    revision, total = snapshot["revision"], snapshot["total_messages"]
+    if type(total) is not int or not 0 <= total <= 100000:
+        raise ValueError("Public history message bound exceeded")
+    messages, size = [], 0
+    deadline = time.monotonic() + seconds
+
+    def request(value):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Public history observation deadline exceeded")
+        return run("request", session, json.dumps(value), timeout=min(15, remaining))
+
+    for index in range(total):
+        encoded = bytearray()
+        while True:
+            offset = len(encoded)
+            result = request(
+                {
+                    "op": "message_chunk",
+                    "index": index,
+                    "offset": offset,
+                    "limit": 65536,
+                    "expected_revision": revision,
+                }
+            )
+            if result.returncode:
+                raise RuntimeError("Revision-bound public history unavailable")
+            chunk = json.loads(result.stdout)
+            data = chunk["data"].encode("utf-8")
+            end = offset + len(data)
+            if not (
+                chunk["session_id"] == session
+                and chunk["revision"] == revision
+                and chunk["index"] == index
+                and chunk["offset"] == offset
+                and chunk["encoding"] == "public_message_json_utf8"
+                and chunk["next_offset"] == end
+                and end <= chunk["total_bytes"]
+                and type(chunk["has_more"]) is bool
+                and (
+                    end < chunk["total_bytes"] and data
+                    if chunk["has_more"]
+                    else end == chunk["total_bytes"]
+                )
+            ):
+                raise ValueError("Public history identity or cursor changed")
+            size += len(data)
+            if size > 64 * 1024 * 1024:
+                raise ValueError("Public history byte bound exceeded")
+            encoded.extend(data)
+            if not chunk["has_more"]:
+                break
+        messages.append(json.loads(encoded))
+    checked = request(
+        {
+            "op": "history",
+            "offset": total,
+            "limit": 1,
+            "expected_revision": revision,
+        }
+    )
+    if checked.returncode:
+        raise RuntimeError("Public history revision changed during export")
+    return {
+        "session_id": session,
+        "revision": revision,
+        "total_messages": total,
+        "messages": messages,
+        "complete": True,
+    }
+
+
 def cleanup_only():
     """Fence execution and observe cleanup before Harbor can inject a verifier."""
     created_path = LOG / "create.json"
@@ -79,6 +153,9 @@ def cleanup_only():
 
 def main(input_path):
     options = json.loads(Path(input_path).read_text())
+    run_timeout_secs = options.get("run_timeout_secs", 28800)
+    if type(run_timeout_secs) is not int or not 1 <= run_timeout_secs <= 28800:
+        raise ValueError("Invalid wrapper bound")
     if options["model"] != "gpt-6.1-sol" or options["effort"] not in (
         "medium",
         "high",
@@ -275,7 +352,11 @@ def main(input_path):
         retain("create.json", created.stdout)
         if created.returncode:
             raise RuntimeError("Voyage creation rejected: " + created.stderr)
-        result = run("run", session, options["instruction"], timeout=1800)
+        # Harbor owns the task deadline and explicitly stops this incarnation on
+        # expiry. This outer process guard permits the whole declared task budget.
+        result = run(
+            "run", session, options["instruction"], timeout=run_timeout_secs + 30
+        )
         retain("response.txt", result.stdout)
         if result.returncode:
             raise RuntimeError("Voyage run failed: " + result.stderr)
@@ -284,6 +365,15 @@ def main(input_path):
         if observed.returncode:
             raise RuntimeError("Final Voyage state unavailable")
         snapshot = json.loads(observed.stdout)
+        summary["completed"] = snapshot.get("run", {}).get("state") == "completed"
+        try:
+            retain(
+                "public-history.json",
+                json.dumps(public_history(run, session, snapshot)),
+            )
+            summary["public_history"] = "complete-revision-bound-public-messages"
+        except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired):
+            summary["public_history"] = "unavailable; do not claim complete trajectory"
         summary["snapshot_keys"] = sorted(snapshot)
         summary["usage"] = snapshot.get("usage", {})
         exported = run("export", session, str(LOG / "conversation.md"))
@@ -301,6 +391,20 @@ def main(input_path):
         try:
             observed = run("inspect", session)
             retain("snapshot.json", observed.stdout)
+            if not observed.returncode:
+                try:
+                    retain(
+                        "public-history.json",
+                        json.dumps(
+                            public_history(
+                                run, session, json.loads(observed.stdout), seconds=5
+                            )
+                        ),
+                    )
+                except (RuntimeError, ValueError, KeyError, subprocess.TimeoutExpired):
+                    summary["public_history"] = (
+                        "unavailable; do not claim complete trajectory"
+                    )
         except (OSError, subprocess.TimeoutExpired):
             pass
     finally:
