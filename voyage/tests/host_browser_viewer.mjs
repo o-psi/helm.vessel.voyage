@@ -70,7 +70,9 @@ async function siteClasses(page){
  await navigate(page,cfg.site+'/site-classes');
  await page.waitForFunction(()=>{
   const session=window.mounted.session,doc=session.replayer?.iframe.contentDocument;
+  const image=doc?.querySelector('#authenticated-asset');
   return doc?.querySelector('#shadow')?.shadowRoot?.textContent.includes('Open shadow content')
+   && image?.complete && image.naturalWidth===40
    && [...session.frames.values()].some(f=>f.player.iframe.contentDocument?.body?.textContent.includes('Cross-origin child content'));
  });
  const facts=await page.evaluate(()=>{
