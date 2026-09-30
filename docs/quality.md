@@ -738,3 +738,20 @@ journeys before claiming #344 acceptance. First explicit root owner enrollment
 activates protected catalogue schema 3; ordinary/user catalogues remain schema 2.
 Older schema-2-only binaries cannot consume activated schema 3, so actual
 compatible downgrade/rollback remains separately required.
+
+### Provider boundary coverage source increment (#353)
+
+The retained `chatgpt_oauth_boundary_tests.rs` and `multimodal_boundary_tests.rs`
+add bound-account OAuth refresh/revocation assertions, private legacy migration
+and logout fencing in an isolated subprocess, and image capability/provenance/
+metadata/aggregate-byte admission assertions. All HTTP endpoints are scripted
+numeric loopback and credentials are synthetic. Child HOME and XDG paths point
+only into the temporary fixture; the parent environment is not mutated. Image
+raster bytes are generated locally. Inference is forbidden in discovery fixtures.
+
+This increment is source preparation only under the user's coordinated final-test
+direction. It has not been compiled/executed or measured. No coverage percentage,
+live authentication, provider spend or native service behavior is established.
+The final integrated provider test pass must verify these cases along with the
+existing provider tests, and final workspace coverage must retain the full source
+and current object set. No denominator exclusions are introduced.

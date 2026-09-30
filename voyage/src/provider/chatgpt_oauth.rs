@@ -1425,3 +1425,7 @@ mod offline_error_tests;
 #[cfg(test)]
 #[path = "chatgpt_oauth_http_tests.rs"]
 mod http_tests;
+
+#[cfg(test)]
+#[path = "chatgpt_oauth_boundary_tests.rs"]
+mod boundary_tests;
