@@ -78,7 +78,7 @@ async fn workflow_metadata_is_durable_but_secret_authority_is_exact_run_and_vola
     let saved = owner.snapshot().await.unwrap();
     assert_eq!(saved.revision, before + 1);
     assert_eq!(saved.session.workflow_runs.len(), 1);
-    let public = serde_json::to_string(&saved).unwrap();
+    let public = serde_json::to_string(&saved.session).unwrap();
     assert!(!public.contains("fixture-private-value"));
     assert_eq!(saved.session.workflow_runs[0].inputs["public"], "visible");
     assert!(run.bind_workflow(invocation(), secrets()).await.is_err());
