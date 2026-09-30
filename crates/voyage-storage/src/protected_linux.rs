@@ -170,25 +170,30 @@ impl RuntimeRoot {
     /// Reviewed identity handoff only after protected old-process retirement.
     /// Pin and validate the whole bounded tree before changing any ownership.
     /// No content/SQLite parsing occurs here; symlinks, hardlinks and devices refuse.
-    pub fn transfer_session(&self,entry:&OsStr,source_uid:u32,source_gid:u32,target_uid:u32,target_gid:u32)->Result<()> {
-        ensure!(unsafe{libc::geteuid()}==self.owner,"runtime handoff requires its root owner");
-        let directory=self.session(entry,source_uid,source_gid)?;
-        let mut objects=Vec::new();
-        pin_tree(&directory,source_uid,source_gid,0,&mut objects)?;
-        // The directory fence removes source pathname access before descendants
-        // change. A failure remains fenced for explicit, receipt-based recovery.
-        ensure!(unsafe{libc::fchown(directory.as_raw_fd(),self.owner,self.owner)}==0,"runtime source fence failed");
-        let mut current=Vec::new();pin_tree(&directory,source_uid,source_gid,0,&mut current)?;
-        let before=objects.iter().map(|file|file.metadata().map(|metadata|(metadata.dev(),metadata.ino()))).collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
-        let after=current.iter().map(|file|file.metadata().map(|metadata|(metadata.dev(),metadata.ino()))).collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
-        ensure!(before==after,"runtime handoff tree changed before source fence");
-        drop(current);
+    pub fn transfer_inventory(&self,entry:&OsStr,uid:u32,gid:u32)->Result<Vec<(u64,u64,u32,u64)>>{
+        let directory=self.session(entry,uid,gid)?;
+        let mut objects=Vec::new();pin_tree(&directory,&[(uid,gid)],0,&mut objects)?;
+        objects.push(directory);inventory(&objects)
+    }
+    /// Resume only the exact root-retained inode inventory. The top directory
+    /// stays root-fenced until all descendants have their target ownership.
+    /// This never reads files, rolls back target secrets, or starts a process.
+    pub fn transfer_session(&self,entry:&OsStr,source_uid:u32,source_gid:u32,target_uid:u32,target_gid:u32,expected:&[(u64,u64,u32,u64)])->Result<()> {
+        self.current()?;ensure!(unsafe{libc::geteuid()}==self.owner,"runtime handoff requires its root owner");
+        let directory=file_at(&self.directory,&session_name(entry)?,libc::O_RDONLY|libc::O_DIRECTORY,0)?;
+        let top=directory.metadata()?;
+        let owners=[(source_uid,source_gid),(target_uid,target_gid),(self.owner,self.owner)];
+        ensure!(top.mode()&0o7777==0o700&&owners.contains(&(top.uid(),top.gid())),"runtime handoff top ownership changed");
+        let mut objects=Vec::new();pin_tree(&directory,&owners,0,&mut objects)?;
+        objects.push(directory.try_clone()?);ensure!(inventory(&objects)?==expected,"runtime handoff inode inventory changed");objects.pop();
+        ensure!(unsafe{libc::fchown(directory.as_raw_fd(),self.owner,self.owner)}==0,"runtime source fence failed");directory.sync_all()?;
+        let mut current=Vec::new();pin_tree(&directory,&owners,0,&mut current)?;current.push(directory.try_clone()?);
+        ensure!(inventory(&current)?==expected,"runtime handoff tree changed before source fence");drop(current);
         for object in &objects {
             ensure!(unsafe{libc::fchownat(object.as_raw_fd(),c"".as_ptr(),target_uid,target_gid,libc::AT_EMPTY_PATH|libc::AT_SYMLINK_NOFOLLOW)}==0,"runtime descendant ownership handoff failed");
         }
         ensure!(unsafe{libc::fchown(directory.as_raw_fd(),target_uid,target_gid)}==0,"runtime target ownership handoff failed");
-        directory.sync_all()?;self.directory.sync_all()?;
-        self.session(entry,target_uid,target_gid)?;Ok(())
+        directory.sync_all()?;self.directory.sync_all()?;self.session(entry,target_uid,target_gid)?;Ok(())
     }
 
     /// Provision a new private runtime directory. Existing entries are never
@@ -448,7 +453,7 @@ impl RootDirectory {
 mod tests;
 
 
-fn pin_tree(directory:&File,uid:u32,gid:u32,depth:usize,objects:&mut Vec<File>)->Result<()> {
+fn pin_tree(directory:&File,owners:&[(u32,u32)],depth:usize,objects:&mut Vec<File>)->Result<()> {
     ensure!(depth<=32&&objects.len()<512,"runtime handoff tree exceeds bounded review limits");
     let raw=unsafe{libc::openat(directory.as_raw_fd(),c".".as_ptr(),libc::O_RDONLY|libc::O_DIRECTORY|libc::O_CLOEXEC|libc::O_NOFOLLOW)};
     ensure!(raw>=0,"runtime handoff listing unavailable");
@@ -468,15 +473,20 @@ fn pin_tree(directory:&File,uid:u32,gid:u32,depth:usize,objects:&mut Vec<File>)-
         let object=file_at(directory,&name,libc::O_PATH,0)?;
         let metadata=object.metadata()?;
         use std::os::unix::fs::FileTypeExt;
-        ensure!(metadata.uid()==uid&&metadata.gid()==gid&&metadata.mode()&0o077==0&&!metadata.file_type().is_symlink()&&(metadata.is_dir()||metadata.is_file()||metadata.file_type().is_socket()),"unsafe runtime handoff entry");
+        ensure!(owners.contains(&(metadata.uid(),metadata.gid()))&&metadata.mode()&0o7077==0&&!metadata.file_type().is_symlink()&&(metadata.is_dir()||metadata.is_file()||metadata.file_type().is_socket()),"unsafe runtime handoff entry");
         ensure!(!metadata.is_file()||metadata.nlink()==1,"runtime handoff hardlink refused");
         if metadata.is_dir(){
             let child=file_at(directory,&name,libc::O_RDONLY|libc::O_DIRECTORY,0)?;
             let current=child.metadata()?;
             ensure!(current.dev()==metadata.dev()&&current.ino()==metadata.ino(),"runtime handoff directory replaced");
-            pin_tree(&child,uid,gid,depth+1,objects)?;
+            pin_tree(&child,owners,depth+1,objects)?;
         }
         objects.push(object);
     }
     Ok(())
+}
+
+fn inventory(objects:&[File])->Result<Vec<(u64,u64,u32,u64)>>{
+    let mut result=objects.iter().map(|file|{let metadata=file.metadata()?;Ok((metadata.dev(),metadata.ino(),metadata.mode(),metadata.nlink()))}).collect::<std::io::Result<Vec<_>>>()?;
+    result.sort_unstable();ensure!(result.windows(2).all(|pair|pair[0]!=pair[1]),"runtime handoff aliases refused");Ok(result)
 }

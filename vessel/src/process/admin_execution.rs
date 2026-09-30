@@ -109,7 +109,7 @@ impl Supervisor {
                 let eligible=database::execution_reviews::authority(&self.directory,grant).await.is_ok();
                 let ordinary=super::default_execution::protected_default(&self.directory)?;
                 let ordinary_summary=IdentitySummary{identity:ordinary.identity,label:ordinary.label,authority:ordinary.authority,account_context:ordinary.account_context,available:ordinary.enabled,unavailable_reason:None};
-                let capability=match provision(&self.directory){Ok(record) if eligible=>{let available=facts(&self.binary,&record,&record.workspace_roots[0]).await.is_ok();ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary.clone(),IdentitySummary{identity:record.identity.identity,label:record.identity.label,authority:record.identity.authority,account_context:record.identity.account_context,available,unavailable_reason:(!available).then_some(ExecutionFailure::AccountUnavailable)}],can_review_administrator:available,can_transition:false}},_=>ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary],can_review_administrator:false,can_transition:false}};
+                let capability=match provision(&self.directory){Ok(record) if eligible=>{let available=facts(&self.binary,&record,&record.workspace_roots[0]).await.is_ok();ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary.clone(),IdentitySummary{identity:record.identity.identity,label:record.identity.label,authority:record.identity.authority,account_context:record.identity.account_context,available,unavailable_reason:(!available).then_some(ExecutionFailure::AccountUnavailable)}],can_review_administrator:available,can_transition:eligible}},_=>ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary],can_review_administrator:false,can_transition:eligible}};
                 Ok(serde_json::to_value(capability)?)
             }
             ExecutionOperation::PrepareTransition{review_id,command_id,session_id,source_incarnation,identity,stop_source}=>self.prepare_execution_transition(grant,review_id,command_id,session_id,source_incarnation,identity,stop_source).await,
@@ -146,6 +146,7 @@ impl Supervisor {
                 Ok(serde_json::to_value(database::execution_reviews::finish_launch(&self.directory,grant,approval.review_id,outcome).await?)?)
             }
             ExecutionOperation::Review{review_id}=>match database::execution_reviews::resolve(&self.directory,grant,review_id).await{Ok(saved)=>Ok(serde_json::to_value(saved)?),Err(_)=>self.observe_execution_transition(grant,review_id).await},
+            ExecutionOperation::ReconcileTransition{review_id,command_id,digest}=>self.reconcile_execution_transition(grant,review_id,command_id,&digest).await,
             ExecutionOperation::Control{control}=>Ok(serde_json::to_value(database::execution_reviews::control(&self.directory,grant,&control).await?)?),
             ExecutionOperation::Status{session_id}=>{
                 let registration=self.registration(session_id).await?;

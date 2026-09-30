@@ -662,7 +662,7 @@ pub async fn finish_launch(root:&Path,connection:&ConnectionGrant,review_id:Uuid
         schema(db)?;let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;authorize(&tx,&owner)?;
         let mut saved=load(&tx,review_id)?;
         ensure!(saved.review.facts.administrative_owner_id==owner.principal,"execution launch belongs to another owner");
-        if saved.receipt.outcome!=ExecutionOutcome::Launching{return Ok(saved);}
+        if !matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}){return Ok(saved);}
         if let ExecutionOutcome::Ready{observed}=&outcome{
             ensure!(observed.identity==saved.review.facts.identity&&observed.incarnation==saved.review.facts.incarnation&&observed.release_digest==saved.review.facts.release_digest,"execution observation mismatch");
         }

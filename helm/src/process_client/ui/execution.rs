@@ -59,6 +59,7 @@ impl App {
             }
             ["check"]=>ExecutionOperation::Review{review_id:view.execution_pending.context("No retained review")?[0]},
             ["review",id]=>ExecutionOperation::Review{review_id:id.parse()?},
+            ["reconcile"]=>{let saved=view.execution_review.as_ref().context("Read retained transition review first")?;ensure!(saved.review.facts.change==voyage_protocol::execution_identity::ExecutionChange::Transition&&matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}),"Only unresolved transition metadata can be reconciled");ExecutionOperation::ReconcileTransition{review_id:saved.review.review_id,command_id:Uuid::new_v4(),digest:saved.review.digest.clone()}},
             [action @ ("approve"|"cancel"|"revoke")]=>{
                 let saved=view.execution_review.as_ref().context("Read the exact prepared review first")?;
                 let approval=ReviewApproval{review_id:saved.review.review_id,command_id:saved.review.command_id,digest:saved.review.digest.clone()};
@@ -67,7 +68,7 @@ impl App {
                     view.execution_uncertain=true;ExecutionOperation::Approve{approval}
                 } else {ExecutionOperation::Control{control:ExecutionReviewControl{command_id:Uuid::new_v4(),review_id:approval.review_id,digest:approval.digest,action:if *action=="cancel"{ExecutionReviewControlAction::Cancel}else{ExecutionReviewControlAction::Revoke}}}}
             }
-            _=>anyhow::bail!("/execution identities | prepare ID REVISION | transition ID REVISION stop-source | check | approve | cancel | revoke | review REVIEW_UUID"),
+            _=>anyhow::bail!("/execution identities | prepare ID REVISION | transition ID REVISION stop-source | check | reconcile | approve | cancel | revoke | review REVIEW_UUID"),
         };
         let incarnation=view.process.incarnation;
         self.status="Execution request captured; retained IDs observe one exact operation.".into();
@@ -82,6 +83,9 @@ impl App {
                     let ids=[saved.review.review_id,saved.review.command_id,saved.review.facts.session_id];
                     if retain(target,ids).is_err(){view.execution_uncertain=true;view.error=Some("Execution receipt could not be retained; keep this view open.".into());return;}
                     view.execution_pending=Some(ids);view.execution_uncertain=false;
+                    if matches!(saved.receipt.outcome,ExecutionOutcome::Cancelled|ExecutionOutcome::Refused{..}){
+                        if forget(target).is_ok(){view.execution_pending=None;}
+                    }
                     view.panel=Some(super::safe(&format!("EXECUTION REVIEW\nState: {:?}\nVoyage: {}\nWorkspace: {}\nAccount: {}\nReview: {}\nExpires: {}\n\nAdministrator execution can alter host files, processes, credentials and Vessel. Namespaces/mounts still constrain actual authority; root can alter local receipts.\n\n/execution approve explicitly authorizes this exact voyage/account/workspace until revoked.\n/execution cancel cancels only pending review; /execution revoke fences authorization, without claiming cleanup.\n/execution check observes the retained receipt. Ready is a launch observation, not a completed run. /use VOYAGE_UUID opens the new voyage.\nCurrent draft remains in its original voyage.",saved.receipt.outcome,saved.review.facts.session_id,saved.review.facts.workspace.display(),saved.review.facts.account.account_id,saved.review.review_id,saved.review.expires_at_ms)));
                     view.execution_review=Some(saved);
                 } else {view.panel=Some(super::safe(&format!("Execution observation\n{}\n\n/execution identities lists configured references. Administrator prepare requires the exact ID/revision, explicit host provisioning and separately enrolled fresh owner connection.\nUnknown/last launch evidence does not mean the process is live.",serde_json::to_string_pretty(&value).unwrap_or_default())));}
@@ -90,3 +94,12 @@ impl App {
         }
     }
 }
+
+#[cfg(unix)]
+fn forget(target:Target)->Result<()>{
+    let root=crate::process_client::cli::default_directory().with_file_name("helm-execution-reviews");
+    crate::process_client::local::check_private_directory(&root)?;
+    std::fs::remove_file(root.join(format!("{}-{}.json",target.route.id,target.session)))?;std::fs::File::open(root)?.sync_all()?;Ok(())
+}
+#[cfg(not(unix))]
+fn forget(_target:Target)->Result<()>{Ok(())}

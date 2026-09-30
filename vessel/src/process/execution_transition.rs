@@ -122,13 +122,47 @@ impl Supervisor {
         let outcome=match transition {Ok(observed)=>ExecutionOutcome::Ready{observed},Err(_)=>ExecutionOutcome::Unconfirmed{cleanup_obligations:vec![intent.source.session_id]}};
         Ok(serde_json::to_value(database::execution_reviews::finish_launch(&self.directory,grant,approval.review_id,outcome).await?)?)
     }
+    pub(super) async fn reconcile_execution_transition(&self,grant:&ConnectionGrant,review_id:Uuid,command_id:Uuid,review_digest:&str)->Result<serde_json::Value>{
+        ensure!(!command_id.is_nil(),"reconciliation command identity missing");
+        database::execution_reviews::authority(&self.directory,grant).await?;
+        let intent:Intent=read(&self.directory,review_id,"intent")?;
+        let saved=database::execution_reviews::resolve(&self.directory,grant,review_id).await?;
+        ensure!(intent.principal==grant.principal_id&&saved.review.digest==review_digest&&command_id!=intent.command_id,"reconciliation review conflict");
+        ensure!(matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}),"review has no unresolved transition");
+        write(&self.directory,command_id,"reconciliation",&(review_id,review_digest,grant.principal_id))?;
+        let lock=self.bound_creation_lock(intent.source.session_id).await?;let _guard=lock.lock().await;
+        let source:RetiredJournalFacts=read(&self.directory,review_id,"source")?;
+        self.commit_execution_transition_mode(grant,&intent,&source,&saved,false).await
+    }
     async fn commit_execution_transition(&self,grant:&ConnectionGrant,intent:&Intent,source:&RetiredJournalFacts,approved:&SavedExecutionReview)->Result<ObservedExecution>{
+        let value=self.commit_execution_transition_mode(grant,intent,source,approved,true).await?;
+        Ok(serde_json::from_value(value)? )
+    }
+    async fn commit_execution_transition_mode(&self,grant:&ConnectionGrant,intent:&Intent,source:&RetiredJournalFacts,approved:&SavedExecutionReview,launch:bool)->Result<serde_json::Value>{
         let session=intent.source.session_id;let old=intent.source.incarnation;
-        let runtime=super::runtime_storage::bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid)?;
+        ensure!(super::guardian::cleanup_observed(&self.directory,session,old).unwrap_or(false)||super::migration::dormant(&self.directory,session,old).unwrap_or(false),"source retirement remains unconfirmed");
+        if let Ok(current)=self.registration(session).await{
+            if current.incarnation==intent.target_incarnation{
+                let info=super::bound_lifecycle::inspect(&self.directory,&current).await;
+                if info.state==ProcessState::Live{
+                    let observed=super::admin_execution::observation(&self.directory,session,current.incarnation)?;
+                    return Ok(serde_json::to_value(database::execution_reviews::finish_launch(&self.directory,grant,intent.review_id,ExecutionOutcome::Ready{observed}).await?)?);
+                }
+                return Ok(serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":current.incarnation,"process_state":info.state,"phase":"admission_retained"},"message":"Retained admission observed. Reconciliation never repeats guardian launch."}));
+            }
+            let mut immutable=current.clone();immutable.state=intent.source.state;ensure!(immutable==intent.source,"source registration changed during reconciliation");
+        }
+        self.transition_facts(grant,intent,source).await?;
+        let runtime=super::runtime_storage::planned_bound_directory(&self.directory,session)?;
+        let receipt=match read::<PreparedTransitionReceipt>(&self.directory,intent.review_id,"prepared"){
+        Ok(receipt)=>receipt,
+        Err(_)=>{
+        super::runtime_storage::bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid)?;
         let prepared=helper(&self.binary,&intent.source_identity,None,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::SourceFreeze{directory:runtime.clone(),command_id:phase_command(intent.review_id,"freeze"),transition_id:intent.review_id,target_incarnation:intent.target_incarnation,expected:source.clone(),target_uid:intent.target.uid,target_gid:intent.target.gid,target_config_digest:intent.target_facts.config_digest.clone(),review_digest:approved.review.digest.clone()}}).await?;
-        let TransitionResponse::Prepared{receipt}=prepared else{anyhow::bail!("source transition remains unconfirmed")};write(&self.directory,intent.review_id,"prepared",&receipt)?;
-        let permitted=database::execution_reviews::authority(&self.directory,grant).await.is_ok()&&database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await.is_ok_and(|saved|saved.receipt.outcome==ExecutionOutcome::Launching);
+        let TransitionResponse::Prepared{receipt}=prepared else{anyhow::bail!("source transition remains unconfirmed")};write(&self.directory,intent.review_id,"prepared",&receipt)?;receipt}};
+        let permitted=database::execution_reviews::authority(&self.directory,grant).await.is_ok()&&database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await.is_ok_and(|saved|matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}));
         if !permitted {
+            ensure!(read::<(u32,u32,PreparedTransitionReceipt)>(&self.directory,intent.review_id,"ownership-intent").is_err(),"authority fenced after ownership handoff; retained target requires operator reconciliation");
             // No target ownership, catalogue binding or guardian admission has
             // been published at this point. Abort metadata only; paused/unknown
             // work and the original account configuration remain retained.
@@ -137,11 +171,14 @@ impl Supervisor {
             write(&self.directory,intent.review_id,"aborted",&aborted)?;
             anyhow::bail!("transition authority was fenced; source retirement remains retained");
         }
+        let inventory=match read::<Vec<(u64,u64,u32,u64)>>(&self.directory,intent.review_id,"ownership-inventory"){Ok(inventory)=>inventory,Err(_)=>{let inventory=super::runtime_storage::transfer_inventory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid)?;write(&self.directory,intent.review_id,"ownership-inventory",&inventory)?;inventory}};
         write(&self.directory,intent.review_id,"ownership-intent",&(intent.source_identity.uid,intent.target.uid,&receipt))?;
-        super::runtime_storage::transfer_bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid,intent.target.uid,intent.target.gid)?;
+        if read::<(u32,u32)>(&self.directory,intent.review_id,"ownership-complete").is_err(){super::runtime_storage::transfer_bound_directory(&self.directory,session,intent.source_identity.uid,intent.source_identity.gid,intent.target.uid,intent.target.gid,&inventory)?;}
         write(&self.directory,intent.review_id,"ownership-complete",&(intent.target.uid,intent.target.gid))?;
         super::launch::validate_identity(&intent.target)?;
         let namespace=if intent.target.authority==AuthorityClass::Administrator{let provision=super::admin_execution::provision(&self.directory)?;Some((provision.data_directory,provision.config_directory))}else{None};
+        super::runtime_storage::bound_directory(&self.directory,session,intent.target.uid,intent.target.gid)?;
+        ensure!(database::execution_reviews::resolve(&self.directory,grant,intent.review_id).await.is_ok_and(|saved|matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..})),"transition authority fenced before target configuration commit");
         let committed=helper(&self.binary,&intent.target,namespace,TransitionRequest{schema:SCHEMA,session_id:session,source_incarnation:old,operation:TransitionOperation::TargetCommit{directory:runtime,command_id:phase_command(intent.review_id,"commit"),expected:receipt,target_config_path:intent.target_config.clone()}}).await?;
         let TransitionResponse::Committed{receipt}=committed else{anyhow::bail!("target configuration commit remains unconfirmed")};write(&self.directory,intent.review_id,"committed",&receipt)?;
         ensure!(receipt.config_digest==intent.target_facts.config_digest&&receipt.history_digest==source.history_digest,"target handoff receipt changed");
@@ -151,10 +188,36 @@ impl Supervisor {
         write(&self.directory,intent.target_incarnation,"retained-config",&(session,intent.target_facts.config_digest.clone()))?;
         let binding=ExecutionBinding{session_id:session,incarnation:intent.target_incarnation,identity:intent.target.identity.clone(),account_context:intent.target.account_context.clone(),peer_uids:ProcessPeerUids{supervisor:0,runtime:intent.target.uid},administrator_grant_id:approved.administrator_grant_id,host_identity_digest:approved.review.facts.host_identity_digest.clone(),policy_digest:approved.review.facts.policy_digest.clone()};
         let mut next=intent.source.clone();next.incarnation=intent.target_incarnation;next.command_id=intent.command_id;next.restart_from=Some(old);next.config_path=Some(intent.target_config.clone());next.executable=Some(self.binary.clone());next.peer_uids=Some(binding.peer_uids.clone());next.state=ProcessState::Starting;next.token=format!("{}{}",Uuid::new_v4().simple(),Uuid::new_v4().simple());
-        database::transition_bound(&self.directory,&intent.source,&next,&binding,serde_json::to_vec(&VesselCommand::Execution{operation:ExecutionOperation::Approve{approval:ReviewApproval{review_id:intent.review_id,command_id:intent.command_id,digest:approved.review.digest.clone()}}})?).await?;
+        if let Ok(current)=self.registration(session).await{
+            if current.incarnation==intent.target_incarnation{
+                let info=super::bound_lifecycle::inspect(&self.directory,&current).await;
+                return Ok(serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":current.incarnation,"process_state":info.state,"phase":"admission_retained"},"message":"Retained admission observed. Reconciliation never repeats guardian launch."}));
+            }
+            let mut immutable=current.clone();immutable.state=intent.source.state;ensure!(immutable==intent.source,"source registration changed during reconciliation");
+        }
+        write(&self.directory,intent.target_incarnation,"dormant",&(session,intent.review_id))?;
+        if !launch{next.state=ProcessState::Stopped;}
+        let previous=self.registration(session).await?;
+        let mut immutable=previous.clone();immutable.state=intent.source.state;ensure!(immutable==intent.source,"source admission changed during handoff");
+        database::transition_bound(&self.directory,&previous,&next,&binding,serde_json::to_vec(&VesselCommand::Execution{operation:ExecutionOperation::Approve{approval:ReviewApproval{review_id:intent.review_id,command_id:intent.command_id,digest:approved.review.digest.clone()}}})?).await?;
+        if !launch{return Ok(serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":next.incarnation,"process_state":"stopped","phase":"handoff_committed"},"message":"Exact handoff metadata committed. No process launched; explicitly restart this voyage to launch the reviewed target."}));}
+        write(&self.directory,intent.target_incarnation,"launch-intent",&(session,intent.review_id))?;
         self.spawn_bound_guardian(&next).await?;
         let info=tokio::time::timeout(Duration::from_secs(10),async{loop{let info=super::bound_lifecycle::inspect(&self.directory,&next).await;if info.state==ProcessState::Live{return info;}tokio::time::sleep(Duration::from_millis(100)).await;}}).await?;
         ensure!(info.incarnation==intent.target_incarnation,"transition process incarnation changed");
-        super::admin_execution::observation(&self.directory,session,intent.target_incarnation)
+        Ok(serde_json::to_value(super::admin_execution::observation(&self.directory,session,intent.target_incarnation)?)?)
     }
+}
+
+/// Protected proof that a committed target incarnation was never launched.
+/// Any retained launch intent fences this proof even without a child receipt.
+pub(super) fn dormant(root:&Path,session:Uuid,incarnation:Uuid)->Result<bool>{
+    let admission=RootDirectory::open(root)?.child("guardians".as_ref()).and_then(|directory|directory.child(session.to_string().as_ref())).and_then(|directory|directory.child(incarnation.to_string().as_ref())).and_then(|directory|directory.read("admission.json".as_ref(),4096));
+    match admission{Ok(_)=>return Ok(false),Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::NotFound)=>{},Err(error)=>return Err(error)}
+    let marker=read::<(Uuid,Uuid)>(root,incarnation,"dormant")?;
+    ensure!(marker.0==session,"transition dormant identity mismatch");
+    match read::<(Uuid,Uuid)>(root,incarnation,"launch-intent"){Ok(_)=>Ok(false),Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::NotFound)=>Ok(true),Err(error)=>Err(error)}
+}
+pub(super) fn carry_retained_digest(root:&Path,previous:&ProcessRegistration,next:&ProcessRegistration)->Result<()> {
+    if dormant(root,previous.session_id,previous.incarnation).unwrap_or(false){if let Some(digest)=retained_digest(root,previous)?{write(root,next.incarnation,"retained-config",&(next.session_id,digest))?;}}Ok(())
 }

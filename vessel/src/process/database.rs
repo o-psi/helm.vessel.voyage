@@ -1090,7 +1090,7 @@ pub async fn transition_bound(root:&Path,previous:&ProcessRegistration,next:&Pro
     blocking(root,move|db|{
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current:String=tx.query_row("SELECT registration FROM voyages WHERE session_id=?1",[previous.session_id.to_string()],|row|row.get(0))?;
-        ensure!(current==serde_json::to_string(&previous)?&&next.session_id==previous.session_id&&next.incarnation!=previous.incarnation&&next.restart_from==Some(previous.incarnation)&&next.peer_uids.as_ref()==Some(&binding.peer_uids)&&binding.incarnation==next.incarnation&&binding.session_id==next.session_id&&next.state==voyage_protocol::process::ProcessState::Starting,"execution transition admission changed");
+        ensure!(current==serde_json::to_string(&previous)?&&next.session_id==previous.session_id&&next.incarnation!=previous.incarnation&&next.restart_from==Some(previous.incarnation)&&next.peer_uids.as_ref()==Some(&binding.peer_uids)&&binding.incarnation==next.incarnation&&binding.session_id==next.session_id&&matches!(next.state,voyage_protocol::process::ProcessState::Starting|voyage_protocol::process::ProcessState::Stopped),"execution transition admission changed");
         ensure!(!record_tx(&tx,"commands",next.command_id,&bytes,true)?,"execution transition already admitted");
         let old:String=tx.query_row("SELECT record FROM execution_bindings WHERE session_id=?1",[previous.session_id.to_string()],|row|row.get(0))?;
         let old:ExecutionBinding=serde_json::from_str(&old)?;ensure!(old.incarnation==previous.incarnation,"source execution binding changed");

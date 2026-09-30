@@ -962,7 +962,25 @@ fenced before ownership publication uses the private SourceAbort receipt, which
 keeps interrupted runs and paused goals rather than continuing them.
 
 This source has not been compiled or tested under the current implementation-first
-release direction. Transition capability remains unavailable until partial
-ownership-transfer recovery and phase reconciliation are completed, followed by
-the coordinated final verification. A controller crash after a directory fence
-must retain the obligation; it does not establish target launch or source recovery.
+release direction. Transition implementation now includes explicit metadata reconciliation below;
+the coordinated final verification is still required. A controller crash after a
+directory fence retains the obligation and does not establish target launch.
+
+
+The controller persists the exact bounded inode/device/mode/link inventory before
+ownership fencing. An explicit `reconcile_transition` revalidates that inventory
+and completes only the pinned source/target/root ownership mixture; new entries,
+links, unsafe modes, devices and inode replacements refuse. It never restores
+private target configuration to the source identity. TargetCommit duplicate
+receipts resolve through the target UID. Existing admissions are observed without
+repeating guardian launch. Before any new guardian spawn the immutable launch
+intent removes never-launched evidence, even if the child response is lost.
+
+When metadata reconciliation reaches a target not previously admitted, it creates
+a stopped target binding and protected dormant marker, with no guardian launch.
+A human can explicitly restart it. Dormant evidence rejects a guardian admission
+or launch intent; it carries the first-launch retained config pin into that
+explicit restart. Ordinary settings changed after a live launch remain eligible
+for ordinary later restart. TUI `/execution reconcile` and Web's exact handoff
+reconciliation action retain unknown outcomes and never automatically approve or
+relaunch. Source-only status still applies to this entire increment.

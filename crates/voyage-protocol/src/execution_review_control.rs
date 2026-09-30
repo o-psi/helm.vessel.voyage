@@ -67,6 +67,8 @@ pub enum ExecutionOperation {
     Approve { approval:super::execution_identity::ReviewApproval },
     Review { review_id:Uuid },
     Control { control:ExecutionReviewControl },
+    /// Explicitly reconcile retained metadata; never repeat uncertain launch.
+    ReconcileTransition { review_id:Uuid, command_id:Uuid, digest:String },
     Status { session_id:Uuid },
 }
 #[derive(Clone,Debug,Serialize,Deserialize)]
