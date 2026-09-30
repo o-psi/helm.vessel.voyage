@@ -4,6 +4,7 @@ This opt-in local adapter evaluates the real **Helm → Vessel → independent
 Voyage** path. Harbor supplies isolated task environments and independent
 verifiers; it does not replace Voyage's agent/tool loop. The initial experiment
 is tracked in [#397](https://github.com/o-psi/helm.vessel.voyage/issues/397).
+The completed [2026-09-30 baseline](baseline-2026-09-30.md) includes all 30 trials.
 This is new explicitly requested evaluation work, not restoration of the retired
 broad evaluation runner. GitHub automation remains build-only.
 
