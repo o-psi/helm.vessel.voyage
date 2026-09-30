@@ -116,7 +116,8 @@ constraints explicitly rather than claiming enforcement from metadata alone.
 configuration and supervisor state inside the disposable container, creates an
 exact session, submits its task through Helm, exports public history, inspects
 canonical completion and verifies matching `stopped.json` cleanup evidence.
-On an agent deadline, the adapter explicitly stops the exact Voyage incarnation
+The adapter also refuses grading after normal exit unless runtime cleanup is
+observed. On an agent deadline, it explicitly stops the exact Voyage incarnation
 and observes matching cleanup before propagating the timeout to Harbor. If cleanup
 cannot be observed, it fails outside the recoverable agent-exit classes so shared
 verification is prohibited. A forced-stall offline check verifies that cancellation
@@ -145,6 +146,13 @@ publish only inspected, sanitized summaries. Follow [quality](../../docs/quality
 and [project instructions](../../AGENTS.md) for in-scope local verification and
 delivery. Source/test changes that trigger workspace coverage still require it;
 this adapter does not make historical Rust coverage a new measurement.
+
+The tested runtime cleans up run-owned shell descendants at run finalization.
+Tasks that require persistent services after the agent ends can therefore fail
+verification even after the model demonstrated working services. An offline
+HTTP-service control observed the service dead after canonical completion and
+before explicit adapter stop. Preserve this boundary; do not disable cleanup to
+inflate scores. Treat service-dependent task outcomes as a compatibility finding.
 
 The first matrix exposed and retained the timeout-detach flaw; it was cancelled
 and marked invalid. The corrected matrix uses a fresh adapter snapshot and fresh

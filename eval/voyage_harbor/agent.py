@@ -5,7 +5,7 @@ import asyncio
 import os
 from pathlib import Path
 import tempfile
-from harbor.agents.installed.base import BaseInstalledAgent
+from harbor.agents.installed.base import BaseInstalledAgent, NonZeroAgentExitCodeError
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
@@ -99,9 +99,19 @@ class VoyageAgent(BaseInstalledAgent):
             await asyncio.shield(shutdown())
             self.populate_context_post_run(context)
             raise
+        except NonZeroAgentExitCodeError:
+            self.require_observed_cleanup()
+            raise
+        self.require_observed_cleanup()
         if result.return_code:
             raise RuntimeError("Voyage trial failed; inspect sanitized agent summary")
         self.populate_context_post_run(context)
+
+    def require_observed_cleanup(self) -> None:
+        path = self.logs_dir / "voyage-summary.json"
+        summary = json.loads(path.read_text()) if path.exists() else {}
+        if summary.get("cleanup") != "observed-runtime-cleanup":
+            raise RuntimeError("Voyage cleanup unresolved; verifier must not run")
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         path = self.logs_dir / "voyage-summary.json"

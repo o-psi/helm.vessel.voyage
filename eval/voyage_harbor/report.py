@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+import statistics
 
 
 def collect(experiment):
@@ -29,6 +30,9 @@ def collect(experiment):
                 "runtime_cleanup": summary.get("cleanup", "unknown"),
                 "elapsed_seconds": summary.get("elapsed_seconds"),
                 "usage": summary.get("usage", {}),
+                "observed_completed_requests": summary.get(
+                    "observed_completed_requests"
+                ),
                 "trial_id": trial.get("id"),
             }
         )
@@ -44,6 +48,50 @@ def collect(experiment):
             "cleanup_observed": sum(
                 r["runtime_cleanup"] == "observed-runtime-cleanup" for r in selected
             ),
+            "canonical_completed": sum(
+                r["canonical_completed"] is True for r in selected
+            ),
+            "solved_and_canonical_completed": sum(
+                r["reward"] == 1 and r["canonical_completed"] is True for r in selected
+            ),
+            "median_agent_seconds": statistics.median(
+                r["elapsed_seconds"]
+                for r in selected
+                if r["elapsed_seconds"] is not None
+            )
+            if any(r["elapsed_seconds"] is not None for r in selected)
+            else None,
+            "observed_usage": {
+                key: sum(
+                    r["usage"][key]
+                    for r in selected
+                    if type(r["usage"].get(key)) is int
+                )
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_input_tokens",
+                    "reasoning_output_tokens",
+                )
+            },
+            "trials_with_unknown_usage": sum(
+                any(
+                    type(r["usage"].get(key)) is not int
+                    for key in (
+                        "input_tokens",
+                        "output_tokens",
+                        "cached_input_tokens",
+                        "reasoning_output_tokens",
+                    )
+                )
+                for r in selected
+            ),
+            "observed_completed_requests": sum(
+                r["observed_completed_requests"] for r in selected
+            )
+            if selected
+            and all(type(r["observed_completed_requests"]) is int for r in selected)
+            else None,
         }
     return {
         "manifest": manifest,
