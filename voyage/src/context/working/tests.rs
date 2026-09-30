@@ -157,3 +157,89 @@ fn unknown_pressure_preserves_large_early_evidence_and_obligations() {
         serde_json::to_value(&canonical).unwrap()
     );
 }
+
+fn model_call_history() -> (Vec<Message>, crate::model::ToolCall) {
+    let mut canonical = history(30000);
+    let call = crate::model::ToolCall {
+        id: "compact-call".into(),
+        name: "compact_context".into(),
+        arguments: serde_json::json!({"retain_recent":0,"carry_forward":"retain unresolved obligation"}),
+    };
+    let mut assistant = Message::new(Role::Assistant, "");
+    assistant.tool_calls.push(call.clone());
+    canonical.push(assistant);
+    (canonical, call)
+}
+#[test]
+fn model_compaction_receipt_is_exact_persistent_and_can_reconcile_only_its_internal_result() {
+    let (canonical, call) = model_call_history();
+    let source = serde_json::to_value(&canonical).unwrap();
+    let (context, receipt) = WorkingContext::default()
+        .request_model_compaction(
+            &canonical,
+            &call,
+            uuid::Uuid::new_v4(),
+            0,
+            Some("retain unresolved obligation".into()),
+        )
+        .unwrap();
+    assert_eq!(receipt["state"], "applied");
+    assert_eq!(serde_json::to_value(&canonical).unwrap(), source);
+    let restored: WorkingContext =
+        serde_json::from_value(serde_json::to_value(&context).unwrap()).unwrap();
+    let (exact, again) = restored
+        .request_model_compaction(
+            &canonical,
+            &call,
+            uuid::Uuid::new_v4(),
+            0,
+            Some("retain unresolved obligation".into()),
+        )
+        .unwrap();
+    assert_eq!(receipt, again);
+    assert_eq!(context.generation, exact.generation);
+    let mut projected = canonical.clone();
+    assert_eq!(restored.fill_model_receipts(&mut projected), 1);
+    assert_eq!(restored.fill_model_receipts(&mut projected), 0);
+    assert_eq!(
+        projected.last().unwrap().tool_call_id.as_deref(),
+        Some("compact-call")
+    );
+    assert_eq!(projected.last().unwrap().content, receipt.to_string());
+    assert_eq!(serde_json::to_value(&canonical).unwrap(), source);
+    assert!(
+        restored
+            .project(&canonical)
+            .unwrap()
+            .iter()
+            .any(|m| m.content.contains("Model-authored carry-forward data")
+                && m.content.contains("retain unresolved obligation"))
+    );
+}
+#[test]
+fn model_notes_reject_malformed_data_and_canonical_anchor_mutation() {
+    let (canonical, call) = model_call_history();
+    assert!(
+        WorkingContext::default()
+            .request_model_compaction(
+                &canonical,
+                &call,
+                uuid::Uuid::new_v4(),
+                0,
+                Some("bad\0notes".into())
+            )
+            .is_err()
+    );
+    let (context, _) = WorkingContext::default()
+        .request_model_compaction(
+            &canonical,
+            &call,
+            uuid::Uuid::new_v4(),
+            0,
+            Some("notes".into()),
+        )
+        .unwrap();
+    let mut changed = canonical;
+    changed.last_mut().unwrap().tool_calls[0].arguments = serde_json::json!({"retain_recent":99});
+    assert!(context.validate(&changed).is_err());
+}

@@ -176,6 +176,28 @@ pub(super) fn apply(view: &mut View, event: &Value) -> bool {
             let Some(object) = payload.as_object() else {
                 return false;
             };
+            let context_observation = if let Some(value) = object.get("context_observation") {
+                let Ok(value) = serde_json::from_value(value.clone()) else {
+                    return false;
+                };
+                Some(value)
+            } else {
+                None
+            };
+            let context_status = if let Some(status) = object.get("context_status") {
+                if !status.is_null() && !status.is_string() {
+                    return false;
+                }
+                Some(status.as_str().map(str::to_owned))
+            } else {
+                None
+            };
+            if let Some(value) = context_observation {
+                snapshot.context_observation = value;
+            }
+            if let Some(value) = context_status {
+                snapshot.context_status = value;
+            }
             if let Some(total) = object.get("total_messages").and_then(Value::as_u64) {
                 let Ok(total) = usize::try_from(total) else {
                     return false;
@@ -340,5 +362,29 @@ mod tests {
             &json!({"cursor":cursor,"revision":revision,"kind":"text_delta","payload":{"offset":0,"text":"wrong run"}})
         ));
         assert_eq!(view.snapshot.as_ref().unwrap().observation_cursor, before);
+    }
+    #[test]
+    fn context_status_event_applies_without_snapshot_and_malformed_status_does_not_mutate() {
+        let (_fixture, mut app, target) = coverage_support::app();
+        let view = app.views.get_mut(&target).unwrap();
+        let old = view.snapshot.as_ref().unwrap();
+        let cursor = old.observation_cursor.unwrap_or(0) + 1;
+        let revision = old.revision + 1;
+        assert!(apply(
+            view,
+            &json!({"cursor":cursor,"revision":revision,"kind":"session","payload":{"context_status":"Last prepared input: unknown tokens","context_observation":null}})
+        ));
+        assert_eq!(
+            view.snapshot.as_ref().unwrap().context_status.as_deref(),
+            Some("Last prepared input: unknown tokens")
+        );
+        assert!(!apply(
+            view,
+            &json!({"cursor":cursor+1,"revision":revision+1,"kind":"session","payload":{"context_status":42,"context_observation":null}})
+        ));
+        assert_eq!(
+            view.snapshot.as_ref().unwrap().context_status.as_deref(),
+            Some("Last prepared input: unknown tokens")
+        );
     }
 }

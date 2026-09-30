@@ -613,3 +613,147 @@ async fn steering_during_count_invalidates_the_prepared_request_before_dispatch(
     }));
     assert_eq!(checkpoint.observations.lock().unwrap().len(), 1);
 }
+
+struct ContextToolProvider {
+    step: AtomicUsize,
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+#[async_trait]
+impl Provider for ContextToolProvider {
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        assert!(request.tools.iter().any(|t| t.name == "context_status"));
+        assert!(request.tools.iter().any(|t| t.name == "compact_context"));
+        self.requests.lock().unwrap().push(request.clone());
+        let step = self.step.fetch_add(1, Ordering::SeqCst);
+        let mut message = Message::new(Role::Assistant, "");
+        let (id, name, args) = match step {
+            0 => ("effect", "fixture_effect", serde_json::json!({})),
+            1 => (
+                "compact",
+                "compact_context",
+                serde_json::json!({"retain_recent":0,"carry_forward":"Unresolved obligation: verify before publishing"}),
+            ),
+            2 => {
+                let result = request
+                    .messages
+                    .iter()
+                    .find(|m| m.tool_call_id.as_deref() == Some("compact"))
+                    .unwrap();
+                let receipt: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+                assert_eq!(receipt["state"], "applied");
+                assert!(receipt["generation"].as_u64().unwrap() > 0);
+                assert!(receipt["before_input_tokens"].is_null());
+                assert!(
+                    request
+                        .messages
+                        .iter()
+                        .any(|m| m.role == Role::User && m.content == "Keep my exact task")
+                );
+                assert!(
+                    request
+                        .messages
+                        .iter()
+                        .any(|m| m.content.contains("Model-authored carry-forward data")
+                            && m.content.contains("Unresolved obligation"))
+                );
+                (
+                    "history",
+                    "context_status",
+                    serde_json::json!({"action":"read_history","message_index":2,"offset":12000,"limit":128}),
+                )
+            }
+            3 => {
+                let read = request
+                    .messages
+                    .iter()
+                    .find(|m| m.tool_call_id.as_deref() == Some("history"))
+                    .unwrap();
+                let value: serde_json::Value = serde_json::from_str(&read.content).unwrap();
+                assert!(value["text"].as_str().unwrap().contains("resultresult"));
+                (
+                    "noop",
+                    "compact_context",
+                    serde_json::json!({"retain_recent":1024}),
+                )
+            }
+            4 => {
+                let noop = request
+                    .messages
+                    .iter()
+                    .find(|m| m.tool_call_id.as_deref() == Some("noop"))
+                    .unwrap();
+                let value: serde_json::Value = serde_json::from_str(&noop.content).unwrap();
+                assert_eq!(value["state"], "no_op");
+                (
+                    "status",
+                    "context_status",
+                    serde_json::json!({"action":"status"}),
+                )
+            }
+            5 => {
+                let status = request
+                    .messages
+                    .iter()
+                    .find(|m| m.tool_call_id.as_deref() == Some("status"))
+                    .unwrap();
+                let value: serde_json::Value = serde_json::from_str(&status.content).unwrap();
+                assert!(value["current_remaining_tokens"].is_null());
+                assert_eq!(value["model_notes"], 1);
+                assert!(value["last_prepared_request"]["input_tokens"].is_null());
+                message.content =
+                    "Finished with retrieved exact evidence and retained obligation".into();
+                return Ok(ModelResponse {
+                    message,
+                    usage: Usage::default(),
+                    service_tier: None,
+                });
+            }
+            _ => panic!("unexpected context loop"),
+        };
+        message.tool_calls.push(ToolCall {
+            id: id.into(),
+            name: name.into(),
+            arguments: args,
+        });
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn model_context_tools_persist_receipts_and_retrieve_canonical_evidence_without_replay() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, effects, checkpoint) = fixture(root.path(), false);
+    agent.provider = Box::new(ContextToolProvider {
+        step: AtomicUsize::new(0),
+        requests: requests.clone(),
+    });
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(requests.lock().unwrap().len(), 6);
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("effect"))
+            .unwrap()
+            .content
+            .len()
+            > 45000
+    );
+    let saved = checkpoint.working.lock().unwrap().clone();
+    assert_eq!(saved.model_note_count(), 1);
+    saved.validate(&outcome.messages).unwrap();
+}

@@ -1,5 +1,8 @@
+mod context;
 pub(crate) mod goal;
 mod host_browser;
+pub(crate) use context::ContextTool;
+pub use context::ContextToolKind;
 pub use host_browser::HostBrowserTool;
 pub(crate) mod action_schema;
 pub(crate) mod evidence;
@@ -408,6 +411,9 @@ impl ToolContext {
 
 #[async_trait]
 pub trait Tool: Send + Sync {
+    fn context_kind(&self) -> Option<ContextToolKind> {
+        None
+    }
     fn definition(&self) -> ToolDefinition;
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError>;
     /// Ordered result contract; ordinary text tools retain their existing implementation.
@@ -617,6 +623,50 @@ impl ToolRegistry {
         self.contracts.insert(name.clone(), contract);
         self.tools.insert(name, tool);
         Ok(())
+    }
+    pub(crate) fn context_kind(&self, name: &str) -> Option<ContextToolKind> {
+        self.tools.get(name).and_then(|tool| tool.context_kind())
+    }
+    pub(crate) fn validate_context_call(
+        &self,
+        name: &str,
+        arguments: &Value,
+        context: &ToolContext,
+    ) -> Result<(), ToolError> {
+        self.contracts
+            .get(name)
+            .ok_or_else(|| ToolError::Failed("context tool unavailable".into()))?
+            .input
+            .validate(arguments)?;
+        context
+            .policy
+            .for_run_dispatch(context.execution_id)
+            .check_execution_authority()
+            .map_err(|_| ToolError::Denied("foreground execution authority unavailable".into()))?;
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
+        Ok(())
+    }
+    pub(crate) fn bound_context_report(
+        &self,
+        mut report: ToolReport,
+        context: &ToolContext,
+    ) -> ToolReport {
+        if output::redact(&mut report.output, &context.redactor).is_err() {
+            report.limit(
+                voyage_protocol::tool_result::IncompleteReason::Withheld,
+                "Context output withheld by confidentiality checks",
+            );
+        }
+        if report.output.text_fallback().len() > context.max_output_bytes {
+            report.limit(
+                voyage_protocol::tool_result::IncompleteReason::OutputLimit,
+                "Context output exceeds the configured budget; inspect smaller pages",
+            );
+        }
+        report.synchronize();
+        report
     }
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.contracts
@@ -902,7 +952,8 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
             matches!(action, Some("inspect" | "screenshot"))
                 || (action == Some("tabs") && arguments["operation"] == "list")
         }
-        "questions" | "read_file" | "list_directory" | "search_files" | "result" => true,
+        "context_status" | "compact_context" | "questions" | "read_file" | "list_directory"
+        | "search_files" | "result" => true,
         "request_filesystem_root" => arguments["permission"] == "read",
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),

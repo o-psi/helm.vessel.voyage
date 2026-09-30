@@ -460,6 +460,16 @@ fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -
                 .extend(presentation::wrap(Text::from(notice), width).lines);
         }
     }
+    if !reviewing
+        && !overlay
+        && let Some(context) = view
+            .and_then(|view| view.snapshot.as_ref())
+            .and_then(|snapshot| snapshot.context_status.as_ref())
+    {
+        text.lines.extend(
+            presentation::wrap(Text::from(Line::styled(safe(context), muted())), width).lines,
+        );
+    }
     text
 }
 
@@ -829,4 +839,29 @@ fn draw_discovery_help(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ),
         area,
     );
+}
+
+#[cfg(test)]
+mod context_caption_tests {
+    use super::*;
+    #[test]
+    fn context_caption_keeps_unknown_usage_visible_in_native_footer() {
+        let (_fixture, mut app, target) = crate::process_client::ui::coverage_support::app();
+        app.selected = Some(target);
+        app.views
+            .get_mut(&target)
+            .unwrap()
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .context_status = Some("Last prepared input: unknown tokens · window: unknown".into());
+        let rendered = footer(&app, 120, false, false, "");
+        let text = rendered
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+            .collect::<String>();
+        assert!(text.contains("Last prepared input: unknown tokens"));
+        assert!(!text.contains('%'));
+    }
 }

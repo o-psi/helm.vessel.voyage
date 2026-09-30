@@ -4,6 +4,9 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod model_requests;
+use model_requests::{ModelNote, ModelReceipt};
+
 const EXCERPT_LIMITS: [usize; 3] = [4096, 1024, 256];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -14,6 +17,10 @@ pub struct WorkingContext {
     pub reason: Option<CompactionReason>,
     #[serde(default)]
     entries: Vec<Reduction>,
+    #[serde(default)]
+    model_notes: Vec<ModelNote>,
+    #[serde(default)]
+    model_receipts: Vec<ModelReceipt>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -35,6 +42,7 @@ struct Reduction {
 
 impl WorkingContext {
     pub fn validate(&self, canonical: &[Message]) -> Result<()> {
+        self.validate_model_state(canonical)?;
         let messages: Vec<_> = canonical
             .iter()
             .filter(|m| m.role != Role::System)
@@ -104,7 +112,10 @@ impl WorkingContext {
     pub fn project(&self, canonical: &[Message]) -> Result<Vec<Message>> {
         self.validate(canonical)?;
         if self.entries.is_empty() {
-            return Ok(canonical.to_vec());
+            let mut output = canonical.to_vec();
+            self.fill_model_receipts(&mut output);
+            self.project_model_notes(&mut output);
+            return Ok(output);
         }
         let mut output = Vec::new();
         let mut ordinal = 0;
@@ -131,6 +142,8 @@ impl WorkingContext {
         for message in &mut output {
             message.provider_state = None;
         }
+        self.fill_model_receipts(&mut output);
+        self.project_model_notes(&mut output);
         Ok(output)
     }
 

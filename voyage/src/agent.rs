@@ -5,6 +5,7 @@ mod retry;
 #[cfg(test)]
 mod retry_tests;
 
+mod context_tools;
 mod tool_replay;
 pub use retry::RetryJitter;
 #[cfg(test)]
@@ -608,7 +609,7 @@ impl Agent {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: Box<dyn Provider>,
-        tools: ToolRegistry,
+        mut tools: ToolRegistry,
         context: ToolContext,
         sink: Arc<dyn EventSink>,
         model: String,
@@ -616,6 +617,12 @@ impl Agent {
         max_tokens: u32,
         temperature: Option<f32>,
     ) -> Self {
+        tools.register(crate::tools::ContextTool(
+            crate::tools::ContextToolKind::Status,
+        ));
+        tools.register(crate::tools::ContextTool(
+            crate::tools::ContextToolKind::Compact,
+        ));
         Self {
             provider,
             tools,
@@ -1170,6 +1177,7 @@ impl Agent {
             gate::guarded(tokio::time::timeout(context.timeout, checkpoint.working_context()), &cancel).await?
                 .map_err(|_| CheckpointError)??
         } else { crate::context::WorkingContext::default() };
+        let mut last_context_observation: Option<voyage_protocol::context_accounting::ContextObservation>;
         'execution: loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
@@ -1256,6 +1264,7 @@ impl Agent {
                 if let Some(checkpoint) = checkpoint {
                     gate::guarded(tokio::time::timeout(context.timeout, checkpoint.context_observation(&observation)), &cancel).await?.map_err(|_| CheckpointError)??;
                 }
+                last_context_observation = Some(observation.clone());
                 self.sink.emit(AgentEvent::ContextBudget(Box::new(observation.clone()))).await;
                 crate::context::check_operator_limit(&observation).map_err(|error| AgentError::from(error).with_recovery(&history, &usage))?;
                 let result = self.stream_prepared_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
@@ -1458,11 +1467,13 @@ impl Agent {
                     })
                     .await;
                 let tool_started = std::time::Instant::now();
-                let result = tokio::select! {
+                let result = if let Some(kind) = self.tools.context_kind(&call.name) {
+                    self.fulfill_context_tool(kind, &call, &context, &history, &mut working_context, last_context_observation.as_ref(), checkpoint, &cancel).await?
+                } else {tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = gate::guarded(self.tools.execute_report_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
-                };
+                    value = gate::guarded(self.tools.execute_report_with_workflow_secrets(&call.name, call.arguments.clone(), &context, bindings.as_ref()), &cancel) => value?,
+                }};
                 let mut report = match result {
                     Ok(report) => report,
                     Err(error) => crate::tools::ToolReport::error(error),

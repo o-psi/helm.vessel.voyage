@@ -59,6 +59,10 @@ impl Journal {
         );
         current.session.context_observation = Some(observation.clone());
         update_session(&tx, &current)?;
+        if Self::observations_initialized(&tx)? {
+            let payload = serde_json::json!({"context_observation":observation.public_view(),"context_status":observation.status_text()});
+            tx.execute("INSERT INTO process_observations(session_id,kind,revision,run_id,payload) VALUES(?1,'session',(SELECT revision FROM sessions WHERE id=?1),?2,?3)",params![run.session_id.to_string(),run.id.to_string(),serde_json::to_string(&payload)?])?;
+        }
         append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
         commit(tx, &self.commit_fence)
     }

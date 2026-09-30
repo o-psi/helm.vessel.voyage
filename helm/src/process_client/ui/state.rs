@@ -168,6 +168,10 @@ pub struct Snapshot {
     #[serde(default)]
     pub inference_next_turn: bool,
     #[serde(default)]
+    pub context_observation: Option<voyage_protocol::context_accounting::ContextObservation>,
+    #[serde(default)]
+    pub context_status: Option<String>,
+    #[serde(default)]
     pub inference_current: Option<super::inference::Settings>,
     #[serde(default)]
     pub access: Option<String>,

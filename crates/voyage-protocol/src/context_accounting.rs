@@ -90,3 +90,33 @@ pub struct ContextObservation {
     /// This observation describes one prepared request, never future tool results.
     pub scope: String,
 }
+
+impl ContextObservation {
+    /// No private account identity is needed by an observing Helm client.
+    pub fn public_view(&self) -> Self {
+        let mut value = self.clone();
+        value.count.scope.account = None;
+        if let Some(capacity) = &mut value.capacity {
+            capacity.scope.account = None;
+        }
+        value
+    }
+    pub fn status_text(&self) -> String {
+        let input = self
+            .count
+            .reliable_input_tokens()
+            .map_or_else(|| "unknown".into(), |n| n.to_string());
+        let window = self
+            .capacity
+            .as_ref()
+            .and_then(|c| c.enabled_window_tokens)
+            .map_or_else(|| "unknown".into(), |n| n.to_string());
+        let reserve = self
+            .output_reserve
+            .map_or_else(|| "unknown".into(), |n| n.to_string());
+        format!(
+            "Last prepared input: {input} tokens · window: {window} · reserve: {reserve} · projection {}",
+            self.projection_generation
+        )
+    }
+}

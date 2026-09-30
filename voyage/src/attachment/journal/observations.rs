@@ -42,7 +42,7 @@ impl Journal {
         Ok(())
     }
 
-    fn observations_initialized(tx: &Transaction<'_>) -> Result<bool> {
+    pub(super) fn observations_initialized(tx: &Transaction<'_>) -> Result<bool> {
         Ok(tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='process_observations')",[],|r|r.get(0))?)
     }
 
