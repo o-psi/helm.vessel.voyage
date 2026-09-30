@@ -424,3 +424,180 @@ fn source_abort_refuses_replaced_directory_identity_and_committed_target() {
     };
     assert!(journal.retired_transition(&guard, &abort, None).is_err());
 }
+
+#[test]
+fn absent_handoff_lookup_is_read_only_and_corrupt_receipt_is_never_absent() {
+    let (_root, mut journal, session, guard, inc) = fixture();
+    let id = Uuid::new_v4();
+    let lookup = TransitionRequest {
+        schema: SCHEMA,
+        session_id: session.id,
+        source_incarnation: inc,
+        operation: TransitionOperation::Lookup {
+            directory: journal.directory.parent().unwrap().into(),
+            command_id: id,
+        },
+    };
+    let before = journal.load_session(session.id).unwrap().revision;
+    assert!(
+        matches!(journal.retired_transition(&guard, &lookup, None).unwrap(), TransitionResponse::Absent { command_id } if command_id==id)
+    );
+    assert!(!table(&journal.connection, TABLE).unwrap());
+    assert_eq!(journal.load_session(session.id).unwrap().revision, before);
+    let facts = observe(&mut journal, &guard, session.id, inc);
+    let request = freeze(&journal, facts);
+    let receipt = prepared(&mut journal, &guard, &request);
+    journal
+        .connection
+        .execute(
+            "UPDATE execution_transitions SET prepared_receipt='invalid' WHERE command_id=?1",
+            [receipt.command_id.to_string()],
+        )
+        .unwrap();
+    let lookup = TransitionRequest {
+        operation: TransitionOperation::Lookup {
+            directory: journal.directory.parent().unwrap().into(),
+            command_id: receipt.command_id,
+        },
+        ..lookup
+    };
+    assert!(journal.retired_transition(&guard, &lookup, None).is_err());
+}
+
+#[test]
+fn source_freeze_and_abort_preserve_legacy_schema_and_interrupted_work() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = prepare_directory(root.path().join("journal")).unwrap();
+    drop(open_private_file(&directory.join("journal.sqlite3")).unwrap());
+    let source = Connection::open(directory.join("journal.sqlite3")).unwrap();
+    source.execute_batch("CREATE TABLE attachment_schema(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL); INSERT INTO attachment_schema VALUES(1,12); CREATE TABLE sessions(id TEXT PRIMARY KEY, revision INTEGER NOT NULL, state TEXT NOT NULL,next_sequence INTEGER NOT NULL DEFAULT 1); CREATE TABLE runs(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,record TEXT NOT NULL,active INTEGER NOT NULL); CREATE TABLE process_configuration(session_id TEXT PRIMARY KEY,settings TEXT NOT NULL);").unwrap();
+    let session = Session::new(root.path().canonicalize().unwrap(), "legacy".into());
+    let history = serde_json::to_string(&session).unwrap();
+    source
+        .execute(
+            "INSERT INTO sessions(id,revision,state) VALUES(?1,0,?2)",
+            params![session.id.to_string(), history],
+        )
+        .unwrap();
+    source
+        .execute(
+            "INSERT INTO process_configuration VALUES(?1,?2)",
+            params![session.id.to_string(), "{\"source\":true}"],
+        )
+        .unwrap();
+    let run = RunRecord {
+        source_incarnation: None,
+        id: Uuid::new_v4(),
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: session.id,
+        state: RunState::Running,
+        partial_text: "retained partial".into(),
+        tool_previews: Vec::new(),
+        reasoning_previews: Vec::new(),
+        terminal_reason: None,
+        usage: Default::default(),
+        final_checkpointed: false,
+    };
+    source
+        .execute(
+            "INSERT INTO runs VALUES(?1,?2,?3,1)",
+            params![
+                run.id.to_string(),
+                session.id.to_string(),
+                serde_json::to_string(&run).unwrap()
+            ],
+        )
+        .unwrap();
+    drop(source);
+    let mut journal = Journal::open(directory).unwrap();
+    assert_eq!(journal.opened_schema, 12);
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let inc = Uuid::new_v4();
+    let before = observe(&mut journal, &guard, session.id, inc);
+    let request = freeze(&journal, before);
+    let receipt = prepared(&mut journal, &guard, &request);
+    let abort = TransitionRequest {
+        schema: SCHEMA,
+        session_id: session.id,
+        source_incarnation: inc,
+        operation: TransitionOperation::AbortSource {
+            directory: root.path().to_owned(),
+            command_id: Uuid::new_v4(),
+            expected: receipt,
+        },
+    };
+    assert!(matches!(
+        journal.retired_transition(&guard, &abort, None).unwrap(),
+        TransitionResponse::Aborted { .. }
+    ));
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT version FROM attachment_schema WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        12
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT state FROM sessions WHERE id=?1",
+                [session.id.to_string()],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        history
+    );
+    assert_eq!(
+        settings(&journal.connection, session.id).unwrap(),
+        "{\"source\":true}"
+    );
+    let retained = journal.run(run.id).unwrap();
+    assert_eq!(retained.state, RunState::Interrupted);
+    assert_eq!(retained.partial_text, run.partial_text);
+    assert!(!retained.final_checkpointed);
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT active FROM runs WHERE id=?1",
+                [run.id.to_string()],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        journal
+            .initial_configuration(session.id)
+            .unwrap()
+            .as_deref(),
+        Some("{\"source\":true}")
+    );
+}
+
+#[test]
+fn inherited_execution_guard_closure_keeps_parent_exclusion_and_rejects_wrong_inode() {
+    let (_root, journal, session, guard, _inc) = fixture();
+    let path = journal
+        .directory
+        .join(format!("{}.execution.lock", session.id));
+    let independent = open_private_file(&path).unwrap();
+    let inherited = journal
+        .acquire_execution_pinned(session.id, guard.file.try_clone().unwrap())
+        .unwrap();
+    assert!(independent.try_lock().is_err());
+    drop(inherited);
+    assert!(independent.try_lock().is_err());
+    let other = open_private_file(&journal.directory.join("other.execution.lock")).unwrap();
+    assert!(journal.acquire_execution_pinned(session.id, other).is_err());
+    assert!(independent.try_lock().is_err());
+    drop(guard);
+    independent.try_lock().unwrap();
+}

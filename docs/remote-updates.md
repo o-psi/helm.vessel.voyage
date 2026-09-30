@@ -152,19 +152,34 @@ larger or slower handoffs refuse with retained source and preactivation recovery
 A recorded reboot alone is not the ownership fence. Review also pins the source
 directory device/inode, full target manifest metadata and both named accounts;
 held leases verify directory identity throughout publication and relocation.
-Prepare refuses different source/retention filesystems before stopping source
-services, because the supported backend requires atomic retention by rename.
-It reports that an explicit relocation backend is required for that topology;
-it never discovers the limitation by silently abandoning a partially installed
-root supervisor.
+Separate source and system filesystems are supported by a bounded opaque export
+while those original-UID leases remain held. The source is atomically retained on
+its own filesystem inside a root-owned container; an immutable opaque archive is
+kept under root-private adoption retention. Root does not parse the old journals
+or provider registry. Temporary rollback traversal is limited to the original
+identity, while its retained name and the canonical source fence remain
+root-controlled.
+The retained source is sealed root-only before old guards release. Rollback takes
+root descriptor locks as metadata before temporarily enabling traversal, then
+passes those same lock descriptions into the original-UID helpers. Child closure
+does not unlock the parent's retained exclusion; every failure seals the container
+before the parent lock set releases. Source/session inode pins are rechecked after
+rename. A staged root fence has its inode recorded before publication, so partial namespace fencing has an exact
+recovery identity.
 
 `adopt-user activate UUID DIGEST` activates reviewed root/gateway services.
 `adopt-user rollback UUID DIGEST` accepts reviewed preactivation stages, including
 interrupted capture/freeze/partial installation. It refuses admitted target
 guardians or live/drifted system units, retains copied artifacts and restores the
-frozen user namespace and exact reviewed user services. Repeating a pending
-rollback resumes only reversible file cleanup. User service restoration is claimed
-before its effect; a lost reply is reconciled by read-only readiness observation.
+frozen user namespace and exact reviewed user services. It holds the original
+supervisor plus every startup/execution guard, verifies the retained opaque digest
+before source mutation, and clears each prepared marker through its exact abort
+UUID on the same retained private helper pipe. Interrupted work and withdrawn Goal
+continuation stay interrupted. The exact original source inode is renamed back;
+there is no reconstruction or overwrite fallback for missing/changed retention.
+Read-only lookup distinguishes an absent command from unavailable/corrupt storage.
+Repeating a pending rollback reconciles exact abort receipts and reversible file
+cleanup. User service restoration is claimed before its effect; a lost reply is reconciled by read-only readiness observation.
 Legacy human grants retain ordinary access and are permanently excluded from root
 administrator authority; fresh root pairing is required. New incarnations remain
 dormant until explicitly restarted, with no claim that old processes survived.
@@ -205,3 +220,15 @@ These offline checks cover authority refusal, exact approval/replay, expired or
 changed installation, uncertain dispatch, worker failure, artifact provenance,
 stale replies, draft retention and capability gating. Real installation,
 reconnection and shared-browser acceptance are recorded separately in #343.
+
+### Source-format preservation during adoption rollback
+
+The shipped `v1.0.2` journal schema is 12 and the current journal schema is 20.
+Source handoff opens an existing schema without invoking quiescent upgrade; it
+adds handoff metadata and interrupts runs while preserving that source schema and
+canonical session settings/history. Only copied target journals are committed or
+upgraded for the new runtime. Source catalogue export likewise uses a read-only
+SQLite connection and validates an admitted reader schema. This is source analysis,
+not proof that an old binary can restore a native installation. The coordinated
+release verification must exercise the shipped old reader against the retained
+frozen source, on both common and separate source/retention filesystems.

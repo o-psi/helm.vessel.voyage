@@ -423,12 +423,18 @@ impl Journal {
                 facts: facts(&tx, request.session_id, request.source_incarnation)?,
             },
             TransitionOperation::Lookup { command_id, .. } => {
-                let StoredTransition {
+                let Some(StoredTransition {
                     prepared,
                     completed: complete,
                     aborted,
                     ..
-                } = stored(&tx, *command_id)?.context("handoff receipt unavailable")?;
+                }) = stored(&tx, *command_id)?
+                else {
+                    ensure!(!command_id.is_nil(), "invalid handoff lookup identity");
+                    return Ok(TransitionResponse::Absent {
+                        command_id: *command_id,
+                    });
+                };
                 ensure!(
                     prepared.session_id == request.session_id
                         && prepared.source_incarnation == request.source_incarnation,

@@ -121,6 +121,10 @@ fn files(root: &Path, prefix: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
     }
     for entry in fs::read_dir(root)? {
         let path = entry?.path();
+        ensure!(
+            path.strip_prefix(prefix)?.components().count() <= 32,
+            "migration tree depth exceeds bound"
+        );
         let meta = fs::symlink_metadata(&path)?;
         if meta.file_type().is_symlink()
             && matches!(
@@ -340,6 +344,45 @@ async fn unit_fingerprint(unit: &str) -> Result<String> {
         .join("\n");
     Ok(format!("{:x}", Sha256::digest(stable.as_bytes())))
 }
+fn opaque_export(root: &Path, channel: &mut UnixStream) -> Result<()> {
+    let mut paths = Vec::new();
+    files(root, root, &mut paths)?;
+    paths.sort();
+    let mut hash = Sha256::new();
+    hash.update(b"voyage/opaque-user-retention/v1\0");
+    let mut total = 0u64;
+    for path in paths {
+        relative(&path)?;
+        let mut file = source_file(&root.join(&path))?;
+        let mode = file.metadata()?.mode() & 0o700;
+        let mut offset = 0;
+        let mut buffer = [0; 65536];
+        loop {
+            let count = file.read(&mut buffer)?;
+            total += count as u64;
+            ensure!(total <= TOTAL, "opaque source retention exceeds byte bound");
+            let frame = Frame::OpaqueFile {
+                relative: path.clone(),
+                offset,
+                bytes: STANDARD.encode(&buffer[..count]),
+                last: count == 0,
+                mode,
+            };
+            hash.update(serde_json::to_vec(&frame)?);
+            write_frame(channel, &frame)?;
+            if count == 0 {
+                break;
+            }
+            offset += count as u64;
+        }
+    }
+    write_frame(
+        channel,
+        &Frame::OpaqueEnd {
+            sha256: format!("{:x}", hash.finalize()),
+        },
+    )
+}
 pub async fn user(args: UserArgs) -> Result<()> {
     ensure!(
         unsafe { libc::geteuid() } != 0 && unsafe { libc::getuid() } == unsafe { libc::geteuid() },
@@ -351,12 +394,33 @@ pub async fn user(args: UserArgs) -> Result<()> {
         UserRequest::HoldOwner => {
             registry::private_directory(&args.directory)?;
             let _owner = registry::lock(&args.directory)?;
+            let directory = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(&args.directory)?;
+            let anchor = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd()));
             write_frame(&mut channel, &Frame::OwnerHeld)?;
             channel.set_read_timeout(Some(Duration::from_secs(900)))?;
-            // EOF or bounded lifetime releases ownership. No effect/command is
-            // accepted while root retains this original-UID namespace lease.
-            let mut unexpected = [0; 1];
-            let _ = channel.read(&mut unexpected);
+            // The retained descriptor survives the source namespace rename;
+            // root never reopens or parses a user journal in privileged context.
+            let deadline = std::time::Instant::now() + Duration::from_secs(900);
+            loop {
+                let request = match read_frame::<UserRequest>(&mut channel) {
+                    Ok(request) => request,
+                    Err(_) => break,
+                };
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "original ownership lease expired"
+                );
+                match request {
+                    UserRequest::OpaqueExport => opaque_export(&anchor, &mut channel)?,
+                    _ => anyhow::bail!("held owner request unavailable"),
+                }
+            }
+        }
+        UserRequest::OpaqueExport => {
+            anyhow::bail!("request requires held original namespace ownership")
         }
         UserRequest::Quiesce => {
             let response = super::exchange::exchange(

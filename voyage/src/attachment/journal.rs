@@ -93,6 +93,9 @@ pub struct Journal {
 /// Never unlink its file. Process death releases ownership; PID values are not used.
 pub struct ExecutionGuard {
     incarnation: Option<Uuid>,
+    // A root-passed rollback guard shares an already held file description;
+    // closing this child must not unlock the parent's retained exclusion.
+    release_on_drop: bool,
     file: File,
     directory: PathBuf,
     session_id: Uuid,
@@ -101,7 +104,9 @@ pub struct ExecutionGuard {
 }
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        if self.release_on_drop {
+            let _ = self.file.unlock();
+        }
     }
 }
 
@@ -402,6 +407,7 @@ impl Journal {
                 .context("session busy during journal upgrade")?;
             guards.push(ExecutionGuard {
                 incarnation: None,
+                release_on_drop: true,
                 file,
                 directory: self.directory.clone(),
                 session_id,
@@ -567,6 +573,7 @@ impl Journal {
             .context("session busy or execution locking unavailable")?;
         let guard = ExecutionGuard {
             incarnation: None,
+            release_on_drop: true,
             file,
             directory: self.directory.clone(),
             session_id,
@@ -575,6 +582,42 @@ impl Journal {
         };
         self.load_session(session_id)?;
         Ok(guard)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn acquire_execution_pinned(
+        &self,
+        session_id: Uuid,
+        file: File,
+    ) -> Result<ExecutionGuard> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        self.check_schema()?;
+        ensure!(!session_id.is_nil(), "nil pinned execution identity");
+        self.load_session(session_id)?;
+        let expected = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(self.directory.join(format!("{session_id}.execution.lock")))?;
+        let actual = file.metadata()?;
+        let expected = expected.metadata()?;
+        ensure!(
+            actual.is_file()
+                && actual.uid() == unsafe { libc::geteuid() }
+                && actual.nlink() == 1
+                && actual.mode() & 0o077 == 0
+                && actual.dev() == expected.dev()
+                && actual.ino() == expected.ino(),
+            "pinned execution descriptor differs from original private lock"
+        );
+        file.try_lock()
+            .context("pinned execution description is not exclusively held")?;
+        Ok(ExecutionGuard {
+            incarnation: None,
+            release_on_drop: false,
+            file,
+            directory: self.directory.clone(),
+            session_id,
+        })
     }
 
     fn check_guard(&self, guard: &ExecutionGuard, session: Uuid) -> Result<()> {

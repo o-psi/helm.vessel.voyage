@@ -9,6 +9,7 @@ use uuid::Uuid;
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum UserRequest {
     HoldOwner,
+    OpaqueExport,
     ExportHeld,
 
     Quiesce,
@@ -76,6 +77,16 @@ pub enum Frame {
     },
     RestoredServices {
         ready: bool,
+    },
+    OpaqueFile {
+        relative: PathBuf,
+        offset: u64,
+        bytes: String,
+        last: bool,
+        mode: u32,
+    },
+    OpaqueEnd {
+        sha256: String,
     },
     OwnerHeld,
     Complete,

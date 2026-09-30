@@ -19,7 +19,8 @@ pub struct TransitionRequest {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum TransitionOperation {
-    /// Holds original startup/execution fences after the exact source freeze.
+    /// Holds original startup/execution fences after an exact freeze or read-only lookup.
+    /// A retained lease can accept only exact AbortSource frames under those guards.
     /// Only private root pipes may carry this bounded lease; EOF releases it.
     SourceLease {
         directory: PathBuf,
@@ -133,5 +134,6 @@ pub enum TransitionResponse {
     Prepared { receipt: PreparedTransitionReceipt },
     Committed { receipt: TransitionReceipt },
     Aborted { receipt: AbortedTransitionReceipt },
+    Absent { command_id: Uuid },
     Unavailable,
 }

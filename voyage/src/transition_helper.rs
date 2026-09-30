@@ -107,6 +107,41 @@ mod linux {
         journal: crate::attachment::journal::Journal,
         guard: crate::attachment::journal::ExecutionGuard,
     }
+    fn inherited_lock(variable: &str, path: &std::path::Path) -> Result<Option<File>> {
+        let Some(value) = std::env::var_os(variable) else {
+            return Ok(None);
+        };
+        let fd = value
+            .to_str()
+            .context("private guard descriptor unavailable")?
+            .parse::<i32>()?;
+        ensure!(fd > 2, "private guard descriptor cannot be stdio");
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        ensure!(
+            flags >= 0 && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } == 0,
+            "private guard close-on-exec unavailable"
+        );
+        let file = unsafe { File::from_raw_fd(fd) };
+        use std::os::unix::fs::OpenOptionsExt;
+        let expected = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(path)?;
+        let actual = file.metadata()?;
+        let expected = expected.metadata()?;
+        ensure!(
+            actual.is_file()
+                && actual.uid() == unsafe { libc::geteuid() }
+                && actual.nlink() == 1
+                && actual.mode() & 0o077 == 0
+                && actual.dev() == expected.dev()
+                && actual.ino() == expected.ino(),
+            "private retained lock descriptor differs"
+        );
+        file.try_lock()
+            .context("retained lock description unavailable")?;
+        Ok(Some(file))
+    }
     fn hold(request: &TransitionRequest) -> Result<HeldJournal> {
         ensure!(request.schema == SCHEMA, "unsupported handoff schema");
         let directory = request.operation.directory();
@@ -127,11 +162,40 @@ mod linux {
             directory.join("journal/journal.sqlite3").is_file(),
             "runtime journal unavailable"
         );
-        let startup =
-            crate::attachment::journal::open_private_file(&directory.join("startup.lock"))?;
-        startup.try_lock()?;
+        let startup = inherited_lock(
+            "VOYAGE_TRANSITION_STARTUP_FD",
+            &directory.join("startup.lock"),
+        )?;
+        let execution = inherited_lock(
+            "VOYAGE_TRANSITION_EXECUTION_FD",
+            &directory
+                .join("journal")
+                .join(format!("{}.execution.lock", request.session_id)),
+        )?;
+        ensure!(
+            startup.is_some() == execution.is_some(),
+            "retained rollback needs both lifetime guards"
+        );
+        if startup.is_some() {
+            ensure!(
+                matches!(&request.operation,TransitionOperation::SourceLease{freeze,..} if matches!(&freeze.operation,TransitionOperation::Lookup{..})),
+                "inherited guards are restricted to original read-only rollback lease"
+            );
+        }
+        let startup = if let Some(file) = startup {
+            file
+        } else {
+            let file =
+                crate::attachment::journal::open_private_file(&directory.join("startup.lock"))?;
+            file.try_lock()?;
+            file
+        };
         let journal = crate::attachment::journal::Journal::open(directory.join("journal"))?;
-        let guard = journal.acquire_execution(request.session_id)?;
+        let guard = if let Some(file) = execution {
+            journal.acquire_execution_pinned(request.session_id, file)?
+        } else {
+            journal.acquire_execution(request.session_id)?
+        };
         Ok(HeldJournal {
             directory: _directory,
             _startup: startup,
@@ -144,6 +208,7 @@ mod linux {
         request: TransitionRequest,
     ) -> Result<TransitionResponse> {
         let _directory = &held.directory;
+        let directory = request.operation.directory();
         let journal = &mut held.journal;
         let guard = &held.guard;
         if matches!(
@@ -231,13 +296,22 @@ mod linux {
                         && request.source_incarnation == freeze.source_incarnation
                         && freeze.schema == SCHEMA
                         && freeze.operation.directory() == directory
-                        && matches!(&freeze.operation, TransitionOperation::SourceFreeze { .. }),
+                        && matches!(
+                            &freeze.operation,
+                            TransitionOperation::SourceFreeze { .. }
+                                | TransitionOperation::Lookup { .. }
+                        ),
                     "source lease identity differs from exact freeze"
                 );
                 let mut held = hold(&request)?;
                 let response = apply_held(&mut held, *freeze.clone())?;
                 ensure!(
-                    matches!(&response, TransitionResponse::Prepared { .. }),
+                    matches!(
+                        &response,
+                        TransitionResponse::Prepared { .. }
+                            | TransitionResponse::Aborted { .. }
+                            | TransitionResponse::Absent { .. }
+                    ),
                     "source lease freeze unavailable"
                 );
                 let bytes = serde_json::to_vec(&response)?;
@@ -250,14 +324,49 @@ mod linux {
                     write_all(&output, &bytes).await
                 })
                 .await??;
-                // Root retains the pipe, this child, and the exact guards until
-                // namespace fencing. No further commands or effects are accepted.
-                let mut unexpected = [0; 1];
-                let _ = tokio::time::timeout(
-                    Duration::from_secs(900),
-                    read_exact(&input, &mut unexpected),
-                )
-                .await;
+                // The same child keeps both old guards throughout rollback.
+                // Read-only lookup may be followed by exact AbortSource; a second
+                // helper must not reacquire or replace these lifetime fences.
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(900);
+                for _ in 0..64 {
+                    let next = tokio::time::timeout_at(deadline, async {
+                        let mut header = [0; 4];
+                        read_exact(&input, &mut header).await?;
+                        let length = u32::from_be_bytes(header) as usize;
+                        ensure!(
+                            length > 0 && length <= MAX_REQUEST,
+                            "source lease command bound"
+                        );
+                        let mut bytes = vec![0; length];
+                        read_exact(&input, &mut bytes).await?;
+                        Ok::<_, anyhow::Error>(serde_json::from_slice::<TransitionRequest>(&bytes)?)
+                    })
+                    .await;
+                    let next = match next {
+                        Ok(Ok(next)) => next,
+                        _ => break,
+                    };
+                    ensure!(
+                        next.schema == SCHEMA
+                            && next.session_id == request.session_id
+                            && next.source_incarnation == request.source_incarnation
+                            && next.operation.directory() == directory
+                            && matches!(&next.operation, TransitionOperation::AbortSource { .. }),
+                        "retained lease accepts only exact original abort"
+                    );
+                    let reply = apply_held(&mut held, next)?;
+                    ensure!(
+                        matches!(&reply, TransitionResponse::Aborted { .. }),
+                        "retained source abort unavailable"
+                    );
+                    let bytes = serde_json::to_vec(&reply)?;
+                    ensure!(bytes.len() <= MAX_RESPONSE, "source abort response bound");
+                    tokio::time::timeout(Duration::from_secs(2), async {
+                        write_all(&output, &(bytes.len() as u32).to_be_bytes()).await?;
+                        write_all(&output, &bytes).await
+                    })
+                    .await??;
+                }
                 drop(held);
                 return Ok(TransitionResponse::Unavailable);
             }

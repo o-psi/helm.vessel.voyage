@@ -29,6 +29,10 @@ struct Review {
     source_device: u64,
     source_inode: u64,
     source_manifest_digest: String,
+    opaque_retention: bool,
+    opaque_digest: Option<String>,
+    temporary_source: Option<PathBuf>,
+    retention_identity: Option<(u64, u64)>,
     original_user: String,
     uid: u32,
     gid: u32,
@@ -49,7 +53,10 @@ struct Review {
     target_incarnations: BTreeMap<Uuid, Uuid>,
     freeze_commands: BTreeMap<Uuid, Uuid>,
     commit_commands: BTreeMap<Uuid, Uuid>,
+    abort_commands: BTreeMap<Uuid, Uuid>,
     freezes: BTreeMap<Uuid, PreparedTransitionReceipt>,
+    fence_identity: Option<(u64, u64)>,
+    rollback_source_verified: bool,
     source_units: Vec<String>,
     source_definitions: BTreeMap<String, String>,
 }
@@ -85,6 +92,21 @@ fn hash<T: Serialize>(value: &T) -> Result<String> {
     use sha2::{Digest, Sha256};
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(value)?)))
 }
+fn review_digest(review: &Review, with_snapshot: bool) -> Result<String> {
+    hash(&serde_json::json!({
+        "schema_version":1,"domain":"voyage/user-adoption-review/v1","operation_id":review.operation_id,
+        "original_user":review.original_user,"source_uid":review.uid,"source_gid":review.gid,"source_home":review.home,"source_groups":review.groups,"source_boot":review.source_boot,
+        "release_id":review.release,"installation_plan":review.planned_installation,
+        "source_device":review.source_device,"source_inode":review.source_inode,"source_manifest_digest":review.source_manifest_digest,"opaque_retention":review.opaque_retention,
+        "gateway_user":review.gateway_user,"gateway_origin":review.origin,"credential_key":review.key,"credential_provisioner":review.provisioner,"source_credential_key":review.source_credential_key,
+        "source_units":if with_snapshot {Some(&review.source_definitions)}else{None},
+        "snapshot_digest":if with_snapshot {review.snapshot_digest.as_ref()}else{None},
+        "target_incarnations":if with_snapshot {Some(&review.target_incarnations)}else{None},
+        "freeze_commands":if with_snapshot {Some(&review.freeze_commands)}else{None},
+        "commit_commands":if with_snapshot {Some(&review.commit_commands)}else{None},
+        "abort_commands":if with_snapshot {Some(&review.abort_commands)}else{None}
+    }))
+}
 fn output(review: &Review) {
     println!(
         "{}",
@@ -115,8 +137,14 @@ fn recheck(review: &Review) -> Result<()> {
         "gateway account changed since adoption review"
     );
     let retained = directory(review.operation_id)?.join("retained-user-vessel");
-    let source = if retained.try_exists()? {
+    let source = if retained.try_exists()? && !review.opaque_retention {
         retained.as_path()
+    } else if let Some(temporary) = &review.temporary_source {
+        if temporary.try_exists()? {
+            temporary.as_path()
+        } else {
+            review.source_directory.as_path()
+        }
     } else {
         review.source_directory.as_path()
     };
@@ -124,8 +152,7 @@ fn recheck(review: &Review) -> Result<()> {
     ensure!(
         metadata.is_dir()
             && metadata.uid() == review.uid
-            && metadata.dev() == review.source_device
-            && metadata.ino() == review.source_inode,
+            && (metadata.dev(), metadata.ino()) == (review.source_device, review.source_inode),
         "original source directory changed since adoption review"
     );
     service::files::check_path(&review.bin, 0)?;
@@ -227,6 +254,20 @@ fn peer(review: &Review, control: bool, path: &Path) -> Result<(OwnedChild, Unix
     let fd = child.as_raw_fd();
     let executable = review.bin.join("vessel");
     service::files::executable(&executable, 0)?;
+    let pinned_directory = if control || path == review.source_directory {
+        None
+    } else {
+        Some(
+            fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(path)?,
+        )
+    };
+    let inherited_directory = pinned_directory.as_ref().map(AsRawFd::as_raw_fd);
+    let helper_path = inherited_directory
+        .map(|fd| PathBuf::from(format!("/proc/self/fd/{fd}/.")))
+        .unwrap_or_else(|| path.to_owned());
     let mut command = Command::new(executable);
     command
         .arg(if control {
@@ -235,7 +276,7 @@ fn peer(review: &Review, control: bool, path: &Path) -> Result<(OwnedChild, Unix
             "migration-user"
         })
         .arg("--directory")
-        .arg(path)
+        .arg(helper_path)
         .arg("--pipe-fd")
         .arg(fd.to_string())
         .stdin(Stdio::null())
@@ -256,6 +297,14 @@ fn peer(review: &Review, control: bool, path: &Path) -> Result<(OwnedChild, Unix
             if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
+            if let Some(directory_fd) = inherited_directory {
+                let flags = libc::fcntl(directory_fd, libc::F_GETFD);
+                if flags < 0
+                    || libc::fcntl(directory_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) != 0
+                {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
             Ok(())
         });
     }
@@ -274,13 +323,13 @@ fn write<T: Serialize>(pipe: &mut UnixStream, value: &T) -> Result<()> {
     Ok(())
 }
 fn read<T: serde::de::DeserializeOwned>(pipe: &mut UnixStream) -> Result<T> {
+    read_limit(pipe, 128 * 1024 * 1024)
+}
+fn read_limit<T: serde::de::DeserializeOwned>(pipe: &mut UnixStream, limit: usize) -> Result<T> {
     let mut len = [0; 4];
     pipe.read_exact(&mut len)?;
     let n = u32::from_be_bytes(len) as usize;
-    ensure!(
-        n > 0 && n <= 128 * 1024 * 1024,
-        "migration response exceeds bound"
-    );
+    ensure!(n > 0 && n <= limit, "migration response exceeds bound");
     let mut bytes = vec![0; n];
     pipe.read_exact(&mut bytes)?;
     serde_json::from_slice(&bytes)
@@ -335,8 +384,11 @@ struct SourceOwnership {
 }
 impl SourceOwnership {
     fn acquire(review: &Review) -> Result<Self> {
-        let (child, mut channel) = peer(review, false, &review.source_directory)?;
-        write(&mut channel, &UserRequest::HoldOwner)?;
+        Self::acquire_at(review, &review.source_directory, &UserRequest::HoldOwner)
+    }
+    fn acquire_at(review: &Review, path: &Path, request: &UserRequest) -> Result<Self> {
+        let (child, mut channel) = peer(review, false, path)?;
+        write(&mut channel, request)?;
         ensure!(
             matches!(read::<Frame>(&mut channel)?, Frame::OwnerHeld),
             "original supervisor ownership lease unavailable"
@@ -345,7 +397,7 @@ impl SourceOwnership {
             child,
             channel,
             started: Instant::now(),
-            directory: review.source_directory.clone(),
+            directory: path.to_owned(),
             device: review.source_device,
             inode: review.source_inode,
             uid: review.uid,
@@ -370,7 +422,7 @@ impl SourceOwnership {
 struct SourceLease {
     child: OwnedChild,
     input: Option<std::process::ChildStdin>,
-    _output: std::process::ChildStdout,
+    output: std::process::ChildStdout,
     started: Instant,
     directory: PathBuf,
     session: Uuid,
@@ -383,7 +435,27 @@ impl SourceLease {
         review: &Review,
         freeze: TransitionRequest,
     ) -> Result<(Self, PreparedTransitionReceipt)> {
-        let source_directory = freeze.operation.directory().to_owned();
+        let (lease, response) = Self::acquire_request(review, freeze, None)?;
+        let TransitionResponse::Prepared { receipt } = response else {
+            bail!("source lease freeze unavailable")
+        };
+        ensure!(
+            receipt.session_id == lease.session
+                && receipt.source_uid == lease.uid
+                && receipt.source_gid == review.gid
+                && receipt.source_directory_device == lease.device
+                && receipt.source_directory_inode == lease.inode,
+            "source freeze receipt differs from held original descriptor"
+        );
+        Ok((lease, receipt))
+    }
+    fn acquire_request(
+        review: &Review,
+        operation: TransitionRequest,
+        pins: Option<&RollbackPins>,
+    ) -> Result<(Self, TransitionResponse)> {
+        let source_directory = operation.operation.directory().to_owned();
+        let session = operation.session_id;
         let mut command = Command::new(review.bin.join("voyage"));
         service::files::executable(&review.bin.join("voyage"), 0)?;
         command
@@ -392,15 +464,35 @@ impl SourceLease {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         drop_identity(&mut command, review)?;
+        if let Some(pins) = pins {
+            let startup = pins.startup.as_raw_fd();
+            let execution = pins.execution.as_raw_fd();
+            command
+                .env("VOYAGE_TRANSITION_STARTUP_FD", startup.to_string())
+                .env("VOYAGE_TRANSITION_EXECUTION_FD", execution.to_string());
+            unsafe {
+                command.pre_exec(move || {
+                    for fd in [startup, execution] {
+                        let flags = libc::fcntl(fd, libc::F_GETFD);
+                        if flags < 0
+                            || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) != 0
+                        {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
+                    Ok(())
+                });
+            }
+        }
         let mut child = OwnedChild(command.spawn()?);
         let mut input = child.stdin.take().context("source lease pipe missing")?;
         let request = TransitionRequest {
             schema: SCHEMA,
-            session_id: freeze.session_id,
-            source_incarnation: freeze.source_incarnation,
+            session_id: operation.session_id,
+            source_incarnation: operation.source_incarnation,
             operation: TransitionOperation::SourceLease {
-                directory: freeze.operation.directory().to_owned(),
-                freeze: Box::new(freeze),
+                directory: operation.operation.directory().to_owned(),
+                freeze: Box::new(operation),
             },
         };
         let bytes = serde_json::to_vec(&request)?;
@@ -414,42 +506,21 @@ impl SourceLease {
             .stdout
             .take()
             .context("source lease reply pipe missing")?;
-        use std::os::fd::{FromRawFd, OwnedFd};
-        let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as i32, 0) };
-        ensure!(raw >= 0, "source lease process pin unavailable");
-        let pidfd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let killer = std::thread::spawn(move || {
-            if done_rx.recv_timeout(Duration::from_secs(10)).is_err() {
-                unsafe {
-                    libc::syscall(
-                        libc::SYS_pidfd_send_signal,
-                        pidfd.as_raw_fd(),
-                        libc::SIGKILL,
-                        std::ptr::null::<libc::siginfo_t>(),
-                        0,
-                    );
-                }
-            }
-        });
-        let result = (|| {
-            let mut header = [0; 4];
-            output.read_exact(&mut header)?;
-            let length = u32::from_be_bytes(header) as usize;
-            ensure!(
-                length > 0 && length <= MAX_RESPONSE,
-                "source lease reply bound"
-            );
-            let mut bytes = vec![0; length];
-            output.read_exact(&mut bytes)?;
-            match serde_json::from_slice::<TransitionResponse>(&bytes)? {
-                TransitionResponse::Prepared { receipt } => Ok(receipt),
-                _ => bail!("source lease freeze unavailable"),
-            }
-        })();
-        let _ = done_tx.send(());
-        let _ = killer.join();
-        let receipt = result?;
+        let response = read_lease_reply(&mut child, &mut output)?;
+        ensure!(
+            matches!(
+                &response,
+                TransitionResponse::Prepared { .. }
+                    | TransitionResponse::Aborted { .. }
+                    | TransitionResponse::Absent { .. }
+            ),
+            "original journal lease unavailable"
+        );
+        let metadata = fs::symlink_metadata(&source_directory)?;
+        ensure!(
+            metadata.is_dir() && metadata.uid() == review.uid && metadata.mode() & 0o077 == 0,
+            "original leased runtime is not reviewed account private directory"
+        );
         ensure!(
             child.try_wait()?.is_none(),
             "source lease ended before publication"
@@ -458,16 +529,30 @@ impl SourceLease {
             Self {
                 child,
                 input: Some(input),
-                _output: output,
+                output,
                 started: Instant::now(),
                 directory: source_directory,
-                session: receipt.session_id,
-                device: receipt.source_directory_device,
-                inode: receipt.source_directory_inode,
-                uid: receipt.source_uid,
+                session,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+                uid: review.uid,
             },
-            receipt,
+            response,
         ))
+    }
+    fn abort(&mut self, request: &TransitionRequest) -> Result<TransitionResponse> {
+        self.check()?;
+        let input = self
+            .input
+            .as_mut()
+            .context("source lease input was retired")?;
+        let bytes = serde_json::to_vec(request)?;
+        ensure!(bytes.len() <= MAX_REQUEST, "source abort request bound");
+        input.write_all(&(bytes.len() as u32).to_be_bytes())?;
+        input.write_all(&bytes)?;
+        let response = read_lease_reply(&mut self.child, &mut self.output)?;
+        self.check()?;
+        Ok(response)
     }
     fn check(&mut self) -> Result<()> {
         ensure!(
@@ -488,6 +573,234 @@ impl SourceLease {
         drop(self.input.take());
         finish(&mut self.child)
     }
+}
+fn read_lease_reply(
+    child: &mut Child,
+    output: &mut std::process::ChildStdout,
+) -> Result<TransitionResponse> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as i32, 0) };
+    ensure!(raw >= 0, "source lease process pin unavailable");
+    let pidfd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let killer = std::thread::spawn(move || {
+        if done_rx.recv_timeout(Duration::from_secs(10)).is_err() {
+            unsafe {
+                libc::syscall(
+                    libc::SYS_pidfd_send_signal,
+                    pidfd.as_raw_fd(),
+                    libc::SIGKILL,
+                    std::ptr::null::<libc::siginfo_t>(),
+                    0,
+                );
+            }
+        }
+    });
+    let result = (|| {
+        let mut header = [0; 4];
+        output.read_exact(&mut header)?;
+        let length = u32::from_be_bytes(header) as usize;
+        ensure!(
+            length > 0 && length <= MAX_RESPONSE,
+            "source lease reply bound"
+        );
+        let mut bytes = vec![0; length];
+        output.read_exact(&mut bytes)?;
+        Ok(serde_json::from_slice(&bytes)?)
+    })();
+    let _ = done_tx.send(());
+    let _ = killer.join();
+    result
+}
+fn receive_opaque(
+    owner: &mut SourceOwnership,
+    leases: &mut [SourceLease],
+    archive: Option<&Path>,
+) -> Result<String> {
+    receive_opaque_with(owner, archive, || {
+        for lease in leases.iter_mut() {
+            lease.check()?;
+        }
+        Ok(())
+    })
+}
+fn receive_opaque_with(
+    owner: &mut SourceOwnership,
+    archive: Option<&Path>,
+    mut current: impl FnMut() -> Result<()>,
+) -> Result<String> {
+    owner.check()?;
+    current()?;
+    write(&mut owner.channel, &UserRequest::OpaqueExport)?;
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"voyage/opaque-user-retention/v1\0");
+    let mut open: Option<(PathBuf, u64, u32)> = None;
+    let mut total = 0u64;
+    let mut names = std::collections::BTreeSet::new();
+    for index in 0..400000usize {
+        owner.check()?;
+        current()?;
+        let frame: Frame = read_limit(&mut owner.channel, 128 * 1024)?;
+        match &frame {
+            Frame::OpaqueFile {
+                relative,
+                offset,
+                bytes,
+                last,
+                mode,
+            } => {
+                ensure!(
+                    relative.is_relative()
+                        && !relative.as_os_str().is_empty()
+                        && relative
+                            .components()
+                            .all(|p| matches!(p, std::path::Component::Normal(_)))
+                        && relative.components().count() <= 32,
+                    "opaque source path exceeds namespace"
+                );
+                let data = STANDARD.decode(bytes)?;
+                ensure!(
+                    data.len() <= 65536 && *mode & !0o700 == 0 && (*last || !data.is_empty()),
+                    "opaque source chunk/mode bound"
+                );
+                if open.is_none() {
+                    ensure!(
+                        *offset == 0 && names.insert(relative.clone()),
+                        "opaque source duplicate file or initial offset"
+                    );
+                    ensure!(names.len() <= 100000, "opaque source file bound");
+                    open = Some((relative.clone(), 0, *mode));
+                }
+                let (path, position, file_mode) = open
+                    .as_mut()
+                    .context("opaque source initial frame missing")?;
+                ensure!(
+                    path == relative && *position == *offset && file_mode == mode,
+                    "opaque source path/offset/mode mismatch"
+                );
+                *position += data.len() as u64;
+                total += data.len() as u64;
+                ensure!(
+                    total <= 8 * 1024 * 1024 * 1024u64,
+                    "opaque source byte bound"
+                );
+                digest.update(serde_json::to_vec(&frame)?);
+                if *last {
+                    ensure!(data.is_empty(), "opaque source end frame contains bytes");
+                    open = None;
+                }
+            }
+            Frame::OpaqueEnd { sha256 } => {
+                ensure!(
+                    open.is_none() && format!("{:x}", digest.clone().finalize()) == *sha256,
+                    "opaque source digest mismatch"
+                );
+                if let Some(archive) = archive {
+                    files::write_new(
+                        &archive.join(format!("frame-{index:06}.json")),
+                        &serde_json::to_vec(&frame)?,
+                    )?;
+                }
+                return Ok(sha256.clone());
+            }
+            _ => bail!("opaque source frame invalid"),
+        }
+        if let Some(archive) = archive {
+            files::write_new(
+                &archive.join(format!("frame-{index:06}.json")),
+                &serde_json::to_vec(&frame)?,
+            )?;
+        }
+    }
+    bail!("opaque source frame count bound")
+}
+fn capture_opaque(
+    review: &mut Review,
+    owner: &mut SourceOwnership,
+    leases: &mut [SourceLease],
+) -> Result<()> {
+    let archive = directory(review.operation_id)?.join("opaque-source");
+    service::files::directory(&archive, 0, true)?;
+    review.opaque_digest = Some(receive_opaque(owner, leases, Some(&archive))?);
+    save(review)
+}
+fn retain_original_namespace(
+    review: &mut Review,
+    owner: &mut SourceOwnership,
+    leases: &mut [SourceLease],
+) -> Result<()> {
+    use std::ffi::CString;
+    let parent = review
+        .source_directory
+        .parent()
+        .context("source parent missing")?;
+    let source_name = CString::new(
+        review
+            .source_directory
+            .file_name()
+            .context("source name missing")?
+            .as_encoded_bytes(),
+    )?;
+    service::files::check_path(parent, review.uid)?;
+    let parent_fd = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(parent)?;
+    let container_name = format!(".voyage-adoption-retained-{}", review.operation_id);
+    let name = CString::new(container_name.clone())?;
+    ensure!(
+        unsafe { libc::mkdirat(parent_fd.as_raw_fd(), name.as_ptr(), 0o700) } == 0,
+        "cannot reserve source-filesystem retention directory"
+    );
+    let raw = unsafe {
+        libc::openat(
+            parent_fd.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    ensure!(
+        raw >= 0,
+        "source retention directory descriptor unavailable"
+    );
+    use std::os::fd::FromRawFd;
+    let container = unsafe { fs::File::from_raw_fd(raw) };
+    container.set_permissions(fs::Permissions::from_mode(0o700))?;
+    let metadata = container.metadata()?;
+    ensure!(
+        metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+        "source retention container is not root-controlled"
+    );
+    let retained_name = CString::new("retained")?;
+    let retained = parent.join(container_name).join("retained");
+    review.temporary_source = Some(retained.clone());
+    review.retention_identity = Some((metadata.dev(), metadata.ino()));
+    save(review)?;
+    leases_current(owner, leases)?;
+    ensure!(
+        unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                parent_fd.as_raw_fd(),
+                source_name.as_ptr(),
+                container.as_raw_fd(),
+                retained_name.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } == 0,
+        "source namespace retention rename unconfirmed"
+    );
+    owner.directory = retained.clone();
+    for lease in leases.iter_mut() {
+        lease.directory = retained.join("sessions").join(lease.session.to_string());
+    }
+    leases_current(owner, leases)?;
+    fs::File::open(parent)?.sync_all()?;
+    container.sync_all()?;
+    // Both the opaque archive and steady retained source are root-private.
+    // Existing original-UID helpers already hold their source descriptors;
+    // rollback reopens traversal only after metadata lock exclusion is held.
+    Ok(())
 }
 fn leases_current(owner: &mut SourceOwnership, leases: &mut [SourceLease]) -> Result<()> {
     owner.check()?;
@@ -593,6 +906,10 @@ fn observe_snapshot(
             .or_insert_with(Uuid::new_v4);
         review
             .commit_commands
+            .entry(session.session_id)
+            .or_insert_with(Uuid::new_v4);
+        review
+            .abort_commands
             .entry(session.session_id)
             .or_insert_with(Uuid::new_v4);
     }
@@ -753,6 +1070,11 @@ fn apply(review: &mut Review) -> Result<()> {
         "source authority/catalogue/preferences changed after reviewed freeze"
     );
     leases_current(&mut owner, &mut leases)?;
+    if review.opaque_retention {
+        review.phase = "capturing-opaque-retention".into();
+        save(review)?;
+        capture_opaque(review, &mut owner, &mut leases)?;
+    }
     review.phase = "installing-dormant-system".into();
     save(review)?;
     let dir = directory(review.operation_id)?.join("frozen-source");
@@ -855,32 +1177,11 @@ fn apply(review: &mut Review) -> Result<()> {
     finish(&mut child)?;
     // Fence the old supervisor namespace. Preserve compatibility aliases only
     // for session artifacts; no old control/authentication record is exposed.
-    let retained = directory(review.operation_id)?.join("retained-user-vessel");
     leases_current(&mut owner, &mut leases)?;
-    fs::rename(&review.source_directory, &retained)?;
-    owner.directory = retained.clone();
-    for lease in &mut leases {
-        lease.directory = retained.join("sessions").join(lease.session.to_string());
-    }
+    retain_original_namespace(review, &mut owner, &mut leases)?;
+    publish_fence(review)?;
     leases_current(&mut owner, &mut leases)?;
-    fs::DirBuilder::new()
-        .mode(0o711)
-        .create(&review.source_directory)?;
-    let aliases = review.source_directory.join("sessions");
-    fs::DirBuilder::new().mode(0o711).create(&aliases)?;
-    for session in review.target_incarnations.keys() {
-        std::os::unix::fs::symlink(
-            Path::new(RUNTIME).join(session.to_string()),
-            aliases.join(session.to_string()),
-        )?;
-    }
-    files::write_new(
-        &review.source_directory.join("system-adoption-fence.json"),
-        &serde_json::to_vec(
-            &serde_json::json!({"schema_version":1,"operation_id":review.operation_id,"control_root":CONTROL,"legacy_owner_retired":true}),
-        )?,
-    )?;
-    leases_current(&mut owner, &mut leases)?;
+    seal_retention(review)?;
     for lease in leases {
         lease.release()?;
     }
@@ -888,6 +1189,324 @@ fn apply(review: &mut Review) -> Result<()> {
     finish(&mut owner.child)?;
     review.phase = "dormant-installed".into();
     save(review)
+}
+fn publish_fence(review: &mut Review) -> Result<()> {
+    let parent = if let Some(retained) = &review.temporary_source {
+        retained
+            .parent()
+            .context("source retention parent missing")?
+            .to_owned()
+    } else {
+        directory(review.operation_id)?
+    };
+    let metadata = fs::symlink_metadata(&parent)?;
+    ensure!(
+        metadata.is_dir() && metadata.uid() == 0 && metadata.mode() & 0o022 == 0,
+        "fence staging parent is not root-controlled"
+    );
+    let staging = parent.join("source-fence");
+    fs::DirBuilder::new().mode(0o711).create(&staging)?;
+    fs::set_permissions(&staging, fs::Permissions::from_mode(0o711))?;
+    let metadata = fs::symlink_metadata(&staging)?;
+    review.fence_identity = Some((metadata.dev(), metadata.ino()));
+    save(review)?;
+    let aliases = staging.join("sessions");
+    fs::DirBuilder::new().mode(0o711).create(&aliases)?;
+    fs::set_permissions(&aliases, fs::Permissions::from_mode(0o711))?;
+    for session in review.target_incarnations.keys() {
+        std::os::unix::fs::symlink(
+            Path::new(RUNTIME).join(session.to_string()),
+            aliases.join(session.to_string()),
+        )?;
+    }
+    files::write_new(
+        &staging.join("system-adoption-fence.json"),
+        &serde_json::to_vec(
+            &serde_json::json!({"schema_version":1,"operation_id":review.operation_id,"control_root":CONTROL,"legacy_owner_retired":true}),
+        )?,
+    )?;
+    fs::File::open(&aliases)?.sync_all()?;
+    fs::File::open(&staging)?.sync_all()?;
+    rename_no_replace(&staging, &review.source_directory)?;
+    fs::File::open(parent)?.sync_all()?;
+    fs::File::open(
+        review
+            .source_directory
+            .parent()
+            .context("source parent missing")?,
+    )?
+    .sync_all()?;
+    Ok(())
+}
+fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
+    use std::ffi::CString;
+    let from = CString::new(from.as_os_str().as_encoded_bytes())?;
+    let to = CString::new(to.as_os_str().as_encoded_bytes())?;
+    ensure!(
+        unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } == 0,
+        "reviewed namespace rename unconfirmed; concurrent source retained"
+    );
+    Ok(())
+}
+fn retained_source(review: &Review) -> Result<PathBuf> {
+    if let Some(path) = &review.temporary_source {
+        if path.try_exists()? {
+            return Ok(path.clone());
+        }
+    }
+    let retained = directory(review.operation_id)?.join("retained-user-vessel");
+    if retained.try_exists()? {
+        Ok(retained)
+    } else {
+        Ok(review.source_directory.clone())
+    }
+}
+fn remove_fence(review: &Review) -> Result<()> {
+    if !review.source_directory.try_exists()? {
+        return Ok(());
+    }
+    service::files::check_path(&review.source_directory, review.uid)?;
+    let metadata = fs::symlink_metadata(&review.source_directory)?;
+    ensure!(
+        metadata.is_dir()
+            && metadata.uid() == 0
+            && Some((metadata.dev(), metadata.ino())) == review.fence_identity,
+        "old namespace fence differs from saved inode"
+    );
+    let aliases = review.source_directory.join("sessions");
+    if aliases.try_exists()? {
+        let meta = fs::symlink_metadata(&aliases)?;
+        ensure!(
+            meta.is_dir() && meta.uid() == 0 && meta.mode() & 0o022 == 0,
+            "old namespace aliases are not protected"
+        );
+        for entry in fs::read_dir(&aliases)? {
+            let path = entry?.path();
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .context("invalid compatibility alias")?;
+            let session = Uuid::parse_str(name)?;
+            ensure!(
+                review.target_incarnations.contains_key(&session)
+                    && fs::symlink_metadata(&path)?.file_type().is_symlink()
+                    && fs::read_link(&path)? == Path::new(RUNTIME).join(session.to_string()),
+                "unexpected legacy alias during rollback"
+            );
+            fs::remove_file(path)?;
+        }
+        fs::remove_dir(aliases)?;
+    }
+    let fence = review.source_directory.join("system-adoption-fence.json");
+    if fence.try_exists()? {
+        let value: serde_json::Value = serde_json::from_slice(&files::read(&fence, 16384)?)?;
+        ensure!(
+            value["operation_id"] == serde_json::to_value(review.operation_id)?
+                && value["control_root"] == CONTROL
+                && value["legacy_owner_retired"] == true,
+            "legacy fence identity changed"
+        );
+        fs::remove_file(fence)?;
+    }
+    fs::remove_dir(&review.source_directory)?;
+    fs::File::open(
+        review
+            .source_directory
+            .parent()
+            .context("source parent unavailable")?,
+    )?
+    .sync_all()?;
+    Ok(())
+}
+struct RollbackPins {
+    session: Uuid,
+    startup: fs::File,
+    execution: fs::File,
+}
+fn rollback_pins(review: &Review, source: &Path) -> Result<Vec<RollbackPins>> {
+    ensure!(
+        review.target_incarnations.len() <= 64,
+        "rollback source lease capacity exceeded"
+    );
+    let mut pins = Vec::new();
+    for session in review.target_incarnations.keys() {
+        let runtime = source.join("sessions").join(session.to_string());
+        let lock = |path: PathBuf| -> Result<fs::File> {
+            let file = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(path)?;
+            let metadata = file.metadata()?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.uid() == review.uid
+                    && metadata.nlink() == 1
+                    && metadata.mode() & 0o077 == 0,
+                "retained source lock is not original private regular file"
+            );
+            file.try_lock()
+                .context("original startup/execution ownership remains live")?;
+            Ok(file)
+        };
+        pins.push(RollbackPins {
+            session: *session,
+            startup: lock(runtime.join("startup.lock"))?,
+            execution: lock(
+                runtime
+                    .join("journal")
+                    .join(format!("{session}.execution.lock")),
+            )?,
+        });
+    }
+    Ok(pins)
+}
+struct RetentionTraversal(fs::File);
+impl Drop for RetentionTraversal {
+    fn drop(&mut self) {
+        let _ = self.0.set_permissions(fs::Permissions::from_mode(0o700));
+        let _ = self.0.sync_all();
+    }
+}
+fn retention_container(review: &Review) -> Result<Option<fs::File>> {
+    let Some(retained) = &review.temporary_source else {
+        return Ok(None);
+    };
+    let parent = retained
+        .parent()
+        .context("retention container parent unavailable")?;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(parent)?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_dir()
+            && metadata.uid() == 0
+            && metadata.mode() & 0o022 == 0
+            && Some((metadata.dev(), metadata.ino())) == review.retention_identity,
+        "retention container differs from pinned root inode"
+    );
+    Ok(Some(file))
+}
+fn seal_retention(review: &Review) -> Result<()> {
+    if let Some(file) = retention_container(review)? {
+        file.set_permissions(fs::Permissions::from_mode(0o700))?;
+        file.sync_all()?;
+    }
+    Ok(())
+}
+fn open_retention_for_rollback(review: &Review) -> Result<Option<RetentionTraversal>> {
+    if let Some(file) = retention_container(review)? {
+        let traversal = RetentionTraversal(file);
+        traversal
+            .0
+            .set_permissions(fs::Permissions::from_mode(0o711))?;
+        traversal.0.sync_all()?;
+        Ok(Some(traversal))
+    } else {
+        Ok(None)
+    }
+}
+fn rollback_journal_leases(
+    review: &Review,
+    source: &Path,
+    owner: &mut SourceOwnership,
+    pins: &[RollbackPins],
+) -> Result<Vec<(SourceLease, TransitionResponse)>> {
+    let snapshot: Snapshot = serde_json::from_slice(&files::read(
+        &directory(review.operation_id)?.join("reviewed-source/snapshot.json"),
+        128 * 1024 * 1024,
+    )?)?;
+    ensure!(snapshot.sessions.len() <= 64, "rollback source lease bound");
+    let mut result: Vec<(SourceLease, TransitionResponse)> = Vec::new();
+    for registration in snapshot.sessions {
+        owner.check()?;
+        for (lease, _) in &mut result {
+            lease.check()?;
+        }
+        let session = registration.session_id;
+        let request = TransitionRequest {
+            schema: SCHEMA,
+            session_id: session,
+            source_incarnation: registration.incarnation,
+            operation: TransitionOperation::Lookup {
+                directory: source.join("sessions").join(session.to_string()),
+                command_id: review.freeze_commands[&session],
+            },
+        };
+        let retained = pins
+            .iter()
+            .find(|pin| pin.session == session)
+            .context("retained source lock set differs")?;
+        result.push(SourceLease::acquire_request(
+            review,
+            request,
+            Some(retained),
+        )?);
+    }
+    Ok(result)
+}
+fn abort_original_markers(
+    review: &Review,
+    owner: &mut SourceOwnership,
+    leases: &mut [(SourceLease, TransitionResponse)],
+) -> Result<()> {
+    for index in 0..leases.len() {
+        owner.check()?;
+        for (lease, _) in leases.iter_mut() {
+            lease.check()?;
+        }
+        let (lease, lookup) = &mut leases[index];
+        match lookup {
+            TransitionResponse::Prepared { receipt } => {
+                ensure!(
+                    receipt.transition_id == review.operation_id
+                        && receipt.review_digest == review.receipt_digest
+                        && receipt.target_incarnation == review.target_incarnations[&lease.session]
+                        && receipt.source_uid == review.uid
+                        && receipt.source_gid == review.gid,
+                    "retained source freeze provenance changed"
+                );
+                let request = TransitionRequest {
+                    schema: SCHEMA,
+                    session_id: lease.session,
+                    source_incarnation: receipt.source_incarnation,
+                    operation: TransitionOperation::AbortSource {
+                        directory: lease.directory.clone(),
+                        command_id: review.abort_commands[&lease.session],
+                        expected: receipt.clone(),
+                    },
+                };
+                ensure!(
+                    matches!(lease.abort(&request)?, TransitionResponse::Aborted { .. }),
+                    "original source marker abort unconfirmed"
+                );
+            }
+            TransitionResponse::Aborted { receipt } => ensure!(
+                receipt.command_id == review.abort_commands[&lease.session]
+                    && receipt.prepared.transition_id == review.operation_id,
+                "source abort identity changed"
+            ),
+            TransitionResponse::Absent { command_id } => ensure!(
+                *command_id == review.freeze_commands[&lease.session]
+                    && !review.freezes.contains_key(&lease.session),
+                "observed source marker contradicts saved freeze"
+            ),
+            _ => bail!(
+                "original source marker is uncertain or already target committed; no service restoration admitted"
+            ),
+        }
+    }
+    owner.check()
 }
 fn apply_install(plan: Plan, options: &Options) -> Result<()> {
     super::apply(plan, options)
@@ -946,10 +1565,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                     && source_metadata.mode() & 0o077 == 0,
                 "original user source directory is not private and owned"
             );
-            ensure!(
-                source_metadata.dev() == fs::metadata(root()?)?.dev(),
-                "user adoption requires atomic same-filesystem retention between original source and /etc/voyage-adoption; different mounts require an explicit relocation backend, and source/services are unchanged"
-            );
+            let opaque_retention = source_metadata.dev() != fs::metadata(root()?)?.dev();
             let source_manifest_digest = hash(&plan.manifest)?;
             service::files::directory(&dir, 0, true)?;
             let mut review = Review {
@@ -960,6 +1576,10 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 source_device: source_metadata.dev(),
                 source_inode: source_metadata.ino(),
                 source_manifest_digest,
+                opaque_retention,
+                opaque_digest: None,
+                temporary_source: None,
+                retention_identity: None,
                 original_user: opts.execution_user,
                 uid: account.uid,
                 gid: account.gid,
@@ -980,29 +1600,14 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 target_incarnations: BTreeMap::new(),
                 freeze_commands: BTreeMap::new(),
                 commit_commands: BTreeMap::new(),
+                abort_commands: BTreeMap::new(),
+                fence_identity: None,
+                rollback_source_verified: false,
                 freezes: BTreeMap::new(),
                 source_units: Vec::new(),
                 source_definitions: BTreeMap::new(),
             };
-            review.receipt_digest = hash(&(
-                &review.operation_id,
-                &review.original_user,
-                review.uid,
-                review.gid,
-                &review.home,
-                &review.groups,
-                review.source_boot,
-                &review.release,
-                &review.planned_installation,
-                review.source_device,
-                review.source_inode,
-                &review.source_manifest_digest,
-                &review.gateway_user,
-                &review.origin,
-                &review.key,
-                &review.provisioner,
-                &review.source_credential_key,
-            ))?;
+            review.receipt_digest = review_digest(&review, false)?;
             save(&review)?;
             review.phase = "quiescence-requested".into();
             save(&review)?;
@@ -1033,28 +1638,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             );
             recheck(&review)?;
             let _snapshot = observe_snapshot(&mut review, "reviewed-source", None)?;
-            review.receipt_digest = hash(&(
-                &review.operation_id,
-                &review.original_user,
-                review.uid,
-                review.gid,
-                &review.home,
-                &review.groups,
-                review.source_boot,
-                &review.release,
-                &review.planned_installation,
-                review.source_device,
-                review.source_inode,
-                &review.source_manifest_digest,
-                &review.gateway_user,
-                &review.origin,
-                &review.key,
-                &review.provisioner,
-                &review.source_credential_key,
-                &review.source_definitions,
-                &review.snapshot_digest,
-                &review.target_incarnations,
-            ))?;
+            review.receipt_digest = review_digest(&review, true)?;
             review.phase = "ready".into();
             save(&review)?;
             output(&review);
@@ -1111,46 +1695,45 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             // Lookup only: never repeat a freeze, commit, install, activation or
             // user-service restoration after a lost reply.
             let mut observed = BTreeMap::new();
+            let reviewed = if review.snapshot_digest.is_some() {
+                let snapshot: Snapshot = serde_json::from_slice(&files::read(
+                    &directory(id)?.join("reviewed-source/snapshot.json"),
+                    128 * 1024 * 1024,
+                )?)?;
+                snapshot
+                    .sessions
+                    .into_iter()
+                    .map(|r| (r.session_id, r.incarnation))
+                    .collect::<BTreeMap<_, _>>()
+            } else {
+                BTreeMap::new()
+            };
             for (session, command_id) in &review.freeze_commands {
-                let path = if review
-                    .source_directory
-                    .join("system-adoption-fence.json")
-                    .try_exists()?
-                {
-                    directory(id)?
-                        .join("retained-user-vessel/sessions")
-                        .join(session.to_string())
-                } else {
-                    review
-                        .source_directory
-                        .join("sessions")
-                        .join(session.to_string())
-                };
-                // The retained tree is root-private after fencing, so source
-                // lookup is intentionally unavailable to the dropped helper.
-                let lookup = if path.starts_with(REVIEWS) {
-                    None
-                } else {
-                    transition(
-                        &review,
-                        &TransitionRequest {
-                            schema: SCHEMA,
-                            session_id: *session,
-                            source_incarnation: review
-                                .freezes
-                                .get(session)
-                                .map(|p| p.source_incarnation)
-                                .unwrap_or(Uuid::nil()),
-                            operation: TransitionOperation::Lookup {
-                                directory: path,
-                                command_id: *command_id,
-                            },
+                let path = retained_source(&review)?
+                    .join("sessions")
+                    .join(session.to_string());
+                let lookup = transition(
+                    &review,
+                    &TransitionRequest {
+                        schema: SCHEMA,
+                        session_id: *session,
+                        source_incarnation: review
+                            .freezes
+                            .get(session)
+                            .map(|p| p.source_incarnation)
+                            .or_else(|| reviewed.get(session).copied())
+                            .unwrap_or(Uuid::nil()),
+                        operation: TransitionOperation::Lookup {
+                            directory: path,
+                            command_id: *command_id,
                         },
-                    )
-                    .ok()
-                };
+                    },
+                )
+                .ok();
                 observed.insert(session.to_string(),serde_json::json!({"freeze_command":command_id,
-                    "freeze_observed":matches!(lookup,Some(TransitionResponse::Prepared{..})),
+                    "freeze_observed":matches!(&lookup,Some(TransitionResponse::Prepared{..})),
+                    "abort_observed":matches!(&lookup,Some(TransitionResponse::Aborted{..})),
+                    "absent_observed":matches!(&lookup,Some(TransitionResponse::Absent{..})),
                     "commit_command":review.commit_commands.get(session),"no_effect_replayed":true}));
             }
             output(&review);
@@ -1212,6 +1795,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                         "ready"
                             | "capturing-retired-source"
                             | "freezing-source"
+                            | "capturing-opaque-retention"
                             | "installing-dormant-system"
                             | "dormant-installed"
                             | "rollback-requested"
@@ -1252,7 +1836,13 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                         "partial adoption unit differs from pinned review"
                     );
                     ensure!(
-                        query(name, "MainPID")? == "0" && query(name, "DropInPaths")?.is_empty(),
+                        query(name, "MainPID")? == "0"
+                            && query(name, "Job")?.is_empty()
+                            && matches!(
+                                query(name, "ActiveState")?.as_str(),
+                                "inactive" | "failed"
+                            )
+                            && query(name, "DropInPaths")?.is_empty(),
                         "partial adoption service retirement/effective unit uncertain"
                     );
                 }
@@ -1278,44 +1868,64 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 retained.phase = "uninstalled-retained".into();
                 lifecycle::save_for_adoption(&retained)?;
             }
-            let retained = directory(review.operation_id)?.join("retained-user-vessel");
-            if retained.try_exists()? {
-                if review.source_directory.try_exists()? {
-                    service::files::check_path(&review.source_directory, 0)?;
-                    let aliases = review.source_directory.join("sessions");
-                    if aliases.try_exists()? {
-                        for entry in fs::read_dir(&aliases)? {
-                            let path = entry?.path();
-                            let name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .context("invalid compatibility alias")?;
-                            let session = Uuid::parse_str(name)?;
-                            ensure!(
-                                review.target_incarnations.contains_key(&session)
-                                    && fs::symlink_metadata(&path)?.file_type().is_symlink()
-                                    && fs::read_link(&path)?
-                                        == Path::new(RUNTIME).join(session.to_string()),
-                                "unexpected legacy alias during rollback"
-                            );
-                            fs::remove_file(path)?;
-                        }
-                        fs::remove_dir(aliases)?;
-                    }
-                    let fence = review.source_directory.join("system-adoption-fence.json");
-                    if fence.try_exists()? {
-                        let value: serde_json::Value =
-                            serde_json::from_slice(&files::read(&fence, 16384)?)?;
-                        ensure!(
-                            value["operation_id"] == serde_json::to_value(review.operation_id)?,
-                            "legacy fence identity changed"
-                        );
-                        fs::remove_file(fence)?;
-                    }
-                    fs::remove_dir(&review.source_directory)?;
+            let retained = retained_source(&review)?;
+            let mut owner =
+                SourceOwnership::acquire_at(&review, &retained, &UserRequest::HoldOwner)?;
+            let pins = rollback_pins(&review, &retained)?;
+            let traversal = open_retention_for_rollback(&review)?;
+            let mut journal_leases =
+                rollback_journal_leases(&review, &retained, &mut owner, &pins)?;
+            if !review.rollback_source_verified {
+                if let Some(expected) = &review.opaque_digest {
+                    ensure!(
+                        receive_opaque_with(&mut owner, None, || {
+                            for (lease, _) in &mut journal_leases {
+                                lease.check()?;
+                            }
+                            Ok(())
+                        })? == *expected,
+                        "retained opaque source changed after exact frozen capture"
+                    );
                 }
-                fs::rename(retained, &review.source_directory)?;
+                // Exact AbortSource mutations may subsequently change the opaque
+                // bytes. Persist proof before any of those idempotent local effects;
+                // retries qualify the new journal through exact abort receipts.
+                review.rollback_source_verified = true;
+                save(&review)?;
             }
+            abort_original_markers(&review, &mut owner, &mut journal_leases)?;
+            if retained != review.source_directory {
+                owner.check()?;
+                for (lease, _) in &mut journal_leases {
+                    lease.check()?;
+                }
+                remove_fence(&review)?;
+                rename_no_replace(&retained, &review.source_directory)?;
+                owner.directory = review.source_directory.clone();
+                owner.check()?;
+                for (lease, _) in &mut journal_leases {
+                    lease.directory = review
+                        .source_directory
+                        .join("sessions")
+                        .join(lease.session.to_string());
+                    lease.check()?;
+                }
+                fs::File::open(
+                    review
+                        .source_directory
+                        .parent()
+                        .context("source parent missing")?,
+                )?
+                .sync_all()?;
+            }
+            seal_retention(&review)?;
+            drop(traversal);
+            for (lease, _) in journal_leases {
+                lease.release()?;
+            }
+            drop(pins);
+            drop(owner.channel);
+            finish(&mut owner.child)?;
             review.phase = "rollback-services-requested".into();
             save(&review)?;
             // The original user control/history installation is retained, frozen
