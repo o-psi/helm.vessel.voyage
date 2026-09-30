@@ -378,6 +378,18 @@ def assert_canonical(snapshot, scenario):
     assert scenario.counter.read_text() == "effect\n" * count
 
 
+def cancel_reviewed_run(fixture, session, run_id):
+    # Accounting/attempt observations may advance the revision while the
+    # provider is held. Re-review only an explicit pre-admission conflict.
+    for _ in range(4):
+        reply = fixture.raw_command(session, fixture.mutation(session, "cancel", run_id=run_id))
+        if reply.get("error") == "session revision conflict":
+            continue
+        assert reply.get("error") is None, reply
+        return reply["result"]
+    raise AssertionError("cancel review could not converge within four known refusals")
+
+
 def run_case(binaries, mode, kind, tui=False):
     fixture = ContextFixture(binaries)
     scenario = Scenario(fixture, mode, kind)
@@ -401,7 +413,7 @@ def run_case(binaries, mode, kind, tui=False):
         if kind == "cancel":
             wait_for(lambda: scenario.held.is_set() or scenario.errors, "reduced retry in flight")
             assert not scenario.errors, scenario.errors
-            fixture.command(session, fixture.mutation(session, "cancel", run_id=admission["run_id"]))
+            cancel_reviewed_run(fixture, session, admission["run_id"])
             snapshot = fixture.finished(session, state="cancelled")
             wait_for(scenario.disconnected.is_set, "provider disconnect after cancellation")
         else:
