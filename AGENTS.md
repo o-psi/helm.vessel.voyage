@@ -100,6 +100,9 @@ responsibility for its integration and outcome.
   broad quality jobs without a new user request. This does not remove applicable
   local verification obligations. A successful compile or checksum is not proof
   of passing tests, working installation or native behavior on another platform.
+  The retired hosted quality workflows are removed. Use the current local
+  commands in [docs/quality.md](docs/quality.md), not historical
+  `scripts/check-quality` workflow dispatches or restored copies of that runner.
 
 ### Publish and own build follow-through
 

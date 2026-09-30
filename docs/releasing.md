@@ -86,8 +86,9 @@ or checksums. Retain historical artifacts. Handled failures remove their tempora
 staging data; forced termination may leave a `.package-*` directory or publication
 lock. Verify the originating process stopped before handling those leftovers.
 
-The [quality runner](quality.md) performs packaging and checksum checks. Automated
-archive regression fixtures are absent. For documentation changes, inspect archive
+The [local quality commands](quality.md) include maintained packaging regression
+fixtures and checksum checks. Retired hosted quality workflows and their
+`scripts/check-quality` entry point are not release gates. For documentation changes, inspect archive
 membership, guide links, configuration and generated CLI documents explicitly.
 Do not claim native runtime or clean-install validation from checksum success.
 
