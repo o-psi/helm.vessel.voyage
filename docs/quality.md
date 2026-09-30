@@ -944,3 +944,8 @@ and attention probes retaining unknown rather than inventing an unread count.
 Only the overview and its own new test module changed; execution UI hooks remain
 owned by the concurrent transition work. These edits still require the coordinated
 final compilation, runtime checks and workspace coverage measurement.
+
+Two further plain-interface source journeys exercise EOF, explicit quit, blank
+input and input failure through the actual chat event loop while scripted peers
+permit only observation. A second source matrix refuses malformed machine output
+without repeating an admitted command. These are prepared, not executed evidence.

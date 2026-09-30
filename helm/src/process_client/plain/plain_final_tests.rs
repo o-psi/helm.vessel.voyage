@@ -342,3 +342,82 @@ async fn output_identity_errors_leave_cursor_unadvanced_and_do_not_retry() {
         peer.finish().await;
     }
 }
+
+#[tokio::test]
+async fn chat_eof_quit_and_input_failure_detach_without_cancelling_or_admitting() {
+    use crate::process_client::loopback_tests::Peer as LoopbackPeer;
+    for mode in ["eof", "quit", "blank_then_quit", "input_error"] {
+        let mut peer = LoopbackPeer::open().await;
+        let client = peer.client.clone();
+        let s = Uuid::new_v4();
+        let i = Uuid::from_u128(2);
+        let (sender, input) = tokio::sync::mpsc::channel(4);
+        match mode {
+            "eof" => {}
+            "quit" => sender.send(Ok("/quit".into())).await.unwrap(),
+            "blank_then_quit" => {
+                sender.send(Ok("  ".into())).await.unwrap();
+                sender.send(Ok("/quit".into())).await.unwrap();
+            }
+            "input_error" => sender
+                .send(Err(anyhow::anyhow!("synthetic input ended")))
+                .await
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        drop(sender);
+        let chat = chat_with_input(&client, s, input);
+        tokio::pin!(chat);
+        let deadline = tokio::time::sleep(std::time::Duration::from_secs(3));
+        tokio::pin!(deadline);
+        let mut inspections = 0;
+        loop {
+            tokio::select! {
+                result=&mut chat=>{assert_eq!(result.is_err(),mode=="input_error");break;},
+                _=&mut deadline=>panic!("chat did not detach"),
+                (id,command)=peer.command()=>{
+                    match command {
+                        V::Inspect {session_id}=>{assert_eq!(session_id,s);inspections+=1;peer.reply(id,info(s,i)).await;},
+                        V::Voyage(request)=>{
+                            assert_eq!(request.session_id,s);
+                            assert!(matches!(request.command,VoyageCommand::Snapshot),"detach cannot mutate its owner");
+                            peer.voyage_reply(id,s,i,json!({"revision":8,"decisions":[]})).await;
+                        },
+                        _=>panic!("unexpected detach request"),
+                    }
+                },
+            }
+        }
+        assert_eq!(inspections, 1);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), peer.command())
+                .await
+                .is_err(),
+            "no delayed mutation after detach"
+        );
+    }
+}
+
+#[tokio::test]
+async fn json_observer_refuses_malformed_output_without_replaying_admitted_work() {
+    let s = Uuid::new_v4();
+    let i = Uuid::from_u128(2);
+    let r = Uuid::new_v4();
+    for output in [
+        json!({"run_id":Uuid::new_v4(),"offset":0,"data":"","next_offset":0,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":1,"data":"","next_offset":1,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":0,"data":"é","next_offset":1,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":0,"data":null,"next_offset":0,"has_more":false,"state":"completed"}),
+        json!({"run_id":r,"offset":0,"data":"","next_offset":0,"has_more":false}),
+    ] {
+        let peer = Peer::new(vec![
+            (wire(V::Inspect { session_id: s }), info(s, i)),
+            (json!({"op":"snapshot"}), json!({"observation_cursor":4})),
+            (wire(V::Capabilities), json!({"features":[]})),
+            (json!({"op":"run_output","run_id":r,"offset":0}), output),
+        ])
+        .await;
+        assert!(follow_json(&peer.client, s, r).await.is_err());
+        peer.finish().await;
+    }
+}
