@@ -77,11 +77,13 @@ def encoded(value):
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def events(mode, *, tool=False, partial=False, call_id=CALL):
+def events(mode, *, tool=False, partial=False, call_id=CALL, tool_name="shell", tool_arguments=None):
     arguments = {"command": "printf 'effect\\n' >> counter.txt; cat payload.txt"}
+    if tool_arguments is not None:
+        arguments = tool_arguments
     if mode == "chat":
         delta = ({"tool_calls": [{"index": 0, "id": call_id, "type": "function",
-                  "function": {"name": "shell", "arguments": json.dumps(arguments)}}]}
+                  "function": {"name": tool_name, "arguments": json.dumps(arguments)}}]}
                  if tool else {"content": PARTIAL if partial else ANSWER})
         result = [{"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}]
         if partial:
@@ -93,7 +95,7 @@ def events(mode, *, tool=False, partial=False, call_id=CALL):
             return [{"type": "response.output_text.delta", "delta": PARTIAL},
                     {"type": "response.failed", "response": {
                         "status": "failed", "error": CONTEXT_ERROR["error"]}}]
-        output = ([{"type": "function_call", "call_id": call_id, "name": "shell",
+        output = ([{"type": "function_call", "call_id": call_id, "name": tool_name,
                     "arguments": json.dumps(arguments)}] if tool else
                   [{"type": "message", "role": "assistant", "content": [
                       {"type": "output_text", "text": ANSWER}]}])
@@ -194,7 +196,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
             scenario.bodies.append(body)
             step = len(scenario.bodies)
             validate_request(body, scenario.mode, scenario.prompt)
-            if scenario.kind == "long":
+            if scenario.kind == "model":
+                if scenario.mode != "chat":
+                    raise AssertionError("model continuity journey uses the Chat fixture")
+                tools = [m for m in body["messages"] if m["role"] == "tool"]
+                if step == 1:
+                    self.stream(events(scenario.mode,tool=True))
+                elif step == 2:
+                    assert scenario.counter.read_text() == "effect\n"
+                    self.stream(events(scenario.mode,tool=True,call_id="model-compact",tool_name="compact_context",tool_arguments={"retain_recent":0,"carry_forward":"Unresolved obligation: verify before publishing"}))
+                elif step == 3:
+                    receipt = json.loads(next(m["content"] for m in tools if m["tool_call_id"] == "model-compact"))
+                    assert receipt["state"] == "applied" and receipt["canonical_preserved"] is True
+                    scenario.context_receipt = receipt
+                    self.stream(events(scenario.mode,tool=True,call_id="model-read",tool_name="context_status",tool_arguments={"action":"read_history","message_index":2,"offset":len(scenario.payload)//2-40,"limit":256}))
+                elif step == 4:
+                    result = json.loads(next(m["content"] for m in tools if m["tool_call_id"] == "model-read"))
+                    assert scenario.middle in result["text"], "canonical evidence not retrieved"
+                    self.stream(events(scenario.mode,tool=True,call_id="model-noop",tool_name="compact_context",tool_arguments={"retain_recent":1024}))
+                elif step == 5:
+                    result = json.loads(next(m["content"] for m in tools if m["tool_call_id"] == "model-noop"))
+                    assert result["state"] == "no_op"
+                    self.stream(events(scenario.mode))
+                elif step == 6:
+                    assert "Unresolved obligation: verify before publishing" in json.dumps(body)
+                    self.stream(events(scenario.mode,tool=True,call_id="model-receipt",tool_name="context_status",tool_arguments={"action":"read_receipt","message_index":3,"call_id":"model-compact"}))
+                elif step == 7:
+                    result = json.loads(next(m["content"] for m in tools if m["tool_call_id"] == "model-receipt"))
+                    assert result["receipt"] == scenario.context_receipt, "restart changed exact context receipt"
+                    assert scenario.counter.read_text() == "effect\n", "restart replayed completed effect"
+                    self.stream(events(scenario.mode))
+                else:
+                    raise AssertionError("unexpected model-context inference")
+            elif scenario.kind == "long":
                 completed = len(scenario.counter.read_text().splitlines()) if scenario.counter.exists() else 0
                 if completed == 6 and not scenario.rejected:
                     scenario.rejected = len(encoded(body))
@@ -383,7 +417,25 @@ def run_case(binaries, mode, kind):
             assert "context" in reason.lower() and "narrow" in reason.lower(), reason
             assert any(m["role"] == "user" and m["content"] == scenario.prompt for m in snapshot["messages"])
         else:
-            assert_canonical(snapshot, scenario)
+            if kind == "model":
+                tools = [m for m in snapshot["messages"] if m["role"] == "tool"]
+                assert [m["tool_call_id"] for m in tools] == [CALL,"model-compact","model-read","model-noop"]
+                assert scenario.payload in tools[0]["content"]
+                assert "Last prepared input" in snapshot["context_status"]
+                assert snapshot["context_observation"]["count"]["scope"]["account"] is None
+                assert snapshot["context_observation"]["count"]["input_tokens"] is None
+                fixture.restart_supervisor(binaries / "voyage")
+                time.sleep(.25)
+                assert len(scenario.bodies) == 5, "supervisor restart replayed inference"
+                fixture.command(session,fixture.mutation(session,"submit",prompt="Continue the exact task and retained obligation without repeating effects."))
+                fixture.finished(session);suspended(fixture,session)
+                final = full_snapshot(fixture,session)
+                assert len(scenario.bodies) == 7 and scenario.counter.read_text() == "effect\n"
+                assert final["messages"][0]["content"] == scenario.prompt
+                assert scenario.payload in next(m["content"] for m in final["messages"] if m.get("tool_call_id") == CALL)
+                assert not scenario.errors, scenario.errors
+            else:
+                assert_canonical(snapshot, scenario)
             if kind == "manual":
                 before = full_snapshot(fixture, session)
                 legacy = fixture.mutation(session, "compact", retain=1)
@@ -418,7 +470,7 @@ def run_case(binaries, mode, kind):
                 assert info["incarnation"] != old
                 snapshot = full_snapshot(fixture, session)
                 assert_canonical(snapshot, scenario)
-            expected = {"long": 14, "rejection": 4, "manual": 3, "cancel": 3}.get(kind, 2)
+            expected = {"long": 14, "rejection": 4, "manual": 3, "cancel": 3, "model":7}.get(kind, 2)
             assert len(scenario.bodies) == expected, "inference replay or missing recovery"
         # Suspension is the end-of-run barrier: no sleep-only claim of non-replay.
         assert not scenario.errors, scenario.errors
@@ -439,7 +491,7 @@ def main():
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--mode", choices=["all", *MODES], default="all")
     parser.add_argument("--case", choices=["all", "rejection", "automatic", "irreducible",
-                                         "manual", "cancel", "partial", "long"], default="all")
+                                         "manual", "cancel", "partial", "long", "model"], default="all")
     args = parser.parse_args()
     binaries = args.bin_dir.resolve()
     for binary in ("voyage", "vessel"):

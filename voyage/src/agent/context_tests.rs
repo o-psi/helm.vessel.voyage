@@ -757,3 +757,84 @@ async fn model_context_tools_persist_receipts_and_retrieve_canonical_evidence_wi
     assert_eq!(saved.model_note_count(), 1);
     saved.validate(&outcome.messages).unwrap();
 }
+
+#[tokio::test]
+async fn model_compaction_checkpoint_failure_never_claims_applied_or_dispatches_continuation() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, effects, mut checkpoint) = fixture(root.path(), false);
+    checkpoint.fail_compaction = true;
+    agent.provider = Box::new(ContextToolProvider {
+        step: AtomicUsize::new(0),
+        requests: requests.clone(),
+    });
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::Checkpoint(_)));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(checkpoint.working.lock().unwrap().generation, 0);
+    assert!(
+        !checkpoint
+            .canonical
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.tool_call_id.as_deref() == Some("compact"))
+    );
+}
+#[tokio::test]
+async fn cancellation_after_context_persistence_retains_receipt_without_inference_or_effect_replay()
+{
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, requests, effects, mut checkpoint) = fixture(root.path(), false);
+    let cancel = CancellationToken::new();
+    checkpoint.cancel_after_compaction = Some(cancel.clone());
+    agent.provider = Box::new(ContextToolProvider {
+        step: AtomicUsize::new(0),
+        requests: requests.clone(),
+    });
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            cancel,
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::Cancelled));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    let working = checkpoint.working.lock().unwrap().clone();
+    let canonical = checkpoint.canonical.lock().unwrap().clone();
+    let receipt = working
+        .model_receipt(&canonical, 3, "compact")
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt["state"], "applied");
+    let serialized = serde_json::to_value(&working).unwrap();
+    let restored: crate::context::WorkingContext = serde_json::from_value(serialized).unwrap();
+    let projected = restored.project(&canonical).unwrap();
+    assert!(
+        projected
+            .iter()
+            .any(|m| m.tool_call_id.as_deref() == Some("compact")
+                && m.content == receipt)
+    );
+    assert!(
+        !canonical
+            .iter()
+            .any(|m| m.tool_call_id.as_deref() == Some("compact"))
+    );
+}

@@ -650,9 +650,13 @@ without live providers:
 cargo build -p vessel -p voyage --locked -j 8
 python3 -B voyage/tests/context_compaction.py --bin-dir target/debug --mode chat
 python3 -B voyage/tests/context_compaction.py --bin-dir target/debug --mode responses
+python3 -B voyage/tests/context_compaction.py --bin-dir target/debug --mode chat --case model
 ```
 
-Each mode has seven bounded scenarios and observes fixture-owned cleanup. The
+Each default mode has seven bounded scenarios and observes fixture-owned cleanup.
+The additional model case checks exact evidence retrieval, an unresolved
+carry-forward obligation, applied/no-op receipts, restart and single execution
+of the completed effect. The
 Responses automatic case uses declared counts from its toy counting endpoint;
 the Chat automatic case proves unknown accounting keeps large evidence. Report
 those synthetic counts separately from real provider measurements and payload

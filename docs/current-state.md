@@ -1181,6 +1181,11 @@ The #381 branch replaces byte-triggered preparation/admission with request-token
 policy. Native OpenAI Responses counts the encoded input; unsupported transports,
 including ChatGPT OAuth counting, remain unknown. Known pressure can persist a
 reduced working projection before dispatch, while zero adds no operator veto.
-Content-free last-request accounting is saved under the executing owner. Model
-status/compaction tools and both clients' accounting display remain unfinished
-#381 work; this paragraph does not claim the complete feature is delivered.
+Content-free last-request accounting is saved under the executing owner and shown
+consistently by both Helm clients. The active Voyage registry fulfills model
+context-status, bounded canonical-history/receipt reads and compaction requests.
+Projection and exact internal receipt persist together before success; unverified
+carry-forward notes never become instructions. Restart preserves continuity
+without replaying completed tools. See [configuration](configuration.md#model-requested-continuity)
+for uncertainty, failure and retrieval boundaries. Publication and full verification
+remain recorded in #381; branch implementation alone is not release evidence.

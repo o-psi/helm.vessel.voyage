@@ -323,4 +323,50 @@ mod tests {
                 .contains("https://fixture.invalid")
         );
     }
+    #[tokio::test]
+    async fn counting_preserves_images_and_hidden_replay_in_the_actual_encoder_projection() {
+        use voyage_protocol::content::{ContentPart, ImageAttachment};
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut buffer, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = buffer.into_inner();
+        let (media_type, width, height) = crate::images::validate(&bytes).unwrap();
+        let id = uuid::Uuid::new_v4();
+        let mut req = request("view synthetic pixel");
+        req.messages[1].parts = vec![
+            ContentPart::Text {
+                text: "view synthetic pixel".into(),
+            },
+            ContentPart::Image {
+                attachment: ImageAttachment {
+                    id,
+                    sha256: format!("{:x}", Sha256::digest(&bytes)),
+                    name: "synthetic".into(),
+                    media_type,
+                    byte_size: bytes.len() as u64,
+                    width,
+                    height,
+                },
+            },
+        ];
+        req.messages[1].image_data.insert(id, bytes);
+        let mut assistant = Message::new(Role::Assistant, "");
+        assistant.provider_state = Some(
+            json!({"kind":"openai_responses_replay","version":1,"items":[{"type":"reasoning","id":"reasoning","encrypted_content":"OPAQUE_REPLAY","summary":[{"type":"summary_text","text":"fixture summary"}],"status":"completed"}]}),
+        );
+        req.messages.push(assistant);
+        let (url, server) = crate::provider::native_http_tests::server(vec![reply(501)]).await;
+        let provider = OpenAiResponsesProvider::new("synthetic-key".into(), Some(url));
+        let count = provider.input_tokens(&req).await.unwrap();
+        assert_eq!(count.reliable_input_tokens(), Some(501));
+        let requests = server.await.unwrap();
+        let counted = body(&requests[0]);
+        let encoded = serde_json::to_string(&counted).unwrap();
+        assert!(encoded.contains("input_image") && encoded.contains("data:image/png;base64,"));
+        assert!(encoded.contains("OPAQUE_REPLAY"));
+        assert_eq!(counted["tools"][0]["name"], "fixture_tool");
+        let record = serde_json::to_string(&count).unwrap();
+        assert!(!record.contains("OPAQUE_REPLAY") && !record.contains("data:image"));
+    }
 }

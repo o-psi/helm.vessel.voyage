@@ -640,8 +640,8 @@ truncation are not input-context recovery.
 Recovery has four reduction stages: 4096-, 1024- and 256-byte excerpts, then
 complete recorded tool-group extraction. Already stronger reductions are retained;
 empty stages do not dispatch. Every retried request must be materially smaller
-(at least 128 serialized-estimate units) after redaction, tool replay projection
-and any explicitly requested local preflight. This measure is not billing usage
+(at least 128 serialized payload bytes) after redaction, tool replay projection
+and final request preparation. This resource measure is not billing usage
 or an authoritative tokenizer. Recovery never loops on an unchanged request.
 Ordinary transient retries remain separately bounded, and every dispatched
 request rechecks runtime authority and cancellation.
@@ -707,10 +707,34 @@ performing old destructive compaction. New runtimes refuse fresh legacy compact
 requests lacking that requirement; historical receipts retain their original
 identity. Upgrade the affected peer instead of falling back to truncation.
 
+### Model-requested continuity
+
+The active Voyage registry exposes `context_status` and `compact_context`.
+Status reports the last prepared request with its scope, method and uncertainty.
+Current occupancy and remaining tokens are unknown at the tool boundary, where
+history has changed. Both Helm clients display the same Voyage-owned last-request
+label; it is not a live percentage or a prediction of future tool output.
+
+A model may request bounded extractive reduction and supply bounded carry-forward
+notes. Notes remain explicitly unverified model-authored data. The pending tool
+group, task and steering remain protected. The runtime atomically persists the
+projection and exact applied/no-op receipt before returning success. Without a
+durable checkpoint it refuses; persistence failure stops continuation. Receipt
+counts remain null when the modified input has not been counted.
+
+`context_status` also provides bounded, redacted canonical-history reads and
+retrieval of positively persisted compaction receipts. A receipt is identified by
+its canonical message index and call ID, not a globally unique call ID. After an
+interrupted receipt write, restart fills only the outgoing request copy from the
+known internal receipt. Canonical history stays append-only and external tool
+effects are never reconstructed or replayed. Explicit continuation is required
+following process restart.
+
 ### Failure and verification boundaries
 
-If task text, instructions, schemas or remaining valid groups cannot be safely
-reduced further, the run stops with an actionable context-exhausted explanation:
+Known irreducible pressure is recorded without introducing a default local veto.
+An explicit operator cap or an actual unrecoverable provider rejection stops the
+run with an actionable context-exhausted explanation:
 full history is retained; narrow the task or select a larger-context model.
 Failed projection validation/persistence stops dispatch. Cancellation is checked
 at execution, checkpoint and provider boundaries; a saved reduction is not

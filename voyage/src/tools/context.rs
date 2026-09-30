@@ -41,3 +41,19 @@ impl Tool for ContextTool {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn context_registry_declaration_cannot_execute_without_the_voyage_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let context = crate::tools::reliability_tests::context(root.path());
+        for kind in [ContextToolKind::Status, ContextToolKind::Compact] {
+            assert!(matches!(
+                ContextTool(kind).execute(json!({}), &context).await,
+                Err(ToolError::Denied(_))
+            ));
+        }
+    }
+}
