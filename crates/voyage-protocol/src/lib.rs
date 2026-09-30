@@ -68,3 +68,6 @@ pub mod execution_profiles;
 pub mod execution_identity;
 
 pub mod execution_review_control;
+
+/// Private dropped-identity helper contracts, never a public authority surface.
+pub mod identity_helper;

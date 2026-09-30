@@ -252,6 +252,24 @@ insufficient. Update all applicable public allowlists and both protocol ends.
 
 ## 3. Authority model
 
+### Private execution-identity configuration observation
+
+The hidden `voyage identity-helper` entry point reads one bounded private-pipe
+request without creating a session. `ReviewConfig` opens a frozen private
+`LaunchConfig` only after the supervisor has selected the configured execution
+identity. It requires an explicit account, validates the executing identity's
+registry and effective policy without provider calls, and returns account and
+capability references, configuration/policy/namespace digests and actual
+UID/GID/groups. It returns only `unavailable` on failure. Configuration content,
+credentials and subprocess diagnostics are absent from its response.
+
+This helper does not authorize a launch. Its caller must check the protected
+identity and owner grant, bound output/time/resources, choose the same explicit
+account/configuration environment for the eventual runtime, and reconstruct facts
+immediately before admission. Administrator account state must use a separately
+provisioned private namespace; root's login defaults cannot supply that namespace.
+The source increment is awaiting the coordinated final milestone verification.
+
 Keep these independent:
 
 1. Human connection rights: who may observe, create, approve, or administer.

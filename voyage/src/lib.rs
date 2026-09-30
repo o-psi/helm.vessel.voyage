@@ -50,3 +50,5 @@ pub mod accounts;
 pub mod catalogue;
 
 pub mod start_settings;
+
+pub mod identity_helper;

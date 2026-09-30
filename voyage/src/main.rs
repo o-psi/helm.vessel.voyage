@@ -7,6 +7,8 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    #[command(hide = true)]
+    IdentityHelper,
     /// Read a bounded model-discovery request on stdin, without creating a session.
     DiscoverModels,
 
@@ -47,6 +49,7 @@ fn main() -> anyhow::Result<()> {
     };
     tokio::runtime::Runtime::new()?.block_on(async move {
         match command {
+            Command::IdentityHelper => voyage::identity_helper::run().await,
             Command::DiscoverModels => voyage::server::models::run().await,
             Command::LegacyRecover(args) => {
                 println!("{}", voyage::server::legacy_recovery::recover(args).await?);
