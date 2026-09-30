@@ -81,3 +81,7 @@ impl Tool for GithubTool {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tool_boundary_tests.rs"]
+mod boundary_tests;

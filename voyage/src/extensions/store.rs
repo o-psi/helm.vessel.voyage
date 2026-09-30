@@ -245,3 +245,7 @@ fn enumerate(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "store_boundary_tests.rs"]
+mod boundary_tests;

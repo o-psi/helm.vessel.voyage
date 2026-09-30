@@ -1018,3 +1018,18 @@ cached receipts cannot become current authority, validation callbacks do not run
 and Save/Delete/SetDefault IDs cannot mutate either namespace after migration.
 The retained profile catalogue and original receipt remain intact. These sources
 are unexecuted pending the final coordinated verification.
+
+The next #353 source batch adds real Helm extension CLI lifecycle cases: packaging
+never replaces an archive, installation stays inactive, exact digest review binds
+activation, updates clear activation, stale deletion/revocation refuses, skill
+snapshot import stays inactive, and invalid package-index origins refuse before
+network admission. Model-facing GitHub adapter cases reject unknown approval/admin
+fields, malformed arguments, absent owning runs and disabled local capability
+without constructing remote requests or publication state.
+
+Private extension-store fault cases distinguish pre-rename failure (old bytes and
+cleaned temporary files) from post-rename lost response (committed candidate bytes,
+no rollback or automatic retry). Missing read-only paths remain absent, exact
+size bounds hold, and symlink/FIFO inputs refuse without following or waiting.
+These source cases add no coverage exclusions or measured percentages. The
+single coordinated verification/coverage pass is still pending.
