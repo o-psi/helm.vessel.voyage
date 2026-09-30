@@ -74,10 +74,11 @@ mod linux {
             .get_or_init(|| Mutex::new(None))
             .lock()
             .map_err(|_| anyhow::anyhow!("executing environment unavailable"))?;
-        if let Some(snapshot) = cache.as_ref() {
-            if snapshot.uid == uid && snapshot.time.elapsed() < Duration::from_secs(1) {
-                return Ok(snapshot.values.get(name).cloned());
-            }
+        if let Some(snapshot) = cache.as_ref()
+            && snapshot.uid == uid
+            && snapshot.time.elapsed() < Duration::from_secs(1)
+        {
+            return Ok(snapshot.values.get(name).cloned());
         }
         let values = manager(uid).unwrap_or_default();
         let value = values.get(name).cloned();

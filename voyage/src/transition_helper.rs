@@ -9,7 +9,7 @@ mod linux {
         fs::File,
         io::{Read, Write},
         os::{
-            fd::{AsRawFd, FromRawFd},
+            fd::FromRawFd,
             unix::fs::{FileTypeExt, MetadataExt},
         },
         time::Duration,

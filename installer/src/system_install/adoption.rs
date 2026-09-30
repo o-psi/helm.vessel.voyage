@@ -1257,10 +1257,10 @@ fn rename_no_replace(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 fn retained_source(review: &Review) -> Result<PathBuf> {
-    if let Some(path) = &review.temporary_source {
-        if path.try_exists()? {
-            return Ok(path.clone());
-        }
+    if let Some(path) = &review.temporary_source
+        && path.try_exists()?
+    {
+        return Ok(path.clone());
     }
     let retained = directory(review.operation_id)?.join("retained-user-vessel");
     if retained.try_exists()? {
@@ -1670,29 +1670,29 @@ pub(super) fn run(args: &[String]) -> Result<()> {
         "status" => {
             ensure!(args.len() == 2, "adoption status takes only identity");
             let mut review = load(id)?;
-            if review.phase == "activation-requested" {
-                if let Ok(mut plan) = lifecycle::installed_for_adoption() {
-                    let release = Path::new(RELEASE_ROOT)
-                        .join("releases")
-                        .join(&review.release);
-                    if plan.record.release == review.release
-                        && verify_effective(&plan).is_ok()
-                        && verify_provisioner(&plan).is_ok()
-                        && pid(ROOT_UNIT, 0, &release.join("bin/vessel")).is_ok()
-                        && pid(
-                            GATEWAY_UNIT,
-                            plan.record.gateway_uid,
-                            &release.join("bin/vessel"),
-                        )
-                        .is_ok()
-                        && preflight().is_ok()
-                    {
-                        plan.record.phase = "active".into();
-                        plan.record.start_requested = true;
-                        lifecycle::save_for_adoption(&plan.record)?;
-                        review.phase = "active".into();
-                        save(&review)?;
-                    }
+            if review.phase == "activation-requested"
+                && let Ok(mut plan) = lifecycle::installed_for_adoption()
+            {
+                let release = Path::new(RELEASE_ROOT)
+                    .join("releases")
+                    .join(&review.release);
+                if plan.record.release == review.release
+                    && verify_effective(&plan).is_ok()
+                    && verify_provisioner(&plan).is_ok()
+                    && pid(ROOT_UNIT, 0, &release.join("bin/vessel")).is_ok()
+                    && pid(
+                        GATEWAY_UNIT,
+                        plan.record.gateway_uid,
+                        &release.join("bin/vessel"),
+                    )
+                    .is_ok()
+                    && preflight().is_ok()
+                {
+                    plan.record.phase = "active".into();
+                    plan.record.start_requested = true;
+                    lifecycle::save_for_adoption(&plan.record)?;
+                    review.phase = "active".into();
+                    save(&review)?;
                 }
             }
             if review.phase == "rollback-services-requested"

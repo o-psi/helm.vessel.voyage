@@ -28,7 +28,7 @@ pub(super) enum AuthoritySource {
         session: Uuid,
     },
     Broker {
-        registration: ProcessRegistration,
+        registration: Box<ProcessRegistration>,
         handle: voyage_protocol::execution_scope::ExecutionScopeHandle,
         binding: GrantBinding,
     },
@@ -134,7 +134,7 @@ pub(super) fn authorize_parts(
             .clone()
             .ok_or_else(|| anyhow::anyhow!("bound scope authority unavailable"))?;
         AuthoritySource::Broker {
-            registration: registration.clone(),
+            registration: Box::new(registration.clone()),
             handle,
             binding: binding.clone(),
         }
