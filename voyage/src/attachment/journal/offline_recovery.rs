@@ -36,8 +36,7 @@ impl Journal {
                 tx.execute("UPDATE process_goals SET state=?1,authority=NULL,revision=revision+1 WHERE session_id=?2",params![serde_json::to_string(&goal)?,guard.session_id.to_string()])?;
             }
         }
-        tx.commit()?;
-        Ok(())
+        commit(tx, &self.commit_fence)
     }
 }
 #[cfg(test)]
