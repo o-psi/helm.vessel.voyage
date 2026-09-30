@@ -404,6 +404,8 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
         client.directory = root.path().into();
         let session = Uuid::new_v4();
         let incarnation = Uuid::new_v4();
+        let snapshot_owner = Uuid::new_v4();
+        let configure_owner = Uuid::new_v4();
         let workspace = root.path().canonicalize().unwrap();
         let reference = session.to_string();
         let config = crate::Config {
@@ -422,13 +424,22 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
             )
             .await
         });
-        let (id, _) = peer.command().await;
+        let (id, command) = peer.command().await;
+        assert!(matches!(command, VesselCommand::Catalogue));
         peer.reply(id,json!([{"session_id":session,"incarnation":incarnation,"workspace":workspace,"state":"live"}])).await;
-        let (id, _) = peer.command().await;
+        let (id, command) = peer.command().await;
+        assert!(matches!(
+            command,
+            VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation: None,
+                command: VoyageCommand::Snapshot,
+            }) if session_id == session
+        ));
         peer.voyage_reply(
             id,
             session,
-            incarnation,
+            snapshot_owner,
             json!({"revision":17,"model":"saved-model","run":{"state":"completed"}}),
         )
         .await;
@@ -438,6 +449,7 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
             incarnation: sent,
             command:
                 VoyageCommand::Configure {
+                    command_id,
                     expected_revision,
                     config_path,
                     ..
@@ -448,7 +460,10 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
             panic!("configure expected")
         };
         assert_eq!(session_id, session);
-        assert_eq!(sent, Some(incarnation));
+        // Configure addresses the canonical session. Vessel selects its current
+        // owner; the mutation keeps its command ID and observed revision fence.
+        assert_eq!(sent, None);
+        assert!(!command_id.is_nil());
         assert_eq!(expected_revision, 17);
         let stored: serde_json::Value =
             serde_json::from_slice(&std::fs::read(config_path).unwrap()).unwrap();
@@ -463,8 +478,8 @@ async fn connected_idle_resume_retains_saved_model_until_explicit_override_and_p
         peer.voyage_reply(
             id,
             session,
-            incarnation,
-            json!({"status":"applied","revision":18}),
+            configure_owner,
+            json!({"status":"applied","command_id":command_id,"revision":18}),
         )
         .await;
         assert_eq!(task.await.unwrap().unwrap().1.session_id, session);

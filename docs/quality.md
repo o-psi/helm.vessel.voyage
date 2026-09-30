@@ -895,8 +895,19 @@ read-only mirror refusal and stale binding/one-use bootstrap boundaries. Synthet
 peers bind numeric loopback; no real Vessel, provider or browser is contacted and
 no operator default configuration/storage is connected by these fixtures.
 
-These source cases have not been compiled, executed or measured. No passing count,
-coverage improvement, native terminal acceptance or 100% reachability claim follows.
+Ordinary `Configure` and `Receipt` requests address the stable session and let
+Vessel select its current owner. The idle resume fixture changes observed owners
+while retaining the saved model or explicit override, exact mutation ID and
+observed revision fence. Receipt lookup preserves the exact session/command and
+rejects a different session; it remains readable after an owner restart. Live
+resource commands retain their separate exact incarnation fences. The coordinated
+run exposed two fixture assertions that incorrectly applied those live fences to
+ordinary configuration and receipt reads; the corrected assertions require the
+same public routing contract as production.
+
+The corrected fixture assertions require coordinated local execution and workspace
+coverage after integration. Source correction alone establishes no passing count,
+coverage improvement, native terminal acceptance or 100% reachability claim.
 Final integrated verification must include existing tests and the unchanged full
 workspace denominator. Execution UI hooks owned by the concurrent identity work
 were not modified by this pass.

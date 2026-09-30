@@ -416,32 +416,52 @@ async fn uncertain_private_write_closes_with_unknown_outcome_without_resending_i
     );
 }
 #[tokio::test]
-async fn exact_receipt_owner_mismatch_is_refused_instead_of_following_new_owner() {
+async fn receipt_read_follows_current_owner_with_exact_session_and_command() {
     use crate::process_client::loopback_tests::Peer;
     use serde_json::json;
     use voyage_protocol::vessel::*;
-    let mut peer = Peer::open().await;
-    let session = Uuid::new_v4();
-    let incarnation = Uuid::new_v4();
-    let command_id = Uuid::new_v4();
-    let client = peer.client.clone();
-    let task = tokio::spawn(async move {
-        client
-            .voyage_observed(session, incarnation, VoyageCommand::Receipt { command_id })
-            .await
-    });
-    let (id, command) = peer.command().await;
-    assert!(
-        matches!(command,VesselCommand::Voyage(VoyageRequest{incarnation:Some(i),command:VoyageCommand::Receipt{command_id:c},..}) if i==incarnation&&c==command_id)
-    );
-    peer.voyage_reply(
-        id,
-        session,
-        Uuid::new_v4(),
-        json!({"status":"accepted","command_id":command_id}),
-    )
-    .await;
-    assert!(task.await.unwrap().is_err());
+    for wrong_session in [false, true] {
+        let mut peer = Peer::open().await;
+        let session = Uuid::new_v4();
+        let incarnation = Uuid::new_v4();
+        let current_owner = Uuid::new_v4();
+        let command_id = Uuid::new_v4();
+        let client = peer.client.clone();
+        let task = tokio::spawn(async move {
+            client
+                .voyage_observed(session, incarnation, VoyageCommand::Receipt { command_id })
+                .await
+        });
+        let (id, command) = peer.command().await;
+        // A receipt observes one retained command in the stable session journal;
+        // it must remain readable after an owner restart without repeating effects.
+        assert!(
+            matches!(command,VesselCommand::Voyage(VoyageRequest{session_id,incarnation:None,command:VoyageCommand::Receipt{command_id:c}}) if session_id==session&&c==command_id)
+        );
+        let receipt = json!({"status":"accepted","command_id":command_id});
+        peer.voyage_reply(
+            id,
+            if wrong_session {
+                Uuid::new_v4()
+            } else {
+                session
+            },
+            current_owner,
+            receipt.clone(),
+        )
+        .await;
+        let result = task.await.unwrap();
+        if wrong_session {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("identity mismatch")
+            );
+        } else {
+            assert_eq!(result.unwrap(), (receipt, current_owner));
+        }
+    }
 }
 #[tokio::test]
 async fn browser_preparation_never_accepts_a_partial_or_positive_effect_claim_as_not_dispatched() {
