@@ -642,6 +642,14 @@ pub async fn control(args: ControlArgs) -> Result<()> {
         unsafe { libc::geteuid() } == 0 && unsafe { libc::getuid() } == 0,
         "migration control requires real root"
     );
+    for kind in ["uid", "gid"] {
+        let map = fs::read_to_string(format!("/proc/self/{kind}_map"))?;
+        let fields = map.split_whitespace().collect::<Vec<_>>();
+        ensure!(
+            fields == ["0", "0", "4294967295"],
+            "migration control requires full host identity maps"
+        );
+    }
     let mut channel = pipe(args.pipe_fd)?;
     let request: ControlRequest = read_frame(&mut channel)?;
     let import = match request {
