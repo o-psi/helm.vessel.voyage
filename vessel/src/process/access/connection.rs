@@ -220,8 +220,11 @@ impl Supervisor {
                     session_id,
                     workspace,
                 };
-                self.start_initialized(command_id, session_id, canonical, None, None, original)
-                    .await
+                if crate::process::runtime_storage::has_bound_layout(&self.directory) {
+                    self.start_identity_request(original, crate::process::accounts::Scope::Connection(grant.clone())).await
+                } else {
+                    self.start_initialized(command_id, session_id, canonical, None, None, original).await
+                }
             }
             VesselCommand::Inspect { session_id } => {
                 has(ProcessRight::Observe)?;

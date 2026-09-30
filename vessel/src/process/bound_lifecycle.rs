@@ -73,6 +73,24 @@ impl Supervisor {
         config_path: PathBuf,
         binding: ExecutionBinding,
     ) -> Result<serde_json::Value> {
+        let original = VesselCommand::StartConfigured {
+            command_id,
+            session_id,
+            workspace: workspace.clone(),
+            config_path: config_path.clone(),
+        };
+        self.start_bound_request_locked(command_id, session_id, workspace, config_path, binding, original).await
+    }
+
+    pub(super) async fn start_bound_request_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: PathBuf,
+        binding: ExecutionBinding,
+        command: VesselCommand,
+    ) -> Result<serde_json::Value> {
         ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
         ensure!(
             !command_id.is_nil()
@@ -87,12 +105,6 @@ impl Supervisor {
             workspace.is_absolute() && config_path.is_absolute(),
             "bound workspace and configuration must be absolute host paths"
         );
-        let command = VesselCommand::StartConfigured {
-            command_id,
-            session_id,
-            workspace: workspace.clone(),
-            config_path: config_path.clone(),
-        };
         let mut registrations = self.registrations.lock().await?;
         ensure!(
             !super::start::resolution_record(
