@@ -10,6 +10,7 @@ mod completion;
 mod controls;
 mod discovery;
 mod explore;
+mod execution;
 mod export;
 mod goals;
 mod history_review;

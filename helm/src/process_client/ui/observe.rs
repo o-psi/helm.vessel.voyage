@@ -16,6 +16,7 @@ use voyage_protocol::vessel::{ProcessInfo, VesselEventSubscription, VoyageComman
 mod catalogue_watch;
 
 pub enum Update {
+    Execution {target:Target,incarnation:uuid::Uuid,result:Result<serde_json::Value,String>},
     GoalOwner {
         target: Target,
         id: uuid::Uuid,

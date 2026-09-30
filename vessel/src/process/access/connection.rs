@@ -21,7 +21,7 @@ impl Supervisor {
         }
     }
     #[cfg(not(target_os = "linux"))]
-    async fn execution_connection(
+    pub(in crate::process) async fn execution_connection(
         &self,
         _grant: &ConnectionGrant,
         registration: &ProcessRegistration,
@@ -30,7 +30,7 @@ impl Supervisor {
         ordinary(registration)
     }
     #[cfg(target_os = "linux")]
-    async fn execution_connection(
+    pub(in crate::process) async fn execution_connection(
         &self,
         grant: &ConnectionGrant,
         registration: &ProcessRegistration,
@@ -115,10 +115,9 @@ impl Supervisor {
                     }
                     ExecutionOperation::Control { .. } => has(ProcessRight::Lifecycle)?,
                 }
-                ensure!(
-                    grant.full_access,
-                    "execution identity review requires explicit account-owner connection"
-                );
+                if !matches!(&operation, ExecutionOperation::Inventory | ExecutionOperation::Status { .. }) {
+                    ensure!(grant.full_access, "execution identity review requires explicit account-owner connection");
+                }
                 store::current_connection(&self.directory, &grant)?;
                 #[cfg(target_os = "linux")]
                 {

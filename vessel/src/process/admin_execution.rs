@@ -19,6 +19,15 @@ struct Provision {
     config_directory:PathBuf,
     workspace_roots:Vec<PathBuf>,
 }
+fn kernel_authority()->Result<Vec<String>> {
+    use std::io::Read;
+    let mut bytes=Vec::new();std::fs::File::open("/proc/self/status")?.take(16385).read_to_end(&mut bytes)?;
+    ensure!(bytes.len()<=16384,"host authority observation exceeds bounds");
+    let text=std::str::from_utf8(&bytes)?;
+    let names=["CapEff:","CapPrm:","CapInh:","CapBnd:","NoNewPrivs:"];
+    let values=text.lines().filter(|line|names.iter().any(|name|line.starts_with(name))).map(str::to_owned).collect::<Vec<_>>();
+    ensure!(values.len()==names.len(),"host capability observation unavailable");Ok(values)
+}
 fn hash(domain:&[u8],bytes:&[u8])->String{let mut hash=Sha256::new();hash.update(domain);hash.update(bytes);format!("{:x}",hash.finalize())}
 fn provision(root:&Path)->Result<Provision>{
     ensure!(unsafe{libc::getuid()}==0&&unsafe{libc::geteuid()}==0,"privileged execution supervisor required");
@@ -87,7 +96,7 @@ impl Supervisor {
         let preflight=facts(&self.binary,&record,workspace).await?;
         let release=super::launch::protected_binary(&self.binary)?;
         let supervisor=super::launch::protected_binary(&self.binary.with_file_name("vessel"))?;
-        let host=hash(b"voyage/administrator-host/v1\0",&serde_json::to_vec(&(&record.identity,&record.data_directory,&record.config_directory,&preflight.account_root_digest,std::fs::read_link("/proc/self/ns/user")?.as_os_str().as_encoded_bytes()))?);
+        let host=hash(b"voyage/administrator-host/v1\0",&serde_json::to_vec(&(&record.identity,&record.data_directory,&record.config_directory,&preflight.account_root_digest,std::fs::read_link("/proc/self/ns/user")?.as_os_str().as_encoded_bytes(),kernel_authority()?))?);
         let policy=hash(b"voyage/administrator-policy/v1\0",&serde_json::to_vec(&(&preflight.policy_digest,&preflight.config_digest,&supervisor,&record.workspace_roots))?);
         let current=ReviewFacts{vessel_id:grant.vessel_id,session_id:session,run_id:review_id,incarnation,requester_id:grant.principal_id,connection_id:grant.grant_id,connection_revision:NonZeroU64::new(grant.revision).context("connection revision unavailable")?,administrative_owner_id:grant.principal_id,authority_revision:NonZeroU64::new(authority).context("owner authority unavailable")?,expected_session_revision:0,change:ExecutionChange::Start,previous_incarnation:None,identity:identity.clone(),account_context:record.identity.account_context.clone(),account:preflight.account,account_capability_revision:preflight.capability_revision,workspace:workspace.to_owned(),host_identity_digest:host,policy_digest:policy,release_digest:release,pending_work_digest:hash(b"voyage/administrator-fresh-work/v1\0",&serde_json::to_vec(&(command_id,session,incarnation))?)};
         ensure!(provision(&self.directory)?.identity==record.identity,"administrator provision changed");
@@ -98,7 +107,9 @@ impl Supervisor {
         match operation {
             ExecutionOperation::Inventory=>{
                 let eligible=database::execution_reviews::authority(&self.directory,grant).await.is_ok();
-                let capability=match provision(&self.directory){Ok(record) if eligible=>{let available=facts(&self.binary,&record,&record.workspace_roots[0]).await.is_ok();ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![IdentitySummary{identity:record.identity.identity,label:record.identity.label,authority:record.identity.authority,account_context:record.identity.account_context,available,unavailable_reason:(!available).then_some(ExecutionFailure::AccountUnavailable)}],can_review_administrator:available,can_transition:false}},_=>ExecutionCapability::Unavailable};
+                let ordinary=super::default_execution::protected_default(&self.directory)?;
+                let ordinary_summary=IdentitySummary{identity:ordinary.identity,label:ordinary.label,authority:ordinary.authority,account_context:ordinary.account_context,available:ordinary.enabled,unavailable_reason:None};
+                let capability=match provision(&self.directory){Ok(record) if eligible=>{let available=facts(&self.binary,&record,&record.workspace_roots[0]).await.is_ok();ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary.clone(),IdentitySummary{identity:record.identity.identity,label:record.identity.label,authority:record.identity.authority,account_context:record.identity.account_context,available,unavailable_reason:(!available).then_some(ExecutionFailure::AccountUnavailable)}],can_review_administrator:available,can_transition:false}},_=>ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary],can_review_administrator:false,can_transition:false}};
                 Ok(serde_json::to_value(capability)?)
             }
             ExecutionOperation::Prepare{review_id,command_id,session_id,workspace,identity}=>{
@@ -136,6 +147,7 @@ impl Supervisor {
             ExecutionOperation::Control{control}=>Ok(serde_json::to_value(database::execution_reviews::control(&self.directory,grant,&control).await?)?),
             ExecutionOperation::Status{session_id}=>{
                 let registration=self.registration(session_id).await?;
+                self.execution_connection(grant,&registration,true).await?;
                 self.connection_session(grant,session_id,&registration.workspace)?;
                 let binding=database::execution_binding(&self.directory,session_id).await?.context("execution identity not observed on this peer")?;
                 let identity=database::configured_identity(&self.directory,&binding.identity).await?;
@@ -160,7 +172,7 @@ pub(super) async fn verify_running(root:&Path,registration:&ProcessRegistration,
     ensure!(super::identity_start::launch_digest(root,registration)?.as_deref()==Some(hash(b"voyage/identity-launch-config/v1\0",&bytes).as_str()),"administrator configuration changed after review");
     let account_root=record.data_directory.join("helm").join("accounts").canonicalize()?;
     let namespace_digest=hash(b"voyage/identity-account-namespace/v1\0",account_root.as_os_str().as_encoded_bytes());
-    let host=hash(b"voyage/administrator-host/v1\0",&serde_json::to_vec(&(identity,&record.data_directory,&record.config_directory,&namespace_digest,std::fs::read_link("/proc/self/ns/user")?.as_os_str().as_encoded_bytes()))?);
+    let host=hash(b"voyage/administrator-host/v1\0",&serde_json::to_vec(&(identity,&record.data_directory,&record.config_directory,&namespace_digest,std::fs::read_link("/proc/self/ns/user")?.as_os_str().as_encoded_bytes(),kernel_authority()?))?);
     ensure!(host==facts.host_identity_digest&&super::launch::protected_binary(registration.executable.as_deref().context("execution binary unavailable")?)?==facts.release_digest,"administrator host or release changed");
     Ok(())
 }

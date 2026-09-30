@@ -3,6 +3,7 @@ use super::{App, inference::Destination};
 use anyhow::Result;
 
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
+    ("execution","Review execution identity and administrator authorization","identities | prepare ID REVISION | check | approve | cancel | revoke | review REVIEW_UUID"),
     (
         "goal",
         "Review persistent Goal, usage and continuation",
@@ -222,6 +223,7 @@ fn opens_directly(name: &str) -> bool {
     matches!(
         name,
         "help"
+            | "execution"
             | "goal"
             | "actions"
             | "preferences"

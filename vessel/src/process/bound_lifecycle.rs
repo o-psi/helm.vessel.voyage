@@ -18,6 +18,10 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
         info.state = ProcessState::Stopped;
         return info;
     }
+    if super::migration::dormant(root,registration.session_id,registration.incarnation).unwrap_or(false) {
+        info.state=ProcessState::Suspended;
+        return info;
+    }
     info.state = ProcessState::Unavailable;
     if let Ok(directory) = runtime_storage::directory(root, registration).await
         && let Ok(response) =
@@ -278,7 +282,8 @@ impl Supervisor {
             "ownership relinquished"
         );
         ensure!(
-            guardian::cleanup_observed(&self.directory, session_id, incarnation)?,
+            guardian::cleanup_observed(&self.directory,session_id,incarnation).unwrap_or(false)
+                || super::migration::dormant(&self.directory,session_id,incarnation).unwrap_or(false),
             "restart requires protected observed local cleanup"
         );
         let identity = database::bound_observer_identity(&self.directory, &previous).await?;

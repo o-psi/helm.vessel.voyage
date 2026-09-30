@@ -867,3 +867,37 @@ transition. An explicit reviewed migration may pin retained ordinary grants only
 after reconstructing the original user identity; it cannot confer administrator
 authority from legacy user records. Native public Run/browser/revocation/restart
 and malformed/false-peer qualification remain in the final deferred test set.
+
+
+### Client and identity-observation source preparation
+
+The TUI `/execution` entry and stock React Execution dialog now have source for
+configured-reference inventory, observed execution/process/local-cleanup status,
+explicit fresh administrator preparation and approval, exact retained-review
+observation and cancellation/revocation. Review IDs are retained before dispatch;
+reconnect and check actions only observe. Current message drafts remain separate.
+Neither UI chooses a UID, environment, executable, credential file or process
+identity directly. The backend checks existing Observe/Create/Execute/Decide/
+Lifecycle rights in addition to separately enrolled administrator authority.
+
+System ordinary identity inventory/status remains available under existing scoped
+observation rights without administrator enrollment. Administrator sessions require
+the original enrolled owner; privileged updates additionally require that explicit
+root association. Host/group/capability/namespace, configured account capability,
+configuration bytes and the protected release are part of current launch facts.
+Last observed launch and owned-process cleanup are distinct from current process
+liveness and unresolved external effects. Preserved legacy credentials cannot be
+promoted by merely enrolling their principal.
+
+Adopted dormant incarnations use the migration module's protected never-launched
+marker only when no guardian admission exists. That is separate evidence from
+observed descendant cleanup. Retired user-installation lifecycle UUIDs are refused
+by the catalogue transaction instead of being replayed under the new system scope.
+
+This remains uncompiled/unexecuted source preparation under the user's single
+coordinated final-verification instruction. Real identity transition is still being
+integrated through an original-UID credential-free source marker, positive old
+owner retirement, safe descriptor ownership handoff, and target-UID private frozen
+configuration commit. Both clients must expose that same reviewed scope and exact
+receipt before #344 is complete. No source-only increment counts as native or
+production acceptance.

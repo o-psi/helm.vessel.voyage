@@ -154,6 +154,7 @@ impl App {
                 preserve_draft,
             );
         }
+        if command_text=="/execution"||command_text.starts_with("/execution "){return self.execution_command(target,command_text);}
         if command_text == "/access" || command_text.starts_with("/access ") {
             return self.open_access(target, command_text.strip_prefix("/access "));
         }
