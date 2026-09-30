@@ -84,3 +84,6 @@ mod scope_authority;
 
 #[cfg(target_os = "linux")]
 mod admin_execution;
+
+#[cfg(target_os="linux")]
+mod execution_transition;

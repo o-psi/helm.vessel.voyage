@@ -11,13 +11,13 @@ use voyage_storage::protected_linux::RootDirectory;
 const PROVISION:&str="administrator-execution.json";
 #[derive(Clone,Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Provision {
+pub(super) struct Provision {
     schema:u32,
-    identity:ConfiguredExecutionIdentity,
-    config_path:PathBuf,
-    data_directory:PathBuf,
-    config_directory:PathBuf,
-    workspace_roots:Vec<PathBuf>,
+    pub(super) identity:ConfiguredExecutionIdentity,
+    pub(super) config_path:PathBuf,
+    pub(super) data_directory:PathBuf,
+    pub(super) config_directory:PathBuf,
+    pub(super) workspace_roots:Vec<PathBuf>,
 }
 fn kernel_authority()->Result<Vec<String>> {
     use std::io::Read;
@@ -29,7 +29,7 @@ fn kernel_authority()->Result<Vec<String>> {
     ensure!(values.len()==names.len(),"host capability observation unavailable");Ok(values)
 }
 fn hash(domain:&[u8],bytes:&[u8])->String{let mut hash=Sha256::new();hash.update(domain);hash.update(bytes);format!("{:x}",hash.finalize())}
-fn provision(root:&Path)->Result<Provision>{
+pub(super) fn provision(root:&Path)->Result<Provision>{
     ensure!(unsafe{libc::getuid()}==0&&unsafe{libc::geteuid()}==0,"privileged execution supervisor required");
     let record:Provision=serde_json::from_slice(&RootDirectory::open(root)?.read(PROVISION.as_ref(),16384)?)?;
     ensure!(record.schema==1&&record.identity.enabled&&record.identity.authority==AuthorityClass::Administrator&&record.identity.uid==0&&record.workspace_roots.len()<=32&&!record.workspace_roots.is_empty(),"administrator execution was not explicitly provisioned");
@@ -45,7 +45,7 @@ fn provision(root:&Path)->Result<Provision>{
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NamespacePin {schema:u32,session:Uuid,command:Uuid,identity:IdentityRef,provision_digest:String}
-fn pin_namespace(root:&Path,session:Uuid,command:Uuid,record:&Provision)->Result<()> {
+pub(super) fn pin_namespace(root:&Path,session:Uuid,command:Uuid,record:&Provision)->Result<()> {
     let pin=NamespacePin{schema:1,session,command,identity:record.identity.identity.clone(),provision_digest:hash(b"voyage/administrator-provision/v1\0",&serde_json::to_vec(record)?)};
     let bytes=serde_json::to_vec(&pin)?;let name=format!("{session}-{command}.json");
     let directory=RootDirectory::open(root)?.create_child("administrator-launches".as_ref())?;
@@ -61,7 +61,7 @@ pub(super) fn runtime_namespace(root:&Path,registration:&ProcessRegistration,ide
     ensure!(pin.schema==1&&pin.session==registration.session_id&&pin.command==registration.command_id&&pin.identity==identity.identity&&record.identity==*identity&&pin.provision_digest==hash(b"voyage/administrator-provision/v1\0",&serde_json::to_vec(&record)?),"administrator context changed after review");
     Ok(Some((record.data_directory,record.config_directory)))
 }
-async fn facts(binary:&Path,record:&Provision,workspace:&Path)->Result<IdentityConfigFacts>{
+pub(super) async fn facts(binary:&Path,record:&Provision,workspace:&Path)->Result<IdentityConfigFacts>{
     super::launch::protected_binary(binary)?;
     let mut command=tokio::process::Command::new(binary);
     command.arg("identity-helper").current_dir(&record.identity.home).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
@@ -80,13 +80,13 @@ async fn facts(binary:&Path,record:&Provision,workspace:&Path)->Result<IdentityC
     if let Ok(Ok(facts))=result{return Ok(facts);}
     let _=child.kill().await;anyhow::bail!("administrator preflight unavailable")
 }
-fn observation(root:&Path,session:Uuid,incarnation:Uuid)->Result<ObservedExecution>{
+pub(super) fn observation(root:&Path,session:Uuid,incarnation:Uuid)->Result<ObservedExecution>{
     let record=RootDirectory::open(root)?.child("guardians".as_ref())?.child(session.to_string().as_ref())?.child(incarnation.to_string().as_ref())?;
     let observed:ObservedExecution=serde_json::from_slice(&record.read("observed.json".as_ref(),8192)?)?;
     ensure!(observed.incarnation==incarnation,"observed execution incarnation mismatch");Ok(observed)
 }
 impl Supervisor {
-    async fn execution_facts(&self,grant:&ConnectionGrant,review_id:Uuid,command_id:Uuid,session:Uuid,incarnation:Uuid,workspace:&Path,identity:&IdentityRef)->Result<(Provision,ReviewFacts,String)>{
+    pub(super) async fn execution_facts(&self,grant:&ConnectionGrant,review_id:Uuid,command_id:Uuid,session:Uuid,incarnation:Uuid,workspace:&Path,identity:&IdentityRef)->Result<(Provision,ReviewFacts,String)>{
         super::access::store::current_connection(&self.directory,grant)?;
         ensure!(grant.full_access&&workspace.is_absolute()&&std::fs::canonicalize(workspace)?==workspace,"execution review requires exact owner workspace");
         let record=provision(&self.directory)?;
@@ -112,6 +112,7 @@ impl Supervisor {
                 let capability=match provision(&self.directory){Ok(record) if eligible=>{let available=facts(&self.binary,&record,&record.workspace_roots[0]).await.is_ok();ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary.clone(),IdentitySummary{identity:record.identity.identity,label:record.identity.label,authority:record.identity.authority,account_context:record.identity.account_context,available,unavailable_reason:(!available).then_some(ExecutionFailure::AccountUnavailable)}],can_review_administrator:available,can_transition:false}},_=>ExecutionCapability::Available{schema:EXECUTION_SCHEMA,installation_scope:InstallationScope::System,identities:vec![ordinary_summary],can_review_administrator:false,can_transition:false}};
                 Ok(serde_json::to_value(capability)?)
             }
+            ExecutionOperation::PrepareTransition{review_id,command_id,session_id,source_incarnation,identity,stop_source}=>self.prepare_execution_transition(grant,review_id,command_id,session_id,source_incarnation,identity,stop_source).await,
             ExecutionOperation::Prepare{review_id,command_id,session_id,workspace,identity}=>{
                 ensure!(!review_id.is_nil()&&!command_id.is_nil()&&!session_id.is_nil(),"nil execution review identity");
                 if let Ok(saved)=database::execution_reviews::resolve(&self.directory,grant,review_id).await {
@@ -129,6 +130,7 @@ impl Supervisor {
                 let saved=database::execution_reviews::resolve(&self.directory,grant,approval.review_id).await?;
                 ensure!(saved.review.command_id==approval.command_id&&saved.review.digest==approval.digest,"execution approval identity conflict");
                 if saved.receipt.outcome!=ExecutionOutcome::AwaitingApproval{return Ok(serde_json::to_value(saved)?);}
+                if saved.review.facts.change==ExecutionChange::Transition{return self.approve_execution_transition(grant,approval,saved).await;}
                 let original=&saved.review.facts;
                 let lock=self.bound_creation_lock(original.session_id).await?;let _guard=lock.lock().await;
                 ensure!(self.registration(original.session_id).await.is_err(),"Voyage was admitted after this review");
@@ -143,7 +145,7 @@ impl Supervisor {
                 let outcome=match launched {Ok(value) if value["state"]=="live"=>match observation(&self.directory,original.session_id,original.incarnation){Ok(observed) if observed.identity==original.identity&&observed.release_digest==original.release_digest=>ExecutionOutcome::Ready{observed},_=>ExecutionOutcome::Unconfirmed{cleanup_obligations:vec![original.session_id]}},_=>ExecutionOutcome::Unconfirmed{cleanup_obligations:vec![original.session_id]}};
                 Ok(serde_json::to_value(database::execution_reviews::finish_launch(&self.directory,grant,approval.review_id,outcome).await?)?)
             }
-            ExecutionOperation::Review{review_id}=>Ok(serde_json::to_value(database::execution_reviews::resolve(&self.directory,grant,review_id).await?)?),
+            ExecutionOperation::Review{review_id}=>match database::execution_reviews::resolve(&self.directory,grant,review_id).await{Ok(saved)=>Ok(serde_json::to_value(saved)?),Err(_)=>self.observe_execution_transition(grant,review_id).await},
             ExecutionOperation::Control{control}=>Ok(serde_json::to_value(database::execution_reviews::control(&self.directory,grant,&control).await?)?),
             ExecutionOperation::Status{session_id}=>{
                 let registration=self.registration(session_id).await?;

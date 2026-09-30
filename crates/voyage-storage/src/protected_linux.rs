@@ -167,6 +167,30 @@ impl RuntimeRoot {
         self.current()?;
         Ok(directory)
     }
+    /// Reviewed identity handoff only after protected old-process retirement.
+    /// Pin and validate the whole bounded tree before changing any ownership.
+    /// No content/SQLite parsing occurs here; symlinks, hardlinks and devices refuse.
+    pub fn transfer_session(&self,entry:&OsStr,source_uid:u32,source_gid:u32,target_uid:u32,target_gid:u32)->Result<()> {
+        ensure!(unsafe{libc::geteuid()}==self.owner,"runtime handoff requires its root owner");
+        let directory=self.session(entry,source_uid,source_gid)?;
+        let mut objects=Vec::new();
+        pin_tree(&directory,source_uid,source_gid,0,&mut objects)?;
+        // The directory fence removes source pathname access before descendants
+        // change. A failure remains fenced for explicit, receipt-based recovery.
+        ensure!(unsafe{libc::fchown(directory.as_raw_fd(),self.owner,self.owner)}==0,"runtime source fence failed");
+        let mut current=Vec::new();pin_tree(&directory,source_uid,source_gid,0,&mut current)?;
+        let before=objects.iter().map(|file|file.metadata().map(|metadata|(metadata.dev(),metadata.ino()))).collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
+        let after=current.iter().map(|file|file.metadata().map(|metadata|(metadata.dev(),metadata.ino()))).collect::<std::io::Result<std::collections::BTreeSet<_>>>()?;
+        ensure!(before==after,"runtime handoff tree changed before source fence");
+        drop(current);
+        for object in &objects {
+            ensure!(unsafe{libc::fchownat(object.as_raw_fd(),c"".as_ptr(),target_uid,target_gid,libc::AT_EMPTY_PATH|libc::AT_SYMLINK_NOFOLLOW)}==0,"runtime descendant ownership handoff failed");
+        }
+        ensure!(unsafe{libc::fchown(directory.as_raw_fd(),target_uid,target_gid)}==0,"runtime target ownership handoff failed");
+        directory.sync_all()?;self.directory.sync_all()?;
+        self.session(entry,target_uid,target_gid)?;Ok(())
+    }
+
     /// Provision a new private runtime directory. Existing entries are never
     /// chowned or repaired. A failed ownership change leaves an inaccessible
     /// root-owned directory for explicit operator reconciliation.
@@ -422,3 +446,37 @@ impl RootDirectory {
 #[cfg(test)]
 #[path = "protected_linux_tests.rs"]
 mod tests;
+
+
+fn pin_tree(directory:&File,uid:u32,gid:u32,depth:usize,objects:&mut Vec<File>)->Result<()> {
+    ensure!(depth<=32&&objects.len()<512,"runtime handoff tree exceeds bounded review limits");
+    let raw=unsafe{libc::openat(directory.as_raw_fd(),c".".as_ptr(),libc::O_RDONLY|libc::O_DIRECTORY|libc::O_CLOEXEC|libc::O_NOFOLLOW)};
+    ensure!(raw>=0,"runtime handoff listing unavailable");
+    let stream=unsafe{libc::fdopendir(raw)};
+    if stream.is_null(){unsafe{libc::close(raw)};anyhow::bail!("runtime handoff listing unavailable");}
+    struct Listing(*mut libc::DIR);
+    impl Drop for Listing{fn drop(&mut self){unsafe{libc::closedir(self.0)};}}
+    let _listing=Listing(stream);
+    loop {
+        unsafe{*libc::__errno_location()=0};
+        let item=unsafe{libc::readdir(stream)};
+        if item.is_null(){ensure!(std::io::Error::last_os_error().raw_os_error()==Some(0),"runtime handoff listing failed");break;}
+        let value=unsafe{std::ffi::CStr::from_ptr((*item).d_name.as_ptr())};
+        if value.to_bytes()==b"."||value.to_bytes()==b".."{continue;}
+        ensure!(objects.len()<512,"runtime handoff file limit exceeded");
+        let name=CString::new(value.to_bytes())?;
+        let object=file_at(directory,&name,libc::O_PATH,0)?;
+        let metadata=object.metadata()?;
+        use std::os::unix::fs::FileTypeExt;
+        ensure!(metadata.uid()==uid&&metadata.gid()==gid&&metadata.mode()&0o077==0&&!metadata.file_type().is_symlink()&&(metadata.is_dir()||metadata.is_file()||metadata.file_type().is_socket()),"unsafe runtime handoff entry");
+        ensure!(!metadata.is_file()||metadata.nlink()==1,"runtime handoff hardlink refused");
+        if metadata.is_dir(){
+            let child=file_at(directory,&name,libc::O_RDONLY|libc::O_DIRECTORY,0)?;
+            let current=child.metadata()?;
+            ensure!(current.dev()==metadata.dev()&&current.ino()==metadata.ino(),"runtime handoff directory replaced");
+            pin_tree(&child,uid,gid,depth+1,objects)?;
+        }
+        objects.push(object);
+    }
+    Ok(())
+}

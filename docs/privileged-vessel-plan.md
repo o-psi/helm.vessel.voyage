@@ -945,3 +945,24 @@ owner retirement, safe descriptor ownership handoff, and target-UID private froz
 configuration commit. Both clients must expose that same reviewed scope and exact
 receipt before #344 is complete. No source-only increment counts as native or
 production acceptance.
+### Reviewed handoff controller source (verification pending)
+
+The root controller now retains an immutable intent before requesting source
+retirement. Reconnection can finish metadata preparation after positive guardian
+cleanup without replaying stop or approval. The source identity reads its journal
+and freezes work; the target identity alone opens its private configuration and
+commits the replacement. Root transfers only bounded, descriptor-pinned ownership
+metadata and publishes a new same-session incarnation/binding before guardian
+launch. Retained configuration startup checks use a protected incarnation pin;
+administrator saved configuration stays pinned to its current review.
+
+Both clients expose explicit source-stop consent and exact configured target
+references. Unknown responses retain their operation IDs. Administrator authority
+fenced before ownership publication uses the private SourceAbort receipt, which
+keeps interrupted runs and paused goals rather than continuing them.
+
+This source has not been compiled or tested under the current implementation-first
+release direction. Transition capability remains unavailable until partial
+ownership-transfer recovery and phase reconciliation are completed, followed by
+the coordinated final verification. A controller crash after a directory fence
+must retain the obligation; it does not establish target launch or source recovery.

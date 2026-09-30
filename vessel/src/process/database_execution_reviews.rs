@@ -111,7 +111,7 @@ fn check_facts(tx: &Transaction<'_>, owner: &Owner, facts: &ReviewFacts) -> Resu
         configured.enabled
             && revision == facts.identity.revision.get()
             && configured.identity == facts.identity
-            && configured.authority == AuthorityClass::Administrator
+            && (configured.authority == AuthorityClass::Administrator || (configured.authority==AuthorityClass::Ordinary&&facts.change==ExecutionChange::Transition))
             && configured.account_context == facts.account_context,
         "administrator execution identity changed or unavailable"
     );
@@ -455,6 +455,22 @@ fn approve_tx(
         .check_current(approval, current, time)
         .map_err(|reason| anyhow::anyhow!("administrator approval refused: {reason:?}"))?;
     let facts = &saved.review.facts;
+    let target_record:String=tx.query_row("SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",params![facts.identity.id.to_string(),facts.identity.revision.get()],|row|row.get(0))?;
+    let target:ConfiguredExecutionIdentity=serde_json::from_str(&target_record)?;
+    if target.authority==AuthorityClass::Ordinary {
+        ensure!(facts.change==ExecutionChange::Transition,"ordinary authorization requires reviewed transition");
+        saved.receipt.outcome=ExecutionOutcome::Approved;set_receipt(tx,&saved)?;return Ok(saved);
+    }
+    if facts.change==ExecutionChange::Transition {
+        let source:String=tx.query_row("SELECT record FROM execution_bindings WHERE session_id=?1",[facts.session_id.to_string()],|row|row.get(0))?;
+        let source:ExecutionBinding=serde_json::from_str(&source)?;
+        ensure!(Some(source.incarnation)==facts.previous_incarnation,"transition source binding changed");
+        if let Some(old)=source.administrator_grant_id {
+            use sha2::{Digest,Sha256};
+            let value=Sha256::digest([b"voyage/review-transition-revoke/v1".as_slice(),saved.review.command_id.as_bytes(),old.as_bytes()].concat());
+            revoke(tx,old,Uuid::from_bytes(value[..16].try_into()?),time)?;
+        }
+    }
     let active:u64=tx.query_row("SELECT count(*) FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.session_id=?1 AND r.grant_id IS NULL",[facts.session_id.to_string()],|r|r.get(0))?;
     ensure!(
         active == 0,
@@ -634,8 +650,9 @@ pub async fn mark_launching(root:&Path,connection:&ConnectionGrant,approval:&Rev
         let mut saved=load(&tx,approval.review_id)?;
         ensure!(saved.review.facts.administrative_owner_id==owner.principal&&saved.review.command_id==approval.command_id&&saved.review.digest==approval.digest,"execution launch receipt conflict");
         if saved.receipt.outcome!=ExecutionOutcome::Approved{return Ok(false);}
-        let id=saved.administrator_grant_id.ok_or_else(||anyhow::anyhow!("administrator authorization missing"))?;
-        ensure!(!tx.query_row("SELECT EXISTS(SELECT 1 FROM administrator_revocations WHERE grant_id=?1)",[id.to_string()],|r|r.get::<_,bool>(0))?,"administrator authorization revoked");
+        if let Some(id)=saved.administrator_grant_id {
+            ensure!(!tx.query_row("SELECT EXISTS(SELECT 1 FROM administrator_revocations WHERE grant_id=?1)",[id.to_string()],|r|r.get::<_,bool>(0))?,"administrator authorization revoked");
+        } else {ensure!(saved.review.facts.change==ExecutionChange::Transition,"administrator authorization missing");}
         saved.receipt.outcome=ExecutionOutcome::Launching;set_receipt(&tx,&saved)?;tx.commit()?;Ok(true)
     }).await
 }

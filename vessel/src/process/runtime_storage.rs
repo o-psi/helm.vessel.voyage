@@ -89,3 +89,11 @@ pub(super) fn planned_bound_directory(root: &Path, session: uuid::Uuid) -> Resul
     let (_, runtime) = runtime_root(root)?;
     Ok(runtime.join(session.to_string()))
 }
+
+
+#[cfg(target_os="linux")]
+pub(super) fn transfer_bound_directory(root:&Path,session:uuid::Uuid,source_uid:u32,source_gid:u32,target_uid:u32,target_gid:u32)->Result<PathBuf>{
+    let (runtime,path)=runtime_root(root)?;
+    runtime.transfer_session(session.to_string().as_ref(),source_uid,source_gid,target_uid,target_gid)?;
+    Ok(path.join(session.to_string()))
+}

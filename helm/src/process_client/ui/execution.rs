@@ -51,6 +51,12 @@ impl App {
                 let ids=[Uuid::new_v4(),Uuid::new_v4(),Uuid::new_v4()];retain(target,ids)?;view.execution_pending=Some(ids);
                 ExecutionOperation::Prepare{review_id:ids[0],command_id:ids[1],session_id:ids[2],workspace:view.process.workspace.clone(),identity}
             }
+            ["transition",id,revision,"stop-source"]=>{
+                ensure!(view.execution_pending.is_none(),"Check or cancel the retained review before creating another");
+                let identity=IdentityRef{id:id.parse()?,revision:revision.parse()?};
+                let ids=[Uuid::new_v4(),Uuid::new_v4(),target.session];retain(target,ids)?;view.execution_pending=Some(ids);
+                ExecutionOperation::PrepareTransition{review_id:ids[0],command_id:ids[1],session_id:target.session,source_incarnation:view.process.incarnation,identity,stop_source:true}
+            }
             ["check"]=>ExecutionOperation::Review{review_id:view.execution_pending.context("No retained review")?[0]},
             ["review",id]=>ExecutionOperation::Review{review_id:id.parse()?},
             [action @ ("approve"|"cancel"|"revoke")]=>{
@@ -61,7 +67,7 @@ impl App {
                     view.execution_uncertain=true;ExecutionOperation::Approve{approval}
                 } else {ExecutionOperation::Control{control:ExecutionReviewControl{command_id:Uuid::new_v4(),review_id:approval.review_id,digest:approval.digest,action:if *action=="cancel"{ExecutionReviewControlAction::Cancel}else{ExecutionReviewControlAction::Revoke}}}}
             }
-            _=>anyhow::bail!("/execution identities | prepare ID REVISION | check | approve | cancel | revoke | review REVIEW_UUID"),
+            _=>anyhow::bail!("/execution identities | prepare ID REVISION | transition ID REVISION stop-source | check | approve | cancel | revoke | review REVIEW_UUID"),
         };
         let incarnation=view.process.incarnation;
         self.status="Execution request captured; retained IDs observe one exact operation.".into();

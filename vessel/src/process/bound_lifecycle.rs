@@ -221,7 +221,7 @@ impl Supervisor {
         Ok(serde_json::to_value(info)?)
     }
 
-    async fn spawn_bound_guardian(&self, registration: &ProcessRegistration) -> Result<()> {
+    pub(super) async fn spawn_bound_guardian(&self, registration: &ProcessRegistration) -> Result<()> {
         let vessel = self.binary.with_file_name("vessel");
         let mut process = tokio::process::Command::new(vessel);
         process

@@ -108,6 +108,13 @@ impl Supervisor {
                     ExecutionOperation::Inventory
                     | ExecutionOperation::Review { .. }
                     | ExecutionOperation::Status { .. } => has(ProcessRight::Observe)?,
+                    ExecutionOperation::PrepareTransition { .. } => {
+                        has(ProcessRight::Observe)?;
+                        has(ProcessRight::Lifecycle)?;
+                        has(ProcessRight::Cancel)?;
+                        has(ProcessRight::Execute)?;
+                        has(ProcessRight::Decide)?;
+                    }
                     ExecutionOperation::Prepare { .. } | ExecutionOperation::Approve { .. } => {
                         has(ProcessRight::Create)?;
                         has(ProcessRight::Execute)?;

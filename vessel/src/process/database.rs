@@ -1083,3 +1083,28 @@ pub async fn registration(root: &Path, session: Uuid) -> Result<ProcessRegistrat
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(target_os="linux")]
+pub async fn transition_bound(root:&Path,previous:&ProcessRegistration,next:&ProcessRegistration,binding:&ExecutionBinding,bytes:Vec<u8>)->Result<()> {
+    let previous=previous.clone();let next=next.clone();let binding=binding.clone();
+    blocking(root,move|db|{
+        let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current:String=tx.query_row("SELECT registration FROM voyages WHERE session_id=?1",[previous.session_id.to_string()],|row|row.get(0))?;
+        ensure!(current==serde_json::to_string(&previous)?&&next.session_id==previous.session_id&&next.incarnation!=previous.incarnation&&next.restart_from==Some(previous.incarnation)&&next.peer_uids.as_ref()==Some(&binding.peer_uids)&&binding.incarnation==next.incarnation&&binding.session_id==next.session_id&&next.state==voyage_protocol::process::ProcessState::Starting,"execution transition admission changed");
+        ensure!(!record_tx(&tx,"commands",next.command_id,&bytes,true)?,"execution transition already admitted");
+        let old:String=tx.query_row("SELECT record FROM execution_bindings WHERE session_id=?1",[previous.session_id.to_string()],|row|row.get(0))?;
+        let old:ExecutionBinding=serde_json::from_str(&old)?;ensure!(old.incarnation==previous.incarnation,"source execution binding changed");
+        validate_binding_tx(&tx,&binding)?;
+        if let Some(id)=old.administrator_grant_id {
+            if Some(id)!=binding.administrator_grant_id {
+                let mut hash=Sha256::new();hash.update(b"voyage/transition-revocation/v1");hash.update(next.command_id.as_bytes());hash.update(id.as_bytes());
+                let value=hash.finalize();let command=Uuid::from_bytes(value[..16].try_into()?);
+                tx.execute("INSERT OR IGNORE INTO administrator_revocations VALUES(?1,?2,?3)",params![id.to_string(),command.to_string(),now()])?;
+            }
+        }
+        tx.execute("DELETE FROM execution_bindings WHERE session_id=?1",[next.session_id.to_string()])?;
+        save_tx(&tx,&next,Some(&binding))?;
+        tx.execute("INSERT INTO execution_bindings VALUES(?1,?2,?3,?4,?5)",params![binding.session_id.to_string(),binding.incarnation.to_string(),binding.identity.id.to_string(),binding.identity.revision.get(),serde_json::to_string(&binding)?])?;
+        tx.commit()?;Ok(())
+    }).await
+}
