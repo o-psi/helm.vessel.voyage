@@ -200,6 +200,10 @@ fn tool(
 }
 fn context(workspace: &std::path::Path, access: crate::config::AccessMode) -> ToolContext {
     let mut context = crate::tools::reliability_tests::context(workspace);
+    context.artifact_scope = Some(crate::artifacts::Scope {
+        directory: workspace.parent().unwrap().join("artifacts"),
+        session: crate::host_resources::process_scope().unwrap().0,
+    });
     context.policy = Arc::new(
         crate::policy::Policy::new(
             &crate::Config {
