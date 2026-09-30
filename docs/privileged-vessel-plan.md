@@ -1080,6 +1080,11 @@ It also returns `restart_permitted: false`: this bookkeeping receipt grants no
 restart permission, even when all known cleanup is observed. Explicit bound
 Restart independently checks current execution admission and protected retirement.
 Both new and cached receipts are checked for this metadata-only contract.
+The offline helper initializes process bookkeeping through the same managed-owner
+entry point as the runtime: command, decision, lifecycle and assignment tables
+precede observation triggers and cleanup progress; session-resource initialization
+follows. The direct journal Goal-fence fixture now mirrors that order and also
+asserts removal of the private continuation authority while retaining its objective.
 
 The recovery request carries the exact protected registration workspace as its
 outer workspace label. Recovery dispatch precedes account/start workspace checks

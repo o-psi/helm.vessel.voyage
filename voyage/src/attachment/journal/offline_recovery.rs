@@ -53,9 +53,15 @@ mod tests {
         let session = Session::new(root.path().canonicalize().unwrap(), "synthetic".into());
         journal.create_session(&session).unwrap();
         let guard = journal.acquire_execution(session.id).unwrap();
+        // Mirror ManagedSessionOwner's production bookkeeping initialization:
+        // observation triggers require decision and assignment tables first.
         journal.initialize_process_commands(&guard).unwrap();
+        journal.initialize_decisions(&guard).unwrap();
         journal.initialize_lifecycle(&guard).unwrap();
+        journal.initialize_assignments(&guard).unwrap();
         journal.initialize_observations(&guard).unwrap();
+        journal.initialize_cleanup_progress(&guard).unwrap();
+        journal.initialize_session_resources(&guard).unwrap();
         let authority = super::super::goals::GoalAuthority {
             installation_id: Uuid::new_v4(),
             principal_id: Uuid::new_v4(),
@@ -84,6 +90,16 @@ mod tests {
         assert_eq!(goal.status, GoalStatus::NeedsAttention);
         assert!(!goal.continuation_authorized);
         assert_eq!(goal.objective, "retained objective; no automatic execution");
+        assert!(
+            journal
+                .connection
+                .query_row(
+                    "SELECT authority IS NULL FROM process_goals WHERE session_id=?1",
+                    [session.id.to_string()],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap()
+        );
         journal.fence_offline_goal(&guard).unwrap();
         assert_eq!(journal.goal(session.id).unwrap(), snapshot);
     }
