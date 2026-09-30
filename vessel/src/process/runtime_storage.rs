@@ -90,17 +90,37 @@ pub(super) fn planned_bound_directory(root: &Path, session: uuid::Uuid) -> Resul
     Ok(runtime.join(session.to_string()))
 }
 
-
-#[cfg(target_os="linux")]
-pub(super) fn transfer_bound_directory(root:&Path,session:uuid::Uuid,source_uid:u32,source_gid:u32,target_uid:u32,target_gid:u32,inventory:&[(u64,u64,u32,u64)])->Result<PathBuf>{
-    let (runtime,path)=runtime_root(root)?;
-    runtime.transfer_session(session.to_string().as_ref(),source_uid,source_gid,target_uid,target_gid,inventory)?;
+#[cfg(target_os = "linux")]
+pub(super) fn transfer_bound_directory(
+    root: &Path,
+    session: uuid::Uuid,
+    source_uid: u32,
+    source_gid: u32,
+    target_uid: u32,
+    target_gid: u32,
+    inventory: &[(u64, u64, u32, u64)],
+) -> Result<PathBuf> {
+    let (runtime, path) = runtime_root(root)?;
+    runtime.transfer_session(
+        session.to_string().as_ref(),
+        source_uid,
+        source_gid,
+        target_uid,
+        target_gid,
+        inventory,
+    )?;
     Ok(path.join(session.to_string()))
 }
 
-#[cfg(target_os="linux")]
-pub(super) fn transfer_inventory(root:&Path,session:uuid::Uuid,uid:u32,gid:u32)->Result<Vec<(u64,u64,u32,u64)>>{
-    let(runtime,_)=runtime_root(root)?;runtime.transfer_inventory(session.to_string().as_ref(),uid,gid)
+#[cfg(target_os = "linux")]
+pub(super) fn transfer_inventory(
+    root: &Path,
+    session: uuid::Uuid,
+    uid: u32,
+    gid: u32,
+) -> Result<Vec<(u64, u64, u32, u64)>> {
+    let (runtime, _) = runtime_root(root)?;
+    runtime.transfer_inventory(session.to_string().as_ref(), uid, gid)
 }
 
 /// Copy only opaque root-owned signed transport bytes into the selected private

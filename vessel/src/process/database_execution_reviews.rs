@@ -33,16 +33,34 @@ fn owner(root: &Path, connection: &ConnectionGrant) -> Result<Owner> {
     crate::process::access::store::current_connection(root, connection)?;
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
-    struct LegacyConnection {grant_id:Uuid,principal_id:Uuid,revision:u64}
-    let control=voyage_storage::protected_linux::RootDirectory::open(root)?;
-    match control.read("legacy-user-connections.json".as_ref(),512*1024) {
-        Ok(bytes)=>{
-            let legacy:Vec<LegacyConnection>=serde_json::from_slice(&bytes)?;
-            ensure!(legacy.len()<=4096&&legacy.iter().all(|entry|!entry.grant_id.is_nil()&&!entry.principal_id.is_nil()&&entry.revision>0),"legacy connection provenance unavailable");
-            ensure!(!legacy.iter().any(|entry|entry.grant_id==connection.grant_id),"legacy user credential cannot authorize administrator execution; pair a fresh root-issued connection");
+    struct LegacyConnection {
+        grant_id: Uuid,
+        principal_id: Uuid,
+        revision: u64,
+    }
+    let control = voyage_storage::protected_linux::RootDirectory::open(root)?;
+    match control.read("legacy-user-connections.json".as_ref(), 512 * 1024) {
+        Ok(bytes) => {
+            let legacy: Vec<LegacyConnection> = serde_json::from_slice(&bytes)?;
+            ensure!(
+                legacy.len() <= 4096
+                    && legacy.iter().all(|entry| !entry.grant_id.is_nil()
+                        && !entry.principal_id.is_nil()
+                        && entry.revision > 0),
+                "legacy connection provenance unavailable"
+            );
+            ensure!(
+                !legacy
+                    .iter()
+                    .any(|entry| entry.grant_id == connection.grant_id),
+                "legacy user credential cannot authorize administrator execution; pair a fresh root-issued connection"
+            );
         }
-        Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error|error.kind()==std::io::ErrorKind::NotFound)=>{},
-        Err(error)=>return Err(error),
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+        Err(error) => return Err(error),
     }
 
     let vessel = crate::process::identity::public(root)?.vessel_id;
@@ -111,7 +129,9 @@ fn check_facts(tx: &Transaction<'_>, owner: &Owner, facts: &ReviewFacts) -> Resu
         configured.enabled
             && revision == facts.identity.revision.get()
             && configured.identity == facts.identity
-            && (configured.authority == AuthorityClass::Administrator || (configured.authority==AuthorityClass::Ordinary&&facts.change==ExecutionChange::Transition))
+            && (configured.authority == AuthorityClass::Administrator
+                || (configured.authority == AuthorityClass::Ordinary
+                    && facts.change == ExecutionChange::Transition))
             && configured.account_context == facts.account_context,
         "administrator execution identity changed or unavailable"
     );
@@ -455,20 +475,43 @@ fn approve_tx(
         .check_current(approval, current, time)
         .map_err(|reason| anyhow::anyhow!("administrator approval refused: {reason:?}"))?;
     let facts = &saved.review.facts;
-    let target_record:String=tx.query_row("SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",params![facts.identity.id.to_string(),facts.identity.revision.get()],|row|row.get(0))?;
-    let target:ConfiguredExecutionIdentity=serde_json::from_str(&target_record)?;
-    if target.authority==AuthorityClass::Ordinary {
-        ensure!(facts.change==ExecutionChange::Transition,"ordinary authorization requires reviewed transition");
-        saved.receipt.outcome=ExecutionOutcome::Approved;set_receipt(tx,&saved)?;return Ok(saved);
+    let target_record: String = tx.query_row(
+        "SELECT record FROM execution_identities WHERE identity_id=?1 AND revision=?2",
+        params![facts.identity.id.to_string(), facts.identity.revision.get()],
+        |row| row.get(0),
+    )?;
+    let target: ConfiguredExecutionIdentity = serde_json::from_str(&target_record)?;
+    if target.authority == AuthorityClass::Ordinary {
+        ensure!(
+            facts.change == ExecutionChange::Transition,
+            "ordinary authorization requires reviewed transition"
+        );
+        saved.receipt.outcome = ExecutionOutcome::Approved;
+        set_receipt(tx, &saved)?;
+        return Ok(saved);
     }
-    if facts.change==ExecutionChange::Transition {
-        let source:String=tx.query_row("SELECT record FROM execution_bindings WHERE session_id=?1",[facts.session_id.to_string()],|row|row.get(0))?;
-        let source:ExecutionBinding=serde_json::from_str(&source)?;
-        ensure!(Some(source.incarnation)==facts.previous_incarnation,"transition source binding changed");
-        if let Some(old)=source.administrator_grant_id {
-            use sha2::{Digest,Sha256};
-            let value=Sha256::digest([b"voyage/review-transition-revoke/v1".as_slice(),saved.review.command_id.as_bytes(),old.as_bytes()].concat());
-            revoke(tx,old,Uuid::from_bytes(value[..16].try_into()?),time)?;
+    if facts.change == ExecutionChange::Transition {
+        let source: String = tx.query_row(
+            "SELECT record FROM execution_bindings WHERE session_id=?1",
+            [facts.session_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let source: ExecutionBinding = serde_json::from_str(&source)?;
+        ensure!(
+            Some(source.incarnation) == facts.previous_incarnation,
+            "transition source binding changed"
+        );
+        if let Some(old) = source.administrator_grant_id {
+            use sha2::{Digest, Sha256};
+            let value = Sha256::digest(
+                [
+                    b"voyage/review-transition-revoke/v1".as_slice(),
+                    saved.review.command_id.as_bytes(),
+                    old.as_bytes(),
+                ]
+                .concat(),
+            );
+            revoke(tx, old, Uuid::from_bytes(value[..16].try_into()?), time)?;
         }
     }
     let active:u64=tx.query_row("SELECT count(*) FROM administrator_grants g LEFT JOIN administrator_revocations r USING(grant_id) WHERE g.session_id=?1 AND r.grant_id IS NULL",[facts.session_id.to_string()],|r|r.get(0))?;
@@ -637,42 +680,107 @@ pub async fn resolve(
 #[path = "database_execution_reviews_tests.rs"]
 mod tests;
 
-pub async fn authority(root:&Path,connection:&ConnectionGrant)->Result<u64>{
-    let owner=owner(root,connection)?;
-    blocking(root,move|db|{schema(db)?;let tx=db.transaction_with_behavior(TransactionBehavior::Deferred)?;authorize(&tx,&owner)}).await
+pub async fn authority(root: &Path, connection: &ConnectionGrant) -> Result<u64> {
+    let owner = owner(root, connection)?;
+    blocking(root, move |db| {
+        schema(db)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        authorize(&tx, &owner)
+    })
+    .await
 }
 /// Latch before any admission or spawn. A crash leaves an unresolved operation;
 /// reconciliation must never launch a second process from this receipt.
-pub async fn mark_launching(root:&Path,connection:&ConnectionGrant,approval:&ReviewApproval)->Result<bool>{
-    let owner=owner(root,connection)?;let approval=approval.clone();
-    blocking(root,move|db|{
-        schema(db)?;let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;authorize(&tx,&owner)?;
-        let mut saved=load(&tx,approval.review_id)?;
-        ensure!(saved.review.facts.administrative_owner_id==owner.principal&&saved.review.command_id==approval.command_id&&saved.review.digest==approval.digest,"execution launch receipt conflict");
-        if saved.receipt.outcome!=ExecutionOutcome::Approved{return Ok(false);}
-        if let Some(id)=saved.administrator_grant_id {
-            ensure!(!tx.query_row("SELECT EXISTS(SELECT 1 FROM administrator_revocations WHERE grant_id=?1)",[id.to_string()],|r|r.get::<_,bool>(0))?,"administrator authorization revoked");
-        } else {ensure!(saved.review.facts.change==ExecutionChange::Transition,"administrator authorization missing");}
-        saved.receipt.outcome=ExecutionOutcome::Launching;set_receipt(&tx,&saved)?;tx.commit()?;Ok(true)
-    }).await
-}
-pub async fn finish_launch(root:&Path,connection:&ConnectionGrant,review_id:Uuid,outcome:ExecutionOutcome)->Result<SavedExecutionReview>{
-    let owner=owner(root,connection)?;
-    blocking(root,move|db|{
-        schema(db)?;let tx=db.transaction_with_behavior(TransactionBehavior::Immediate)?;authorize(&tx,&owner)?;
-        let mut saved=load(&tx,review_id)?;
-        ensure!(saved.review.facts.administrative_owner_id==owner.principal,"execution launch belongs to another owner");
-        if !matches!(saved.receipt.outcome,ExecutionOutcome::Launching|ExecutionOutcome::Unconfirmed{..}){return Ok(saved);}
-        if let ExecutionOutcome::Ready{observed}=&outcome{
-            ensure!(observed.identity==saved.review.facts.identity&&observed.incarnation==saved.review.facts.incarnation&&observed.release_digest==saved.review.facts.release_digest,"execution observation mismatch");
+pub async fn mark_launching(
+    root: &Path,
+    connection: &ConnectionGrant,
+    approval: &ReviewApproval,
+) -> Result<bool> {
+    let owner = owner(root, connection)?;
+    let approval = approval.clone();
+    blocking(root, move |db| {
+        schema(db)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        authorize(&tx, &owner)?;
+        let mut saved = load(&tx, approval.review_id)?;
+        ensure!(
+            saved.review.facts.administrative_owner_id == owner.principal
+                && saved.review.command_id == approval.command_id
+                && saved.review.digest == approval.digest,
+            "execution launch receipt conflict"
+        );
+        if saved.receipt.outcome != ExecutionOutcome::Approved {
+            return Ok(false);
         }
-        ensure!(matches!(outcome,ExecutionOutcome::Ready{..}|ExecutionOutcome::Unconfirmed{..}),"invalid launch completion observation");
-        saved.receipt.outcome=outcome;set_receipt(&tx,&saved)?;tx.commit()?;Ok(saved)
-    }).await
+        if let Some(id) = saved.administrator_grant_id {
+            ensure!(
+                !tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM administrator_revocations WHERE grant_id=?1)",
+                    [id.to_string()],
+                    |r| r.get::<_, bool>(0)
+                )?,
+                "administrator authorization revoked"
+            );
+        } else {
+            ensure!(
+                saved.review.facts.change == ExecutionChange::Transition,
+                "administrator authorization missing"
+            );
+        }
+        saved.receipt.outcome = ExecutionOutcome::Launching;
+        set_receipt(&tx, &saved)?;
+        tx.commit()?;
+        Ok(true)
+    })
+    .await
+}
+pub async fn finish_launch(
+    root: &Path,
+    connection: &ConnectionGrant,
+    review_id: Uuid,
+    outcome: ExecutionOutcome,
+) -> Result<SavedExecutionReview> {
+    let owner = owner(root, connection)?;
+    blocking(root, move |db| {
+        schema(db)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        authorize(&tx, &owner)?;
+        let mut saved = load(&tx, review_id)?;
+        ensure!(
+            saved.review.facts.administrative_owner_id == owner.principal,
+            "execution launch belongs to another owner"
+        );
+        if !matches!(
+            saved.receipt.outcome,
+            ExecutionOutcome::Launching | ExecutionOutcome::Unconfirmed { .. }
+        ) {
+            return Ok(saved);
+        }
+        if let ExecutionOutcome::Ready { observed } = &outcome {
+            ensure!(
+                observed.identity == saved.review.facts.identity
+                    && observed.incarnation == saved.review.facts.incarnation
+                    && observed.release_digest == saved.review.facts.release_digest,
+                "execution observation mismatch"
+            );
+        }
+        ensure!(
+            matches!(
+                outcome,
+                ExecutionOutcome::Ready { .. } | ExecutionOutcome::Unconfirmed { .. }
+            ),
+            "invalid launch completion observation"
+        );
+        saved.receipt.outcome = outcome;
+        set_receipt(&tx, &saved)?;
+        tx.commit()?;
+        Ok(saved)
+    })
+    .await
 }
 
 /// Protected guardian observation; no client-supplied review becomes authority.
-pub async fn grant_facts(root:&Path,grant_id:Uuid)->Result<ReviewFacts>{
+pub async fn grant_facts(root: &Path, grant_id: Uuid) -> Result<ReviewFacts> {
     protected(root)?;
     blocking(root,move|db|{
         schema(db)?;let tx=db.transaction_with_behavior(TransactionBehavior::Deferred)?;

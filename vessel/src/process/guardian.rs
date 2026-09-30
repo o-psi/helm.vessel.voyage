@@ -246,7 +246,7 @@ fn current(
             );
             let identity = super::database::bound_observer_identity(root, &registration).await?;
             super::launch::validate_identity(&identity)?;
-            super::admin_execution::verify_running(root,&registration,&identity).await?;
+            super::admin_execution::verify_running(root, &registration, &identity).await?;
             Ok((registration, identity))
         })
 }
@@ -317,13 +317,27 @@ pub fn run(args: Args) -> Result<()> {
         command.arg("--config").arg(config);
     }
     super::launch::configure_identity(&mut command, &identity)?;
-    if let Some((data, config)) = super::admin_execution::runtime_namespace(&args.directory,&registration,&identity)? {
-        command.env("XDG_DATA_HOME",data).env("XDG_CONFIG_HOME",config);
+    if let Some((data, config)) =
+        super::admin_execution::runtime_namespace(&args.directory, &registration, &identity)?
+    {
+        command
+            .env("XDG_DATA_HOME", data)
+            .env("XDG_CONFIG_HOME", config);
     }
-    let launch_digest=super::identity_start::launch_digest(&args.directory, &registration)?;
-    let retained_digest=if identity.authority==voyage_protocol::execution_identity::AuthorityClass::Administrator{launch_digest.clone()}else{super::execution_transition::retained_digest(&args.directory,&registration)?};
-    if let Some(digest)=retained_digest{command.env("VOYAGE_BOUND_RETAINED_CONFIG_DIGEST",digest);}
-    if let Some(digest) = launch_digest {command.env("VOYAGE_BOUND_CONFIG_DIGEST", digest);}
+    let launch_digest = super::identity_start::launch_digest(&args.directory, &registration)?;
+    let retained_digest = if identity.authority
+        == voyage_protocol::execution_identity::AuthorityClass::Administrator
+    {
+        launch_digest.clone()
+    } else {
+        super::execution_transition::retained_digest(&args.directory, &registration)?
+    };
+    if let Some(digest) = retained_digest {
+        command.env("VOYAGE_BOUND_RETAINED_CONFIG_DIGEST", digest);
+    }
+    if let Some(digest) = launch_digest {
+        command.env("VOYAGE_BOUND_CONFIG_DIGEST", digest);
+    }
     ensure!(
         unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == 0,
         "protected child guardian unavailable"

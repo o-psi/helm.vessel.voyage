@@ -123,8 +123,14 @@ impl Supervisor {
                     }
                     ExecutionOperation::Control { .. } => has(ProcessRight::Lifecycle)?,
                 }
-                if !matches!(&operation, ExecutionOperation::Inventory | ExecutionOperation::Status { .. }) {
-                    ensure!(grant.full_access, "execution identity review requires explicit account-owner connection");
+                if !matches!(
+                    &operation,
+                    ExecutionOperation::Inventory | ExecutionOperation::Status { .. }
+                ) {
+                    ensure!(
+                        grant.full_access,
+                        "execution identity review requires explicit account-owner connection"
+                    );
                 }
                 store::current_connection(&self.directory, &grant)?;
                 #[cfg(target_os = "linux")]
