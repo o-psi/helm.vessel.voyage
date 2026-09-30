@@ -5,6 +5,8 @@ use std::path::Path;
 use voyage_protocol::identity_helper::*;
 
 const PRIVATE_CONFIG_BYTES: usize = 65_536;
+#[cfg(target_os = "linux")]
+mod authority;
 
 fn digest(domain: &[u8], bytes: &[u8]) -> String {
     let mut value = Sha256::new();
@@ -220,11 +222,25 @@ async fn account_operation(
     use serde_json::json;
     let registry = crate::accounts::Registry::default_host()?;
     match operation {
+        operation @ (IdentityHelperOperation::Enrollment { .. }
+        | IdentityHelperOperation::Usage { .. }
+        | IdentityHelperOperation::SetDefault { .. }) => {
+            #[cfg(target_os = "linux")]
+            {
+                network_operation(workspace, registry, operation).await
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = operation;
+                anyhow::bail!("identity account authority unavailable")
+            }
+        }
         IdentityHelperOperation::Accounts { scope, transport } => {
             ensure!(
                 scope.can_use || scope.can_enroll,
                 "account observation denied"
             );
+            registry.ensure_chatgpt_connection()?;
             let (revision, all) = registry.list(|_| scope.can_use)?;
             let accounts: Vec<_> = all
                 .into_iter()
@@ -363,6 +379,184 @@ async fn account_operation(
     }
 }
 
+#[cfg(target_os = "linux")]
+struct UsageAuthority {
+    pipe: std::sync::Arc<authority::Pipe>,
+    scope: IdentityAccountScope,
+    registry: crate::accounts::Registry,
+    workspace: std::path::PathBuf,
+    account: voyage_protocol::accounts::AccountBinding,
+    capability_revision: u64,
+}
+#[cfg(target_os = "linux")]
+impl std::fmt::Debug for UsageAuthority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("IdentityUsageAuthority")
+    }
+}
+#[cfg(target_os = "linux")]
+impl crate::policy::ExecutionAuthority for UsageAuthority {
+    fn check(&self) -> Result<()> {
+        ensure!(
+            self.pipe.allows(
+                &self.scope.actor,
+                IdentityAuthorityRight::Use,
+                self.account.connection_id,
+                Some(self.account.account_id)
+            ),
+            "account authority unavailable"
+        );
+        ensure!(
+            use_account(&self.scope, &self.registry, &self.account, &self.workspace)?
+                .capability_revision
+                == self.capability_revision,
+            "account capability changed"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn network_operation(
+    workspace: &Path,
+    registry: crate::accounts::Registry,
+    operation: IdentityHelperOperation,
+) -> Result<serde_json::Value> {
+    use crate::policy::ExecutionAuthority;
+    use serde_json::json;
+    use std::sync::Arc;
+    use voyage_protocol::accounts::*;
+    let pipe = Arc::new(authority::Pipe::open()?);
+    match operation {
+        IdentityHelperOperation::Enrollment { scope, operation } => {
+            ensure!(
+                scope.can_enroll && scope.actor.workspace == workspace.to_string_lossy(),
+                "enrollment scope refused"
+            );
+            registry.ensure_chatgpt_connection()?;
+            let current = scope.clone();
+            let peer = pipe.clone();
+            let service = crate::accounts::device::DeviceService::new(
+                registry,
+                Arc::new(move |actor, connection| {
+                    actor == &current.actor
+                        && (current.full_access
+                            || current.enrollment_connections.contains(&connection))
+                        && peer.allows(actor, IdentityAuthorityRight::Enroll, connection, None)
+                }),
+            );
+            match operation {
+                IdentityEnrollmentOperation::Start { request } => {
+                    ensure!(request.actor == scope.actor, "enrollment actor changed");
+                    Ok(serde_json::to_value(service.start(request).await?)?)
+                }
+                IdentityEnrollmentOperation::Resolve { request } => {
+                    ensure!(request.actor == scope.actor, "enrollment actor changed");
+                    Ok(serde_json::to_value(service.resolve(request)?)?)
+                }
+                IdentityEnrollmentOperation::Drive { enrollment_id } => Ok(serde_json::to_value(
+                    service.drive(enrollment_id, &scope.actor).await?,
+                )?),
+                IdentityEnrollmentOperation::Status { enrollment_id } => Ok(serde_json::to_value(
+                    service.status(enrollment_id, &scope.actor)?,
+                )?),
+                IdentityEnrollmentOperation::Cancel {
+                    command_id,
+                    enrollment_id,
+                } => Ok(serde_json::to_value(service.cancel(
+                    command_id,
+                    enrollment_id,
+                    &scope.actor,
+                )?)?),
+            }
+        }
+        IdentityHelperOperation::Usage {
+            scope,
+            account,
+            refresh,
+        } => {
+            let descriptor = use_account(&scope, &registry, &account, workspace)?;
+            let authority = Arc::new(UsageAuthority {
+                pipe,
+                scope: scope.clone(),
+                registry: registry.clone(),
+                workspace: workspace.to_owned(),
+                account: account.clone(),
+                capability_revision: descriptor.capability_revision,
+            });
+            authority.check()?;
+            let mut observation = registry.usage_cached(&account)?;
+            if refresh && account.transport == Transport::ChatgptOauth {
+                let mut config = select(&scope, workspace, Some(account.clone()), None)?;
+                config.select_account(account.clone())?;
+                crate::runtime_policy::RuntimePolicy::resolve(&config, workspace)?
+                    .policy()
+                    .check_current()?;
+                let provider = registry
+                    .oauth_provider(&account)?
+                    .with_authority(Some(authority.clone()));
+                observation.attempted_at = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs() as i64,
+                );
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(15),
+                    provider.account_usage(),
+                )
+                .await;
+                observation.refresh_status = match result {
+                    Ok(Ok(snapshot)) => {
+                        observation.snapshot = Some(snapshot);
+                        AccountUsageRefreshStatus::Available
+                    }
+                    Ok(Err(error)) => match error.category() {
+                        "authentication" => AccountUsageRefreshStatus::SignInRequired,
+                        "rate_limit" => AccountUsageRefreshStatus::RateLimited,
+                        "invalid_response" => AccountUsageRefreshStatus::InvalidResponse,
+                        _ => AccountUsageRefreshStatus::Unavailable,
+                    },
+                    Err(_) => AccountUsageRefreshStatus::Unavailable,
+                };
+                authority.check()?;
+                registry.publish_usage(observation)?;
+                observation = registry.usage_cached(&account)?;
+            }
+            authority.check()?;
+            ensure!(
+                observation.capability_revision == descriptor.capability_revision,
+                "account usage context changed"
+            );
+            Ok(serde_json::to_value(observation)?)
+        }
+        IdentityHelperOperation::SetDefault {
+            scope,
+            command_id,
+            account,
+            expected_revision,
+        } => {
+            ensure!(
+                scope.full_access && scope.actor.principal == "owner",
+                "host owner is required for default account changes"
+            );
+            use_account(&scope, &registry, &account, workspace)?;
+            ensure!(
+                pipe.allows(
+                    &scope.actor,
+                    IdentityAuthorityRight::Use,
+                    account.connection_id,
+                    Some(account.account_id)
+                ),
+                "default account authority changed"
+            );
+            let (revision, binding) =
+                registry.set_default_account(command_id, workspace, expected_revision, account)?;
+            Ok(json!({"default_revision":revision,"default_account":binding}))
+        }
+        _ => anyhow::bail!("identity account operation refused"),
+    }
+}
+
 #[cfg(unix)]
 fn review_config(workspace: &Path, path: &Path) -> Result<IdentityConfigFacts> {
     let bytes = frozen_config(path)?;
@@ -409,7 +603,7 @@ fn review_config(workspace: &Path, path: &Path) -> Result<IdentityConfigFacts> {
 
 pub async fn run() -> Result<()> {
     use voyage_protocol::process::{read_frame, write_frame};
-    let result = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+    let result = tokio::time::timeout(std::time::Duration::from_secs(50), async {
         let request: IdentityHelperRequest = read_frame(&mut tokio::io::stdin()).await?;
         ensure!(
             serde_json::to_vec(&request)?.len() <= IDENTITY_HELPER_BYTES,

@@ -440,7 +440,9 @@ runtime's namespace. Explicit enrolled-owner preparation of an ordinary transiti
 configuration produces a separate target-owned stage and typed facts only.
 Administrator account changes retain the explicit review boundary. The source
 is awaiting final verification and hosted delivery. Identity-scoped enrollment and
-usage, owner identity controls, production system adoption and automatic bound
+usage now have source paths using current private-pipe authority checks and
+original-attempt recovery, also awaiting that verification. Owner identity
+controls, production system adoption and automatic bound
 recovery remain incomplete. Bound startup does not derive scoped Vessel
 access from runtime-directory ancestry. See the
 [privileged Vessel plan](privileged-vessel-plan.md) for the remaining release work.

@@ -9,7 +9,11 @@ use voyage_protocol::{
     process::{GrantBinding, ProcessGrant, ProcessRegistration, ProcessRight, VesselCommand},
 };
 
-fn projection(scope: &Scope, root: &Path, workspace: &Path) -> Result<IdentityAccountScope> {
+pub(super) fn projection(
+    scope: &Scope,
+    root: &Path,
+    workspace: &Path,
+) -> Result<IdentityAccountScope> {
     let can_use = scope
         .check(root, workspace, ProcessRight::AccountUse)
         .is_ok();
@@ -55,8 +59,9 @@ pub(super) async fn selected(scope: &Scope, root: &Path) -> Result<ConfiguredExe
 }
 
 #[derive(Clone, Copy)]
-enum Selection<'a> {
+pub(super) enum Selection<'a> {
     Default,
+    FrozenDefault(&'a ConfiguredExecutionIdentity),
     Bound(&'a ProcessRegistration),
     ReviewTarget(&'a ConfiguredExecutionIdentity),
 }
@@ -94,6 +99,13 @@ async fn selected_for(
             "account runtime incarnation changed"
         );
         database::bound_observer_identity(root, &current).await
+    } else if let Selection::FrozenDefault(identity) = selection {
+        let current = selected(scope, root).await?;
+        ensure!(
+            &current == identity,
+            "enrollment identity selection changed"
+        );
+        Ok(current)
     } else if let Selection::ReviewTarget(identity) = selection {
         let Scope::Connection(grant) = scope else {
             anyhow::bail!("review target requires an enrolled human owner");
@@ -232,6 +244,27 @@ impl Supervisor {
         command: VesselCommand,
         scope: Scope,
     ) -> Result<serde_json::Value> {
+        if let VesselCommand::EnrollAccount {
+            command_id,
+            enrollment_id,
+            workspace,
+            connection_id,
+            alias,
+            label,
+        } = &command
+        {
+            let request = voyage_protocol::accounts::EnrollmentRequest {
+                command_id: *command_id,
+                enrollment_id: *enrollment_id,
+                connection_id: *connection_id,
+                alias: alias.clone(),
+                label: label.clone(),
+                actor: scope.actor(workspace),
+            };
+            return self
+                .start_identity_enrollment(scope, workspace.clone(), request)
+                .await;
+        }
         if matches!(
             command,
             VesselCommand::StartAccount { .. }
@@ -265,9 +298,27 @@ impl Supervisor {
             | VesselCommand::AccountModels { workspace, .. } => {
                 (workspace.clone(), ProcessRight::AccountUse)
             }
+            VesselCommand::AccountUsage { workspace, .. }
+            | VesselCommand::AccountSetDefault { workspace, .. } => {
+                (workspace.clone(), ProcessRight::AccountUse)
+            }
+            VesselCommand::ResolveAccountEnrollment { workspace, .. }
+            | VesselCommand::CancelAccountEnrollment { workspace, .. }
+            | VesselCommand::PrivateAccountEnrollment { workspace, .. } => {
+                (workspace.clone(), ProcessRight::AccountEnroll)
+            }
             _ => anyhow::bail!("identity-scoped account operation unavailable"),
         };
         let projection = self.identity_account_scope(&scope, &workspace)?;
+        static USAGE_REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let refresh_requested =
+            matches!(&command, VesselCommand::AccountUsage { refresh: true, .. });
+        let refresh_guard = if refresh_requested {
+            USAGE_REFRESH.try_lock().ok()
+        } else {
+            None
+        };
+        let refresh_unavailable = refresh_requested && refresh_guard.is_none();
         let operation = match command {
             VesselCommand::Accounts { transport, .. } => IdentityHelperOperation::Accounts {
                 scope: projection,
@@ -288,10 +339,91 @@ impl Supervisor {
                 scope: projection,
                 account,
             },
+            VesselCommand::AccountUsage {
+                account, refresh, ..
+            } => {
+                ensure!(
+                    !matches!(scope, Scope::Session(_)),
+                    "usage observations require a human connection"
+                );
+                IdentityHelperOperation::Usage {
+                    scope: projection,
+                    account,
+                    refresh: refresh && !refresh_unavailable,
+                }
+            }
+            VesselCommand::AccountSetDefault {
+                command_id,
+                account,
+                expected_revision,
+                ..
+            } => {
+                ensure!(
+                    matches!(scope, Scope::Owner),
+                    "only host owner may change default account"
+                );
+                IdentityHelperOperation::SetDefault {
+                    scope: projection,
+                    command_id,
+                    account,
+                    expected_revision,
+                }
+            }
+            VesselCommand::ResolveAccountEnrollment {
+                command_id,
+                enrollment_id,
+                connection_id,
+                alias,
+                label,
+                ..
+            } => {
+                ensure!(
+                    scope.connection_allowed(connection_id),
+                    "enrollment connection denied"
+                );
+                IdentityHelperOperation::Enrollment {
+                    scope: projection,
+                    operation: IdentityEnrollmentOperation::Resolve {
+                        request: voyage_protocol::accounts::EnrollmentRequest {
+                            command_id,
+                            enrollment_id,
+                            connection_id,
+                            alias,
+                            label,
+                            actor: scope.actor(&workspace),
+                        },
+                    },
+                }
+            }
+            VesselCommand::CancelAccountEnrollment {
+                command_id,
+                enrollment_id,
+                ..
+            } => IdentityHelperOperation::Enrollment {
+                scope: projection,
+                operation: IdentityEnrollmentOperation::Cancel {
+                    command_id,
+                    enrollment_id,
+                },
+            },
+            VesselCommand::PrivateAccountEnrollment { enrollment_id, .. } => {
+                IdentityHelperOperation::Enrollment {
+                    scope: projection,
+                    operation: IdentityEnrollmentOperation::Status { enrollment_id },
+                }
+            }
             _ => anyhow::bail!("identity-scoped account operation unavailable"),
         };
-        self.identity_account_helper(&scope, &workspace, right, operation)
-            .await
+        let mut value = self
+            .identity_account_helper(&scope, &workspace, right, operation)
+            .await?;
+        if refresh_unavailable {
+            value["refresh_status"] = serde_json::to_value(
+                voyage_protocol::accounts::AccountUsageRefreshStatus::Unavailable,
+            )?;
+        }
+        drop(refresh_guard);
+        Ok(value)
     }
 
     pub(super) async fn identity_account_helper(
@@ -331,86 +463,16 @@ impl Supervisor {
         operation: IdentityHelperOperation,
         selection: Selection<'_>,
     ) -> Result<IdentityHelperResponse> {
-        ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
-        scope.check(&self.directory, workspace, right)?;
-        let identity = selected_for(scope, &self.directory, selection).await?;
-        current(
-            scope,
+        run_owned_helper(
             &self.directory,
+            &self.binary,
+            scope,
             workspace,
-            &identity,
             right,
+            operation,
             selection,
         )
-        .await?;
-        super::launch::protected_binary(&self.binary)?;
-        let request = IdentityHelperRequest {
-            schema: IDENTITY_HELPER_SCHEMA,
-            workspace: workspace.to_owned(),
-            operation,
-        };
-        ensure!(
-            serde_json::to_vec(&request)?.len() <= IDENTITY_HELPER_BYTES,
-            "identity account request exceeds bounds"
-        );
-        let mut command = tokio::process::Command::new(&self.binary);
-        command
-            .arg("identity-helper")
-            .current_dir(&identity.home)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        super::launch::configure_identity(command.as_std_mut(), &identity)?;
-        // The ordinary helper uses the exact selected user's local namespace.
-        // Administrator helpers are handled by the explicit reviewed path.
-        ensure!(
-            identity.uid != 0,
-            "administrator accounts require owner-reviewed identity selection"
-        );
-        unsafe {
-            command.pre_exec(|| {
-                for (resource, limit) in
-                    [(libc::RLIMIT_AS, 512 * 1024 * 1024), (libc::RLIMIT_CPU, 5)]
-                {
-                    let limits = libc::rlimit {
-                        rlim_cur: limit,
-                        rlim_max: limit,
-                    };
-                    if libc::setrlimit(resource, &limits) != 0 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-        let mut child = command.spawn()?;
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            voyage_protocol::process::write_frame(&mut child.stdin.take().context("identity helper input missing")?, &request).await?;
-            let mut output = child.stdout.take().context("identity helper output missing")?;
-            let read = voyage_protocol::process::read_frame::<IdentityHelperResponse>(&mut output);
-            tokio::pin!(read);
-            let response = loop {
-                tokio::select! {
-                    response = &mut read => break response?,
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => current(scope, &self.directory, workspace, &identity, right, selection).await?,
-                }
-            };
-            ensure!(serde_json::to_vec(&response)?.len() <= IDENTITY_HELPER_BYTES, "identity helper output exceeds bounds");
-            ensure!(child.wait().await?.success(), "identity helper failed");
-            current(scope, &self.directory, workspace, &identity, right, selection).await?;
-            Ok(response)
-        }).await;
-        match result {
-            Ok(Ok(value)) => Ok(value),
-            failure => {
-                let _ = child.kill().await;
-                match failure {
-                    Ok(Err(error)) => Err(error),
-                    _ => anyhow::bail!("identity account helper deadline elapsed"),
-                }
-            }
-        }
+        .await
     }
 
     pub(super) fn identity_account_scope(
@@ -465,5 +527,123 @@ impl Supervisor {
         )
         .await?;
         Ok(())
+    }
+}
+
+/// The owning supervisor task may retain this runner after a socket waiter leaves.
+pub(super) async fn run_owned_helper(
+    root: &Path,
+    binary: &Path,
+    scope: &Scope,
+    workspace: &Path,
+    right: ProcessRight,
+    operation: IdentityHelperOperation,
+    selection: Selection<'_>,
+) -> Result<IdentityHelperResponse> {
+    ensure!(unsafe { libc::geteuid() } == 0, "root supervisor required");
+    scope.check(root, workspace, right)?;
+    let identity = selected_for(scope, root, selection).await?;
+    current(scope, root, workspace, &identity, right, selection).await?;
+    super::launch::protected_binary(binary)?;
+    let current_authority = matches!(
+        &operation,
+        IdentityHelperOperation::Enrollment { .. }
+            | IdentityHelperOperation::Usage { .. }
+            | IdentityHelperOperation::SetDefault { .. }
+    );
+    let request = IdentityHelperRequest {
+        schema: IDENTITY_HELPER_SCHEMA,
+        workspace: workspace.to_owned(),
+        operation,
+    };
+    ensure!(
+        serde_json::to_vec(&request)?.len() <= IDENTITY_HELPER_BYTES,
+        "identity account request exceeds bounds"
+    );
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .arg("identity-helper")
+        .current_dir(&identity.home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    super::launch::configure_identity(command.as_std_mut(), &identity)?;
+    // The ordinary helper uses the exact selected user's local namespace.
+    // Administrator helpers are handled by the explicit reviewed path.
+    ensure!(
+        identity.uid != 0,
+        "administrator accounts require owner-reviewed identity selection"
+    );
+    let (mut authority, descriptor) = if current_authority {
+        let (stream, descriptor) = super::identity_authority::attach(&mut command)?;
+        (Some(stream), Some(descriptor))
+    } else {
+        (None, None)
+    };
+    unsafe {
+        command.pre_exec(|| {
+            for (resource, limit) in [(libc::RLIMIT_AS, 512 * 1024 * 1024), (libc::RLIMIT_CPU, 5)] {
+                let limits = libc::rlimit {
+                    rlim_cur: limit,
+                    rlim_max: limit,
+                };
+                if libc::setrlimit(resource, &limits) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn()?;
+    drop(descriptor);
+    let result = tokio::time::timeout(Duration::from_secs(if current_authority {55} else {30}), async {
+        voyage_protocol::process::write_frame(&mut child.stdin.take().context("identity helper input missing")?, &request).await?;
+        let mut output = child.stdout.take().context("identity helper output missing")?;
+        let read = voyage_protocol::process::read_frame::<IdentityHelperResponse>(&mut output);
+        tokio::pin!(read);
+        let response = loop {
+            tokio::select! {
+                biased;
+                response = &mut read => break response?,
+                check = async {if let Some(stream)=&mut authority {super::identity_authority::read(stream).await} else {std::future::pending().await}} => {
+                    match check {
+                        Ok(check)=>{
+                            let right=match check.right {IdentityAuthorityRight::Use=>ProcessRight::AccountUse,IdentityAuthorityRight::Enroll=>ProcessRight::AccountEnroll};
+                            let mut allowed=check.actor==scope.actor(workspace)
+                                &&current(scope,root,workspace,&identity,right,selection).await.is_ok();
+                            if allowed {
+                                allowed=match check.right {
+                                    IdentityAuthorityRight::Enroll=>check.account_id.is_none()&&scope.connection_allowed(check.connection_id),
+                                    IdentityAuthorityRight::Use=>if let Some(id)=check.account_id {
+                                        let projection=projection(scope,root,workspace)?;
+                                        projection.full_access||projection.account_ids.contains(&id)
+                                            ||(projection.can_enroll&&scope.connection_allowed(check.connection_id))
+                                    } else {false},
+                                };
+                            }
+                            super::identity_authority::reply(authority.as_mut().context("authority channel unavailable")?,allowed).await?;
+                        },
+                        Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|e|e.kind()==std::io::ErrorKind::UnexpectedEof)=>authority=None,
+                        Err(_)=>anyhow::bail!("identity authority channel refused"),
+                    }
+                },
+                _ = tokio::time::sleep(Duration::from_millis(100)) => current(scope, root, workspace, &identity, right, selection).await?,
+            }
+        };
+        ensure!(serde_json::to_vec(&response)?.len() <= IDENTITY_HELPER_BYTES, "identity helper output exceeds bounds");
+        ensure!(child.wait().await?.success(), "identity helper failed");
+        current(scope, root, workspace, &identity, right, selection).await?;
+        Ok(response)
+    }).await;
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        failure => {
+            let _ = child.kill().await;
+            match failure {
+                Ok(Err(error)) => Err(error),
+                _ => anyhow::bail!("identity account helper deadline elapsed"),
+            }
+        }
     }
 }

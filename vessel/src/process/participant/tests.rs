@@ -21,6 +21,8 @@ impl Fixture {
             model_slots: Arc::new(Semaphore::new(1)),
             devices: super::super::accounts::device_service(directory.clone()).unwrap(),
             enrollment_workers: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "linux")]
+            identity_enrollment_starts: Mutex::new(HashMap::new()),
             assignment_locks: Mutex::new(HashMap::new()),
             lifecycle_locks: Mutex::new(HashMap::new()),
             registrations: super::super::database::Registrations::new(directory.clone()),

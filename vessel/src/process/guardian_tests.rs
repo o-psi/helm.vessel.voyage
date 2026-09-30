@@ -917,6 +917,8 @@ os._exit(0)
             std::sync::Arc::new(|_, _| false),
         ),
         enrollment_workers: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        #[cfg(target_os = "linux")]
+        identity_enrollment_starts: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         assignment_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         lifecycle_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         registrations: database::Registrations::new(control.clone()),

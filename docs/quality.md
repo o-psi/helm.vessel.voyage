@@ -864,3 +864,15 @@ These are source-only cases, not executed verification. Actual root broker epoch
 parent/connection revocation and suspended/live roundtrips remain final integrated
 native gates. Existing legacy-file authority test construction was updated for the
 new AuthoritySource representation without weakening its assertions.
+
+### Identity-scoped enrollment and usage source qualification pending
+
+No tests or provider calls have run for the new ordinary system account worker.
+The final coordinated set must verify actual UID drop/private-root refusal before
+authority metadata, root-peer authentication, bounded channel failure, revocation
+between poll/exchange/publication, duplicate start waiters, socket loss with retained
+worker, negative-admission and interrupted-effect no-replay, supervisor restart,
+changed default identity, private-code exclusion and one usage refresh at a time.
+Prepared negative peer/descriptor cases are unexecuted. Use synthetic provider
+fixtures and disposable native hosts; skipped or inaccessible provider/host work
+is not passing evidence. Preserve existing user-service account behavior.

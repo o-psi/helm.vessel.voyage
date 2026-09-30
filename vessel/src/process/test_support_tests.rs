@@ -102,6 +102,8 @@ impl Fixture {
                 Arc::new(|_, _| false),
             ),
             enrollment_workers: Mutex::new(HashMap::new()),
+            #[cfg(target_os = "linux")]
+            identity_enrollment_starts: Mutex::new(HashMap::new()),
             assignment_locks: Mutex::new(HashMap::new()),
             lifecycle_locks: Mutex::new(HashMap::new()),
             registrations: database::Registrations::new(self.0.clone()),

@@ -76,7 +76,7 @@ impl Scope {
             }
         }
     }
-    fn connection_allowed(&self, id: Uuid) -> bool {
+    pub(super) fn connection_allowed(&self, id: Uuid) -> bool {
         match self {
             Self::Owner => true,
             Self::Connection(g) => g.full_access || g.enrollment_connections.contains(&id),
@@ -305,6 +305,10 @@ pub(super) fn device_service(root: PathBuf) -> Result<DeviceService> {
 
 impl Supervisor {
     pub(super) async fn resume_enrollments(&self) -> Result<()> {
+        #[cfg(target_os = "linux")]
+        if super::runtime_storage::has_bound_layout(&self.directory) {
+            return self.resume_identity_enrollments().await;
+        }
         for (id, actor) in self.devices.resume_candidates()? {
             self.enrollment_worker(id, actor, None).await;
         }

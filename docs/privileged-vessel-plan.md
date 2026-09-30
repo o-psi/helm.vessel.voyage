@@ -858,6 +858,31 @@ This remains source preparation without test/build execution. Root counterpart,
 suspended forwarding and final integrated/native verification are required before
 claiming working broker admission or continuous revocation.
 
+### Ordinary account enrollment and usage source integration
+
+System account operations now delegate device enrollment, private status, exact
+resolution/cancellation, cached usage and bounded usage refresh to the explicitly
+selected ordinary identity. A separate root-created descriptor checks current
+actor, grant, identity and account/enrollment rights before provider steps and
+credential publication. The helper authenticates the root peer before sending
+check metadata. The reply is a boolean; root never opens that user's credentials
+or receives device codes from the authority channel. Private enrollment status
+retains its human-only response path and is absent from command/event history.
+
+The supervisor tracks each original attempt before starting its owned worker.
+Duplicate waiters share its start response; leaving the request does not cancel
+the driver. Drivers retain exact IDs and bounded lifetimes. After supervisor
+restart, protected intent recovery resolves the attempt before driving it: an
+unadmitted or uncertain device-start/exchange is never automatically repeated.
+Changed default execution identity, grant revocation or unavailable authority
+refuses further effects. Owner-private provider state stays in the original home;
+administrator login credentials are never a fallback. Usage refresh keeps the
+existing single-refresh gate and publishes only under current authority.
+
+These paths are source-only and await the combined ordinary/native, cancellation,
+restart, private-code and provider-fixture checks. They do not establish live
+provider authentication, spending authorization or completed #344 acceptance.
+
 ### Protected supervisor scope counterpart
 
 The supervisor now binds a read-only abstract Unix authority endpoint only for a

@@ -1,6 +1,6 @@
 //! Private, bounded helper messages. The supervisor selects and drops the OS
 //! identity before exec; these messages never grant execution authority.
-use crate::accounts::{AccountBinding, EnrollmentActor, Transport};
+use crate::accounts::{AccountBinding, EnrollmentActor, EnrollmentRequest, Transport};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -54,6 +54,68 @@ pub enum IdentityHelperOperation {
         account: Option<AccountBinding>,
         settings: crate::start_settings::StartSettings,
     },
+    Enrollment {
+        scope: IdentityAccountScope,
+        operation: IdentityEnrollmentOperation,
+    },
+    Usage {
+        scope: IdentityAccountScope,
+        account: AccountBinding,
+        refresh: bool,
+    },
+    SetDefault {
+        scope: IdentityAccountScope,
+        command_id: Uuid,
+        account: AccountBinding,
+        expected_revision: u64,
+    },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum IdentityEnrollmentOperation {
+    Start {
+        request: EnrollmentRequest,
+    },
+    Resolve {
+        request: EnrollmentRequest,
+    },
+    Drive {
+        enrollment_id: Uuid,
+    },
+    Status {
+        enrollment_id: Uuid,
+    },
+    Cancel {
+        command_id: Uuid,
+        enrollment_id: Uuid,
+    },
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityAuthorityRight {
+    Use,
+    Enroll,
+}
+
+/// An independent private pipe checks CURRENT supervisor authority at each
+/// credential/network/publication boundary. Only a boolean crosses back.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityAuthorityRequest {
+    pub schema: u32,
+    pub actor: EnrollmentActor,
+    pub right: IdentityAuthorityRight,
+    pub connection_id: Uuid,
+    pub account_id: Option<Uuid>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityAuthorityReply {
+    pub schema: u32,
+    pub allowed: bool,
 }
 
 /// A private projection of an authenticated grant. The root caller retains all

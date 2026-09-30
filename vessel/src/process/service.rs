@@ -29,6 +29,9 @@ pub(super) struct Supervisor {
     pub(super) model_slots: Arc<Semaphore>,
     pub(super) devices: voyage_runtime::accounts::device::DeviceService,
     pub(super) enrollment_workers: Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>,
+    #[cfg(target_os = "linux")]
+    pub(super) identity_enrollment_starts:
+        Mutex<HashMap<Uuid, tokio::sync::watch::Receiver<super::identity_enrollment::Started>>>,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: super::database::Registrations,
@@ -95,6 +98,8 @@ pub async fn serve_configured(
         model_slots: Arc::new(Semaphore::new(4)),
         devices: super::accounts::device_service(directory.clone())?,
         enrollment_workers: Mutex::new(HashMap::new()),
+        #[cfg(target_os = "linux")]
+        identity_enrollment_starts: Mutex::new(HashMap::new()),
         registrations: super::database::Registrations::new(directory.clone()),
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
