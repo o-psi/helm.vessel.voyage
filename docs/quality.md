@@ -1063,5 +1063,20 @@ observed cleanup. This adds no paid provider calls or hosted quality jobs.
 The grounded control sources also cover open shadow controls before light-DOM
 controls, exact paged handle identity, shadow-local accessible labels, nested
 hit testing, mutation/new-root invalidation and explicit traversal truncation.
-These additions were prepared during the implementation-only release pass; they
-have not yet been executed against the combined release source.
+The Linux worker suite passed all 24 cases with no failures, cancellations or
+skips in 16.803 seconds after the final oversized-observation fix. The toolchain
+was Node 26.8.2, pinned Playwright 1.63.0 and Chromium 152.0.7977.82. The grounded
+case keeps its 60-second timeout. An earlier reproduction reached the wide
+observation in 3.259 seconds but cancelled at 60 seconds and did not finish
+cleanup until 265.735 seconds. Rendered text/control geometry are now withheld
+after the node walk truncates; the 100001-node fixture traps those reads and
+requires that neither runs. Its hidden subtree isolates traversal from enormous
+inline layout while visible controls before and after it exercise the boundary.
+
+The four real guardian crash/shutdown cases observed zero remaining live
+processes, zombies, process groups, socket descriptors/files and profile
+directories. Uncertain effect receipts remain retained; only cooperative shutdown
+releases the worker lock. Raw failing and corrected logs remain under ignored
+`target/verification-v103/browser-final/`. These checks cover the Linux worker and
+guardian, not the full Helm client journeys, root-bound public transport,
+production TLS, installers or other platforms.

@@ -22,6 +22,15 @@ open shadow roots before accepting a target. Traversal examines at most 100000
 elements and 32 open shadow levels. `controls_truncated` marks a partial count when
 either bound is reached; `unsupported` states the limit. Child frames retain their
 independent observed frame identity and existing frame bound.
+An observation that exceeds the node budget withholds rendered text and effect
+references instead of forcing layout of the entire oversized document. Its
+`text_truncated` flag and `unsupported` entry state this limitation; the partial
+control count does not assert that the rest of the page has no controls. The node
+budget fixture uses a hidden 100001-node subtree so it measures traversal without
+also requiring Chromium to format an enormous line of empty inline elements.
+It also traps full-body rendered-text and control-geometry reads and requires that
+neither trap runs after traversal truncates; hiding the subtree cannot conceal a
+regression in the production bound.
 `read` returns bounded element text, never input values. `diagnostics` returns error
 counts only and clears them on control fences. Effects add typed `key`, native
 `select`/`check`, `double_click`, reference-to-reference `drag`, and `history`

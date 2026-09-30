@@ -57,10 +57,14 @@ const agentObservation = ({offset,limit,textOffset}) => {
   }
   state.refresh();
   if(!document.body)throw new Error('body unavailable');
-  const body=document.body.innerText;
-  return {version:state.version,text:body.slice(textOffset,textOffset+16384),text_total:body.length,text_truncated:textOffset+16384<body.length,
+  // Reading innerText or control geometry forces rendered layout. Do not cross
+  // the node budget by laying out an explicitly truncated document afterwards.
+  // Such an observation has partial metadata but no grounded effect references.
+  const body=state.nodesTruncated?'':document.body.innerText;
+  return {version:state.version,text:body.slice(textOffset,textOffset+16384),text_total:body.length,text_truncated:state.nodesTruncated||textOffset+16384<body.length,
     control_total:state.controls.length,controls_truncated:state.nodesTruncated||state.shadowTruncated,
-    indices:state.controls.slice(offset,offset+limit).map((_,i)=>offset+i)};
+    nodes_truncated:state.nodesTruncated,
+    indices:state.nodesTruncated?[]:state.controls.slice(offset,offset+limit).map((_,i)=>offset+i)};
 };
 
 const controlSignature=e=>JSON.stringify({connected:e.isConnected,tag:e.tagName,attributes:[...e.attributes].slice(0,128).map(a=>[a.name,a.value.slice(0,16384)]),text:(e.innerText||'').slice(0,1024),disabled:e.disabled,readonly:e.readOnly,checked:e.checked,value:typeof e.value==='string'?e.value.slice(0,16384):null,optionCount:e.options?.length,options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>[o.value,o.selected,o.disabled]):null});
@@ -439,7 +443,7 @@ export class Worker {
         // A mutation invalidates all references from this observation. This is
         // deliberately conservative; agents must inspect after dynamic changes.
         const observed=await frame.evaluate(agentObservation,{offset,limit,textOffset});guard();
-        const elements=[];let elementBytes=0,nextOffset=offset+limit<observed.control_total?offset+limit:null;
+        const elements=[];let elementBytes=0,nextOffset=!observed.nodes_truncated&&offset+limit<observed.control_total?offset+limit:null;
         for(const i of observed.indices){
           const handle=await frame.evaluateHandle(i=>globalThis.__voyageAgentObservation?.controls[i]??null,i),h=handle.asElement();guard();if(!h){await handle.dispose();beforeEffect('stale_reference');}
           const info=await h.evaluate(e=>{
@@ -460,7 +464,7 @@ export class Worker {
         if(!await frame.evaluate(version=>{const state=globalThis.__voyageAgentObservation;state?.refresh();return state?.version===version;},observed.version))beforeEffect('observation_changed');guard();
         const title=(await page.title()).slice(0,256);guard();
         const location=new URL(frame.url());location.username='';location.password='';
-        return {document:{url:location.href.slice(0,8192),title,frame:frame===page.mainFrame()?null:this.frameId(frame)},text:observed.text,text_total:observed.text_total,text_truncated:observed.text_truncated,elements,control_total:observed.control_total,controls_truncated:observed.controls_truncated,next_offset:nextOffset,frames,frames_truncated:page.frames().length>33,unsupported:['canvas and video require screenshot','closed shadow roots are not inspected',...(observed.controls_truncated?['control traversal limited to 100000 elements and 32 open shadow levels']:[])],downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
+        return {document:{url:location.href.slice(0,8192),title,frame:frame===page.mainFrame()?null:this.frameId(frame)},text:observed.text,text_total:observed.text_total,text_truncated:observed.text_truncated,elements,control_total:observed.control_total,controls_truncated:observed.controls_truncated,next_offset:nextOffset,frames,frames_truncated:page.frames().length>33,unsupported:['canvas and video require screenshot','closed shadow roots are not inspected',...(observed.controls_truncated?['control traversal limited to 100000 elements and 32 open shadow levels']:[]),...(observed.nodes_truncated?['rendered text and control references withheld because document traversal is incomplete']:[])],downloads:[...this.downloads].filter(([,d])=>d.owner==='agent').map(([id])=>id)};
       }
       case 'read':{
         const h=await observedRef(a.ref);guard();const offset=number(a.offset??0,0,2000000);
