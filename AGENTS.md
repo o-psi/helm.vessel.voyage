@@ -263,6 +263,18 @@ implicitly. Keep tests and quality validation local; use the build-only GitHub
 workflow and follow-through rules above for hosted compilation and downloads.
 Preserve existing release artifacts and follow [docs/releasing.md](docs/releasing.md).
 
+## Local agent benchmarks
+
+Use the opt-in [Harbor adapter](eval/voyage_harbor/README.md) for explicitly requested
+Terminal-Bench evaluations. Keep the real Helm–Vessel–Voyage path, pinned task/source
+and adapter identities, fresh isolated trial state, independently graded outcomes,
+finite run/resource bounds and observed cleanup. Obtain live-provider/account and
+budget authorization before inference. Report task rewards separately from setup,
+provider, timeout and cleanup failures; partial pilots are not full leaderboard scores.
+Keep raw traces private, publish only sanitized evidence, and retain unresolved
+obligations in the GitHub issue. This does not restore retired broad suites, authorize
+hosted quality jobs, or relax runtime policy to make benchmark tasks pass.
+
 ## Code coverage history
 
 For each delivery changing Rust source, Cargo manifests/lockfile, or tests, run
