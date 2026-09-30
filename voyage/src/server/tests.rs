@@ -665,6 +665,7 @@ mod live_controls_batch {
     async fn unknown_section_does_not_close_executor() {
         let (_root, state) = fixture().await;
         let (run, _, _) = open(&state, false).await;
+        let inventory = state.controls.inspect(None, "tools").await.unwrap()["value"].clone();
         assert!(
             state
                 .controls
@@ -676,7 +677,7 @@ mod live_controls_batch {
         );
         assert_eq!(
             state.controls.inspect(None, "tools").await.unwrap()["value"],
-            json!([])
+            inventory
         );
         assert!(state.controls.close().await);
     }

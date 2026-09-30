@@ -76,7 +76,17 @@ async fn file_tool_journey_retains_results_and_finishes_canonical_answer() {
             .iter()
             .any(|m| m.role == Role::Tool && m.content.contains("fixture data"))
     );
-    assert_eq!(agent.tool_inventory().len(), 2);
+    let mut inventory: Vec<_> = agent.tool_inventory().into_iter().map(|t| t.name).collect();
+    inventory.sort();
+    assert_eq!(
+        inventory,
+        [
+            "compact_context",
+            "context_status",
+            "read_file",
+            "write_file"
+        ]
+    );
     assert!(agent.plain_terminals().is_ok());
     assert!(agent.terminal_metadata().is_empty());
     assert_eq!(agent.model(), "fixture-model");

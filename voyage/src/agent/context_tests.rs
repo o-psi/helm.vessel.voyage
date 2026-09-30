@@ -477,6 +477,10 @@ async fn trustworthy_pressure_prepares_before_predictable_rejection_without_effe
         requests: requests.clone(),
         rejections: rejections.clone(),
     });
+    let agent = agent.with_context_policy(crate::context::ContextPolicy {
+        safety_margin: 0,
+        output_reserve: Some(8),
+    });
     let outcome = agent
         .run_checkpointed(
             vec![],

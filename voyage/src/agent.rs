@@ -1062,8 +1062,36 @@ impl Agent {
         .await
     }
 
+    /// Keep the active loop on the heap. Its request preparation and tool
+    /// boundaries must not inflate every supervising future's stack frame.
     #[allow(clippy::too_many_arguments)]
-    async fn run_inner(
+    fn run_inner<'a>(
+        &'a self,
+        history: Vec<Message>,
+        prompt: Message,
+        cancel: CancellationToken,
+        input: Option<SteeringReceiver>,
+        checkpoint: Option<&'a dyn RunCheckpoint>,
+        selected_model: Option<String>,
+        scope: Option<crate::completion::runtime::RunHandle>,
+        bindings: Option<crate::workflow::secrets::RunBindings>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<AgentOutcome, AgentError>> + Send + 'a>,
+    > {
+        Box::pin(self.run_inner_owned(
+            history,
+            prompt,
+            cancel,
+            input,
+            checkpoint,
+            selected_model,
+            scope,
+            bindings,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_inner_owned(
         &self,
         mut history: Vec<Message>,
         prompt: Message,
