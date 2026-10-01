@@ -56,6 +56,16 @@ fn owned_pty_restores_terminal_after_detach_and_initialization_error() {
             mode.as_str(),
             "normal" | "registry-refusal" | "initialization-error"
         ));
+        let parent: libc::pid_t = std::env::var("HELM_OWNED_EVENT_LOOP_PARENT_353")
+            .expect("owned parent witness")
+            .parse()
+            .unwrap();
+        assert_eq!(unsafe { libc::getppid() }, parent);
+        assert_eq!(
+            unsafe { libc::getsid(0) },
+            unsafe { libc::getpid() },
+            "child must own its new PTY session"
+        );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -91,6 +101,10 @@ fn owned_pty_restores_terminal_after_detach_and_initialization_error() {
         command.args(["--exact", TEST, "--nocapture"]);
         command.env_clear();
         command.env(CHILD, mode);
+        command.env(
+            "HELM_OWNED_EVENT_LOOP_PARENT_353",
+            std::process::id().to_string(),
+        );
         command.env("HOME", root.path());
         command.env("PATH", "/usr/bin:/bin");
         command.env("TERM", "xterm-256color");
