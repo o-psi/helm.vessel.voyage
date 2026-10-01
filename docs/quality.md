@@ -698,8 +698,10 @@ Run the browser client checks in the private `o-psi/webhelm` checkout; the publi
 
 On disposable native Linux guests, qualify explicit system upgrade for active and
 inactive installs, exact root/gateway release PIDs and readiness, preserved paired
-identity, credentials and running independent voyages. Verify inactive-only rollback
-refuses candidates that were started; do not infer database-schema compatibility.
+identity, credentials and running independent voyages. Verify active rollback only for an exact retained completed upgrade whose two
+validated code-owned contracts are identical. Missing or incompatible contracts
+must refuse before publication. Inactive-only rollback additionally requires that
+the candidate never started; do not infer database-schema compatibility.
 Inject unit publication/readiness failure and interruption, observe retained journal
 and bounded refusal without replay. Service-removal uninstall must observe managed
 PIDs zero and disabled/absent exact units while retaining state, releases, provisioner
@@ -748,8 +750,13 @@ On a separate active guest replace `--no-start` with `--start`; establish pairin
 and exact retained authorization first. Upgrade must report the new root/gateway
 process executables with root/ordinary UIDs and public readiness. Verify pairing,
 public routing and retained identity again, including after an actual guest reboot.
-An explicit rollback must fail before publication, with unchanged current units,
-release and lifecycle record: candidate startup may have opened persistent state.
+For a qualified compatible pair, explicit active rollback must restore the exact
+retained source units and readiness while preserving paired identity, credentials
+and the same independent Voyage incarnation/process start identity. Missing or
+incompatible contracts, or a transition that is not the retained completed upgrade,
+must fail before publication with unchanged units, release and lifecycle record:
+startup may have opened persistent state. Do not patch a manifest or relabel an
+archive to manufacture either compatibility or refusal.
 A live independent Voyage fixture must retain the same incarnation and process
 start identity across supervisor upgrade/removal; a PID alone is insufficient.
 Do not claim that managed MainPID zero proves independent descendant cleanup.
