@@ -669,6 +669,23 @@ selection sends no inference. These checks use
 synthetic accounts and local provider responses. Web profile tests run with the
 existing Web test scripts; they do not establish live sign-in or provider behavior.
 
+The Helm account/profile socket journeys use the existing private loopback
+transport with scripted host metadata. They prepare full capability/host refusal,
+exact enrollment resolve/cancel, cached and explicit usage, default uncertainty,
+profile CAS save/default/delete and composer-retention assertions. They neither
+invoke a model nor start a service or real browser. Source preparation is not a
+passing result; the coordinated workspace verification must execute these cases.
+
+A pending profile save now retains its exact command ID and origin: destination,
+workspace, authenticated host, connection loss generation and runtime incarnation.
+Only a matching save response containing the exact reviewed profile confirms it.
+Unconfirmed outcomes remain bounded local bookkeeping with no automatic resend.
+Review restoration requires the same current origin; closed, reactivated or changed
+destinations cannot inherit the previous review through a later catalogue failure.
+The prepared cases cover those boundaries and verify read-only loads never erase
+an unrelated original save. Native root/grant and live-provider evidence remain
+separate from these presentation/transport checks.
+
 ### Separate Helm Web source
 
 Run the browser client checks in the private `o-psi/webhelm` checkout; the public repository no longer contains those tests. The public repository does not contain those tests. See its README for setup and shared browser asset synchronization.

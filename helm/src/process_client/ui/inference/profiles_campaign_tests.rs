@@ -448,7 +448,8 @@ fn failed_profile_operation_cannot_inject_terminal_controls_or_drop_reviewed_set
         .unwrap()
         .profiles[0]
         .clone();
-    app.inference.profiles.pending_save = Some(profile.clone());
+    let review = super::tests::retained_review(&mut app, profile.clone());
+    app.inference.profiles.pending_save = Some(review);
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.inference.profiles.job = Some(rx);
     assert!(

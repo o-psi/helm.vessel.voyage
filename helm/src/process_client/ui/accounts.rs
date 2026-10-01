@@ -1698,3 +1698,6 @@ pub(super) mod app_tests;
 #[cfg(test)]
 #[path = "accounts/accounts_final_tests.rs"]
 mod accounts_final_tests;
+#[cfg(all(test, unix))]
+#[path = "accounts/socket_journey_tests.rs"]
+mod socket_journey_tests;

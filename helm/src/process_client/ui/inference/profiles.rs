@@ -20,10 +20,26 @@ pub(super) struct Controls {
     job: Option<tokio::sync::oneshot::Receiver<ProfileJobResult>>,
     labels: Vec<ExecutionProfile>,
     accounts: Vec<account_choices::Choice>,
-    pending_save: Option<ExecutionProfile>,
+    pending_save: Option<SaveReview>,
+    unconfirmed_saves: Vec<SaveReview>,
+    job_save_id: Option<Uuid>,
     automatic: bool,
     hits: std::cell::RefCell<Vec<(Rect, KeyCode)>>,
     rows: std::cell::RefCell<Vec<(Rect, usize)>>,
+}
+#[derive(Clone)]
+struct SaveOrigin {
+    destination: Destination,
+    workspace: std::path::PathBuf,
+    host: Uuid,
+    loss_generation: u64,
+    incarnation: Option<Uuid>,
+}
+#[derive(Clone)]
+struct SaveReview {
+    origin: SaveOrigin,
+    command_id: Uuid,
+    profile: ExecutionProfile,
 }
 pub(super) struct Panel {
     destination: Destination,
@@ -104,13 +120,20 @@ impl App {
             .destination;
         let (route, workspace) = self.account_destination(destination)?;
         let client = self.clients[route].clone();
+        let expected_host = self.account_host(route);
+        let save_id = match &command {
+            VesselCommand::SaveProfile { command_id, .. } => Some(*command_id),
+            _ => None,
+        };
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
                 let caps = client.request(VesselCommand::Capabilities).await?;
                 let host: Uuid = serde_json::from_value(caps["vessel_id"].clone())?;
                 ensure!(
-                    !host.is_nil() && client.managed().is_none_or(|c| c.vessel_id == host),
+                    !host.is_nil()
+                        && client.managed().is_none_or(|c| c.vessel_id == host)
+                        && expected_host.is_none_or(|expected| expected == host),
                     "Profile host changed"
                 );
                 // Metadata is optional: unavailable account labels must never turn
@@ -140,13 +163,14 @@ impl App {
             let _ = tx.send(result);
         });
         self.inference.profiles.job = Some(rx);
+        self.inference.profiles.job_save_id = save_id;
         Ok(())
     }
     pub(super) fn poll_profiles(&mut self) {
         let Some(mut rx) = self.inference.profiles.job.take() else {
             return;
         };
-        let result = match rx.try_recv() {
+        let mut result = match rx.try_recv() {
             Ok(result) => result,
             Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
                 self.inference.profiles.job = Some(rx);
@@ -156,6 +180,42 @@ impl App {
                 "Profile request interrupted; reload to check its outcome"
             )),
         };
+        let save_id = self.inference.profiles.job_save_id.take();
+        let review = if save_id.is_some()
+            && self
+                .inference
+                .profiles
+                .pending_save
+                .as_ref()
+                .is_some_and(|review| Some(review.command_id) == save_id)
+        {
+            self.inference.profiles.pending_save.take()
+        } else {
+            None
+        };
+        let current_review = review
+            .as_ref()
+            .is_some_and(|review| self.profile_origin_current(&review.origin));
+        if let Some(review) = review.as_ref() {
+            let exact_ack = result.as_ref().is_ok_and(|(host, catalogue, _)| {
+                *host == review.origin.host
+                    && catalogue
+                        .profiles
+                        .iter()
+                        .any(|profile| profile == &review.profile)
+            });
+            if !exact_ack {
+                if result.is_ok() {
+                    result = Err(anyhow::anyhow!(
+                        "Profile save response did not confirm the exact reviewed settings"
+                    ));
+                }
+                self.inference
+                    .profiles
+                    .unconfirmed_saves
+                    .push(review.clone());
+            }
+        }
         let Some(panel) = self.inference.profiles.panel.as_ref() else {
             return;
         };
@@ -167,7 +227,6 @@ impl App {
         match result {
             Ok((host, catalogue, accounts)) => {
                 self.inference.profiles.accounts = accounts;
-                self.inference.profiles.pending_save = None;
                 if let Ok((route, _)) = self.account_destination(destination) {
                     self.cache_account_host(route, host);
                 }
@@ -194,7 +253,8 @@ impl App {
             Err(e) => {
                 let panel = self.inference.profiles.panel.as_mut().unwrap();
                 panel.notice = safe(&e.to_string());
-                if let Some(profile) = self.inference.profiles.pending_save.take() {
+                if current_review && let Some(review) = review {
+                    let profile = review.profile;
                     panel.name = Some((profile.id, profile.name.clone(), Some(profile)));
                     panel.notice.push_str(
                         " · Settings retained. Ctrl+R reloads profiles before saving again.",
@@ -248,6 +308,14 @@ impl App {
         Ok(())
     }
     pub(super) fn save_profile_settings(&mut self, value: Settings) -> Result<()> {
+        ensure!(
+            self.inference.profiles.pending_save.is_none(),
+            "An original profile save is still being reconciled; inspect its outcome before another change"
+        );
+        ensure!(
+            self.inference.profiles.unconfirmed_saves.len() < 64,
+            "Profile save outcomes remain unconfirmed; inspect their original hosts before another change"
+        );
         let (id, name) = self
             .inference
             .profiles
@@ -265,7 +333,8 @@ impl App {
             catalogue.can_manage,
             "Profile management requires executing-host administration access"
         );
-        let (_, workspace) = self.account_destination(panel.destination)?;
+        let origin = self.profile_save_origin(panel.destination)?;
+        let workspace = origin.workspace.clone();
         let profile = ExecutionProfile {
             id,
             name,
@@ -274,19 +343,72 @@ impl App {
             reasoning_effort: value.reasoning_effort,
             service_tier: value.service_tier,
         };
+        let command_id = Uuid::new_v4();
         let command = VesselCommand::SaveProfile {
-            command_id: Uuid::new_v4(),
+            command_id,
             workspace,
             expected_revision: catalogue.revision,
             profile: profile.clone(),
             make_default: catalogue.profiles.is_empty(),
         };
         self.request_profiles(command)?;
-        self.inference.profiles.pending_save = Some(profile);
+        self.inference.profiles.pending_save = Some(SaveReview {
+            origin,
+            command_id,
+            profile,
+        });
         self.inference.profiles.editing = None;
         self.cancel_model_catalog();
         self.cancel_chooser_accounts();
         Ok(())
+    }
+    fn profile_save_origin(&self, destination: Destination) -> Result<SaveOrigin> {
+        let (route, workspace) = self.account_destination(destination)?;
+        ensure!(
+            self.clients.available(route),
+            "Original profile host is disconnected"
+        );
+        let host = self
+            .account_host(route)
+            .context("Authenticated profile host unavailable")?;
+        ensure!(!host.is_nil(), "Authenticated profile host unavailable");
+        let loss_generation = self.clients[route]
+            .connection_state()
+            .borrow()
+            .loss_generation;
+        let incarnation = match destination {
+            Destination::Live(target) => Some(
+                self.views
+                    .get(&target)
+                    .context("Voyage unavailable")?
+                    .process
+                    .incarnation,
+            ),
+            Destination::Draft(_) => None,
+        };
+        Ok(SaveOrigin {
+            destination,
+            workspace,
+            host,
+            loss_generation,
+            incarnation,
+        })
+    }
+    fn profile_origin_current(&self, origin: &SaveOrigin) -> bool {
+        self.inference
+            .profiles
+            .panel
+            .as_ref()
+            .is_some_and(|panel| panel.destination == origin.destination)
+            && self.inference_destination() == Some(origin.destination)
+            && self
+                .profile_save_origin(origin.destination)
+                .is_ok_and(|current| {
+                    current.workspace == origin.workspace
+                        && current.host == origin.host
+                        && current.loss_generation == origin.loss_generation
+                        && current.incarnation == origin.incarnation
+                })
     }
     fn use_profile(&mut self, destination: Destination, profile: ExecutionProfile) -> Result<()> {
         let value = settings(&profile);
@@ -693,6 +815,18 @@ mod tests {
             .unwrap()
         );
     }
+    pub(super) fn retained_review(app: &mut App, profile: ExecutionProfile) -> SaveReview {
+        let destination = app.inference.profiles.panel.as_ref().unwrap().destination;
+        let (route, _) = app.account_destination(destination).unwrap();
+        app.cache_account_host(route, Uuid::new_v4());
+        let command_id = Uuid::new_v4();
+        app.inference.profiles.job_save_id = Some(command_id);
+        SaveReview {
+            origin: app.profile_save_origin(destination).unwrap(),
+            command_id,
+            profile,
+        }
+    }
     #[test]
     fn settings_are_copied_and_labels_require_all_four_values() {
         let (_fixture, mut app, _, mut profile) = setup(true);
@@ -813,7 +947,8 @@ mod tests {
     #[test]
     fn failed_save_retains_profile_values_for_repair() {
         let (_fixture, mut app, _, profile) = setup(true);
-        app.inference.profiles.pending_save = Some(profile.clone());
+        let review = retained_review(&mut app, profile.clone());
+        app.inference.profiles.pending_save = Some(review);
         let (tx, rx) = tokio::sync::oneshot::channel();
         app.inference.profiles.job = Some(rx);
         assert!(
@@ -844,3 +979,6 @@ mod tests {
 #[cfg(test)]
 #[path = "profiles_campaign_tests.rs"]
 mod campaign_tests;
+#[cfg(all(test, unix))]
+#[path = "profile_socket_journey_tests.rs"]
+mod socket_journey_tests;

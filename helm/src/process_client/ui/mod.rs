@@ -1,4 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
+#[cfg(all(test, unix))]
+mod account_socket_support_tests;
 #[cfg(test)]
 mod account_test_support;
 mod accounts;
