@@ -1191,3 +1191,14 @@ The private button sends public human mode only when the current viewer controls
 private browsing and chooses Finish private browsing. A watching viewer choosing
 Browse privately must request private mode, including reclaim after the other
 viewer disconnects. The same predicate is maintained in the Web shared viewer.
+
+### Ordinary wake and guardian authority combined qualification
+
+Clean source `ca71ecdbe32e30277741eab7145d88c2d66cd7bd` passed strict
+all-target/all-feature Clippy, formatting/diff checks and 2,339 default-feature
+workspace tests with zero failures and eight ignored. The audit retained 536
+workspace files, all 535 prior files and 17 current objects, using only 248 own
+profiles and preserving 235 foreign profiles. This records the integrated proof
+cases, not successful native wake or active owner survival. Those native journeys
+and the new same-browser TUI/Web private reclaim case require the corrected
+packaged binaries and observed cleanup.

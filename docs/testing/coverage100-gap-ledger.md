@@ -11,34 +11,29 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-The clean-source measurement `83ab2bfb55ef37c423a82bd3c22f27772b1eb6f1`,
-recorded in `coverage/latest.json`, passed **2,330 tests, zero failures, eight ignored**.
-It covers **96,631 / 131,037 lines (73.743294%)**, 8,758 / 11,986 functions
-and 152,366 / 216,837 regions. **34,406 line gaps remain**, including one known
+Clean source `ca71ecdbe32e30277741eab7145d88c2d66cd7bd`, recorded in
+`coverage/latest.json`, passed **2,339 tests, zero failures, eight ignored**.
+It covers **96,873 / 131,550 lines (73.639681%)**, 8,776 / 12,018 functions
+and 152,704 / 217,634 regions. **34,677 line gaps remain**, including one known
 standard-library line. This does not meet #353's reachable-production objective.
 
-All **535 current workspace files**, all **533 prior files** and the same known
+All **536 current workspace files**, all **535 prior files** and the same known
 standard-library source are retained. All 14 test targets and three integration
-entrypoints contribute 17 distinct instrumented object hashes. The maintained
-checkout-absolute forwarding wrapper separates workspace artifact filenames;
-no foreign-checkout source mappings remain. All 235 foreign raw profiles are
-unchanged; only 248 own profiles were merged. The default export mixed 2,091
-source mappings and was rejected. Exact source/object/profile manifests, rejected
-reports and current summary remain under ignored
-`target/coverage-report/v103-profile-corrected` (#251).
+entrypoints contribute 17 distinct instrumented objects. No foreign-checkout
+source maps remain. Only 248 own profiles were merged; 235 foreign profiles remain
+unchanged. The mixed default export with 2,092 source mappings was rejected.
+Exact manifests and reports remain under ignored `target/coverage-report/v103-bound-final`.
+Earlier qualified raw profiles and all 17 prior object hashes were preserved.
 
-Compared with the prior published `202544f` measurement: 1,929 more covered lines,
-825 more measured lines and a 1.014206 percentage-point improvement. No denominator
-exclusions were added. Identity-helper, scope authority, private validator and Helm
-account/profile pipeline assertions are now executed. Native Root transport, UID
-drop, adoption, service activation and process cleanup remain separate gates.
-An initial completed run failed the obsolete-profile-panel closure assertion; its
-production ordering was corrected and the failed run's 248 profiles preserved
-before this independent passing measurement.
+Compared with the published `83ab2bf` record: 242 more covered lines, 513 more
+measured lines and a 0.103613 percentage-point drop. New ordinary wake and
+independent guardian authority paths expand the unexecuted denominator. No
+exclusions were added. Their proof/refusal cases passed; actual native execution
+and same-browser client journeys remain separate acceptance gates.
 
-The detailed export `coverage353-current-detailed.json` from the older
-`202544f` measurement is historical. Its line addresses must be regenerated
-against the current audited objects/profile before selecting new gaps.
+Historical detailed exports require regeneration against current audited
+objects/profile before selecting line addresses. Native Root, external-provider
+and other-platform evidence is not inferred from this default-feature percentage.
 
 ## Historical audited checkpoint and area map
 
@@ -102,7 +97,7 @@ They must not be relabeled untestable merely because fixtures are difficult.
 
 ## Current largest areas and concrete next assertions
 
-This map is derived from the current audited `83ab2bf` export above.
+This map is derived from the current audited `ca71ecd` export above.
 Directory rows aggregate that directory only; the identity-helper row also
 includes its same-named entry file. An unexecuted line is not proof of an
 unreachable branch or a missing assertion. Native requirements remain required
@@ -110,12 +105,12 @@ evidence, without being removed from this denominator.
 
 | Area | Uncovered lines | Total lines |
 |---|---:|---:|
-| `helm/src/process_client/` | 8,594 | 33,720 |
-| `vessel/src/process/` | 8,398 | 18,483 |
+| `helm/src/process_client/` | 8,595 | 33,720 |
+| `vessel/src/process/` | 8,677 | 18,996 |
 | `installer/src/` | 3,899 | 7,287 |
-| `voyage/src/server/` | 1,761 | 5,611 |
+| `voyage/src/server/` | 1,748 | 5,611 |
 | `voyage/src/attachment/` | 1,640 | 12,432 |
-| `voyage/src/tools/` | 1,391 | 7,865 |
+| `voyage/src/tools/` | 1,397 | 7,865 |
 | `voyage/src/github/` | 788 | 3,137 |
 | `voyage/src/identity_helper.rs` and `identity_helper/` | 336 | 1,503 |
 | `voyage/src/subagent/` | 478 | 2,402 |
