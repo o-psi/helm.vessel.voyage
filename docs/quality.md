@@ -1407,6 +1407,15 @@ before/after durable commit. Synthetic SQLite/service-manager checks do not prov
 that journey; current CT106 state migrated without a snapshot cannot be relabeled
 as its successful legacy rollback.
 
+Legacy proof verification/restore receives every pinned claim, including the
+snapshot SHA-256, through the private child stdin rather than trusting mutable
+staging metadata. A coordinated backup-plus-proof change refuses before restoring
+files. Registration projections are compared as complete semantic records; only
+published optional fields with null defaults may be normalized. Unknown authority
+extras and non-null peer bindings refuse. Fixture DDL is frozen from published
+tag v1.0.2; restoration asserts the pinned SQLite snapshot hash plus original
+canonical rows/schema, not an assumed identical pre-backup file header.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its

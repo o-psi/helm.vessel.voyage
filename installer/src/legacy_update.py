@@ -90,10 +90,14 @@ def tree_digest(root, state=False):
     return sha.hexdigest()
 
 def projection_matches(state, db):
+    optional = {'executable', 'config_path', 'initialize', 'restart_from', 'peer_uids', 'name'}
+    def normalized(record):
+        return {key:value for key,value in record.items() if not (key in optional and value is None)}
     for session, encoded in db.execute('SELECT session_id,registration FROM voyages'):
-        saved = json.loads(encoded); projected = json.loads(checked(state/'sessions'/session/'registration.json',65536))
-        for key in ('session_id','incarnation','workspace','config_path','token','initialize','restart_from'):
-            if saved.get(key) != projected.get(key): raise ValueError('ordinary registration projection changed')
+        saved = json.loads(encoded)
+        projected = json.loads(checked(state/'sessions'/session/'registration.json',65536))
+        if normalized(saved) != normalized(projected):
+            raise ValueError('ordinary registration projection changed')
 
 def evidence(state, accounts, db):
     sessions=inventory(state,db)
@@ -124,9 +128,19 @@ def run(action,state,accounts,stage):
         with os.fdopen(fd,'w') as stream:json.dump(current,stream,sort_keys=True);stream.flush();os.fsync(stream.fileno())
         fd=os.open(stage,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
         return current
+    supplied=sys.stdin.buffer.read(65537)
+    if not supplied or len(supplied)>65536:raise ValueError('pinned legacy proof unavailable')
+    expected=json.loads(supplied)
     saved=json.loads(checked(proof_path,512*1024))
-    if digest_file(backup)!=saved['backup_sha256']:raise ValueError('legacy snapshot changed')
-    if any(current[key]!=saved[key] for key in current):raise ValueError('post-snapshot state changed; legacy restore refused')
+    if not isinstance(expected,dict) or set(expected)!=(set(saved)-{'sessions'}):
+        raise ValueError('pinned legacy proof shape changed')
+    if any(saved[key]!=value for key,value in expected.items()):
+        raise ValueError('staged proof does not match pinned approval')
+    actual_backup=digest_file(backup)
+    if actual_backup!=expected['backup_sha256']:raise ValueError('pinned legacy snapshot changed')
+    if any(current[key]!=expected[key] for key in current if key!='sessions') or current['sessions']!=saved['sessions']:
+        raise ValueError('post-snapshot state changed; legacy restore refused')
+    current['backup_sha256']=actual_backup
     if action=='verify':return current
     if action!='restore':raise ValueError('unsupported legacy proof operation')
     db.close()

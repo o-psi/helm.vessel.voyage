@@ -17,10 +17,21 @@ pub(crate) struct Guard {
     _sessions: Vec<File>,
     supervisor: Option<File>,
 }
-fn inspect(action: &str, state: &Path, accounts: &Path, stage: &Path) -> Result<serde_json::Value> {
+fn inspect(
+    action: &str,
+    state: &Path,
+    accounts: &Path,
+    stage: &Path,
+    expected: Option<&serde_json::Value>,
+) -> Result<serde_json::Value> {
     for path in [state, accounts, stage] {
         files::safe(path)?;
     }
+    let expected = expected.map(serde_json::to_vec).transpose()?;
+    ensure!(
+        expected.as_ref().is_none_or(|bytes| bytes.len() <= 65536),
+        "Pinned legacy proof exceeds bound"
+    );
     let output = crate::service::command::run(
         Path::new("/usr/bin/python3"),
         &[
@@ -32,7 +43,7 @@ fn inspect(action: &str, state: &Path, accounts: &Path, stage: &Path) -> Result<
             accounts.to_str().context("Account path encoding")?,
             stage.to_str().context("Stage path encoding")?,
         ],
-        None,
+        expected.as_deref(),
     )?;
     let evidence: serde_json::Value = serde_json::from_slice(&output)?;
     ensure!(
@@ -80,11 +91,11 @@ pub(crate) fn accounts_for_process(pid: u32) -> Result<PathBuf> {
 }
 
 pub(crate) fn eligible(state: &Path, accounts: &Path, stage: &Path) -> Result<()> {
-    inspect("inspect", state, accounts, stage).map(|_| ())
+    inspect("inspect", state, accounts, stage, None).map(|_| ())
 }
 pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard> {
     let supervisor = files::lock(&state.join("supervisor.lock"))?;
-    let first = inspect("inspect", state, accounts, stage)?;
+    let first = inspect("inspect", state, accounts, stage, None)?;
     let mut sessions = Vec::new();
     for session in first["sessions"]
         .as_array()
@@ -103,7 +114,7 @@ pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard
                 .join(format!("{id}.execution.lock")),
         )?);
     }
-    let mut evidence = inspect("snapshot", state, accounts, stage)?;
+    let mut evidence = inspect("snapshot", state, accounts, stage, None)?;
     ensure!(
         first["sessions"] == evidence["sessions"],
         "Legacy ownership inventory changed"
@@ -138,22 +149,34 @@ impl Guard {
     }
 }
 pub(crate) fn verify(proof: &Proof) -> Result<()> {
-    let observed = inspect("verify", &proof.state, &proof.accounts, &proof.stage)?;
-    for key in [
-        "canonical_sha256",
-        "state_sha256",
-        "accounts_sha256",
-        "session_count",
-    ] {
+    let observed = inspect(
+        "verify",
+        &proof.state,
+        &proof.accounts,
+        &proof.stage,
+        Some(&proof.evidence),
+    )?;
+    for (key, expected) in proof
+        .evidence
+        .as_object()
+        .context("Pinned legacy evidence missing")?
+    {
         ensure!(
-            observed[key] == proof.evidence[key],
-            "Legacy snapshot proof changed"
+            observed[key] == *expected,
+            "Legacy snapshot pinned claim changed"
         );
     }
     Ok(())
 }
 pub(crate) fn restore(proof: &Proof) -> Result<()> {
-    inspect("restore", &proof.state, &proof.accounts, &proof.stage).map(|_| ())
+    inspect(
+        "restore",
+        &proof.state,
+        &proof.accounts,
+        &proof.stage,
+        Some(&proof.evidence),
+    )
+    .map(|_| ())
 }
 pub(crate) fn fence(state: &Path, operation: &str, previous: &str, candidate: &str) -> Result<()> {
     let path = state.join("update-quarantine.json");
