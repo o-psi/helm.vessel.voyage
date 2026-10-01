@@ -50,6 +50,14 @@ fn rename(revision: u64, name: &str) -> RuntimeCommand {
 #[tokio::test]
 async fn workspace_routes_apply_policy_and_recheck_authority_before_disclosure() {
     let (root, state, _provider) = family_fixture::fixture().await;
+    let initialized = std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .current_dir(root.path())
+        .output()
+        .unwrap();
+    assert!(initialized.status.success());
     std::fs::write(root.path().join("owned.txt"), "canonical 世界\n").unwrap();
     let before = state.owner.snapshot().await.unwrap().revision;
     let file = call(
@@ -660,12 +668,12 @@ async fn private_workflow_input_is_volatile_and_failed_dispatch_discards_only_it
 #[tokio::test]
 async fn workflow_translation_replays_completed_admission_without_consuming_private_input_again() {
     let (root, state, provider) = configured(vec![Reply::held("Owned workflow answer")]).await;
-    std::fs::write(root.path().join("plain.toml"),"schema_version=1\nid=\"plain\"\nversion=\"1\"\ndescription=\"Owned fixture\"\nprompt=\"Synthetic workflow prompt\"\n").unwrap();
+    std::fs::write(root.path().join("server-contract-workflow.toml"),"schema_version=1\nid=\"server-contract-workflow\"\nversion=\"1\"\ndescription=\"Owned fixture\"\nprompt=\"Synthetic workflow prompt\"\n").unwrap();
     let command = RuntimeCommand::WorkflowSubmit {
         command_id: Uuid::new_v4(),
         expected_revision: 0,
         expires_at_ms: expiry(),
-        id: "plain".into(),
+        id: "server-contract-workflow".into(),
         scope: Some("user".into()),
         user_directory: Some(root.path().into()),
         inputs: vec![],
@@ -906,10 +914,15 @@ async fn github_route_refuses_scope_bounds_and_runs_owner_local_references_witho
         assert!(call(&state, make(words)).await.is_err());
     }
     let command = make(vec!["references".into()]);
-    let first = call(&state, command.clone()).await.unwrap();
+    let id = command.mutation_id().unwrap();
+    let first = call(&state, command).await.unwrap();
     assert_eq!(first["status"], "accepted");
-    let replay = call(&state, command).await.unwrap();
-    assert_eq!(replay["run_id"], first["run_id"]);
+    // A running/retiring operator is observed through its durable receipt;
+    // do not repeat execution admission while the runtime is not idle.
+    let retained = call(&state, RuntimeCommand::Receipt { command_id: id })
+        .await
+        .unwrap();
+    assert_eq!(retained["run_id"], first["run_id"]);
     let completed = finish(&state).await;
     assert_eq!(completed["run"]["state"], "completed");
     assert!(completed["pending_cleanup_run"].is_null());
