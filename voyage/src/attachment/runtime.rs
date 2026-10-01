@@ -1005,3 +1005,11 @@ mod goal_control_tests;
 #[cfg(test)]
 #[path = "runtime/coverage_boundary_tests.rs"]
 mod coverage_boundary_tests;
+
+#[cfg(test)]
+mod data_family_tests;
+#[cfg(test)]
+#[path = "runtime/family_fixture_tests.rs"]
+mod family_fixture;
+#[cfg(test)]
+mod run_family_tests;
