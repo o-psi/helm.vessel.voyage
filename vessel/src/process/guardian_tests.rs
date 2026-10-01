@@ -52,16 +52,111 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
     let uid = id("-u");
     let gid = id("-g");
     assert_ne!(uid, 0);
-    struct Fixture(PathBuf);
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
+    struct Fixture(PathBuf, std::sync::Mutex<Vec<(OwnedFd, bool)>>);
+    impl Fixture {
+        fn owned(&self, mut child: std::process::Child, guardian: bool) -> std::process::Child {
+            let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as i32, 0) };
+            if fd < 0 {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("native fixture child identity pin unavailable");
+            }
+            self.1
+                .lock()
+                .unwrap()
+                .push((unsafe { OwnedFd::from_raw_fd(fd as i32) }, guardian));
+            child
         }
     }
-    let fixture = Fixture(PathBuf::from(format!(
-        "/opt/vg-{}",
-        &Uuid::new_v4().simple().to_string()[..8]
-    )));
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            // These are fixture-owned protected metadata, never user journals.
+            // Request every admitted owner stop before retiring the supervisor.
+            let control = self.0.join("control");
+            let mut admissions = Vec::new();
+            if let Ok(sessions) = fs::read_dir(control.join("guardians")) {
+                for session in sessions.flatten() {
+                    let Ok(sid) = Uuid::parse_str(&session.file_name().to_string_lossy()) else {
+                        continue;
+                    };
+                    if let Ok(incarnations) = fs::read_dir(session.path()) {
+                        for incarnation in incarnations.flatten() {
+                            let Ok(inc) =
+                                Uuid::parse_str(&incarnation.file_name().to_string_lossy())
+                            else {
+                                continue;
+                            };
+                            if incarnation.path().join("admission.json").is_file() {
+                                let _ = request_stop(&control, sid, inc);
+                                admissions.push((sid, inc));
+                            }
+                        }
+                    }
+                }
+            }
+            use std::os::fd::AsRawFd;
+            let children = self.1.get_mut().unwrap_or_else(|error| error.into_inner());
+            for (fd, guardian) in children.iter() {
+                if !guardian {
+                    unsafe {
+                        libc::syscall(
+                            libc::SYS_pidfd_send_signal,
+                            fd.as_raw_fd(),
+                            libc::SIGTERM,
+                            std::ptr::null::<libc::siginfo_t>(),
+                            0,
+                        );
+                    }
+                }
+            }
+            let deadline = std::time::Instant::now() + Duration::from_secs(25);
+            loop {
+                let exited = children.iter().all(|(fd, _)| {
+                    let mut poll = libc::pollfd {
+                        fd: fd.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    unsafe { libc::poll(&mut poll, 1, 0) > 0 && poll.revents & libc::POLLIN != 0 }
+                });
+                if exited || std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            let mut unresolved = false;
+            for (fd, _) in children.iter() {
+                let mut poll = libc::pollfd {
+                    fd: fd.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                if unsafe { libc::poll(&mut poll, 1, 0) } <= 0 {
+                    unresolved = true;
+                }
+            }
+            unresolved |= admissions
+                .iter()
+                .any(|(sid, inc)| !cleanup_observed(&control, *sid, *inc).unwrap_or(false));
+            // Preserve exact receipts/diagnostics on panic or unresolved cleanup.
+            // Native harness teardown may retire the guest; this is not cleanup proof.
+            if std::thread::panicking() || unresolved {
+                eprintln!(
+                    "native fixture evidence retained at {}; cleanup_unresolved={unresolved}",
+                    self.0.display()
+                );
+            } else {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+    }
+    let fixture = Fixture(
+        PathBuf::from(format!(
+            "/opt/vg-{}",
+            &Uuid::new_v4().simple().to_string()[..8]
+        )),
+        std::sync::Mutex::new(Vec::new()),
+    );
     fs::create_dir(&fixture.0).unwrap();
     fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755)).unwrap();
     let control = fixture.0.join("control");
@@ -219,7 +314,7 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
                 Ok(())
             });
         }
-        command.spawn().unwrap()
+        fixture.owned(command.spawn().unwrap(), true)
     };
     async fn wait(child: &mut std::process::Child) -> std::process::ExitStatus {
         for _ in 0..500 {
@@ -317,7 +412,7 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         .unwrap()
     );
     let spawn_service = || {
-        Command::new(&vessel)
+        let child = Command::new(&vessel)
             .arg("local-serve")
             .arg("--directory")
             .arg(&control)
@@ -329,7 +424,8 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
                 fs::File::create(control.join("service.stderr")).unwrap(),
             ))
             .spawn()
-            .unwrap()
+            .unwrap();
+        fixture.owned(child, false)
     };
     async fn service_request(
         control: &Path,
@@ -387,26 +483,31 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
     )
     .await;
     assert!(
-        blocked
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("explicit execution identity"))
+        blocked.error.is_some() && !blocked.outcome_unknown,
+        "missing protected ordinary default must be definitively refused: {:?}",
+        blocked.error
     );
+    let unconfigured_session = Uuid::new_v4();
     let blocked = service_request(
         &control,
         VesselCommand::Start {
             command_id: Uuid::new_v4(),
-            session_id: Uuid::new_v4(),
+            session_id: unconfigured_session,
             workspace: workspace.clone(),
         },
     )
     .await;
     assert!(
-        blocked
-            .error
-            .as_deref()
-            .is_some_and(|message| message.contains("explicit execution identity"))
+        blocked.error.is_some() && !blocked.outcome_unknown,
+        "missing protected ordinary default must be definitively refused: {:?}",
+        blocked.error
     );
+    assert!(
+        database::registration(&control, unconfigured_session)
+            .await
+            .is_err()
+    );
+    assert!(!runtime.join(unconfigured_session.to_string()).exists());
     // Public configured creation uses the protected ordinary default. It never
     // reads root's account registry or accepts client-selected UID/grant facts.
     RootDirectory::open(&control)
