@@ -296,3 +296,15 @@ SQLite connection and validates an admitted reader schema. This is source analys
 not proof that an old binary can restore a native installation. The coordinated
 release verification must exercise the shipped old reader against the retained
 frozen source, on both common and separate source/retention filesystems.
+
+### Current-client admission to verified user updates
+
+Current Helm Web requires the explicit `verified_user_updates` capability for
+new ordinary-user update effects, alongside the existing owner and remote-update
+authority. Old published Vessels advertised remote updates while executing their
+old installed updater; a version string does not prove the newer rollback and
+activation-quarantine contract. Existing operation status remains observable
+without automatically applying or discarding it. An old server needs the supported
+current-installer maintenance/bootstrap entry; clients must not turn presentation
+into an arbitrary host executor or infer new grants to manufacture a handoff.
+The feature is not advertised for the staged system/root update surface.

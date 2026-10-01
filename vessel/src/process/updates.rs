@@ -69,6 +69,13 @@ pub(super) fn supported(directory: &Path) -> bool {
     installer(directory).is_ok()
 }
 
+/// Explicit protocol admission for the current ordinary-user update controller.
+/// Historical releases advertised remote_updates without its rollback/quarantine
+/// contract; version strings alone must not authorize a current client to apply.
+pub(super) fn verified_user_updates(directory: &Path) -> bool {
+    !super::runtime_storage::has_bound_layout(directory) && supported(directory)
+}
+
 pub(super) fn running_release() -> Option<String> {
     let executable = std::env::current_exe().ok()?;
     let release = executable.parent()?.parent()?.file_name()?.to_str()?;

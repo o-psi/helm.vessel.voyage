@@ -100,7 +100,7 @@ impl Supervisor {
                 "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory)
                     && (!crate::process::runtime_storage::has_bound_layout(&self.directory)
                         || self.administrative_authority(&grant).await.is_ok()),
-                "features": ({let mut features=vec!["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals","start_settings"];if crate::process::runtime_storage::has_bound_layout(&self.directory){features.push("execution_identity");}features})
+                "features": ({let mut features=vec!["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals","start_settings"];if crate::process::runtime_storage::has_bound_layout(&self.directory){features.push("execution_identity");}if grant.full_access && crate::process::updates::verified_user_updates(&self.directory){features.push("verified_user_updates");}features})
             })),
             VesselCommand::Execution { operation } => {
                 use voyage_protocol::execution_review_control::ExecutionOperation;
