@@ -20,7 +20,8 @@ cargo clippy --workspace --locked --all-targets --all-features -j 8 -- -D warnin
 cargo build --workspace --release --locked -j 8
 python3 -m unittest discover -s packaging -p test_package_linux.py -v
 python3 voyage/tests/conversation_files.py --bin-dir target/release
-python3 packaging/package_linux.py --version v1.0.2 --bin-dir target/release --output dist/linux-release
+release_tag="$(python3 -c 'import pathlib, tomllib; print("v" + tomllib.loads(pathlib.Path("Cargo.toml").read_text())["workspace"]["package"]["version"])')"
+python3 packaging/package_linux.py --version "$release_tag" --bin-dir target/release --output dist/linux-release
 (cd dist/linux-release && sha256sum -c *.sha256)
 ```
 

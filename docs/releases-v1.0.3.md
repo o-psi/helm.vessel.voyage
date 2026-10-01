@@ -27,10 +27,19 @@ Root metadata helpers do not execute agent loops or centralize credentials.
 
 Remaining v1.0.3 gates include complete browser/client journeys, deployed TLS
 acceptance, integrated UX/event verification and stable artifact publication.
-The current full-scope coverage record measures clean Rust source `ca71ecd`:
-2,339 passed, zero failed, eight ignored; 96,873 / 131,550 lines (73.639681%).
-The unchanged reachable-production objective and explicit gap ledger remain
-tracked by #353; passing tests do not imply that objective is met.
+The authoritative full-scope measurement is [coverage/latest.json](../coverage/latest.json).
+The delivered admission repair passed 2,345 tests with zero failures and eight
+ignored; its source and full source/object audit are recorded there. The fresh
+80-turn journey also passed: 160 messages, 2,720 ordered events, retention-gap
+recovery and lossless 17-message paging without repeated inference, with observed
+cleanup. The unchanged reachable-production objective remains tracked by #353;
+passing tests do not imply that objective is met.
+
+Helm Web `ff3129f` is deployed through the existing scoped updater in CT 106.
+Public health and all five manifest assets matched the verified local build;
+authenticated reload and Changes panel keyboard focus restoration passed.
+The UX delivery is recorded in closed core #377 and Web #5. Complete browser
+acceptance and matching production Vessel rollout remain separate gates.
 
 ## Planned assets and installation
 
