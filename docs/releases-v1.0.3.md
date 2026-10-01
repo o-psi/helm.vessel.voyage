@@ -25,21 +25,37 @@ Reliable Vessels** (#344/#346/#380), following the latest release planning. Thei
 staged source is present but is not supported production deployment in v1.0.3.
 Root metadata helpers do not execute agent loops or centralize credentials.
 
-Remaining v1.0.3 gates include complete browser/client journeys, deployed TLS
-acceptance, integrated UX/event verification and stable artifact publication.
+Remaining v1.0.3 gates include deployed browser TLS/client acceptance, complete
+reachable-production coverage, the newly discovered upgrade/admission defects
+(#400/#401/#402) and stable artifact publication. Ordered live-event and UX
+acceptance are recorded in closed #366/#372 and #377, respectively.
 The authoritative full-scope measurement is [coverage/latest.json](../coverage/latest.json).
-The delivered admission repair passed 2,345 tests with zero failures and eight
-ignored; its source and full source/object audit are recorded there. The fresh
+The last delivered clean-source measurement passed 2,441 tests with zero failures
+and eight ignored at source `3138b823b40287e89a3974f5c1b50e14dcd3c251`; its full
+source/object audit is recorded there. Later source batches are awaiting their
+coordinated measurement; this record does not attribute old coverage to them. The fresh
 80-turn journey also passed: 160 messages, 2,720 ordered events, retention-gap
 recovery and lossless 17-message paging without repeated inference, with observed
 cleanup. The unchanged reachable-production objective remains tracked by #353;
 passing tests do not imply that objective is met.
 
-Helm Web `ff3129f` is deployed through the existing scoped updater in CT 106.
+Helm Web `5fc8502a4932ced7cf3fe5bcb0703aaf9f7e7205` is deployed through the
+existing scoped updater in CT 106.
 Public health and all five manifest assets matched the verified local build;
 authenticated reload and Changes panel keyboard focus restoration passed.
-The UX delivery is recorded in closed core #377 and Web #5. Complete browser
-acceptance and matching production Vessel rollout remain separate gates.
+The UX delivery is recorded in closed core #377 and Web #5. The current archive also passed the expanded actual native/Web-adapter browser
+journey with observed cleanup; see [browser qualification](testing/host-browser-v1.0.3.md).
+Complete deployed browser acceptance remains a separate gate.
+
+The CT 106 candidate update exposed a missing gateway `--public-origin` option
+and an unsafe rollback boundary: v1.0.2 cannot read the migrated catalogue.
+Both services were recovered on the verified candidate with the same HTTPS
+origin and a temporary equivalent command line, preserving the catalogue and
+original unconfirmed receipt. This is service recovery, not a completed managed
+update. The unchanged saved owner connection also requires admission compatibility
+for its complete v1.0.2 rights vector; newly introduced WorkspaceRead authority
+must not be inferred. These defects and the safe legacy migration/rollback
+obligation remain open until corrected source, tests and deployment qualify them.
 
 ## Planned assets and installation
 
