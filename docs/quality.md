@@ -1371,6 +1371,15 @@ literal loopback development HTTP; hostname HTTP, credentials, paths and query
 secrets remain refused. See [issue #401](https://github.com/o-psi/helm.vessel.voyage/issues/401).
 These parser checks do not establish native systemd activation or complete rollback.
 
+Ordinary updater regressions for #401 cover reader/writer format admission,
+missing legacy declarations, separately pinned declaration changes despite an
+unchanged package ID, every unchanged gateway attempted after a peer failure,
+start-limit reset only for unchanged reviewed units, and active previous-release
+executable checks. A previous pointer with a candidate supervisor PID refuses
+readiness. These synthetic service-manager fixtures are not native CT106 recovery
+or successful legacy schema rollback evidence; the latter remains explicitly
+unimplemented rather than simulated with database rewrites.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its

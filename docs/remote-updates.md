@@ -10,6 +10,33 @@ or discard an update. Workspace/session execution and lifecycle grants do not
 confer installation authority. Helm presents the operation; an independent
 installer process on the Vessel host performs it.
 
+## Ordinary rollback format admission and legacy limits
+
+Ordinary self-update preparation now requires declared persistent format contracts
+on the installed and candidate releases. Every candidate catalogue/journal writer
+format must be readable by the previous release before installation is approved.
+The exact declarations are retained separately from the legacy package ID and
+rechecked before publication; old ready receipts without those pins refuse apply.
+Missing declarations are unknown compatibility, not permission to migrate.
+
+The shipped v1.0.2 supervisor accepts catalogue schema 1 only. The v1.0.3 candidate
+can migrate that catalogue to schema 2; pointing binaries back to v1.0.2 cannot
+restore service readiness. Existing ordinary binary backups preserve an executable,
+not a consistent catalogue backup. A verified legacy migration/rollback plan is
+still required for this old installation path; the new admission refusal is not
+completion of that migration or proof of working v1.0.2 rollback. Ordinary local
+binary installation does not gain a database snapshot/restore mechanism here.
+Never downgrade or rewrite the live database, restore stale registrations over
+new admissions, or replay an unconfirmed update to make the state appear complete.
+
+After an activation failure, the updater rolls back the pointer once, attempts
+supervisor restoration and every unchanged reviewed gateway independently, and
+checks active kernel executable identities against the previous release. Only
+unchanged gateway units may have their start-limit failure reset during this
+approved rollback. A changed definition, readiness failure or candidate executable
+leaves explicit unconfirmed obligations; pointer rollback alone is not recovery.
+See [the observed gateway and rollback defect](https://github.com/o-psi/helm.vessel.voyage/issues/401).
+
 ## Channel selection and approval
 
 In Helm Web, open **Manage Vessels**, then the selected Vessel's details. The

@@ -33,6 +33,8 @@ struct Record {
     #[serde(default)]
     staging_root: Option<PathBuf>,
     gateways: Vec<Gateway>,
+    #[serde(default)]
+    contracts_sha256: Option<[String; 2]>,
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -324,6 +326,120 @@ fn launch(record: &Record, phase: &str) -> Result<()> {
         Ok(())
     }
 }
+/// Binary rollback cannot recover a database written in an unreadable format.
+/// No backup/transaction replay is inferred from an absent legacy declaration.
+fn rollback_formats(installed: &Manifest, candidate: &Manifest) -> Result<()> {
+    installed.validate()?;
+    candidate.validate()?;
+    let previous = installed.update_compatibility.as_ref().context(
+        "Installed release has no declared rollback reader formats; a verified legacy migration/backup plan is required before publication"
+    )?;
+    let next = candidate.update_compatibility.as_ref().context(
+        "Candidate release has no declared persistent writer formats; rollback compatibility is unknown"
+    )?;
+    for (read, write) in [
+        ("catalogue_read", "catalogue_write"),
+        ("journal_read", "journal_write"),
+    ] {
+        ensure!(
+            next.formats[write]
+                .iter()
+                .all(|format| previous.formats[read].contains(format)),
+            "Previous release cannot read candidate {write} formats; no publication performed and no database downgrade is permitted"
+        );
+    }
+    Ok(())
+}
+
+fn contract_id(manifest: &Manifest) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let declaration = manifest
+        .update_compatibility
+        .as_ref()
+        .context("Persistent format declaration unavailable")?;
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(declaration)?)
+    ))
+}
+
+fn installed_manifest(identity: &str) -> Result<Manifest> {
+    let manifest: Manifest = serde_json::from_slice(&files::read(
+        &installation_root()?
+            .join("releases")
+            .join(identity)
+            .join("release.json"),
+        1024 * 1024,
+    )?)?;
+    ensure!(
+        manifest.id()? == identity,
+        "Installed manifest identity changed"
+    );
+    Ok(manifest)
+}
+
+fn verified_service(unit: &str, release: &std::path::Path) -> Result<()> {
+    ensure!(
+        systemctl(&["show", unit, "--property=ActiveState", "--value"])?.trim() == "active",
+        "Service is not active"
+    );
+    let pid: u32 = systemctl(&["show", unit, "--property=MainPID", "--value"])?
+        .trim()
+        .parse()?;
+    ensure!(
+        pid > 1 && process_executable(pid)? == release.join("bin/vessel"),
+        "Service executable not verified"
+    );
+    Ok(())
+}
+
+/// Restore only unchanged reviewed gateways, even if supervisor readiness failed.
+/// Every attempted activation must independently expose the previous executable.
+fn rollback_gateways(record: &Record, previous: &std::path::Path) -> Result<()> {
+    let mut failures = Vec::new();
+    for gateway in &record.gateways {
+        let result = (|| -> Result<()> {
+            ensure!(
+                unchanged_gateway(gateway)?,
+                "Refusing rollback over changed gateway configuration"
+            );
+            systemctl(&["reset-failed", &gateway.unit])?;
+            systemctl(&["restart", &gateway.unit])?;
+            verified_service(&gateway.unit, previous)
+        })();
+        if let Err(error) = result {
+            failures.push(format!("{}: {error}", gateway.unit));
+        }
+    }
+    ensure!(
+        failures.is_empty(),
+        "Gateway rollback remains unconfirmed: {}",
+        failures.join("; ")
+    );
+    Ok(())
+}
+
+fn restore_previous(record: &Record, error: anyhow::Error) -> Result<()> {
+    let previous = install::rollback(false)
+        .context("Binary rollback could not be confirmed; services retained for inspection")?;
+    let supervisor = service::configure(&previous.release_dir.join("bin"), false, false);
+    let gateways = rollback_gateways(record, &previous.release_dir);
+    // Configuration already verifies authenticated readiness for an active unit;
+    // these independent kernel executable checks forbid a pointer-only claim.
+    let observed = verified_service("voyage-vessel.service", &previous.release_dir);
+    let failures = [supervisor, gateways, observed]
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|failure| failure.to_string())
+        .collect::<Vec<_>>();
+    if !failures.is_empty() {
+        return Err(error.context(format!("Previous binary pointer restored but service rollback remains unconfirmed: {}; persistent state was not downgraded", failures.join("; "))));
+    }
+    Err(error.context(
+        "Previous installation and all reviewed services verified active after activation failed",
+    ))
+}
+
 fn prepare_worker(record: &mut Record) -> Result<()> {
     record.gateways = gateways()?;
     let cancel = source::Cancellation::new()?;
@@ -363,6 +479,8 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
             "This exact release is already installed. No installation or service changes were made.",
         );
     }
+    rollback_formats(&installed, &manifest)?;
+    record.contracts_sha256 = Some([contract_id(&installed)?, contract_id(&manifest)?]);
     // Exercise the candidate loader before approval; no unit has been changed.
     let mut check = Command::new(prepared.bin_dir.join("vessel"));
     check.arg("--version");
@@ -417,9 +535,17 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         "Installation changed since review"
     );
     let bin = record.bin_dir.as_ref().context("Prepared source missing")?;
+    let candidate = Manifest::inspect(bin)?;
     ensure!(
-        Manifest::inspect(bin)?.id()? == record.release_id.as_deref().unwrap_or(""),
+        candidate.id()? == record.release_id.as_deref().unwrap_or(""),
         "Prepared source changed"
+    );
+    let installed = installed_manifest(&record.current_release)?;
+    rollback_formats(&installed, &candidate)?;
+    ensure!(
+        record.contracts_sha256.as_ref()
+            == Some(&[contract_id(&installed)?, contract_id(&candidate)?]),
+        "Persistent format declarations changed or were not pinned before approval; no publication performed"
     );
     ensure!(
         serde_json::to_vec(&gateways()?)? == serde_json::to_vec(&record.gateways)?,
@@ -433,8 +559,7 @@ fn apply_worker(record: &mut Record) -> Result<()> {
     // Existing transactional publication validates all binary and asset hashes.
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), false, false) {
-        install::rollback(false).context("Service failed; binary rollback also failed")?;
-        return Err(error);
+        return restore_previous(record, error);
     }
     let activated = (|| -> Result<()> {
         for gateway in &record.gateways {
@@ -453,16 +578,7 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         Ok(())
     })();
     if let Err(error) = activated {
-        let previous = install::rollback(false)?;
-        service::configure(&previous.release_dir.join("bin"), false, false)?;
-        for gateway in &record.gateways {
-            ensure!(
-                unchanged_gateway(gateway)?,
-                "Refusing rollback over changed gateway configuration"
-            );
-            systemctl(&["restart", &gateway.unit])?;
-        }
-        return Err(error.context("Previous installation restored after gateway activation failed"));
+        return restore_previous(record, error);
     }
     ensure!(
         current()? == record.release_id.as_deref().unwrap_or(""),
@@ -509,14 +625,7 @@ fn reconcile(record: &mut Record) -> Result<()> {
     for unit in std::iter::once("voyage-vessel.service")
         .chain(record.gateways.iter().map(|g| g.unit.as_str()))
     {
-        let state = systemctl(&["show", unit, "--property=ActiveState", "--value"])?;
-        ensure!(state.trim() == "active", "Service is not active");
-        let pid = systemctl(&["show", unit, "--property=MainPID", "--value"])?;
-        let pid: u32 = pid.trim().parse()?;
-        ensure!(
-            process_executable(pid)? == release.join("bin/vessel"),
-            "Service executable not verified"
-        );
+        verified_service(unit, &release)?;
     }
     for gateway in &record.gateways {
         ensure!(unchanged_gateway(gateway)?, "Gateway configuration changed");
@@ -659,6 +768,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 bin_dir: None,
                 staging_root: None,
                 gateways: Vec::new(),
+                contracts_sha256: None,
             };
             save(
                 &mut record,
@@ -834,6 +944,7 @@ mod tests {
             bin_dir: None,
             staging_root: None,
             gateways: vec![],
+            contracts_sha256: None,
         };
         save(&mut record, phase, "fixture").unwrap();
         record

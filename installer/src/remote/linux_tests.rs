@@ -37,6 +37,7 @@ fn record(phase: &str) -> Record {
         bin_dir: None,
         staging_root: None,
         gateways: vec![],
+        contracts_sha256: None,
     };
     save(&mut record, phase, "fixture").unwrap();
     record
@@ -251,8 +252,41 @@ fn stale_preparation_and_empty_latest_status_never_replay() {
     assert_eq!(load(OP).unwrap().phase, "failed");
     f.done();
 }
+fn declare_contract(bin: &std::path::Path) {
+    let path = bin.parent().unwrap().join("release.json");
+    let mut manifest: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    manifest.update_compatibility = Some(crate::install::release::UpdateCompatibility {
+        schema_version: 1,
+        formats: [
+            "catalogue_read",
+            "catalogue_write",
+            "journal_read",
+            "journal_write",
+            "process_protocol",
+            "vessel_protocol",
+            "execution_identity",
+        ]
+        .into_iter()
+        .map(|name| {
+            (
+                name.into(),
+                if name.ends_with("_read") {
+                    vec![1, 2]
+                } else {
+                    vec![1]
+                },
+            )
+        })
+        .collect(),
+        implementation_sha256: "a".repeat(64),
+        build_inputs_sha256: "b".repeat(64),
+    });
+    fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+}
+
 fn installed_release(f: &Fixture, r: &mut Record) -> PathBuf {
     let bin = crate::fixture_tests::release(f, "candidate", "1.0.0");
+    declare_contract(&bin);
     let manifest = Manifest::inspect(&bin).unwrap();
     let identity = manifest.id().unwrap();
     let install = installation_root().unwrap();
@@ -401,6 +435,7 @@ shutil.copytree(source.parent, root, dirs_exist_ok=True)
 }
 fn candidate(f: &Fixture, version: &str, protocol: &str, vessel: &str) -> PathBuf {
     let bin = crate::fixture_tests::release(f, "download", version);
+    declare_contract(&bin);
     f.script("download/bin/voyage-installer", protocol);
     f.script("download/bin/vessel", vessel);
     let path = bin.parent().unwrap().join("release.json");
@@ -516,8 +551,14 @@ fn apply_rejects_missing_candidate_and_changed_gateway_before_publication() {
             .to_string()
             .contains("Prepared source missing")
     );
+    installed_release(&f, &mut r);
     let bin = crate::fixture_tests::release(&f, "candidate-refusal", "1.0.1");
+    declare_contract(&bin);
     r.release_id = Some(Manifest::inspect(&bin).unwrap().id().unwrap());
+    r.contracts_sha256 = Some([
+        contract_id(&installed_manifest(&r.current_release).unwrap()).unwrap(),
+        contract_id(&Manifest::inspect(&bin).unwrap()).unwrap(),
+    ]);
     r.bin_dir = Some(bin);
     r.gateways.push(Gateway {
         unit: "old.service".into(),
@@ -547,12 +588,19 @@ fn failed_service_configuration_rolls_back_published_binaries() {
     f.call(LIST, "[]");
     f.effective(false);
     f.query("ActiveState", "activating");
-    assert!(
-        apply_worker(&mut r)
-            .unwrap_err()
-            .to_string()
-            .contains("transitioning")
+    inactive_plan(&f);
+    f.call(&["daemon-reload"], "");
+    f.effective(true);
+    f.call(
+        &[
+            "show",
+            "voyage-vessel.service",
+            "--property=ActiveState",
+            "--value",
+        ],
+        "inactive",
     );
+    assert!(format!("{:#}", apply_worker(&mut r).unwrap_err()).contains("transitioning"));
     assert_eq!(current().unwrap(), r.current_release);
     assert!(r.staging_root.as_ref().unwrap().exists());
     cleanup_staging(&mut r).unwrap();
@@ -574,5 +622,198 @@ fn current_identity_requires_valid_journal_and_exact_pointer() {
     }
     fs::write(&journal, b"invalid JSON").unwrap();
     assert!(current().is_err());
+    f.done();
+}
+
+#[test]
+fn declared_rollback_reader_must_cover_every_candidate_catalogue_and_journal_writer() {
+    let f = installation();
+    let mut r = record("preparing");
+    let installed = installed_release(&f, &mut r);
+    let bin = candidate(&f, "2.0.0", "printf 1", "exit 0");
+    let old = Manifest::inspect(&installed.join("bin")).unwrap();
+    let new = Manifest::inspect(&bin).unwrap();
+    rollback_formats(&old, &new).unwrap();
+    for variant in 0..4 {
+        let mut prior = old.clone();
+        let mut next = new.clone();
+        match variant {
+            0 => prior.update_compatibility = None,
+            1 => next.update_compatibility = None,
+            2 => {
+                let formats = &mut next.update_compatibility.as_mut().unwrap().formats;
+                formats.insert("catalogue_read".into(), vec![1, 3]);
+                formats.insert("catalogue_write".into(), vec![3]);
+            }
+            _ => {
+                let formats = &mut next.update_compatibility.as_mut().unwrap().formats;
+                formats.insert("journal_read".into(), vec![1, 3]);
+                formats.insert("journal_write".into(), vec![3]);
+            }
+        }
+        assert!(rollback_formats(&prior, &next).is_err());
+        assert_eq!(current().unwrap(), r.current_release);
+    }
+    f.done();
+}
+
+#[test]
+fn legacy_unknown_rollback_contract_is_refused_before_review_publication_or_units() {
+    let f = installation();
+    let mut r = record("preparing");
+    let release = installed_release(&f, &mut r);
+    let path = release.join("release.json");
+    let mut legacy: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    legacy.update_compatibility = None;
+    fs::write(path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let bin = candidate(&f, "2.0.0", "printf 1", "exit 0");
+    acquisition(&bin);
+    f.call(LIST, "[]");
+    let error = prepare_worker(&mut r).unwrap_err().to_string();
+    assert!(error.contains("legacy migration/backup plan"));
+    assert_eq!(current().unwrap(), r.current_release);
+    assert!(
+        r.release_id.as_deref() != Some(Manifest::inspect(&bin).unwrap().id().unwrap().as_str())
+    );
+    assert!(r.staging_root.is_none());
+    assert!(
+        fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    f.done();
+}
+
+#[test]
+fn rollback_gateway_matrix_requires_unchanged_definition_active_previous_executable_and_continues_peers()
+ {
+    for variant in 0..4 {
+        let f = installation();
+        let mut r = record("applying");
+        let previous = installed_release(&f, &mut r);
+        let gateway = Gateway {
+            unit: "first.service".into(),
+            definition: "ExecStart=stable\n".into(),
+        };
+        r.gateways = vec![
+            gateway.clone(),
+            Gateway {
+                unit: "second.service".into(),
+                definition: "ExecStart=stable\n".into(),
+            },
+        ];
+        for (index, gateway) in r.gateways.iter().enumerate() {
+            definition(
+                &f,
+                &gateway.unit,
+                if variant == 1 && index == 0 {
+                    "changed\n"
+                } else {
+                    "ExecStart=stable\n"
+                },
+            );
+            if variant == 1 && index == 0 {
+                continue;
+            }
+            f.call(&["reset-failed", &gateway.unit], "");
+            f.call(&["restart", &gateway.unit], "");
+            f.call(
+                &["show", &gateway.unit, "--property=ActiveState", "--value"],
+                if variant == 2 && index == 0 {
+                    "failed"
+                } else {
+                    "active"
+                },
+            );
+            if variant == 2 && index == 0 {
+                continue;
+            }
+            let pid = 21 + index as u32;
+            f.call(
+                &["show", &gateway.unit, "--property=MainPID", "--value"],
+                &pid.to_string(),
+            );
+            let executable = if variant == 3 && index == 0 {
+                f.root.join("candidate/vessel")
+            } else {
+                previous.join("bin/vessel")
+            };
+            process(&f, pid, &executable, &["vessel"]);
+        }
+        assert_eq!(rollback_gateways(&r, &previous).is_ok(), variant == 0);
+        f.done();
+    }
+}
+
+#[test]
+fn supervisor_readiness_requires_actual_previous_pid_not_only_previous_pointer() {
+    for candidate in [false, true] {
+        let f = installation();
+        let mut r = record("applying");
+        let previous = installed_release(&f, &mut r);
+        f.call(
+            &[
+                "show",
+                "voyage-vessel.service",
+                "--property=ActiveState",
+                "--value",
+            ],
+            "active",
+        );
+        f.call(
+            &[
+                "show",
+                "voyage-vessel.service",
+                "--property=MainPID",
+                "--value",
+            ],
+            "31",
+        );
+        let executable = if candidate {
+            f.root.join("new-release/bin/vessel")
+        } else {
+            previous.join("bin/vessel")
+        };
+        process(&f, 31, &executable, &["vessel"]);
+        assert_eq!(
+            verified_service("voyage-vessel.service", &previous).is_ok(),
+            !candidate
+        );
+        assert_eq!(current().unwrap(), r.current_release);
+        f.done();
+    }
+}
+
+#[test]
+fn approved_contract_change_is_refused_even_when_legacy_release_identity_is_unchanged() {
+    let f = installation();
+    let mut r = record("preparing");
+    installed_release(&f, &mut r);
+    let bin = candidate(&f, "2.0.0", "printf 1", "exit 0");
+    acquisition(&bin);
+    f.call(LIST, "[]");
+    inactive_plan(&f);
+    prepare_worker(&mut r).unwrap();
+    let prepared = r.bin_dir.as_ref().unwrap();
+    let path = prepared.parent().unwrap().join("release.json");
+    let mut changed: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let unchanged_id = changed.id().unwrap();
+    changed
+        .update_compatibility
+        .as_mut()
+        .unwrap()
+        .build_inputs_sha256 = "c".repeat(64);
+    assert_eq!(changed.id().unwrap(), unchanged_id);
+    fs::write(path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert!(
+        apply_worker(&mut r)
+            .unwrap_err()
+            .to_string()
+            .contains("not pinned before approval")
+    );
+    assert_eq!(current().unwrap(), r.current_release);
+    assert!(r.staging_root.as_ref().unwrap().exists());
+    cleanup_staging(&mut r).unwrap();
     f.done();
 }
