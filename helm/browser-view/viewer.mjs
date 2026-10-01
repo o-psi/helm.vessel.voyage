@@ -561,6 +561,7 @@ export function mountBrowserViewer(root,options={}){
                 :phase==='unavailable'?'This Voyage host cannot start a browser with its current configuration.'
                 :'Check the voyage state and try again.';
             recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';recoveryAction.disabled=connection.busy;
+            recoveryAction.setAttribute('aria-label',recoveryAction.textContent);recoveryAction.title=recoveryAction.textContent;
         }
         modeHint.textContent=privateControl?'Private: other viewers and agent capture are paused. Continue agent when finished.'
             :connection.controls?'You are browsing. Other connected viewers can see this page.'
