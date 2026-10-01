@@ -289,6 +289,15 @@ fn enrollment_authorized(root: &Path, actor: &EnrollmentActor, connection: Uuid)
         && scope.connection_allowed(connection)
 }
 
+pub(super) fn quarantined_device_service(root: PathBuf) -> Result<DeviceService> {
+    let registry = Registry::existing_default_host()?;
+    // Existing private state only; no connection enrollment, migration or driver.
+    Ok(DeviceService::new(
+        registry,
+        Arc::new(move |actor, connection| enrollment_authorized(&root, actor, connection)),
+    ))
+}
+
 pub(super) fn device_service(root: PathBuf) -> Result<DeviceService> {
     let registry = if super::runtime_storage::has_bound_layout(&root) {
         // Explicitly separate administrator account state from root's login.

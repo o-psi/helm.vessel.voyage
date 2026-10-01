@@ -38,6 +38,7 @@ pub fn rollback(dry_run: bool) -> Result<Report> {
             .as_deref()
             .context("No previous release available")?;
         let manifest = l.verify(id)?;
+        legacy_rollback_admission(&manifest, &l.root)?;
         validate(&l, &j, false)?;
         return l.report(id, &manifest.version, &j);
     }
@@ -51,12 +52,27 @@ pub fn rollback(dry_run: bool) -> Result<Report> {
         .clone()
         .context("No previous release available")?;
     let manifest = l.verify(&id)?;
+    legacy_rollback_admission(&manifest, &l.root)?;
     let report = l.report(&id, &manifest.version, &j)?;
     j.pending = Some(id.clone());
     l.save(&j)?;
     publish(&l, &mut j, &id)?;
     Ok(report)
 }
+fn legacy_rollback_admission(manifest: &Manifest, staging: &std::path::Path) -> Result<()> {
+    if manifest.update_compatibility.is_none()
+        && manifest.version.trim_start_matches('v') == "1.0.2"
+    {
+        let state = crate::service::state_directory()?;
+        if state.join("catalogue.sqlite3").try_exists()? {
+            crate::legacy::eligible(&state, &crate::legacy::accounts()?, staging).context(
+                "Previous legacy binaries cannot be selected over migrated or active state",
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn publish(l: &Layout, j: &mut Journal, id: &str) -> Result<()> {
     l.verify(id)?;
     ensure!(

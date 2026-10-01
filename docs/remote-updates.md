@@ -19,15 +19,41 @@ The exact declarations are retained separately from the legacy package ID and
 rechecked before publication; old ready receipts without those pins refuse apply.
 Missing declarations are unknown compatibility, not permission to migrate.
 
-The shipped v1.0.2 supervisor accepts catalogue schema 1 only. The v1.0.3 candidate
-can migrate that catalogue to schema 2; pointing binaries back to v1.0.2 cannot
-restore service readiness. Existing ordinary binary backups preserve an executable,
-not a consistent catalogue backup. A verified legacy migration/rollback plan is
-still required for this old installation path; the new admission refusal is not
-completion of that migration or proof of working v1.0.2 rollback. Ordinary local
-binary installation does not gain a database snapshot/restore mechanism here.
-Never downgrade or rewrite the live database, restore stale registrations over
-new admissions, or replay an unconfirmed update to make the state appear complete.
+### Supported quiescent v1.0.2 handover
+
+The shipped v1.0.2 supervisor accepts catalogue schema 1 and Voyage journal
+schemas through 12. This is a format-breaking legacy handover: preparation uses
+the installed trusted helper to observe its catalogue, requires a managed active
+ordinary supervisor, pins its actual account namespace and refuses any owner with
+unobserved cleanup, an active run, a newer journal or a protected execution binding.
+Active legacy owners are never cancelled to make the update eligible.
+
+Apply stops only reviewed gateways and the managed supervisor, fences the
+supervisor and every canonical session's startup/execution locks, then takes an
+exact private SQLite snapshot before any candidate migration. The candidate
+supervisor is quarantined to readiness/status observations: no voyage start,
+restart, browser/tool action, account enrollment or other mutation is admitted.
+Enrollment and notification drivers wait for durable commit. Existing account
+storage is not created or migrated by quarantined startup.
+
+Before commit, the updater proves the authoritative ordinary admission tables,
+registration projections, session journals/private resources and original account
+namespace are unchanged, and all new execution/admin authority tables are empty.
+Every reviewed service must expose the candidate executable; its actual account
+namespace must match the pinned previous process environment. The durable
+`committing` receipt precedes lifting quarantine; a stopped worker can finish
+that observation through reconciliation without reinstalling or replaying effects.
+
+On failure, the candidate and gateways must be observed stopped and ownership
+locks held before the unchanged-state proof permits restoring the exact original
+SQLite snapshot. No schema-version row is edited, no current registration is
+silently dropped and no journal or credential is rewritten. Changed admissions,
+authority, accounts or private state retain snapshot/quarantine/releases and an
+unconfirmed receipt. Local rollback to legacy binaries also refuses migrated or
+active state. This mechanism cannot reconstruct a pre-migration snapshot for a
+host that was already migrated by an older updater; that host's retained recovery
+obligation remains distinct. Native legacy update/rollback qualification is required
+in addition to the synthetic proof tests.
 
 Before effects, ordinary update reviews pin the original supervisor unit definition,
 state directory, active state and enablement. Apply rechecks those pins. Rollback

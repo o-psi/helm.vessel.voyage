@@ -1376,15 +1376,36 @@ missing legacy declarations, separately pinned declaration changes despite an
 unchanged package ID, every unchanged gateway attempted after a peer failure,
 start-limit reset only for unchanged reviewed units, and active previous-release
 executable checks. A previous pointer with a candidate supervisor PID refuses
-readiness. These synthetic service-manager fixtures are not native CT106 recovery
-or successful legacy schema rollback evidence; the latter remains explicitly
-unimplemented rather than simulated with database rewrites.
+readiness. These prepared service-manager fixtures do not establish native CT106
+recovery or successful legacy data restoration. The quiescent snapshot mechanism
+below requires its own real-binary and native qualification; no database rewrite
+is used to simulate a rollback.
 
 Service restoration tests for #401 also cover a previously active supervisor left
 failed by candidate activation, originally disabled enablement, originally
 inactive services and independently changed definitions. The existing owned
 service-manager fixture verifies actual previous-executable readiness after Start;
 no fixture claim is substituted for the still-required native legacy data proof.
+
+### Quiescent legacy activation snapshot and proof (#401)
+
+`legacy::tests` runs the maintained `installer/src/legacy_update.py` through the
+same bounded child runner used by delivery. Fixtures verify byte-exact schema-1
+snapshot restoration after an empty-authority schema-2 migration; refusal after
+canonical admission, execution authority or private account changes; no snapshot
+when a session execution lock is held; and refusal for unobserved cleanup or
+journals beyond the published v1.0.2 reader range. The complete original SQLite
+snapshot is restored only after proving unchanged state, never by editing schema
+versions or erasing new owner/effect rows.
+
+`process::update_quarantine::tests` verifies readiness-only command admission and
+fail-closed malformed markers. Actual native qualification must additionally
+exercise real v1.0.2 binaries, gateway/supervisor stop/start and PID/enablement
+proof, live-owner refusal without cancellation, a forced candidate activation
+failure, old-helper readability of both retained conversations, and worker death
+before/after durable commit. Synthetic SQLite/service-manager checks do not prove
+that journey; current CT106 state migrated without a snapshot cannot be relabeled
+as its successful legacy rollback.
 
 ### Legacy owner admission without new rights (#402)
 

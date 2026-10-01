@@ -37,6 +37,12 @@ struct Record {
     contracts_sha256: Option<[String; 2]>,
     #[serde(default)]
     supervisor_activation: Option<service::Activation>,
+    #[serde(default)]
+    legacy_mode: bool,
+    #[serde(default)]
+    legacy_proof: Option<crate::legacy::Proof>,
+    #[serde(default)]
+    legacy_accounts: Option<PathBuf>,
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -507,8 +513,59 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
             "This exact release is already installed. No installation or service changes were made.",
         );
     }
-    rollback_formats(&installed, &manifest)?;
-    record.contracts_sha256 = Some([contract_id(&installed)?, contract_id(&manifest)?]);
+    if installed.update_compatibility.is_none()
+        && installed.version.trim_start_matches('v') == "1.0.2"
+    {
+        manifest
+            .update_compatibility
+            .as_ref()
+            .context("Candidate format declaration unavailable")?
+            .validate()?;
+        let activation = service::review_activation(
+            &installation_root()?
+                .join("releases")
+                .join(&record.current_release)
+                .join("bin"),
+        )?;
+        ensure!(
+            activation.active,
+            "Legacy migration requires a verified managed active supervisor"
+        );
+        service::catalogue(
+            &installation_root()?
+                .join("releases")
+                .join(&record.current_release)
+                .join("bin"),
+            &activation.state,
+        )?;
+        let pid: u32 = systemctl(&[
+            "show",
+            "voyage-vessel.service",
+            "--property=MainPID",
+            "--value",
+        ])?
+        .trim()
+        .parse()?;
+        ensure!(
+            process_executable(pid)?
+                == installation_root()?
+                    .join("releases")
+                    .join(&record.current_release)
+                    .join("bin/vessel"),
+            "Legacy supervisor identity changed"
+        );
+        let accounts = crate::legacy::accounts_for_process(pid)?;
+        crate::legacy::eligible(&activation.state, &accounts, prepared.staging_root())?;
+        record.legacy_accounts = Some(accounts);
+        record.legacy_mode = true;
+        record.contracts_sha256 = Some([
+            format!("legacy-quiescent:{}", record.current_release),
+            contract_id(&manifest)?,
+        ]);
+    } else {
+        rollback_formats(&installed, &manifest)?;
+        record.contracts_sha256 = Some([contract_id(&installed)?, contract_id(&manifest)?]);
+    }
     // Exercise the candidate loader before approval; no unit has been changed.
     let mut check = Command::new(prepared.bin_dir.join("vessel"));
     check.arg("--version");
@@ -555,6 +612,162 @@ fn cleanup_staging(record: &mut Record) -> Result<()> {
     record.bin_dir = None;
     Ok(())
 }
+fn stop_gateways(record: &Record) -> Result<()> {
+    for gateway in &record.gateways {
+        ensure!(
+            unchanged_gateway(gateway)?,
+            "Gateway changed before legacy quiescence"
+        );
+        systemctl(&["stop", &gateway.unit])?;
+        let state = systemctl(&["show", &gateway.unit, "--property=ActiveState", "--value"])?;
+        ensure!(
+            matches!(state.trim(), "inactive" | "failed"),
+            "Gateway stop remains unconfirmed"
+        );
+        let pid = systemctl(&["show", &gateway.unit, "--property=MainPID", "--value"])?;
+        ensure!(pid.trim() == "0", "Gateway process remains present");
+    }
+    Ok(())
+}
+
+fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
+    let activation = record
+        .supervisor_activation
+        .clone()
+        .context("Legacy activation intent unavailable")?;
+    ensure!(
+        activation.active,
+        "Legacy update requires quiescent managed service handover"
+    );
+    let previous = installation_root()?
+        .join("releases")
+        .join(&record.current_release);
+    let candidate = installation_root()?.join("releases").join(
+        record
+            .release_id
+            .as_deref()
+            .context("Candidate identity missing")?,
+    );
+    let stage = record
+        .staging_root
+        .clone()
+        .context("Legacy staging unavailable")?;
+    let accounts = record
+        .legacy_accounts
+        .clone()
+        .context("Legacy account namespace was not pinned")?;
+    crate::legacy::fence(
+        &activation.state,
+        &record.operation_id,
+        &record.current_release,
+        record.release_id.as_deref().unwrap(),
+    )?;
+    let mut guard = None;
+    let mut published = false;
+    let applied = (|| -> Result<()> {
+        stop_gateways(record)?;
+        service::quiesce(&previous.join("bin"), &activation)?;
+        guard = Some(crate::legacy::begin(&activation.state, &accounts, &stage)?);
+        record.legacy_proof = guard.as_ref().map(|guard| guard.proof.clone());
+        save(
+            record,
+            "applying",
+            "Legacy owners quiescent; exact private snapshot retained before migration",
+        )?;
+        flow::execute(options, false)?;
+        published = true;
+        guard.as_mut().unwrap().permit_supervisor();
+        service::start_quarantined(&candidate.join("bin"), &activation)?;
+        for gateway in &record.gateways {
+            ensure!(
+                unchanged_gateway(gateway)?,
+                "Gateway changed during legacy activation"
+            );
+            systemctl(&["reset-failed", &gateway.unit])?;
+            systemctl(&["restart", &gateway.unit])?;
+            verified_service(&gateway.unit, &candidate)?;
+        }
+        verified_service("voyage-vessel.service", &candidate)?;
+        let pid: u32 = systemctl(&[
+            "show",
+            "voyage-vessel.service",
+            "--property=MainPID",
+            "--value",
+        ])?
+        .trim()
+        .parse()?;
+        ensure!(
+            crate::legacy::accounts_for_process(pid)? == accounts,
+            "Candidate account namespace changed; commit refused"
+        );
+        guard.as_ref().unwrap().verify()?;
+        ensure!(
+            current()? == record.release_id.as_deref().unwrap(),
+            "Legacy activation pointer changed"
+        );
+        // Commit is durable before lifting quarantine. Reconciliation can finish
+        // this observation without installing/replaying the operation again.
+        save(
+            record,
+            "committing",
+            "Approved legacy activation verified; removing quarantine",
+        )?;
+        crate::legacy::clear(&activation.state, &record.operation_id)?;
+        Ok(())
+    })();
+    if let Err(error) = applied {
+        if record.phase == "committing" {
+            return Err(error.context("Commit remains unconfirmed; installation is not replayed"));
+        }
+        let rollback = (|| -> Result<()> {
+            let observed_pointer = current()?;
+            ensure!(
+                observed_pointer == record.current_release
+                    || Some(observed_pointer.as_str()) == record.release_id.as_deref(),
+                "Legacy pointer outcome is not matched; rollback remains unconfirmed"
+            );
+            published |= observed_pointer != record.current_release;
+            if published {
+                stop_gateways(record)?;
+                let current_activation = service::review_activation(&candidate.join("bin"))?;
+                service::quiesce(&candidate.join("bin"), &current_activation)?;
+                guard
+                    .as_mut()
+                    .context("Legacy snapshot ownership unavailable")?
+                    .restore()?;
+                install::rollback(false)?;
+                ensure!(
+                    current()? == record.current_release,
+                    "Previous legacy pointer not verified"
+                );
+            }
+            // Release journal exclusion only after the original snapshot is back.
+            drop(guard.take());
+            service::restore_activation(
+                &previous.join("bin"),
+                &candidate.join("bin"),
+                &activation,
+            )?;
+            rollback_gateways(record, &previous)?;
+            verified_service("voyage-vessel.service", &previous)?;
+            crate::legacy::clear(&activation.state, &record.operation_id)?;
+            Ok(())
+        })();
+        return match rollback {
+            Ok(())=>Err(error.context("Legacy update refused or failed; exact previous state and services restored, no operation replayed")),
+            Err(rollback)=>Err(error.context(format!("Legacy rollback unconfirmed: {rollback}; snapshot, quarantine and releases retained"))),
+        };
+    }
+    drop(guard);
+    cleanup_staging(record)?;
+    record.legacy_proof = None;
+    save(
+        record,
+        "complete",
+        "Approved quiescent legacy update committed and services verified; independent history retained",
+    )
+}
+
 fn apply_worker(record: &mut Record) -> Result<()> {
     let _installation = install::operation_lock()?;
     ensure!(now() <= record.created_at + 3600, "Update review expired");
@@ -569,12 +782,28 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         "Prepared source changed"
     );
     let installed = installed_manifest(&record.current_release)?;
-    rollback_formats(&installed, &candidate)?;
-    ensure!(
-        record.contracts_sha256.as_ref()
-            == Some(&[contract_id(&installed)?, contract_id(&candidate)?]),
-        "Persistent format declarations changed or were not pinned before approval; no publication performed"
-    );
+    if record.legacy_mode {
+        ensure!(
+            installed.version.trim_start_matches('v') == "1.0.2"
+                && installed.update_compatibility.is_none(),
+            "Legacy installation identity changed"
+        );
+        ensure!(
+            record.contracts_sha256.as_ref()
+                == Some(&[
+                    format!("legacy-quiescent:{}", record.current_release),
+                    contract_id(&candidate)?
+                ]),
+            "Legacy contract approval changed"
+        );
+    } else {
+        rollback_formats(&installed, &candidate)?;
+        ensure!(
+            record.contracts_sha256.as_ref()
+                == Some(&[contract_id(&installed)?, contract_id(&candidate)?]),
+            "Persistent format declarations changed or were not pinned before approval; no publication performed"
+        );
+    }
     ensure!(
         serde_json::to_vec(&gateways()?)? == serde_json::to_vec(&record.gateways)?,
         "Gateway services changed since review"
@@ -588,6 +817,9 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         record.supervisor_activation.as_ref() == Some(&service::review_activation(bin)?),
         "Supervisor activation or definition changed since review; no publication performed"
     );
+    if record.legacy_mode {
+        return apply_legacy(record, &options);
+    }
     // Existing transactional publication validates all binary and asset hashes.
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), false, false) {
@@ -661,6 +893,37 @@ fn reconcile(record: &mut Record) -> Result<()> {
     }
     for gateway in &record.gateways {
         ensure!(unchanged_gateway(gateway)?, "Gateway configuration changed");
+    }
+    if record.legacy_mode {
+        let activation = record
+            .supervisor_activation
+            .as_ref()
+            .context("Legacy activation unavailable")?;
+        let quarantine = activation.state.join("update-quarantine.json");
+        if quarantine.try_exists()? {
+            if Some(installed.as_str()) == record.release_id.as_deref() {
+                crate::legacy::verify(
+                    record
+                        .legacy_proof
+                        .as_ref()
+                        .context("Legacy commit proof unavailable")?,
+                )?;
+            } else {
+                // Previous services can only reopen this original schema after
+                // a proved snapshot restoration, never an in-place downgrade.
+                let accounts = crate::legacy::accounts()?;
+                crate::legacy::eligible(
+                    &activation.state,
+                    &accounts,
+                    record
+                        .staging_root
+                        .as_deref()
+                        .context("Legacy staging unavailable")?,
+                )?;
+            }
+            crate::legacy::clear(&activation.state, &record.operation_id)?;
+        }
+        record.legacy_proof = None;
     }
     cleanup_staging(record)?;
     if Some(installed.as_str()) == record.release_id.as_deref() {
@@ -780,8 +1043,14 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 if p.extension().is_some_and(|v| v == "json") {
                     let other: Record = serde_json::from_slice(&files::read(&p, 65536)?)?;
                     ensure!(
-                        !["preparing", "applying", "ready", "unconfirmed"]
-                            .contains(&other.phase.as_str()),
+                        ![
+                            "preparing",
+                            "applying",
+                            "committing",
+                            "ready",
+                            "unconfirmed"
+                        ]
+                        .contains(&other.phase.as_str()),
                         "An update is already pending; resolve or discard it first"
                     );
                 }
@@ -802,6 +1071,9 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 gateways: Vec::new(),
                 contracts_sha256: None,
                 supervisor_activation: None,
+                legacy_mode: false,
+                legacy_proof: None,
+                legacy_accounts: None,
             };
             save(
                 &mut record,
@@ -831,7 +1103,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             } else {
                 load(operation)?
             };
-            if ["preparing", "applying"].contains(&record.phase.as_str())
+            if ["preparing", "applying", "committing"].contains(&record.phase.as_str())
                 && now() > record.updated_at + 1230
             {
                 let phase = if record.phase == "preparing" {
@@ -857,7 +1129,15 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 record.release_id.as_deref() == Some(args[2].as_str()),
                 "Approved release identity conflict"
             );
-            if ["applying", "complete", "failed", "unconfirmed"].contains(&record.phase.as_str()) {
+            if [
+                "applying",
+                "committing",
+                "complete",
+                "failed",
+                "unconfirmed",
+            ]
+            .contains(&record.phase.as_str())
+            {
                 return output(&record);
             }
             ensure!(
@@ -979,6 +1259,9 @@ mod tests {
             gateways: vec![],
             contracts_sha256: None,
             supervisor_activation: None,
+            legacy_mode: false,
+            legacy_proof: None,
+            legacy_accounts: None,
         };
         save(&mut record, phase, "fixture").unwrap();
         record

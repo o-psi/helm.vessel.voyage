@@ -70,6 +70,17 @@ impl Registry {
         crate::provider::chatgpt_oauth::storage::prepare(&root)?;
         Ok(Self::new(root.join("accounts")))
     }
+    /// Observation-only activation quarantine must not create or migrate accounts.
+    pub fn existing_default_host() -> Result<Self> {
+        let root = dirs::data_local_dir()
+            .ok_or_else(|| anyhow::anyhow!("private data directory unavailable"))?
+            .join("helm");
+        ensure!(
+            root.is_dir(),
+            "Existing account namespace unavailable during activation"
+        );
+        Ok(Self::new(root.join("accounts")))
+    }
     fn transaction<T>(&self, f: impl FnOnce(&mut Database) -> Result<T>) -> Result<T> {
         let directory = Directory::open(&self.root)
             .map_err(|_| anyhow::anyhow!("private account storage unavailable"))?;

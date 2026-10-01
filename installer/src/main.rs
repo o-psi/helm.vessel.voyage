@@ -166,3 +166,6 @@ mod fixture_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 mod main_tests;
+
+#[cfg(target_os = "linux")]
+mod legacy;

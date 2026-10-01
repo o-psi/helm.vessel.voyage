@@ -64,3 +64,24 @@ pub(crate) fn restore_activation(
 ) -> Result<()> {
     systemd::restore_activation(bin, candidate, prior)
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn catalogue(
+    bin: &std::path::Path,
+    state: &std::path::Path,
+) -> Result<Vec<serde_json::Value>> {
+    readiness::catalogue(bin, state)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn quiesce(bin: &std::path::Path, prior: &Activation) -> Result<()> {
+    systemd::quiesce(bin, prior)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn start_quarantined(bin: &std::path::Path, prior: &Activation) -> Result<()> {
+    systemd::start_quarantined(bin, prior)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn state_directory() -> Result<std::path::PathBuf> {
+    Ok(unit::Layout::discover()?.state)
+}

@@ -54,6 +54,13 @@ struct HttpState {
     socket_capacity: Arc<Semaphore>,
 }
 
+struct AbortOwnedTask(tokio::task::AbortHandle);
+impl Drop for AbortOwnedTask {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
     serve_configured(directory, binary, None).await
 }
@@ -96,7 +103,11 @@ pub async fn serve_configured(
         directory: directory.clone(),
         binary,
         model_slots: Arc::new(Semaphore::new(4)),
-        devices: super::accounts::device_service(directory.clone())?,
+        devices: if super::update_quarantine::active(&directory)? {
+            super::accounts::quarantined_device_service(directory.clone())?
+        } else {
+            super::accounts::device_service(directory.clone())?
+        },
         enrollment_workers: Mutex::new(HashMap::new()),
         #[cfg(target_os = "linux")]
         identity_enrollment_starts: Mutex::new(HashMap::new()),
@@ -116,8 +127,30 @@ pub async fn serve_configured(
             gateway_ipc::bind_root(&config.name, config.gateway_uid)
         })
         .transpose()?;
-    supervisor.resume_enrollments().await?;
-    let notification_delivery = supervisor.start_notification_delivery();
+    let quarantined = super::update_quarantine::active(&directory)?;
+    if !quarantined {
+        supervisor.resume_enrollments().await?;
+    }
+    let deferred = supervisor.clone();
+    let notification_delivery = if quarantined {
+        tokio::spawn(async move {
+            loop {
+                if matches!(
+                    super::update_quarantine::active(&deferred.directory),
+                    Ok(false)
+                ) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            let _ = deferred.resume_enrollments().await;
+            let task = deferred.start_notification_delivery();
+            let _owned = AbortOwnedTask(task.abort_handle());
+            let _ = task.await;
+        })
+    } else {
+        supervisor.start_notification_delivery()
+    };
     let catalogue_refresh = supervisor.start_catalogue_refresh();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
@@ -837,6 +870,7 @@ tokio::task_local! {
 
 impl Supervisor {
     pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
+        super::update_quarantine::check(&self.directory, &command)?;
         match command {
             VesselCommand::HostBrowserDisconnected {
                 session_id,

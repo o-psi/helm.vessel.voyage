@@ -39,6 +39,9 @@ fn record(phase: &str) -> Record {
         gateways: vec![],
         contracts_sha256: None,
         supervisor_activation: None,
+        legacy_mode: false,
+        legacy_proof: None,
+        legacy_accounts: None,
     };
     save(&mut record, phase, "fixture").unwrap();
     record

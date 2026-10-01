@@ -170,6 +170,40 @@ pub(super) fn restore_activation(
     Ok(())
 }
 
+pub(super) fn quiesce(bin: &Path, prior: &super::Activation) -> Result<()> {
+    ensure!(
+        review_activation(bin)? == *prior,
+        "Supervisor changed before legacy quiescence"
+    );
+    let layout = unit::Layout::discover()?;
+    unit::check_effective(&layout)?;
+    if prior.active {
+        let pid: u32 = command::query("MainPID")?.parse()?;
+        #[cfg(test)]
+        let executable = crate::fixture_tests::executable(pid)?;
+        #[cfg(not(test))]
+        let executable = fs::read_link(format!("/proc/{pid}/exe"))?;
+        ensure!(
+            pid > 1 && executable == bin.join("vessel"),
+            "Legacy supervisor executable changed"
+        );
+        command::systemctl(&["--no-block", "stop", unit::NAME])?;
+        wait_inactive()?;
+    }
+    Ok(())
+}
+pub(super) fn start_quarantined(bin: &Path, prior: &super::Activation) -> Result<()> {
+    configure(bin, false, false)?;
+    if prior.active {
+        let layout = unit::Layout::discover()?;
+        unit::check_effective(&layout)?;
+        command::systemctl(&["reset-failed", unit::NAME])?;
+        command::systemctl(&["--no-block", "start", unit::NAME])?;
+        readiness::wait(bin, &layout.state, &[], None)?;
+    }
+    Ok(())
+}
+
 pub(super) fn preview(bin: &Path, start: bool) -> Result<String> {
     let plan = plan(bin, start)?;
     Ok(format!(
