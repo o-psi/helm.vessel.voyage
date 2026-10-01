@@ -216,16 +216,16 @@ impl App {
                     .push(review.clone());
             }
         }
-        // Receipt disposition belongs to the original save, but its catalogue
-        // and labels may not be published into a replaced viewing context.
-        if review.is_some() && !current_review {
-            return;
-        }
         let Some(panel) = self.inference.profiles.panel.as_ref() else {
             return;
         };
         if self.inference_destination() != Some(panel.destination) {
             self.inference.profiles.panel = None;
+            return;
+        }
+        // Close the old destination first; a still-open same-target panel can
+        // also have changed origin and may receive no catalogue/cache updates.
+        if review.is_some() && !current_review {
             return;
         }
         let destination = panel.destination;
