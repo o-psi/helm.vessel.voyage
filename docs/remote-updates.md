@@ -29,6 +29,13 @@ binary installation does not gain a database snapshot/restore mechanism here.
 Never downgrade or rewrite the live database, restore stale registrations over
 new admissions, or replay an unconfirmed update to make the state appear complete.
 
+Before effects, ordinary update reviews pin the original supervisor unit definition,
+state directory, active state and enablement. Apply rechecks those pins. Rollback
+restores that exact definition, starts the previous supervisor when it was
+previously active (including when candidate activation left it failed/inactive),
+and preserves original enablement rather than enabling a disabled service. An old
+receipt without the activation pin cannot prove restoration intent.
+
 After an activation failure, the updater rolls back the pointer once, attempts
 supervisor restoration and every unchanged reviewed gateway independently, and
 checks active kernel executable identities against the previous release. Only

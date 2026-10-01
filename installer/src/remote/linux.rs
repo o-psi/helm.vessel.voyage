@@ -35,6 +35,8 @@ struct Record {
     gateways: Vec<Gateway>,
     #[serde(default)]
     contracts_sha256: Option<[String; 2]>,
+    #[serde(default)]
+    supervisor_activation: Option<service::Activation>,
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -422,11 +424,37 @@ fn rollback_gateways(record: &Record, previous: &std::path::Path) -> Result<()> 
 fn restore_previous(record: &Record, error: anyhow::Error) -> Result<()> {
     let previous = install::rollback(false)
         .context("Binary rollback could not be confirmed; services retained for inspection")?;
-    let supervisor = service::configure(&previous.release_dir.join("bin"), false, false);
+    let supervisor = record
+        .supervisor_activation
+        .as_ref()
+        .context("Prior supervisor activation was not pinned; rollback remains unconfirmed")
+        .and_then(|activation| {
+            service::restore_activation(
+                &previous.release_dir.join("bin"),
+                &installation_root()?
+                    .join("releases")
+                    .join(
+                        record
+                            .release_id
+                            .as_deref()
+                            .context("Candidate identity missing")?,
+                    )
+                    .join("bin"),
+                activation,
+            )
+        });
     let gateways = rollback_gateways(record, &previous.release_dir);
     // Configuration already verifies authenticated readiness for an active unit;
     // these independent kernel executable checks forbid a pointer-only claim.
-    let observed = verified_service("voyage-vessel.service", &previous.release_dir);
+    let observed = if record
+        .supervisor_activation
+        .as_ref()
+        .is_some_and(|activation| !activation.active)
+    {
+        Ok(())
+    } else {
+        verified_service("voyage-vessel.service", &previous.release_dir)
+    };
     let failures = [supervisor, gateways, observed]
         .into_iter()
         .filter_map(Result::err)
@@ -494,7 +522,7 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
         prepared.bin_dir.to_string_lossy().into_owned(),
     ])?;
     let plan = flow::plan(&options)?;
-    service::preview(&plan.release_dir.join("bin"), false)?;
+    record.supervisor_activation = Some(service::review_activation(&plan.release_dir.join("bin"))?);
     record.release_id = Some(manifest.id()?);
     record.version = Some(manifest.version);
     record.description = Some(prepared.description.clone());
@@ -556,6 +584,10 @@ fn apply_worker(record: &mut Record) -> Result<()> {
         "--bin-dir".into(),
         bin.to_string_lossy().into_owned(),
     ])?;
+    ensure!(
+        record.supervisor_activation.as_ref() == Some(&service::review_activation(bin)?),
+        "Supervisor activation or definition changed since review; no publication performed"
+    );
     // Existing transactional publication validates all binary and asset hashes.
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), false, false) {
@@ -769,6 +801,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 staging_root: None,
                 gateways: Vec::new(),
                 contracts_sha256: None,
+                supervisor_activation: None,
             };
             save(
                 &mut record,
@@ -945,6 +978,7 @@ mod tests {
             staging_root: None,
             gateways: vec![],
             contracts_sha256: None,
+            supervisor_activation: None,
         };
         save(&mut record, phase, "fixture").unwrap();
         record

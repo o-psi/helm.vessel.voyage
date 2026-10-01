@@ -78,6 +78,75 @@ fn plan(bin: &Path, start: bool) -> Result<Plan> {
         rollback,
     })
 }
+pub(super) fn review_activation(bin: &Path) -> Result<super::Activation> {
+    let plan = plan(bin, false)?;
+    Ok(super::Activation {
+        active: plan.active,
+        enabled: plan.enabled,
+        definition: plan.previous,
+        state: plan.layout.state,
+    })
+}
+
+/// Restore the reviewed activation without enabling an originally disabled unit.
+pub(super) fn restore_activation(
+    bin: &Path,
+    candidate: &Path,
+    prior: &super::Activation,
+) -> Result<()> {
+    let layout = unit::Layout::discover()?;
+    ensure!(
+        layout.state == prior.state,
+        "Supervisor state directory changed since review"
+    );
+    let current = unit::existing(&layout)?;
+    let candidate_definition = unit::render(candidate, &layout.state)?;
+    ensure!(
+        current == prior.definition || current.as_deref() == Some(&candidate_definition),
+        "Refusing rollback over independently changed supervisor definition"
+    );
+    unit::check_effective(&layout)?;
+    let activation = command::query("ActiveState")?;
+    if matches!(
+        activation.as_str(),
+        "active" | "activating" | "deactivating"
+    ) {
+        ensure!(
+            current.is_some(),
+            "Unrecognized supervisor activation cannot be stopped"
+        );
+        command::systemctl(&["--no-block", "stop", unit::NAME])?;
+        wait_inactive()?;
+    }
+    match (&prior.definition, &current) {
+        (Some(definition), Some(current)) if definition != current => {
+            files::replace(&layout.unit, definition, Some(current))?
+        }
+        (Some(definition), None) => files::replace(&layout.unit, definition, None)?,
+        (None, Some(current)) => files::remove_reviewed(&layout.unit, current)?,
+        _ => (),
+    }
+    command::systemctl(&["daemon-reload"])?;
+    if prior.enabled {
+        command::systemctl(&["enable", unit::NAME])?;
+    } else if prior.definition.is_some() {
+        command::systemctl(&["disable", unit::NAME])?;
+    }
+    if prior.active {
+        ensure!(
+            prior.definition.is_some(),
+            "Reviewed active supervisor definition missing"
+        );
+        unit::check_effective(&layout)?;
+        command::systemctl(&["reset-failed", unit::NAME])?;
+        command::systemctl(&["--no-block", "start", unit::NAME])?;
+        readiness::wait(bin, &layout.state, &[], None)?;
+    } else {
+        wait_inactive()?;
+    }
+    Ok(())
+}
+
 pub(super) fn preview(bin: &Path, start: bool) -> Result<String> {
     let plan = plan(bin, start)?;
     Ok(format!(

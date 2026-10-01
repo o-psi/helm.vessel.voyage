@@ -42,3 +42,24 @@ pub fn preview(_bin: &std::path::Path, _start: bool) -> Result<String> {
 pub fn configure(_bin: &std::path::Path, _start: bool, _dry_run: bool) -> Result<()> {
     bail!("Service management requires Linux systemd user services")
 }
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub(crate) struct Activation {
+    pub active: bool,
+    pub enabled: bool,
+    pub definition: Option<String>,
+    pub state: std::path::PathBuf,
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn review_activation(bin: &std::path::Path) -> Result<Activation> {
+    systemd::review_activation(bin)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn restore_activation(
+    bin: &std::path::Path,
+    candidate: &std::path::Path,
+    prior: &Activation,
+) -> Result<()> {
+    systemd::restore_activation(bin, candidate, prior)
+}

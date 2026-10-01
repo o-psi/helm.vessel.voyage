@@ -38,6 +38,7 @@ fn record(phase: &str) -> Record {
         staging_root: None,
         gateways: vec![],
         contracts_sha256: None,
+        supervisor_activation: None,
     };
     save(&mut record, phase, "fixture").unwrap();
     record
@@ -530,7 +531,8 @@ fn apply_publishes_reviewed_candidate_and_cleans_retained_staging() {
     prepare_worker(&mut r).unwrap();
     let staging = r.staging_root.clone().unwrap();
     f.call(LIST, "[]");
-    inactive_plan(&f);
+    inactive_plan(&f); // Fresh activation/definition pin before publication.
+    inactive_plan(&f); // Configuration observes the same unchanged unit.
     f.call(&["daemon-reload"], "");
     f.effective(true);
     apply_worker(&mut r).unwrap();
@@ -576,7 +578,7 @@ fn apply_rejects_missing_candidate_and_changed_gateway_before_publication() {
 }
 
 #[test]
-fn failed_service_configuration_rolls_back_published_binaries() {
+fn transitioning_supervisor_is_refused_before_binary_publication() {
     let f = installation();
     let mut r = record("preparing");
     installed_release(&f, &mut r);
@@ -588,18 +590,6 @@ fn failed_service_configuration_rolls_back_published_binaries() {
     f.call(LIST, "[]");
     f.effective(false);
     f.query("ActiveState", "activating");
-    inactive_plan(&f);
-    f.call(&["daemon-reload"], "");
-    f.effective(true);
-    f.call(
-        &[
-            "show",
-            "voyage-vessel.service",
-            "--property=ActiveState",
-            "--value",
-        ],
-        "inactive",
-    );
     assert!(format!("{:#}", apply_worker(&mut r).unwrap_err()).contains("transitioning"));
     assert_eq!(current().unwrap(), r.current_release);
     assert!(r.staging_root.as_ref().unwrap().exists());

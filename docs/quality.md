@@ -1380,6 +1380,12 @@ readiness. These synthetic service-manager fixtures are not native CT106 recover
 or successful legacy schema rollback evidence; the latter remains explicitly
 unimplemented rather than simulated with database rewrites.
 
+Service restoration tests for #401 also cover a previously active supervisor left
+failed by candidate activation, originally disabled enablement, originally
+inactive services and independently changed definitions. The existing owned
+service-manager fixture verifies actual previous-executable readiness after Start;
+no fixture claim is substituted for the still-required native legacy data proof.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its
