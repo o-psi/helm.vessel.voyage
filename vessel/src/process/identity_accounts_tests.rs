@@ -2,6 +2,8 @@
 use super::*;
 use crate::process::{access::store, identity_accounts::test_fixtures as f, test_support::Fixture};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
+use voyage_protocol::process::ProcessState;
 
 fn check(
     scope: &Scope,
