@@ -387,7 +387,8 @@ mod tests {
         message.tool_output = Some(Box::new(report.output));
         let canonical = vec![message];
         let mut working = WorkingContext::default();
-        assert_eq!(working.prepare(&canonical).unwrap(), 1);
+        assert_eq!(working.prepare(&canonical).unwrap(), 0);
+        assert_eq!(working.compact(&canonical, 0).unwrap(), 1);
         let projection = working.project(&canonical).unwrap();
         assert!(projection[0].content.len() < 6000);
         assert!(projection[0].content.contains(&id.to_string()));
@@ -622,7 +623,9 @@ mod tests {
             m.tool_outcome = Some(report.outcome.clone());
             let canonical = vec![m];
             let mut working = WorkingContext::default();
-            working.prepare(&canonical).unwrap();
+            // Explicit task-boundary compaction; bytes are resource evidence,
+            // never a substitute for unavailable model token accounting.
+            working.compact(&canonical, 0).unwrap();
             let projected = working.project(&canonical).unwrap();
             let preview = projected[0].content.len();
             let mut retrieved = 0;
@@ -676,7 +679,7 @@ mod tests {
         }
         println!(
             "ISSUE282_BENCHMARK={}",
-            json!({"version":1,"measurement":"offline model-visible text bytes; not provider tokens or cache savings","rows":rows})
+            json!({"version":1,"measurement":"offline model-visible text bytes after explicit compaction; not provider tokens or cache savings","rows":rows})
         );
     }
     #[cfg(unix)]

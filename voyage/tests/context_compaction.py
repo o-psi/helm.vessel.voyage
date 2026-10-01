@@ -349,21 +349,34 @@ def suspended(fixture, session):
 
 
 def full_snapshot(fixture, session):
-    snapshot = fixture.snapshot(session)
-    for index, message in enumerate(snapshot["messages"]):
-        if not message.get("projection_truncated"):
-            continue
-        chunks, offset = [], 0
-        while True:
-            chunk = fixture.command(session, {"op": "message_chunk", "index": message["message_index"],
-                "offset": offset, "limit": 65536, "expected_revision": snapshot["revision"]})
-            assert chunk["offset"] == offset
-            chunks.append(chunk["data"])
-            offset = chunk["next_offset"]
-            if not chunk["has_more"]:
+    # Rehydrate only reads when late metadata invalidates a chunk review. Never
+    # combine chunks from different revisions or replay a mutation/effect.
+    for _ in range(4):
+        snapshot = fixture.snapshot(session)
+        restart = False
+        for index, message in enumerate(snapshot["messages"]):
+            if not message.get("projection_truncated"):
+                continue
+            chunks, offset = [], 0
+            while True:
+                reply = fixture.raw_command(session, {"op": "message_chunk", "index": message["message_index"],
+                    "offset": offset, "limit": 65536, "expected_revision": snapshot["revision"]})
+                if reply.get("error") in ("session revision conflict", "suspended observation unavailable"):
+                    restart = True
+                    break
+                assert reply.get("error") is None, reply
+                chunk = reply["result"]
+                assert chunk["offset"] == offset and chunk["revision"] == snapshot["revision"]
+                chunks.append(chunk["data"])
+                offset = chunk["next_offset"]
+                if not chunk["has_more"]:
+                    break
+            if restart:
                 break
-        snapshot["messages"][index] = json.loads("".join(chunks))
-    return snapshot
+            snapshot["messages"][index] = json.loads("".join(chunks))
+        if not restart:
+            return snapshot
+    raise AssertionError("canonical read did not converge within four fresh reviews")
 
 
 def assert_canonical(snapshot, scenario):
