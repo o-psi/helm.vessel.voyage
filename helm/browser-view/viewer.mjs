@@ -350,7 +350,7 @@ export function mountBrowserViewer(root,options={}){
     const status=node('span',identity,'browser-next-status','Opening…');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const actions=node('div',chrome,'browser-next-actions');
     const primary=button('Continue agent',actions,()=>void connection.control('agent'),'browser-primary browser-next-primary');
-    const privacy=button('Browse privately',actions,()=>void connection.control(connection.status?.mode==='private'?'human':'private'),'browser-privacy browser-next-privacy');
+    const privacy=button('Browse privately',actions,()=>void connection.control(connection.controls&&connection.status?.mode==='private'?'human':'private'),'browser-privacy browser-next-privacy');
     const scale=button('View at actual size',actions,()=>{actual=!actual;scaleChosen=true;paintScale();},'browser-next-scale','100%');
     const more=node('details',actions,'browser-next-more');
     const summary=node('summary',more,'','More');summary.setAttribute('aria-label','More browser options');

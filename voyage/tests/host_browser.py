@@ -24,6 +24,8 @@ import traceback
 import urllib.request
 import uuid
 
+from ui_journeys import launch as launch_tui, screen, send, pty_helpers
+
 
 def uid():
     return str(uuid.uuid4())
@@ -224,6 +226,7 @@ def main():
     supervisor = None
     gateway = None
     launchers = []
+    tui_clients = []
     opener = root/'bin'; opener.mkdir()
     (opener/'xdg-open').write_text('#!/usr/bin/python3\nimport os,pathlib,sys\np=pathlib.Path(sys.argv[1]).resolve()\nassert p.is_relative_to(pathlib.Path(os.environ["HOME"]).parent) and p.name == "open.html"\npathlib.Path(os.environ["FIXTURE_LAUNCHER"]).write_text(str(p))\n')
     (opener/'xdg-open').chmod(0o700)
@@ -324,9 +327,22 @@ def main():
             captured = root/(item['label']+'-launcher-path')
             launch_env = {**env, 'PATH': str(opener)+':'+env['PATH'], 'FIXTURE_LAUNCHER': str(captured)}
             route = ['--directory', str(directory)] if index == 0 else ['--access-file', item['access']]
-            launch = subprocess.Popen([str(binaries/'helm'), 'connect', *route, 'browser', item['session']],
-                env=launch_env, cwd=workspace, stdout=subprocess.DEVNULL, stderr=(root/(item['label']+'-native-error.log')).open('wb'))
-            launchers.append(launch)
+            if index == 1:
+                # The scoped route contains exactly this voyage. Exercise the
+                # real TUI key path, not just the native viewer CLI entry point.
+                tui = launch_tui([str(binaries/'helm'), 'connect', *route, '--no-start'],
+                    launch_env, workspace, root/'browser-tui.pty', 120, 36)
+                tui_clients.append(tui)
+                wait(lambda: item['label'] in screen(tui) or tui['process'].poll() is not None)
+                assert tui['process'].poll() is None, 'TUI exited before F6'
+                send(tui, '\x1b[17~')
+                launch = tui['process']
+                item['native_entry'] = 'tui-f6'
+            else:
+                launch = subprocess.Popen([str(binaries/'helm'), 'connect', *route, 'browser', item['session']],
+                    env=launch_env, cwd=workspace, stdout=subprocess.DEVNULL, stderr=(root/(item['label']+'-native-error.log')).open('wb'))
+                launchers.append(launch)
+                item['native_entry'] = 'cli'
             wait(lambda: captured.exists() or launch.poll() is not None)
             assert captured.exists(), 'native launcher exited before private fixture capture'
             item['launcher'] = captured.read_text()
@@ -346,6 +362,9 @@ def main():
         for launch in launchers:
             launch.send_signal(signal.SIGINT)
             assert launch.wait(timeout=15) == 0, 'native viewer cleanup failed'
+        for tui in tui_clients:
+            pty_helpers.stop_pty(tui, wait)
+            assert tui['process'].returncode == 0, 'TUI detach failed'
         server.release.set()
         for item in report['sessions']:
             def completed():
@@ -359,6 +378,7 @@ def main():
             assert snap.get('pending_cleanup_run') is None, snap
             assert '/private' not in json.dumps(snap['messages']), 'private human URL leaked into conversation'
             assert 'SYNTHETIC_PRIVATE_INPUT_333' not in json.dumps(snap['messages']), 'private input leaked into conversation'
+            assert 'SYNTHETIC_DUAL_PRIVATE_333' not in json.dumps(snap['messages']), 'dual-viewer private input leaked'
             assert all(m.get('tool_outcome', {}).get('execution') == 'succeeded' for m in snap['messages'] if m['role'] == 'tool')
         # No mock stopped marker or explicit shutdown: observe automatic owner suspension.
         # Each receiver is fresh; no prior browser attachment or socket can wake the owner.
@@ -370,6 +390,7 @@ def main():
                 report.setdefault('suspended', []).append({'phase': phase, 'session': item['session'],
                     'state': inspection['state'], 'incarnation': inspection['incarnation']})
                 if phase == 'suspended-native':
+                    item['native_entry'] = 'cli'
                     captured = root/(item['label']+'-suspended-launcher-path')
                     launch_env = {**env, 'PATH': str(opener)+':'+env['PATH'], 'FIXTURE_LAUNCHER': str(captured)}
                     route = ['--directory', str(directory)] if index == 0 else ['--access-file', item['access']]
@@ -403,6 +424,11 @@ def main():
         report['failure'] = traceback.format_exc()
         print(report['failure'], flush=True)
     finally:
+        for tui in tui_clients:
+            try:
+                pty_helpers.stop_pty(tui, wait)
+            except Exception as exc:
+                report['cleanup'].setdefault('tui_errors', []).append(type(exc).__name__)
         for item in report['sessions']:
             try:
                 report['pre_teardown'].append({'session': item['session'], 'snapshot': voyage(item['session'], op='snapshot'),
@@ -436,7 +462,7 @@ def main():
         report['cleanup'].update(remaining_owned_pids=owned(), server_thread_alive=thread.is_alive())
         report['cleanup']['child_server_thread_alive'] = child_thread.is_alive()
         (root/'provider.json').write_text(json.dumps({'requests': server.requests, 'errors': server.errors, 'arrived': server.arrived, 'visits': server.visits}, indent=2))
-        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive() and not child_thread.is_alive():
+        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive() and not child_thread.is_alive() and not report['cleanup'].get('tui_errors'):
             report['journey'] = 'passed'
         (root/'report.json').write_text(json.dumps(report, indent=2))
     assert report.get('journey') == 'passed' and not report['cleanup'].get('forced_pids') and not owned(), str(root)

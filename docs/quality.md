@@ -1174,3 +1174,20 @@ raw profiles were merged; 235 foreign profiles remain unchanged.
 `coverage/latest.json` and the current gap ledger record the actual totals.
 Native system/identity journeys, hosted packaging and deployment are separate
 obligations; this result does not establish complete release acceptance.
+
+### Same-browser TUI/Web private handoff preparation (#333)
+
+The maintained host-browser journey now prepares an actual scoped Helm TUI and
+presses F6 for one voyage, while the production Web host-browser adapter mounts
+a second viewer of the same browser. It requires private data exclusion, fenced
+private disconnect, explicit same-principal private reclaim and an explicit return
+to agent control before cleanup. Ctrl+Q detaches the TUI without cancelling the
+held synthetic run. Canonical history and provider counts must remain unchanged
+by viewer actions. This source increment is not passing evidence until the
+coordinated journey completes, including cleanup. It does not establish deployed
+React dock/TLS, real-site breadth, tab/file/scroll or stalled-viewer acceptance.
+
+The private button sends public human mode only when the current viewer controls
+private browsing and chooses Finish private browsing. A watching viewer choosing
+Browse privately must request private mode, including reclaim after the other
+viewer disconnects. The same predicate is maintained in the Web shared viewer.

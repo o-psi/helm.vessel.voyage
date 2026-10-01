@@ -109,23 +109,67 @@ async function layout(page,label){
  }
  await page.setViewportSize({width:1280,height:800});
 }
+async function sameBrowserWeb(item, browserId){
+ const peer=await connect({...item},false),page=await browser.newPage(),trace=[];
+ await page.exposeFunction('webExchange',async request=>{
+  const response=await peer.exchange(request),operation=request.command.operation;
+  if(operation?.action==='control')trace.push({action:operation.action,mode:operation.mode});
+  if(response.result?.incarnation)peer.item.incarnation=response.result.incarnation;
+  return response;
+ });
+ await page.goto(cfg.site+'/receiver');
+ await page.evaluate(async item=>{
+  const {mountHostBrowser}=await import('/web/resources/js/host-browser.js');
+  window.mounted=mountHostBrowser(document.querySelector('main'),{client:{exchange:window.webExchange},sessionId:item.session,incarnation:item.incarnation,context:()=>({revision:0})});
+ },peer.item);
+ await page.waitForFunction(()=>window.mounted.session.attached&&!window.mounted.session.busy);
+ await decoded(page,'same-browser Web adapter');
+ assert.equal(await page.evaluate(()=>window.mounted.session.status.binding.browser_id),browserId);
+ return {page,trace};
+}
+async function privateExcluded(page){
+ await page.waitForFunction(()=>window.mounted.session.status?.mode==='private'&&!window.mounted.session.controls&&!window.mounted.session.streaming);
+ assert.equal(await page.getByRole('textbox',{name:'Website address',exact:true}).inputValue(),'');
+ const values=await page.evaluate(()=>[...document.querySelectorAll('iframe')].map(frame=>{
+  const doc=frame.contentDocument;return [doc?.body?.textContent||'',...[...(doc?.querySelectorAll('input,textarea')||[])].map(e=>e.value)].join(' ');
+ }).join(' '));
+ assert.equal(values.includes('SYNTHETIC_DUAL_PRIVATE_333'),false,'other viewer must not expose private values');
+}
 async function native(item,observer){
  const page=await browser.newPage();
  await page.goto(new URL('file://'+item.launcher).href);
  await page.getByRole('button',{name:'Browse privately',exact:true}).waitFor();
  assert.equal(new URL(page.url()).hash,'','bootstrap must remove launch secret from history');
  await decoded(page,'native '+item.native_route);
+ const joint=item.native_entry==='tui-f6'?await sameBrowserWeb(item,(await observer.op('status')).status.binding.browser_id):null;
  evidence.nativeStage='before private '+item.native_route;save();
  await mode(page,'Browse privately','private');
+ if(joint)await privateExcluded(joint.page);
  evidence.nativeStage='before navigate '+item.native_route;save();
  await navigate(page,cfg.site+'/native-'+item.native_route);
- evidence.nativeStage='before agent '+item.native_route;save();
- await mode(page,'Continue agent','agent');
+ if(joint){
+  await page.getByRole('textbox',{name:'Text for browser',exact:true}).fill('SYNTHETIC_DUAL_PRIVATE_333');
+  await page.getByRole('button',{name:'Send text to browser',exact:true}).click();
+  await privateExcluded(joint.page);
+  await page.getByRole('button',{name:'Close viewer',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
+  assert.equal((await observer.op('status')).status.mode,'private','private detach must not resume agent');
+  await mode(joint.page,'Browse privately','private',false);
+  assert.equal(joint.trace.at(-1).mode,'private','reclaim must not publish private browsing as human mode');
+  await mode(joint.page,'Continue agent','agent');
+  await joint.page.getByRole('button',{name:'Close viewer',exact:true}).click();
+  await joint.page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
+  await joint.page.close();
+  evidence.steps.push({same_browser_two_clients:true,native_entry:'tui-f6',private_excluded:true,disconnect_stayed_private:true,explicit_same_principal_reclaim:true});save();
+ }else{
+  evidence.nativeStage='before agent '+item.native_route;save();
+  await mode(page,'Continue agent','agent');
+ }
  evidence.nativeStage='before agent replay '+item.native_route;save();
- await decoded(page,'native return '+item.native_route);
+ if(!joint)await decoded(page,'native return '+item.native_route);
  evidence.nativeStage='before close '+item.native_route;save();
- await page.getByRole('button',{name:'Close viewer',exact:true}).click();
- await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
+ if(!joint){await page.getByRole('button',{name:'Close viewer',exact:true}).click();
+ await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));}
  await new Promise(r=>setTimeout(r,300));
  assert.equal((await observer.op('status')).status.running,true,'viewer disconnect must not close host');
  evidence.steps.push({native_route:item.native_route,authenticated:true,disconnect_preserved_host:true});save();
