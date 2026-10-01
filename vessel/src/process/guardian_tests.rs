@@ -196,11 +196,99 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         enabled: true,
     };
     database::store_identity(&control, &identity).await.unwrap();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let (received, mut provider_requests) = tokio::sync::mpsc::unbounded_channel();
+    let (disconnected, mut provider_closed) = tokio::sync::mpsc::unbounded_channel();
+    struct HeldProvider(tokio::task::JoinHandle<()>);
+    impl Drop for HeldProvider {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let provider_guard = HeldProvider(tokio::spawn(async move {
+        let mut peers = tokio::task::JoinSet::new();
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (mut stream, peer) = accepted.unwrap();
+                    assert!(peer.ip().is_loopback());
+                    let received = received.clone(); let disconnected = disconnected.clone();
+                    peers.spawn(async move {
+                        let mut bytes = Vec::new();
+                        let mut chunk = [0; 4096];
+                        let (header_end, length) = tokio::time::timeout(Duration::from_secs(10), async {
+                            loop {
+                                let n = stream.read(&mut chunk).await.unwrap();
+                                assert!(n > 0);
+                                bytes.extend_from_slice(&chunk[..n]);
+                                assert!(bytes.len() <= 1024 * 1024);
+                                if let Some(end) = bytes.windows(4).position(|value| value == b"\r\n\r\n") {
+                                    let header = std::str::from_utf8(&bytes[..end]).unwrap();
+                                    let length = header.lines().find_map(|line| {
+                                        line.to_ascii_lowercase().strip_prefix("content-length:")
+                                            .map(|value| value.trim().parse::<usize>().unwrap())
+                                    }).unwrap_or(0);
+                                    assert!(length <= 1024 * 1024);
+                                    if bytes.len() >= end + 4 + length {
+                                        break (end, length);
+                                    }
+                                }
+                            }
+                        }).await.unwrap();
+                        let header = std::str::from_utf8(&bytes[..header_end]).unwrap();
+                        if header.starts_with("GET /v1/models ") {
+                            let body = r#"{"data":[{"id":"fixture-model"}]}"#;
+                            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                            return;
+                        }
+                        assert!(header.starts_with("POST /v1/responses "));
+                        assert!(header.to_ascii_lowercase().contains("authorization: bearer synthetic-native-fixture"));
+                        let body: serde_json::Value = serde_json::from_slice(&bytes[header_end + 4..header_end + 4 + length]).unwrap();
+                        assert_eq!(body["model"], "fixture-model");
+                        // A real native provider dispatch is now pending. No
+                        // fabricated journal row, goal or execution flag exists.
+                        received.send(body).unwrap();
+                        let mut probe = [0; 1];
+                        let observed = tokio::time::timeout(Duration::from_secs(120), stream.read(&mut probe)).await;
+                        let closed = matches!(observed, Ok(Ok(0)))
+                            || matches!(observed, Ok(Err(ref error)) if matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe));
+                        let _ = disconnected.send(closed);
+                    });
+                },
+                completed=peers.join_next(), if !peers.is_empty() => {completed.unwrap().unwrap();},
+            }
+        }
+    }));
+    let key_name = format!(
+        "VOYAGE_GUARDIAN_KEY_{}",
+        Uuid::new_v4().simple().to_string().to_ascii_uppercase()
+    );
+    // Provision only this synthetic key in the executing ordinary user's own
+    // private environment record; the root test never parses that record.
+    let mut provision = Command::new("/usr/bin/python3");
+    provision.arg("-c").arg(r#"import json,os,pathlib,stat,sys,tempfile
+p=pathlib.Path(os.environ['HOME'])/'.config'/'helm'; p.mkdir(parents=True,exist_ok=True,mode=0o700)
+for d in (p.parent,p):
+ m=d.lstat(); assert stat.S_ISDIR(m.st_mode) and not stat.S_ISLNK(m.st_mode) and m.st_uid==os.geteuid(); assert d!=p or m.st_mode&0o077==0
+path=p/'account-environment.json'; values={}
+try:
+ fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC); m=os.fstat(fd); assert stat.S_ISREG(m.st_mode) and m.st_uid==os.geteuid() and m.st_nlink==1 and m.st_mode&0o077==0 and m.st_size<=65536
+ with os.fdopen(fd,'r') as f: values=json.load(f)
+except FileNotFoundError: pass
+assert isinstance(values,dict); values[sys.argv[1]]='synthetic-native-fixture'; raw=json.dumps(values).encode(); assert len(raw)<=65536
+fd,temp=tempfile.mkstemp(dir=p); os.fchmod(fd,0o600)
+with os.fdopen(fd,'wb') as f: f.write(raw); f.flush(); os.fsync(f.fileno())
+os.replace(temp,path); fd=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC); os.fsync(fd); os.close(fd)
+"#).arg(&key_name);
+    launch::configure_identity(&mut provision, &identity).unwrap();
+    assert!(provision.status().unwrap().success());
     let ordinary = |args: &[&str]| -> Vec<u8> {
         let mut command = Command::new(&vessel);
         command.args(["auth", "accounts"]).args(args);
         launch::configure_identity(&mut command, &identity).unwrap();
-        command.env("VOYAGE_GUARDIAN_FIXTURE_KEY", "synthetic-native-fixture");
+        command.env(&key_name, "synthetic-native-fixture");
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -215,7 +303,7 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         "--label",
         &label,
         "--endpoint",
-        "http://127.0.0.1:9/v1",
+        &endpoint,
         "--transports",
         "openai-responses",
     ]))
@@ -227,11 +315,11 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         "--account",
         &label,
         "--env",
-        "VOYAGE_GUARDIAN_FIXTURE_KEY",
+        &key_name,
     ]))
     .unwrap();
     let config = workspace.join("launch.json");
-    fs::write(&config,serde_json::to_vec(&serde_json::json!({"version":1,"workspace":workspace,"config":{"provider":"openai-responses","model":"fixture-model","api_key_required":false,"base_url":"http://127.0.0.1:9/v1","account":{"account_id":account["id"],"connection_id":connection["id"],"identity_generation":account["identity_generation"],"connection_revision":connection["revision"],"transport":"openai_responses"},"access":"read-only","provider_retry_attempts":1,"context_window":0,"command_timeout_secs":2},"explicit":{"access":"read-only"},"selection":null,"confirmation":null})).unwrap()).unwrap();
+    fs::write(&config,serde_json::to_vec(&serde_json::json!({"version":1,"workspace":workspace,"config":{"provider":"openai-responses","model":"fixture-model","api_key_required":false,"base_url":endpoint,"account":{"account_id":account["id"],"connection_id":connection["id"],"identity_generation":account["identity_generation"],"connection_revision":connection["revision"],"transport":"openai_responses"},"access":"read-only","provider_retry_attempts":1,"provider_response_timeout_ms":120000,"context_window":0,"command_timeout_secs":2},"explicit":{"access":"read-only"},"selection":null,"confirmation":null})).unwrap()).unwrap();
     fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).unwrap();
     std::os::unix::fs::chown(&config, Some(uid), Some(gid)).unwrap();
     let registration = |binary: PathBuf| ProcessRegistration {
@@ -353,6 +441,69 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
             .unwrap_or_default(),
         fs::read_to_string(directory.join("fixture-runtime.stderr")).unwrap_or_default()
     );
+    let initial_snapshot = routing::forward(&directory, &r, RuntimeCommand::Snapshot)
+        .await
+        .unwrap();
+    assert!(initial_snapshot.error.is_none());
+    let renamed = routing::forward(
+        &directory,
+        &r,
+        RuntimeCommand::Rename {
+            command_id: Uuid::new_v4(),
+            expected_revision: initial_snapshot.result["revision"].as_u64().unwrap(),
+            expires_at_ms: (chrono::Utc::now().timestamp_millis() + 60_000) as u64,
+            name: "Retained bound conversation".into(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(renamed.error.is_none());
+    assert_ne!(renamed.result["status"], "rejected");
+    async fn active_turn(
+        directory: &Path,
+        registration: &ProcessRegistration,
+        requests: &mut tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
+        prompt: &str,
+    ) -> Uuid {
+        let snapshot = routing::forward(directory, registration, RuntimeCommand::Snapshot)
+            .await
+            .unwrap();
+        assert!(snapshot.error.is_none());
+        let response = routing::forward(
+            directory,
+            registration,
+            RuntimeCommand::Submit {
+                budget: None,
+                coordination: None,
+                command_id: Uuid::new_v4(),
+                expected_revision: snapshot.result["revision"].as_u64().unwrap(),
+                expires_at_ms: (chrono::Utc::now().timestamp_millis() + 60_000) as u64,
+                prompt: prompt.into(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(response.error.is_none(), "{:?}", response.error);
+        let run: Uuid = serde_json::from_value(response.result["run_id"].clone()).unwrap();
+        let dispatched = tokio::time::timeout(Duration::from_secs(10), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(dispatched.to_string().contains(prompt));
+        let running = routing::forward(directory, registration, RuntimeCommand::Snapshot)
+            .await
+            .unwrap();
+        assert_eq!(running.result["run"]["run_id"], run.to_string());
+        assert_eq!(running.result["run"]["state"], "running");
+        run
+    }
+    let active_run = active_turn(
+        &directory,
+        &r,
+        &mut provider_requests,
+        "guardian active independence fixture",
+    )
+    .await;
     assert!(
         fs::read_to_string(format!("/proc/{}/status", guardian.id()))
             .unwrap()
@@ -642,7 +793,8 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
             .await
             .is_err()
     );
-    request_stop(&control, public_session, public_registration.incarnation).unwrap();
+    // This separate owner has no run or held resource. It must retire cleanly
+    // through the real idle suspension path, not stay alive for our assertions.
     for _ in 0..200 {
         if cleanup_observed(&control, public_session, public_registration.incarnation)
             .unwrap_or(false)
@@ -652,9 +804,42 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(cleanup_observed(&control, public_session, public_registration.incarnation).unwrap());
+    let public_record = RootDirectory::open(&control)
+        .unwrap()
+        .child("guardians".as_ref())
+        .unwrap()
+        .child(public_session.to_string().as_ref())
+        .unwrap()
+        .child(public_registration.incarnation.to_string().as_ref())
+        .unwrap();
+    let public_completion: Completion = serde_json::from_slice(
+        &public_record
+            .read("completion.json".as_ref(), 8192)
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(public_completion.child_exited_successfully);
+    assert_eq!(public_completion.child_exit_code, Some(0));
+    assert!(public_completion.stop_reason.is_none());
     service.kill().unwrap();
     service.wait().unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(guardian.try_wait().unwrap().is_none());
+    assert!(cleanup_observed(&control, r.session_id, r.incarnation).is_err());
+    let independent = routing::forward(&directory, &r, RuntimeCommand::Snapshot)
+        .await
+        .unwrap();
+    assert!(independent.error.is_none());
+    assert_eq!(independent.result["run"]["run_id"], active_run.to_string());
+    assert_eq!(independent.result["run"]["state"], "running");
+    assert!(matches!(
+        provider_closed.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    assert!(
+        !provider_guard.0.is_finished(),
+        "held provider task stopped early"
+    );
     assert!(
         routing::forward(&directory, &r, RuntimeCommand::Health)
             .await
@@ -692,20 +877,14 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         snapshot.result["result"]["session_id"],
         r.session_id.to_string()
     );
-    let renamed = routing::forward(
-        &directory,
-        &r,
-        RuntimeCommand::Rename {
-            command_id: Uuid::new_v4(),
-            expected_revision: snapshot.result["result"]["revision"].as_u64().unwrap(),
-            expires_at_ms: (chrono::Utc::now().timestamp_millis() + 60_000) as u64,
-            name: "Retained bound conversation".into(),
-        },
-    )
-    .await
-    .unwrap();
-    assert!(renamed.error.is_none());
-    assert_ne!(renamed.result["status"], "rejected");
+    assert_eq!(
+        snapshot.result["result"]["run"]["run_id"],
+        active_run.to_string()
+    );
+    assert_eq!(
+        snapshot.result["result"]["name"],
+        "Retained bound conversation"
+    );
     let stopped = service_request(
         &control,
         VesselCommand::Stop {
@@ -717,6 +896,13 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
     assert!(stopped.error.is_none(), "{:?}", stopped.error);
     assert!(guardian_record.read("stop.json".as_ref(), 4096).is_ok());
     assert!(wait(&mut guardian).await.success());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), provider_closed.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        "held provider socket did not observe runtime cancellation"
+    );
     assert!(cleanup_observed(&control, r.session_id, r.incarnation).unwrap());
     assert_eq!(
         service_request(
@@ -752,6 +938,13 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
             .incarnation,
         next.incarnation
     );
+    let restarted_run = active_turn(
+        &directory,
+        &next,
+        &mut provider_requests,
+        "guardian restarted active independence fixture",
+    )
+    .await;
     let duplicate = service_request(&control, restart.clone()).await;
     assert!(duplicate.error.is_none());
     assert_eq!(
@@ -789,6 +982,17 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
     assert!(overlap.error.is_some());
     service.kill().unwrap();
     service.wait().unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    assert!(cleanup_observed(&control, next.session_id, next.incarnation).is_err());
+    let independent = routing::forward(&directory, &next, RuntimeCommand::Snapshot)
+        .await
+        .unwrap();
+    assert!(independent.error.is_none());
+    assert_eq!(
+        independent.result["run"]["run_id"],
+        restarted_run.to_string()
+    );
+    assert_eq!(independent.result["run"]["state"], "running");
     let mut service = spawn_service();
     service_ready(&control, r.session_id, &mut service).await;
     let duplicate = service_request(&control, restart).await;
@@ -829,6 +1033,12 @@ async fn native_guardian_attests_pipe_launch_and_proves_descendant_cleanup() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(cleaned, "service-started guardian did not confirm cleanup");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), provider_closed.recv())
+            .await
+            .unwrap()
+            .unwrap()
+    );
     // Simulate a crash after atomic admission but before the launch effect.
     // Retrying its receipt must not invent a live owner or spawn again.
     let previous = database::registration(&control, next.session_id)
