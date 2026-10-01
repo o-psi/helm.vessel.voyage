@@ -911,15 +911,17 @@ fn reconcile(record: &mut Record) -> Result<()> {
             } else {
                 // Previous services can only reopen this original schema after
                 // a proved snapshot restoration, never an in-place downgrade.
-                let accounts = crate::legacy::accounts()?;
-                crate::legacy::eligible(
-                    &activation.state,
-                    &accounts,
-                    record
-                        .staging_root
-                        .as_deref()
-                        .context("Legacy staging unavailable")?,
-                )?;
+                let proof = record
+                    .legacy_proof
+                    .as_ref()
+                    .context("Pinned previous-state restoration proof unavailable")?;
+                ensure!(
+                    proof.state == activation.state
+                        && record.legacy_accounts.as_ref() == Some(&proof.accounts)
+                        && record.staging_root.as_ref() == Some(&proof.stage),
+                    "Pinned legacy source namespace changed"
+                );
+                crate::legacy::restored(proof)?;
             }
             crate::legacy::clear(&activation.state, &record.operation_id)?;
         }

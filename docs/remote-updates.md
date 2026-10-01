@@ -19,6 +19,13 @@ The exact declarations are retained separately from the legacy package ID and
 rechecked before publication; old ready receipts without those pins refuse apply.
 Missing declarations are unknown compatibility, not permission to migrate.
 
+The shipped v1.0.2 Web updater invokes its installed old installer, which has no
+handoff to the candidate implementation. The new quiescent mechanism therefore
+requires an explicitly invoked current trusted installer maintenance/bootstrap
+entry. An unmodified old Web prepare/apply path must not be presented as repaired
+merely because a candidate archive contains the new code. Normal installer entry
+integration and native bootstrap qualification remain delivery obligations.
+
 ### Supported quiescent v1.0.2 handover
 
 The shipped v1.0.2 supervisor accepts catalogue schema 1 and Voyage journal

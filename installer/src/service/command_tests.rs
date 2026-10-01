@@ -54,3 +54,35 @@ fn query_uses_exact_property_protocol() {
     assert_eq!(query("MainPID").unwrap(), "42");
     f.done();
 }
+
+#[test]
+fn private_helper_inherits_exact_held_ownership_description_until_exit() {
+    let f = crate::fixture_tests::Fixture::new();
+    let path = f.root.join("owned-lease");
+    let lease = crate::install::files::lock(&path).unwrap();
+    let output = run_with_leases(
+        Path::new("/usr/bin/python3"),
+        &[
+            "-I",
+            "-c",
+            r#"import os,fcntl,sys
+fds=[int(v) for v in os.environ['LEGACY_UPDATE_LOCK_FDS'].split(',')]
+assert len(fds)==1
+fcntl.flock(fds[0],fcntl.LOCK_EX|fcntl.LOCK_NB)
+other=os.open(sys.argv[1],os.O_RDWR)
+try:
+ try:fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ except BlockingIOError:print('exact-lease-held')
+ else:raise AssertionError('ownership not retained')
+finally:os.close(other)
+"#,
+            path.to_str().unwrap(),
+        ],
+        None,
+        &[&lease],
+    )
+    .unwrap();
+    assert_eq!(output, b"exact-lease-held\n");
+    drop(lease);
+    crate::install::files::lock(&path).unwrap();
+}

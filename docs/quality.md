@@ -1416,6 +1416,15 @@ extras and non-null peer bindings refuse. Fixture DDL is frozen from published
 tag v1.0.2; restoration asserts the pinned SQLite snapshot hash plus original
 canonical rows/schema, not an assumed identical pre-backup file header.
 
+Previous-pointer legacy reconciliation requires the exact recorded source/account
+namespace and a positively pinned snapshot-restored marker with schema1 and every
+private/canonical claim; freshly eligible state is insufficient. Reconciliation
+only observes and never restores or reapplies. Legacy helpers inherit duplicate
+OFD ownership leases and Linux parent-death termination, retaining exclusion until
+actual helper exit even if the updater dies. Guardian evidence follows the shipped
+strict boot/lock contract; an empty failed startup requires its explicit authored
+`startup_failed` cleanup proof, not an empty-database assumption.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its

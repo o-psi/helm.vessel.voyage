@@ -24,6 +24,16 @@ fn inspect(
     stage: &Path,
     expected: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value> {
+    inspect_leased(action, state, accounts, stage, expected, &[])
+}
+fn inspect_leased(
+    action: &str,
+    state: &Path,
+    accounts: &Path,
+    stage: &Path,
+    expected: Option<&serde_json::Value>,
+    leases: &[&File],
+) -> Result<serde_json::Value> {
     for path in [state, accounts, stage] {
         files::safe(path)?;
     }
@@ -32,7 +42,7 @@ fn inspect(
         expected.as_ref().is_none_or(|bytes| bytes.len() <= 65536),
         "Pinned legacy proof exceeds bound"
     );
-    let output = crate::service::command::run(
+    let output = crate::service::command::run_with_leases(
         Path::new("/usr/bin/python3"),
         &[
             "-I",
@@ -44,6 +54,7 @@ fn inspect(
             stage.to_str().context("Stage path encoding")?,
         ],
         expected.as_deref(),
+        leases,
     )?;
     let evidence: serde_json::Value = serde_json::from_slice(&output)?;
     ensure!(
@@ -108,13 +119,16 @@ pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard
         ensure!(!id.is_nil(), "Nil legacy session");
         let directory = state.join("sessions").join(id.to_string());
         sessions.push(files::lock(&directory.join("startup.lock"))?);
+        sessions.push(files::lock(&directory.join("guardian.lock"))?);
         sessions.push(files::lock(
             &directory
                 .join("journal")
                 .join(format!("{id}.execution.lock")),
         )?);
     }
-    let mut evidence = inspect("snapshot", state, accounts, stage, None)?;
+    let mut leases = sessions.iter().collect::<Vec<_>>();
+    leases.push(&supervisor);
+    let mut evidence = inspect_leased("snapshot", state, accounts, stage, None, &leases)?;
     ensure!(
         first["sessions"] == evidence["sessions"],
         "Legacy ownership inventory changed"
@@ -139,13 +153,35 @@ impl Guard {
         self.supervisor.take();
     }
     pub fn verify(&self) -> Result<()> {
-        verify(&self.proof)
+        let mut leases = self._sessions.iter().collect::<Vec<_>>();
+        if let Some(supervisor) = &self.supervisor {
+            leases.push(supervisor);
+        }
+        inspect_leased(
+            "verify",
+            &self.proof.state,
+            &self.proof.accounts,
+            &self.proof.stage,
+            Some(&self.proof.evidence),
+            &leases,
+        )
+        .map(|_| ())
     }
     pub fn restore(&mut self) -> Result<()> {
         if self.supervisor.is_none() {
             self.supervisor = Some(files::lock(&self.proof.state.join("supervisor.lock"))?);
         }
-        restore(&self.proof)
+        let mut leases = self._sessions.iter().collect::<Vec<_>>();
+        leases.push(self.supervisor.as_ref().unwrap());
+        inspect_leased(
+            "restore",
+            &self.proof.state,
+            &self.proof.accounts,
+            &self.proof.stage,
+            Some(&self.proof.evidence),
+            &leases,
+        )
+        .map(|_| ())
     }
 }
 pub(crate) fn verify(proof: &Proof) -> Result<()> {
@@ -167,16 +203,6 @@ pub(crate) fn verify(proof: &Proof) -> Result<()> {
         );
     }
     Ok(())
-}
-pub(crate) fn restore(proof: &Proof) -> Result<()> {
-    inspect(
-        "restore",
-        &proof.state,
-        &proof.accounts,
-        &proof.stage,
-        Some(&proof.evidence),
-    )
-    .map(|_| ())
 }
 pub(crate) fn fence(state: &Path, operation: &str, previous: &str, candidate: &str) -> Result<()> {
     let path = state.join("update-quarantine.json");
@@ -203,3 +229,14 @@ pub(crate) fn clear(state: &Path, operation: &str) -> Result<()> {
 #[cfg(test)]
 #[path = "legacy_tests.rs"]
 mod tests;
+
+pub(crate) fn restored(proof: &Proof) -> Result<()> {
+    inspect(
+        "verify-restored",
+        &proof.state,
+        &proof.accounts,
+        &proof.stage,
+        Some(&proof.evidence),
+    )
+    .map(|_| ())
+}

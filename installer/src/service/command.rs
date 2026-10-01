@@ -8,7 +8,28 @@ use std::{
     time::{Duration, Instant},
 };
 pub(crate) fn run(program: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>> {
-    let mut child = Command::new(program)
+    run_with_leases(program, args, input, &[])
+}
+pub(crate) fn run_with_leases(
+    program: &Path,
+    args: &[&str],
+    input: Option<&[u8]>,
+    leases: &[&std::fs::File],
+) -> Result<Vec<u8>> {
+    use std::os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::process::CommandExt,
+    };
+    let mut inherited = Vec::new();
+    for lease in leases {
+        let descriptor = unsafe { libc::fcntl(lease.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 64) };
+        ensure!(descriptor >= 0, "Cannot duplicate helper ownership lease");
+        inherited.push(unsafe { OwnedFd::from_raw_fd(descriptor) });
+    }
+    let descriptors = inherited.iter().map(AsRawFd::as_raw_fd).collect::<Vec<_>>();
+    let parent = std::process::id() as libc::pid_t;
+    let mut command = Command::new(program);
+    command
         .args(args)
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -16,9 +37,38 @@ pub(crate) fn run(program: &Path, args: &[&str], input: Option<&[u8]>) -> Result
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if !descriptors.is_empty() {
+        command.env(
+            "LEGACY_UPDATE_LOCK_FDS",
+            descriptors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        // Child inherits exact OFD leases. Parent death kills it before another
+        // supervisor can proceed; leases remain held until observed child exit.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0
+                    || libc::getppid() != parent
+                {
+                    return Err(std::io::Error::other("Helper parent no longer owned"));
+                }
+                for descriptor in &descriptors {
+                    if libc::fcntl(*descriptor, libc::F_SETFD, 0) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+    let mut child = command
         .spawn()
         .with_context(|| format!("Cannot execute {}", program.display()))?;
+    drop(inherited);
     let stdout = child.stdout.take().context("child stdout missing")?;
     let stderr = child.stderr.take().context("child stderr missing")?;
     let (send, receive) = mpsc::channel();

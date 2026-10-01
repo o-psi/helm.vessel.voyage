@@ -46,6 +46,27 @@ def canonical(db):
             raise ValueError('new execution authority prevents legacy rollback')
     return sha.hexdigest()
 
+def leased(path):
+    import fcntl
+    info=path.stat()
+    descriptors=os.environ.get('LEGACY_UPDATE_LOCK_FDS','').split(',')
+    if len(descriptors)>16385:raise ValueError('helper lease bound exceeded')
+    for raw in descriptors:
+        if not raw:continue
+        descriptor=int(raw); held=os.fstat(descriptor)
+        if (info.st_dev,info.st_ino)==(held.st_dev,held.st_ino):
+            fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            return True
+    return False
+
+def guardian_idle(directory):
+    import fcntl
+    path=directory/'guardian.lock'
+    if path.exists() and leased(path):return
+    fd=os.open(path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+    try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    finally:os.close(fd)
+
 def inventory(state, db):
     rows = db.execute('SELECT session_id,registration FROM voyages ORDER BY session_id').fetchall()
     if len(rows) > 4096: raise ValueError('ordinary voyage bound exceeded')
@@ -59,12 +80,23 @@ def inventory(state, db):
         directory = state/'sessions'/session
         stopped = json.loads(checked(directory/'stopped.json', 65536))
         guardian = json.loads(checked(directory/('guardian-'+registration['incarnation']+'.json'),65536))
-        if any(record.get('session_id') != session or record.get('incarnation') != registration['incarnation'] or record.get('cleanup_observed') is not True for record in (stopped, guardian)):
+        guardian_idle(directory)
+        if set(guardian)!={'session_id','incarnation','boot_id','cleanup_observed'}:
+            raise ValueError('strict guardian evidence unavailable')
+        uuid.UUID(guardian['boot_id'])
+        current_boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        guardian_clean=guardian['cleanup_observed'] is True or guardian['boot_id']!=current_boot
+        if stopped.get('session_id')!=session or stopped.get('incarnation')!=registration['incarnation'] or stopped.get('cleanup_observed') is not True or not guardian_clean:
+            raise ValueError('ordinary voyage cleanup is not observed')
+        if any(record.get('session_id') != session or record.get('incarnation') != registration['incarnation'] for record in (stopped, guardian)):
             raise ValueError('ordinary voyage cleanup is not observed')
         journal = database(directory/'journal/journal.sqlite3')
         version = journal.execute('SELECT version FROM attachment_schema WHERE id=1').fetchone()[0]
-        if journal.execute('SELECT count(*) FROM sessions WHERE id=?',(session,)).fetchone()[0] != 1:
-            raise ValueError('legacy journal session identity missing')
+        owned=journal.execute('SELECT count(*) FROM sessions WHERE id=?',(session,)).fetchone()[0]
+        if owned!=1:
+            empty=journal.execute('SELECT count(*) FROM sessions').fetchone()[0]==0 and all(journal.execute('SELECT count(*) FROM '+table).fetchone()[0]==0 for table in ('runs','commands','events'))
+            if not empty or stopped.get('startup_failed') is not True:
+                raise ValueError('legacy journal session identity missing')
         if not 2 <= version <= 12 or journal.execute('SELECT count(*) FROM runs WHERE active=1').fetchone()[0]:
             raise ValueError('legacy journal or active run prevents update')
         journal.close()
@@ -141,8 +173,15 @@ def run(action,state,accounts,stage):
     if any(current[key]!=expected[key] for key in current if key!='sessions') or current['sessions']!=saved['sessions']:
         raise ValueError('post-snapshot state changed; legacy restore refused')
     current['backup_sha256']=actual_backup
+    if action=='verify-restored':
+        if version!=1:raise ValueError('previous snapshot schema not restored')
+        restored=json.loads(checked(stage/'legacy-restored.json',65536))
+        if restored!=expected:raise ValueError('previous snapshot restoration marker not pinned')
+        return current
     if action=='verify':return current
     if action!='restore':raise ValueError('unsupported legacy proof operation')
+    if not leased(state/'supervisor.lock') or any(not leased(state/'sessions'/session/'startup.lock') or not leased(state/'sessions'/session/'guardian.lock') or not leased(state/'sessions'/session/'journal'/(session+'.execution.lock')) for session in current['sessions']):
+        raise ValueError('helper-held restoration ownership unavailable')
     db.close()
     # Caller holds supervisor/startup/execution locks and proved every writer stopped.
     # Restore the original SQLite snapshot, never mutate a schema-version row.
@@ -153,6 +192,10 @@ def run(action,state,accounts,stage):
     sidecar=state/'catalogue.sqlite3-journal'
     if sidecar.exists():checked(sidecar,512*1024*1024);sidecar.unlink()
     fd=os.open(state,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
+    marker=stage/'legacy-restored.json'
+    descriptor=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
+    with os.fdopen(descriptor,'w') as stream:json.dump(expected,stream,sort_keys=True);stream.flush();os.fsync(stream.fileno())
+    fd=os.open(stage,os.O_RDONLY|os.O_DIRECTORY);os.fsync(fd);os.close(fd)
     return current
 
 if __name__=='__main__':

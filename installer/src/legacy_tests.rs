@@ -183,3 +183,49 @@ fn any_registration_projection_authority_extra_is_refused_without_catalogue_rest
         );
     }
 }
+
+#[test]
+fn previous_pointer_observation_requires_pinned_restored_marker_and_original_namespace() {
+    let f = Fixture::new();
+    let (state, accounts, stage) = setup(&f);
+    let mut guard = begin(&state, &accounts, &stage).unwrap();
+    assert!(restored(&guard.proof).is_err()); // Eligible schema1 alone is insufficient.
+    guard.permit_supervisor();
+    sql(
+        &state,
+        "CREATE TABLE execution_identities(id TEXT); UPDATE schema_version SET version=2;",
+    );
+    guard.restore().unwrap();
+    let proof = guard.proof.clone();
+    drop(guard);
+    restored(&proof).unwrap();
+    let previous = files::hash(&state.join("catalogue.sqlite3")).unwrap();
+    let marker = stage.join("legacy-restored.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&marker).unwrap()).unwrap();
+    value["backup_sha256"] = "f".repeat(64).into();
+    std::fs::write(marker, serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(restored(&proof).is_err());
+    assert_eq!(
+        files::hash(&state.join("catalogue.sqlite3")).unwrap(),
+        previous
+    );
+}
+
+#[test]
+fn positively_empty_failed_startup_is_eligible_but_unknown_empty_journal_is_refused() {
+    for proved in [false, true] {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        let directory = state.join("sessions/11111111-1111-4111-8111-111111111111");
+        crate::service::command::run(Path::new("/usr/bin/python3"),&["-I","-c","import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('DELETE FROM sessions'); c.commit()",directory.join("journal/journal.sqlite3").to_str().unwrap()],None).unwrap();
+        if proved {
+            let path = directory.join("stopped.json");
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            value["startup_failed"] = true.into();
+            std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+        }
+        assert_eq!(eligible(&state, &accounts, &stage).is_ok(), proved);
+    }
+}
