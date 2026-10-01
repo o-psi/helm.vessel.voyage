@@ -3,7 +3,7 @@
 use super::super::family_fixture::*;
 use super::*;
 use serde_json::json;
-use voyage_protocol::{execution_budget::*, goals::*, process::RuntimeCommand};
+use voyage_protocol::{goals::*, process::RuntimeCommand};
 
 async fn active_goal(f: &Fixture) {
     f.owner
@@ -119,7 +119,7 @@ async fn idle_goal_wrappers_are_read_only_and_do_not_manufacture_a_meter_or_repo
     for limit in [0, 129] {
         assert!(f.owner.goal_allocations(0, limit).await.is_err());
     }
-    let (_, mut run) = f.running().await;
+    let (_, run) = f.running().await;
     assert!(f.owner.goal_tool(run.run_id).await.unwrap().is_none());
     run.finish_operator(Ok("ordinary non-Goal".into()), false)
         .await
@@ -139,7 +139,7 @@ async fn idle_goal_wrappers_are_read_only_and_do_not_manufacture_a_meter_or_repo
 async fn goal_reservation_and_meter_are_incarnation_bound_one_use_and_human_pause_revokes_continuation()
  {
     let f = Fixture::new().await;
-    let (command, mut run, _) = reserved(&f).await;
+    let (command, run, _) = reserved(&f).await;
     assert!(
         f.owner
             .begin_execution_meter(command, Uuid::new_v4(), None)
@@ -197,7 +197,7 @@ async fn goal_reservation_and_meter_are_incarnation_bound_one_use_and_human_paus
 #[tokio::test]
 async fn observed_usage_settles_once_without_declaring_the_objective_complete() {
     let f = Fixture::new().await;
-    let (command, mut run, observer) = reserved(&f).await;
+    let (command, run, observer) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await
@@ -251,7 +251,7 @@ async fn observed_usage_settles_once_without_declaring_the_objective_complete() 
 async fn incomplete_usage_and_unobserved_cleanup_fence_automatic_continuation_without_refunding_uncertainty()
  {
     let f = Fixture::new().await;
-    let (command, mut run, observer) = reserved(&f).await;
+    let (command, run, observer) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await
@@ -290,7 +290,7 @@ async fn incomplete_usage_and_unobserved_cleanup_fence_automatic_continuation_wi
 #[tokio::test]
 async fn allocation_and_nonadmission_close_are_exact_destination_and_receipt_bound() {
     let f = Fixture::new().await;
-    let (command, mut run, observer) = reserved(&f).await;
+    let (command, run, observer) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await
@@ -353,7 +353,7 @@ async fn allocation_and_nonadmission_close_are_exact_destination_and_receipt_bou
 async fn child_dispatch_is_pinned_before_effect_and_changed_payload_or_unknown_closure_fails() {
     use voyage_protocol::vessel::VoyageCommand;
     let f = Fixture::new().await;
-    let (command, mut run, observer) = reserved(&f).await;
+    let (command, run, observer) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await
@@ -398,7 +398,7 @@ async fn child_dispatch_is_pinned_before_effect_and_changed_payload_or_unknown_c
 #[tokio::test]
 async fn child_usage_attribution_is_immutable_and_late_observation_cannot_restore_authority() {
     let f = Fixture::new().await;
-    let (command, mut run, observer) = reserved(&f).await;
+    let (command, run, observer) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await
@@ -506,7 +506,7 @@ async fn offline_goal_fence_and_explicit_stop_preserve_objective_and_never_enabl
 #[tokio::test]
 async fn goal_report_read_cannot_change_control_and_report_requires_current_canonical_evidence() {
     let f = Fixture::new().await;
-    let (command, mut run, _) = reserved(&f).await;
+    let (command, run, _) = reserved(&f).await;
     f.owner
         .begin_execution_meter(command, f.incarnation, None)
         .await

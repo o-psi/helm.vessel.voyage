@@ -56,7 +56,7 @@ async fn admission_observes_exact_delivery_without_reentering_preparation_or_all
 async fn invalid_clock_and_preparation_failure_do_not_reserve_a_command_or_canonical_input() {
     let f = Fixture::new().await;
     for clock in [
-        Arc::new(|| Ok(-1)) as Arc<dyn RuntimeClock>,
+        Arc::new(|| -> anyhow::Result<i64> { Ok(-1) }) as Arc<dyn RuntimeClock>,
         Arc::new(|| Err(anyhow::anyhow!("synthetic unavailable clock"))),
         Arc::new(|| Ok(i64::MAX)),
     ] {
