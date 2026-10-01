@@ -149,3 +149,52 @@ fn system_acquisition_uses_explicit_home_public_mode_and_fixed_environment() {
     drop(prepared);
     assert!(prepare_public(Source::Latest, &AtomicBool::new(true), f.root.clone()).is_err());
 }
+
+#[test]
+fn acquired_metadata_bounds_and_lexical_escape_refuse_and_clean_only_owned_stage() {
+    let f = Fixture::new();
+    let sentinel = f.root.join("unrelated-sentinel");
+    std::fs::write(&sentinel, b"preserve").unwrap();
+    for suffix in [
+        "(root/'prepared.json').write_bytes(b'x'*65537)",
+        "(root/'prepared.json').write_text(json.dumps({'bin_dir':str(root/'../outside'),'description':'escape'}))",
+        "(root/'release.json').write_bytes(b'x'*1048577)",
+        "(binary/'helm').unlink(); (binary/'helm').symlink_to('/bin/sh')",
+        "(root/'prepared.json').unlink(); (root/'prepared.json').symlink_to('/etc/passwd')",
+    ] {
+        set_acquire(&format!("{SUCCESS}\n{suffix}"));
+        assert!(prepare(Source::Latest, &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            std::fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"preserve");
+    }
+}
+
+#[test]
+fn acquired_release_identity_contract_rejection_leaves_no_usable_preparation() {
+    let f = Fixture::new();
+    for changes in [
+        "manifest['schema_version']=2",
+        "manifest['target']='wrong-platform'",
+        "manifest['binaries'].pop('voyage')",
+        "manifest['binaries']['helm']['sha256']='g'*64",
+        "manifest['version']='invalid\\nversion'",
+        "manifest['assets']={'share/voyage/browser/worker.mjs':{'sha256':'a'*64}}",
+    ] {
+        set_acquire(&format!(
+            "{SUCCESS}\nmanifest=json.loads((root/'release.json').read_text())\n{changes}\n(root/'release.json').write_text(json.dumps(manifest))"
+        ));
+        assert!(prepare(Source::Nightly, &AtomicBool::new(false)).is_err());
+        assert_eq!(
+            std::fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+                .unwrap()
+                .count(),
+            0
+        );
+    }
+    cleanup_result().unwrap();
+}

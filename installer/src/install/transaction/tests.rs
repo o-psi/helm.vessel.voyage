@@ -405,3 +405,6 @@ fn browser_assets_are_verified_staged_and_bound_to_release_identity() {
     manifest.assets.remove("share/voyage/browser/worker.mjs");
     assert!(manifest.validate().is_err());
 }
+
+#[path = "release_boundary_tests.rs"]
+mod release_boundary_tests;

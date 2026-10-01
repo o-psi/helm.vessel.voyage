@@ -1291,3 +1291,23 @@ or successful voyage launch. SQLite foreign-key protections make invalid event
 session references unreachable through supported catalogue writers; tests retain
 those protections. Serialization and allocator/OS failures still require separate
 fault evidence, rather than invented passing outcomes or denominator exclusions.
+
+### Ordinary installer release and acquisition refusal cases
+
+`install::transaction::tests::release_boundary_tests` extends the existing owned
+fixture with complete browser inventories, manifest/platform/hash bounds, source
+format readability and identity stability, reuse of a matching interrupted copy,
+changed source/partial browser refusal, installed permission/hash/link refusal and
+sparse oversized asset rejection before allocation/publication. The tests retain
+publication pointers and unfinished stage evidence on refusal; exact verified
+browser assets survive ordinary publication. System release staging is separate.
+
+`source::tests` also supplies malformed/oversized acquired metadata, changed release
+contracts and symlink/lexical escape sources through the existing offline Python
+acquisition fixture. Each failure must remove only its owned staging directory
+and preserve an unrelated sentinel. No public download, service-manager command,
+Root installation, or real provider request is made. This cohort does not establish
+Root/native service outcomes or interactive installer consent. Real acquisition
+timeouts, unobservable OS cleanup failures and foreign-UID filesystem failures
+remain separately observable gates; tests do not shorten production deadlines or
+exclude their source from the coverage denominator.
