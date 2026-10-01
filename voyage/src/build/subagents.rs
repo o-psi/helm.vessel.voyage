@@ -469,3 +469,7 @@ mod approval_outcome_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "subagents_family_tests.rs"]
+mod subagents_family_tests;
