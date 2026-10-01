@@ -2,7 +2,9 @@
 
 Runs two real Vessel-supervised voyages, scripted provider, loopback website and
 Chromium DOM viewers, then real automatic suspension and fresh native/Web
-owner preparation with replayed pages and explicit close. Evidence stays in a private temporary directory. Requires
+owner preparation, client file/tab/scroll controls and an isolated adverse phase.
+The latter kills only the fixture's identity-checked browser worker and briefly
+withholds its actual guardian evidence before explicit cleanup. Evidence stays in a private temporary directory. Requires
 existing playwright-core and ws; never installs dependencies. Nonzero on any
 journey/cleanup failure; pre-teardown status is retained separately from cleanup.
 """
@@ -16,12 +18,15 @@ import os
 from pathlib import Path
 import signal
 import socket
+import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
 import time
 import traceback
 import urllib.request
+import urllib.parse
 import uuid
 
 from ui_journeys import launch as launch_tui, screen, send, pty_helpers
@@ -47,6 +52,33 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.visits.append(self.path)
+        route = urllib.parse.urlsplit(self.path)
+        if route.path == '/fixture-counter':
+            label = urllib.parse.parse_qs(route.query, strict_parsing=True).get('label', [''])[0]
+            assert label in ('adverse-native', 'adverse-other')
+            data = json.dumps({'count': self.server.counter_updates.get(label, 0)}).encode()
+            self.send_response(200); self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        if route.path.startswith('/ui/'):
+            label = route.path.removeprefix('/ui/')
+            assert label in ('local-owner', 'access-file', 'web-access-file', 'adverse-native', 'adverse-other')
+            data = ('''<!doctype html><title>Synthetic UI ''' + label + '''</title>
+<style>body{font:16px sans-serif;margin:16px;min-height:2400px}#scroll-result{position:fixed;right:12px;top:8px;background:white}</style>
+<h1>Synthetic voyage browser</h1><p id="scroll-anchor">Scroll the task page</p>
+<button id="counter" onclick="document.querySelector('#count').textContent=String(++window.fixtureCount);if(window.fixtureCounterLabel)fetch('/fixture-counter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({label:window.fixtureCounterLabel,count:window.fixtureCount})})">Increment task counter</button>
+<output id="count">0</output><script>window.fixtureCount=0</script>
+<label>Upload fixture file <input id="upload" type="file" onchange="const f=this.files[0];if(f)f.text().then(text=>document.querySelector('#upload-result').textContent=f.name+'|'+text)"></label>
+<output id="upload-result"></output><a href="/ui-download?label=''' + label + '''">Download fixture bytes</a>
+<output id="scroll-result">Scrolled:0</output>
+<script>window.fixtureCounterLabel=''' + json.dumps(label if label.startswith('adverse-') else None) + ''';addEventListener('scroll',()=>document.querySelector('#scroll-result').textContent='Scrolled:'+Math.round(scrollY))</script>''').encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        if route.path == '/ui-download':
+            label = urllib.parse.parse_qs(route.query, strict_parsing=True).get('label', [''])[0]
+            assert label in ('local-owner', 'access-file', 'web-access-file', 'adverse-native', 'adverse-other')
+            data = ('SYNTHETIC_BROWSER_FILE_333:'+label+'\n').encode()
+            self.send_response(200); self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="fixture-'+label+'.txt"')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
         if self.path == '/site-classes':
             data = ('''<!doctype html><title>Site classes</title>
 <link rel="stylesheet" href="/site.css"><h1>Synthetic voyage browser</h1>
@@ -98,8 +130,33 @@ document.cookie='fixture_asset=allowed; SameSite=Lax';</script>
         self.wfile.write(data)
 
     def do_POST(self):
+        length = int(self.headers.get('Content-Length', '0'))
+        if not 0 < length <= 4*1024*1024:
+            self.send_error(413); return
+        if self.path == '/fixture-counter':
+            assert length <= 256
+            value = json.loads(self.rfile.read(length))
+            assert set(value) == {'label', 'count'} and value['label'] in ('adverse-native', 'adverse-other')
+            assert isinstance(value['count'], int) and not isinstance(value['count'], bool) and 0 <= value['count'] <= 8
+            self.server.counter_updates[value['label']] = max(self.server.counter_updates.get(value['label'], 0), value['count'])
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers(); return
+        if self.path == '/fixture-control':
+            if length > 4096 or self.headers.get('Authorization') != 'Bearer '+getattr(self.server, 'control_token', ''):
+                self.send_error(403); return
+            try:
+                result = self.server.fixture_control(json.loads(self.rfile.read(length)))
+                data = json.dumps(result).encode()
+                self.send_response(200)
+            except Exception:
+                # The private root report retains the failure. Never return
+                # process paths, tokens, page content or a Python traceback.
+                self.server.control_failed = True
+                data = b'{"error":"fixture control refused"}'
+                self.send_response(500)
+            self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(data)))
+            self.end_headers(); self.wfile.write(data); return
         try:
-            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            body = json.loads(self.rfile.read(length))
             label = next(m['content'] for m in body['messages'] if m['role'] == 'user')
             assert label in ('orchard', 'harbor'), label
             self.server.requests.append(body)
@@ -200,7 +257,13 @@ def main():
     directory = root/'vessel'
     report = {'sessions': [], 'pre_teardown': [], 'cleanup': {},
               'binary_sha256': {name: hashlib.file_digest((binaries/name).open('rb'), 'sha256').hexdigest()
-                                for name in ('helm', 'vessel', 'voyage')}}
+                                for name in ('helm', 'vessel', 'voyage')},
+              'source_sha256': {name: hashlib.sha256((repo/name).read_bytes()).hexdigest() for name in
+                               ('voyage/tests/host_browser.py', 'voyage/tests/host_browser_viewer.mjs',
+                                'voyage/browser/worker.mjs', 'helm/browser-view/viewer.mjs')},
+              'web_source_sha256': {name: hashlib.sha256((web_resources/name).read_bytes()).hexdigest()
+                                   for name in ('host-browser.js', 'vessel-client.js', 'connection-diagnostics.js')}}
+    fixture_principals = {}
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fixture)
     server.modules = {'/viewer.css': repo/'helm/browser-view/viewer.css', '/viewer.mjs': repo/'helm/browser-view/viewer.mjs',
                       '/helm/browser-view/viewer.mjs': repo/'helm/browser-view/viewer.mjs'}
@@ -220,6 +283,8 @@ def main():
     child_thread = threading.Thread(target=child_server.serve_forever, daemon=True); child_thread.start()
     server.agent_interactions = args.agent_interactions
     server.requests, server.errors, server.visits, server.arrived = [], [], [], {}
+    server.control_token, server.control_failed = uid(), False
+    server.counter_updates = {}
     server.release = threading.Event()
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
     log = (root/'vessel.log').open('wb')
@@ -267,6 +332,131 @@ def main():
                 except (OSError, ProcessLookupError):
                     pass
         return found
+
+    # Fixture-only adverse control. Requests have no arbitrary path, PID,
+    # signal or script parameter. A pidfd and proc starttime bind the one
+    # worker effect to this private fixture's selected Voyage.
+    adverse = {}
+
+    def private_bytes(path, limit=4096):
+        metadata = path.lstat()
+        assert stat.S_ISREG(metadata.st_mode) and metadata.st_uid == os.getuid()
+        assert metadata.st_nlink == 1 and not metadata.st_mode & 0o077 and metadata.st_size <= limit
+        assert path.resolve() == path and path.is_relative_to(root)
+        return path.read_bytes()
+
+    def process_identity(pid):
+        try:
+            fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+            return fields[19], fields[0]
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+
+    def fixture_control(command):
+        action = command.get('action')
+        expected_keys = {'action', 'session', 'command_id'} if action in ('pin-saved-receipt', 'check-saved-receipt') else {'action', 'session'}
+        assert set(command) == expected_keys
+        session = command['session']
+        assert session in [item['session'] for item in report['sessions']]
+        worker_root = directory/'sessions'/session/'journal'/'host-browser'
+        marker, held = worker_root/'guardian-cleanup.json', worker_root/'guardian-cleanup.fixture-held.json'
+        if action == 'crash-worker':
+            assert session not in adverse, 'fixture crash is one-shot'
+            lock_bytes = private_bytes(worker_root/'worker.lock')
+            lock = json.loads(lock_bytes)
+            pid = lock['pid']; assert isinstance(pid, int) and 1 < pid < 2**31
+            identity = process_identity(pid); assert identity and identity[1] != 'Z'
+            fd = os.pidfd_open(pid)
+            try:
+                now = process_identity(pid)
+                assert now and now[0] == identity[0] and now[1] != 'Z'
+                args_now = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+                assert args_now[:2] == [os.fsencode(args.node.resolve()), os.fsencode(repo/'voyage/browser/worker.mjs')]
+                environment = Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+                assert b'HOME='+os.fsencode(worker_root) in environment
+                scratch = Path(os.fsdecode(next(value.removeprefix(b'TMPDIR=') for value in environment if value.startswith(b'TMPDIR='))))
+                scratch_meta = scratch.lstat()
+                assert scratch.parent == Path('/tmp') and scratch.name.startswith('vhb-')
+                assert stat.S_ISDIR(scratch_meta.st_mode) and scratch_meta.st_uid == os.getuid() and not scratch_meta.st_mode & 0o077
+                tracked = {}
+                for candidate in Path('/proc').iterdir():
+                    if candidate.name.isdecimal():
+                        try:
+                            if b'HOME='+os.fsencode(worker_root) in (candidate/'environ').read_bytes().split(b'\0'):
+                                seen = process_identity(int(candidate.name))
+                                if seen: tracked[int(candidate.name)] = seen[0]
+                        except OSError:
+                            pass
+                adverse[session] = {'worker': pid, 'start': identity[0], 'scratch': scratch, 'tracked': tracked,
+                    'lock_sha256': hashlib.sha256(lock_bytes).hexdigest()}
+                now = process_identity(pid)
+                assert now and now[0] == identity[0] and now[1] != 'Z'
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+            finally:
+                os.close(fd)
+            wait(lambda: marker.exists(), 12)
+            return {'worker_signal_sent': True, 'guardian_marker_written': True}
+        assert session in adverse
+        if action in ('pin-saved-receipt', 'check-saved-receipt'):
+            command_id = str(uuid.UUID(command['command_id']))
+            assert command_id == command['command_id'] and command_id != str(uuid.UUID(int=0))
+            database = worker_root/'receipts.sqlite3'
+            # This is direct fixture storage observation, not a public saved-
+            # receipt API or permission to prepare a replacement owner.
+            private_bytes(database, 16*1024*1024)
+            connection = sqlite3.connect(database.as_uri()+'?mode=ro', uri=True, timeout=1.0)
+            try:
+                connection.execute('PRAGMA query_only=ON')
+                row = connection.execute('SELECT principal,digest,state FROM receipts WHERE id=?', (command_id,)).fetchone()
+            finally:
+                connection.close()
+            assert row is not None and row[0] == fixture_principals[session]
+            assert len(row[1]) == 64 and all(char in '0123456789abcdef' for char in row[1])
+            assert row[2] == 'unknown'
+            saved = (command_id, *row)
+            if action == 'pin-saved-receipt':
+                assert 'saved_receipt' not in adverse[session]
+                adverse[session]['saved_receipt'] = saved
+            else:
+                assert saved == adverse[session]['saved_receipt'], 'original exact receipt changed'
+            return {'state': 'unknown', 'original_principal_matches': True,
+                    'exact_receipt_unchanged': action == 'check-saved-receipt', 'read_only_storage': True}
+        if action == 'withhold-cleanup':
+            assert not held.exists()
+            record = private_bytes(marker)
+            value = json.loads(record)
+            assert all(value.get(key) is True for key in ('observed', 'cleanup_complete', 'descendants_terminated', 'descendants_reaped', 'temporary_cleaned'))
+            adverse[session]['marker_sha256'] = hashlib.sha256(record).hexdigest()
+            adverse[session]['marker_identity'] = (marker.stat().st_dev, marker.stat().st_ino)
+            marker.rename(held)
+            return {'cleanup_evidence_withheld': True}
+        if action == 'restore-cleanup':
+            record = private_bytes(held)
+            assert not marker.exists()
+            assert hashlib.sha256(record).hexdigest() == adverse[session]['marker_sha256']
+            assert (held.stat().st_dev, held.stat().st_ino) == adverse[session]['marker_identity']
+            held.rename(marker)
+            return {'same_cleanup_evidence_restored': True}
+        assert action == 'cleanup-state'
+        live = zombies = 0
+        for pid, start in adverse[session]['tracked'].items():
+            now = process_identity(pid)
+            if now and now[0] == start:
+                if now[1] == 'Z': zombies += 1
+                else: live += 1
+        capacity = Path(env['XDG_DATA_HOME'])/'helm'/'host-browser-capacity'
+        slots = sum(private_bytes(path, 128).decode() == session for path in capacity.glob('browser-slot-*'))
+        record = json.loads(private_bytes(marker)) if marker.exists() else None
+        lock = worker_root/'worker.lock'
+        return {'live_owned_browser_processes': live, 'owned_browser_zombies': zombies,
+                'scratch_removed': not adverse[session]['scratch'].exists(),
+                'worker_lock_retained': lock.exists(),
+                'worker_lock_unchanged': lock.exists() and hashlib.sha256(private_bytes(lock)).hexdigest() == adverse[session]['lock_sha256'],
+                'cleanup_evidence_available': record is not None, 'capacity_slots_retained': slots,
+                'guardian_observed': record.get('observed') if record else False,
+                'external_actions_reconciled': record.get('external_actions_reconciled') if record else False}
+
+    server.fixture_control = fixture_control
 
     try:
         for name in ('helm', 'vessel', 'voyage'):
@@ -321,8 +511,9 @@ def main():
             (root/(item['label']+'-inspect.json')).write_text(json.dumps(inspection, indent=2))
             item['incarnation'] = inspection['incarnation']
             access = root/(item['label']+'-access.json')
+            fixture_principals[item['session']] = uid()
             cli('process-grant', '--directory', str(directory), '--output', str(access),
-                '--session', item['session'], '--principal', uid(), '--workspace', str(workspace),
+                '--session', item['session'], '--principal', fixture_principals[item['session']], '--workspace', str(workspace),
                 '--endpoint', endpoint, '--rights', 'observe,execute,history')
             item['access'] = str(access)
         # Native CLI inspects the snapshot, hence the explicit fixture history right above.
@@ -354,7 +545,8 @@ def main():
         viewer = root/'viewer.json'
         viewer.write_text(json.dumps({'sessions': report['sessions'], 'ws': str(args.ws.resolve()),
             'playwright': str(repo/'voyage/browser/node_modules/playwright-core'), 'chromium': str(args.chromium),
-            'site': server.site, 'screenshots': str(screenshots), 'evidence': str(root/'viewer-evidence.json')}))
+            'site': server.site, 'screenshots': str(screenshots), 'evidence': str(root/'viewer-evidence.json'),
+            'fixture_control_token': server.control_token}))
         with (root/'viewer.log').open('wb') as output:
             result = subprocess.run([str(args.node.resolve()), str(Path(__file__).with_name('host_browser_viewer.mjs')), str(viewer)],
                 env=env, cwd=workspace, stdout=output, stderr=output, timeout=260)
@@ -382,19 +574,20 @@ def main():
             assert '/private' not in json.dumps(snap['messages']), 'private human URL leaked into conversation'
             assert 'SYNTHETIC_PRIVATE_INPUT_333' not in json.dumps(snap['messages']), 'private input leaked into conversation'
             assert 'SYNTHETIC_DUAL_PRIVATE_333' not in json.dumps(snap['messages']), 'dual-viewer private input leaked'
+            assert 'SYNTHETIC_BROWSER_FILE_333' not in json.dumps(snap['messages']), 'private file bytes leaked into conversation'
             assert all(m.get('tool_outcome', {}).get('execution') == 'succeeded' for m in snap['messages'] if m['role'] == 'tool')
         # No mock stopped marker or explicit shutdown: observe automatic owner suspension.
         # Each receiver is fresh; no prior browser attachment or socket can wake the owner.
-        for phase in ('suspended-native', 'suspended-web'):
+        for phase in ('suspended-native', 'suspended-web', 'adverse'):
             for index, item in enumerate(report['sessions']):
                 inspection = wait(lambda: (info if (info := request({
                     'op': 'inspect', 'session_id': item['session']}))['state'] == 'suspended' else None), 70)
                 item['incarnation'] = inspection['incarnation']
                 report.setdefault('suspended', []).append({'phase': phase, 'session': item['session'],
                     'state': inspection['state'], 'incarnation': inspection['incarnation']})
-                if phase == 'suspended-native':
+                if phase in ('suspended-native', 'adverse'):
                     item['native_entry'] = 'cli'
-                    captured = root/(item['label']+'-suspended-launcher-path')
+                    captured = root/(item['label']+'-'+phase+'-launcher-path')
                     launch_env = {**env, 'PATH': str(opener)+':'+env['PATH'], 'FIXTURE_LAUNCHER': str(captured)}
                     route = ['--directory', str(directory)] if index == 0 else ['--access-file', item['access']]
                     launch = subprocess.Popen([str(binaries/'helm'), 'connect', *route, 'browser', item['session']],
@@ -422,6 +615,7 @@ def main():
                 assert inspection['incarnation'] != item['incarnation'], 'no actual owner preparation observed'
         assert len(server.requests) == (38 if args.agent_interactions else 4), 'viewer preparation must not invoke provider or replay the run'
         assert not server.errors, server.errors
+        assert not server.control_failed, 'adverse fixture control failed'
         report['actions'] = 'passed'
     except Exception:
         report['failure'] = traceback.format_exc()
@@ -440,6 +634,13 @@ def main():
                 report['pre_teardown'].append({'error': str(exc)})
         (root/'report.json').write_text(json.dumps(report, indent=2))
         server.release.set()
+        # Restore only this fixture's exact held evidence on a failed assertion
+        # before stopping its Voyage. The failed journey stays failed.
+        for session in adverse:
+            held = directory/'sessions'/session/'journal'/'host-browser'/'guardian-cleanup.fixture-held.json'
+            if held.exists():
+                try: fixture_control({'action': 'restore-cleanup', 'session': session})
+                except Exception: report['cleanup']['held_evidence_unresolved'] = True
         for pid in owned():
             try:
                 fd = os.pidfd_open(pid)
@@ -465,11 +666,11 @@ def main():
         report['cleanup'].update(remaining_owned_pids=owned(), server_thread_alive=thread.is_alive())
         report['cleanup']['child_server_thread_alive'] = child_thread.is_alive()
         (root/'provider.json').write_text(json.dumps({'requests': server.requests, 'errors': server.errors, 'arrived': server.arrived, 'visits': server.visits}, indent=2))
-        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive() and not child_thread.is_alive() and not report['cleanup'].get('tui_errors'):
+        if report.get('actions') == 'passed' and not report['cleanup'].get('forced_pids') and not owned() and not thread.is_alive() and not child_thread.is_alive() and not report['cleanup'].get('tui_errors') and not report['cleanup'].get('held_evidence_unresolved'):
             report['journey'] = 'passed'
         (root/'report.json').write_text(json.dumps(report, indent=2))
     assert report.get('journey') == 'passed' and not report['cleanup'].get('forced_pids') and not owned(), str(root)
-    print('PASS: two real voyages, shared mounted viewer, native local/access-file launchers, replayed DOM, private UI control, history/title, modal/IME, conversation fence, actual suspended native/Web preparation and cleanup')
+    print('PASS: two real voyages, actual TUI/native and Web adapter, private handoff, exact file/tab/scroll controls, bounded stalled viewer, worker crash/retained cleanup uncertainty, suspended preparation and observed cleanup')
 
 
 if __name__ == '__main__':
