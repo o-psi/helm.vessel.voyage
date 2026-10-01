@@ -228,3 +228,53 @@ async fn absent_optional_service_does_not_manufacture_success_or_spin() {
     );
     assert!(service.is_none());
 }
+
+#[test]
+fn guardian_socket_separates_session_incarnation_and_control_realm() {
+    let root = Path::new("/synthetic/private-realm-one");
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let name = guardian_socket_name(root, session, incarnation);
+    assert_eq!(name, guardian_socket_name(root, session, incarnation));
+    assert_ne!(name, socket_name(root));
+    assert_ne!(
+        name,
+        guardian_socket_name(root, Uuid::new_v4(), incarnation)
+    );
+    assert_ne!(name, guardian_socket_name(root, session, Uuid::new_v4()));
+    assert_ne!(
+        name,
+        guardian_socket_name(Path::new("/other"), session, incarnation)
+    );
+    assert!(name.len() <= 80);
+    assert!(!name.contains("private-realm"));
+}
+
+#[tokio::test]
+async fn guardian_listener_refuses_another_owner_without_loading_authority() {
+    let fixture = Fixture::new();
+    let mut value = request(&fixture.0);
+    value.handle.socket_name =
+        guardian_socket_name(&fixture.0, value.session_id, value.incarnation);
+    let owner = (Uuid::new_v4(), value.incarnation);
+    let (mut client, server) = UnixStream::pair().unwrap();
+    let directory = fixture.0.clone();
+    let worker = tokio::spawn(async move {
+        connection_for(directory, server, unsafe { libc::geteuid() }, Some(owner)).await
+    });
+    let body = serde_json::to_vec(&value).unwrap();
+    client.write_u32(body.len() as u32).await.unwrap();
+    client.write_all(&body).await.unwrap();
+    let length = client.read_u32().await.unwrap() as usize;
+    let mut bytes = vec![0; length];
+    client.read_exact(&mut bytes).await.unwrap();
+    assert_eq!(bytes, br#"{"scope":null}"#);
+    worker.await.unwrap().unwrap();
+    assert!(!fixture.0.join("access/runtime-scope-leases").exists());
+}
+
+#[test]
+fn unprotected_guardian_start_never_manufactures_a_root_listener() {
+    let fixture = Fixture::new();
+    assert!(start_guardian(&fixture.0, &fixture.registration()).is_err());
+}

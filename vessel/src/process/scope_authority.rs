@@ -47,6 +47,15 @@ pub(super) fn socket_name(root: &Path) -> String {
     format!("voyage-scope-{:x}", hash.finalize())
 }
 
+fn guardian_socket_name(root: &Path, session: Uuid, incarnation: Uuid) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"voyage/guardian-scope-socket/v1\0");
+    hash.update(root.as_os_str().as_encoded_bytes());
+    hash.update(session.as_bytes());
+    hash.update(incarnation.as_bytes());
+    format!("voyage-scope-{:x}", hash.finalize())
+}
+
 fn current_grant(
     root: &Path,
     registration: &ProcessRegistration,
@@ -90,6 +99,7 @@ pub(super) async fn mint(
     hash.update(b"voyage/runtime-grant-lease/v1\0");
     hash.update(serde_json::to_vec(&(
         registration.session_id,
+        registration.incarnation,
         binding.grant_id,
         binding.principal_id,
         binding.revision,
@@ -121,7 +131,11 @@ pub(super) async fn mint(
                 grant: binding.clone(),
                 epoch: epoch.clone(),
                 handle: ExecutionScopeHandle {
-                    socket_name: socket_name(root),
+                    socket_name: guardian_socket_name(
+                        root,
+                        registration.session_id,
+                        registration.incarnation,
+                    ),
                     lease_id: id,
                     secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
                 },
@@ -139,7 +153,8 @@ pub(super) async fn mint(
             && lease.grant.revision == binding.revision
             && lease.epoch == epoch
             && lease.handle.lease_id == id
-            && lease.handle.socket_name == socket_name(root)
+            && lease.handle.socket_name
+                == guardian_socket_name(root, registration.session_id, registration.incarnation)
             && lease.handle.secret.len() == 64,
         "retained runtime scope lease changed"
     );
@@ -155,7 +170,9 @@ async fn scope(root: &Path, peer: u32, request: ScopeCheck) -> Result<RuntimeSco
             && !request.incarnation.is_nil()
             && request.token.len() == 64
             && request.handle.secret.len() == 64
-            && request.handle.socket_name == socket_name(root),
+            && (request.handle.socket_name == socket_name(root)
+                || request.handle.socket_name
+                    == guardian_socket_name(root, request.session_id, request.incarnation)),
         "runtime scope request refused"
     );
     let registration = database::registration(root, request.session_id).await?;
@@ -214,13 +231,28 @@ async fn scope(root: &Path, peer: u32, request: ScopeCheck) -> Result<RuntimeSco
     })
 }
 
-async fn connection(root: PathBuf, mut stream: UnixStream, peer: u32) -> Result<()> {
+#[cfg(test)]
+async fn connection(root: PathBuf, stream: UnixStream, peer: u32) -> Result<()> {
+    connection_for(root, stream, peer, None).await
+}
+
+async fn connection_for(
+    root: PathBuf,
+    mut stream: UnixStream,
+    peer: u32,
+    owner: Option<(Uuid, Uuid)>,
+) -> Result<()> {
     let response = tokio::time::timeout(DEADLINE, async {
         let length = stream.read_u32().await? as usize;
         ensure!((1..=MAX_FRAME).contains(&length), "scope frame refused");
         let mut bytes = vec![0; length];
         stream.read_exact(&mut bytes).await?;
         let request: ScopeCheck = serde_json::from_slice(&bytes)?;
+        ensure!(
+            owner.is_none_or(|(session, incarnation)| request.session_id == session
+                && request.incarnation == incarnation),
+            "guardian scope owner refused"
+        );
         scope(&root, peer, request).await
     })
     .await;
@@ -278,10 +310,19 @@ pub(super) fn start(root: &Path) -> Result<Option<Service>> {
         unsafe { libc::geteuid() } == 0,
         "root authority service required"
     );
-    let address = std::os::unix::net::SocketAddr::from_abstract_name(socket_name(root).as_bytes())?;
+    start_listener(root, socket_name(root), None).map(Some)
+}
+
+fn start_listener(root: &Path, name: String, owner: Option<(Uuid, Uuid)>) -> Result<Service> {
+    RootDirectory::open(root)?;
+    ensure!(
+        unsafe { libc::geteuid() } == 0,
+        "root authority service required"
+    );
+    let address = std::os::unix::net::SocketAddr::from_abstract_name(name.as_bytes())?;
     let listener = UnixListener::bind_addr(&address.into())?;
     let root = root.to_owned();
-    Ok(Some(Service {
+    Ok(Service {
         task: tokio::spawn(async move {
             let capacity = Arc::new(Semaphore::new(32));
             let mut tasks = JoinSet::new();
@@ -292,11 +333,84 @@ pub(super) fn start(root: &Path) -> Result<Option<Service>> {
                     while tasks.try_join_next().is_some() {}
                     if tasks.len() >= 32 {continue;}
                         let Ok(permit)=capacity.clone().try_acquire_owned() else{continue;};
-                        let root=root.clone();tasks.spawn(async move {let _permit=permit;let _=connection(root,stream,peer).await;});
+                        let root=root.clone();tasks.spawn(async move {let _permit=permit;let _=connection_for(root,stream,peer,owner).await;});
                     },
                     _=tasks.join_next(),if !tasks.is_empty()=>{},
                 }
             }
         }),
-    }))
+    })
+}
+
+/// A guardian owns this metadata-only listener until its actual child tree has
+/// retired. Supervisor replacement never owns or cancels this authority service.
+pub(super) struct GuardianService {
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for GuardianService {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+pub(super) fn start_guardian(
+    root: &Path,
+    registration: &ProcessRegistration,
+) -> Result<GuardianService> {
+    RootDirectory::open(root)?;
+    ensure!(
+        unsafe { libc::geteuid() } == 0
+            && registration
+                .peer_uids
+                .as_ref()
+                .is_some_and(|p| p.supervisor == 0),
+        "protected guardian authority required"
+    );
+    let root = root.to_owned();
+    let owner = (registration.session_id, registration.incarnation);
+    let name = guardian_socket_name(&root, owner.0, owner.1);
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let thread = std::thread::Builder::new()
+        .name("guardian-scope".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(_) => {
+                    let _ = ready_tx.send(false);
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let mut service = match start_listener(&root, name, Some(owner)) {
+                    Ok(service) => service,
+                    Err(_) => {
+                        let _ = ready_tx.send(false);
+                        return;
+                    }
+                };
+                if ready_tx.send(true).is_err() {
+                    return;
+                }
+                tokio::select! { _ = stopped => {}, _ = service.wait() => {} }
+            });
+            runtime.shutdown_timeout(DEADLINE);
+        })?;
+    let service = GuardianService {
+        stop: Some(stop),
+        thread: Some(thread),
+    };
+    ensure!(
+        ready_rx.recv_timeout(DEADLINE).unwrap_or(false),
+        "guardian scope listener unavailable"
+    );
+    Ok(service)
 }
