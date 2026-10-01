@@ -6,6 +6,13 @@ qualify the actual scoped Linux/native viewer and matching Web adapter; full
 deployed Vessel TLS/WSS, representative public-site and client-cost acceptance
 remain open in #333.
 
+The remaining production route is prepared in
+[the separate executable qualification guide](host-browser-production-qualification.md).
+It supports two actual TUI launchers and two authenticated React dock viewers,
+including CUA/authorized-host orchestration without login export. That new driver
+and its measurement/site helpers are source-only and unexecuted; they do not add
+passing evidence to this record.
+
 ## Current archive and observed four-phase result
 
 [Hosted build 36926772323](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36926772323)

@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import re
 import stat
+import sys
 import time
 
 
@@ -103,7 +104,8 @@ def main():
         assert type(root['start_ticks']) is int and root['start_ticks'] > 0
         assert type(root['descendants']) is bool
     os.umask(0o077)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    if str(args.output) != '-':
+        args.output.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     initial, last = {}, {}
     samples = []
@@ -143,8 +145,11 @@ def main():
         raise
     finally:
         # Never publish PID/starttime/path/command/credentials in the summary.
-        with args.output.open('x') as output:
-            json.dump(result, output, indent=2)
+        if str(args.output) == '-':
+            json.dump(result, sys.stdout)
+        else:
+            with args.output.open('x') as output:
+                json.dump(result, output, indent=2)
 
 
 if __name__ == '__main__':
