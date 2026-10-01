@@ -13,6 +13,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
+use uuid::Uuid;
 
 #[derive(Default)]
 struct Worker {
