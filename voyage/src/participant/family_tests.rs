@@ -160,6 +160,7 @@ struct Fixture {
     root: tempfile::TempDir,
     tool: ParticipantTool,
     run: RunOwner,
+    run_id: Uuid,
     context: ToolContext,
     peer: Peer,
 }
@@ -178,28 +179,30 @@ impl Fixture {
         owner.initialize_session_resources().await.unwrap();
         let principal = Uuid::new_v4();
         owner.initialize_command_bindings(principal).await.unwrap();
-        let Admission::New(mut run) = owner
-            .admit(TurnAdmission {
-                budget: None,
-                coordination: None,
-                operator_name: None,
-                command_id: Uuid::new_v4(),
-                machine_id: Uuid::new_v4(),
-                principal_id: principal,
-                session_id: session.id,
-                expected_revision: 0,
-                expires_at_ms: chrono::Utc::now().timestamp_millis() + 120_000,
-                prompt: "Owned parent participant fixture".into(),
-                parts: vec![],
-            })
-            .await
-            .unwrap()
-        else {
+        let admission = TurnAdmission {
+            budget: None,
+            coordination: None,
+            operator_name: None,
+            command_id: Uuid::new_v4(),
+            machine_id: Uuid::new_v4(),
+            principal_id: principal,
+            session_id: session.id,
+            expected_revision: 0,
+            expires_at_ms: chrono::Utc::now().timestamp_millis() + 120_000,
+            prompt: "Owned parent participant fixture".into(),
+            parts: vec![],
+        };
+        let Admission::New(mut run) = owner.admit(admission.clone()).await.unwrap() else {
             panic!("fresh parent")
         };
+        // Retain the exact admitted canonical record rather than accessing the
+        // execution owner's private fields or guessing a run ID from a command.
+        let admitted = owner.lookup_turn(admission).await.unwrap().unwrap();
+        assert_eq!(admitted.session_id, session.id);
+        let run_id = admitted.id;
         run.register_local_cleanup().await.unwrap();
         run.start_operator().await.unwrap();
-        let peer = Peer::new(mode, owner.clone(), run.run_id).await;
+        let peer = Peer::new(mode, owner.clone(), run_id).await;
         let credential = root.path().join("participant.json");
         std::fs::write(
             &credential,
@@ -228,7 +231,7 @@ impl Fixture {
             parent: Arc::new(Parent {
                 meter: None,
                 owner,
-                run_id: run.run_id,
+                run_id,
                 principal_id: principal,
                 vessel_id: Uuid::new_v4(),
                 endpoints: vec![endpoint],
@@ -239,6 +242,7 @@ impl Fixture {
             root,
             tool,
             run,
+            run_id,
             peer,
         }
     }
@@ -272,7 +276,7 @@ async fn real_participant_submission_records_before_delivery_and_exact_terminal_
         .tool
         .parent
         .owner
-        .assignment_request(f.run.run_id, id)
+        .assignment_request(f.run_id, id)
         .await
         .unwrap()
         .unwrap();
@@ -357,7 +361,7 @@ async fn cancellation_monitor_survives_tool_return_and_requires_observed_fence_r
                 .tool
                 .parent
                 .owner
-                .assignment_result(f.run.run_id, id)
+                .assignment_result(f.run_id, id)
                 .await
                 .unwrap();
             if prior["cleanup_observed"] == true {
@@ -393,7 +397,7 @@ async fn observation_and_retained_reconciliation_are_exact_binding_and_child_sco
     assert!(
         crate::participant::reconcile(
             f.tool.parent.owner.clone(),
-            f.run.run_id,
+            f.run_id,
             id,
             "owned",
             false,
@@ -406,7 +410,7 @@ async fn observation_and_retained_reconciliation_are_exact_binding_and_child_sco
     *f.peer.mode.lock().await = Mode::Complete;
     let observed = crate::participant::reconcile(
         f.tool.parent.owner.clone(),
-        f.run.run_id,
+        f.run_id,
         id,
         "owned",
         false,
@@ -420,7 +424,7 @@ async fn observation_and_retained_reconciliation_are_exact_binding_and_child_sco
     assert_eq!(
         crate::participant::reconcile(
             f.tool.parent.owner.clone(),
-            f.run.run_id,
+            f.run_id,
             id,
             "owned",
             false,
@@ -470,7 +474,7 @@ async fn tool_schema_does_not_disclose_runtime_instructions_or_invent_context_an
         f.tool
             .parent
             .owner
-            .assignment_request(f.run.run_id, id)
+            .assignment_request(f.run_id, id)
             .await
             .unwrap()
             .is_none()
@@ -526,7 +530,7 @@ async fn read_only_and_unattended_approval_refuse_without_contacting_or_recordin
             f.tool
                 .parent
                 .owner
-                .assignment_request(f.run.run_id, id)
+                .assignment_request(f.run_id, id)
                 .await
                 .unwrap()
                 .is_none()
@@ -558,7 +562,7 @@ async fn foreground_authority_is_rechecked_after_approval_before_any_remote_disp
         f.tool
             .parent
             .owner
-            .assignment_request(f.run.run_id, id)
+            .assignment_request(f.run_id, id)
             .await
             .unwrap()
             .is_none()
@@ -583,7 +587,7 @@ async fn receiver_identity_and_budget_capability_are_required_before_parent_allo
         f.tool
             .parent
             .owner
-            .assignment_request(f.run.run_id, id)
+            .assignment_request(f.run_id, id)
             .await
             .unwrap()
             .is_none()
@@ -718,7 +722,7 @@ async fn malformed_usage_and_non_admission_proof_do_not_change_the_last_exact_ob
     for invalid in [
         json!({"admission_closed":true}),
         json!({"result":{"execution_usage":{"invalid":"usage"}}}),
-        json!({"execution_usage":{"budget":{"command_id":Uuid::new_v4(),"session_id":id,"parent_session_id":f.tool.parent.owner.session_id(),"parent_run_id":f.run.run_id,"tokens":10,"elapsed_ms":100,"expires_at_ms":u64::MAX},"session_id":id,"run_id":id,"input_tokens":1,"output_tokens":1,"elapsed_ms":1,"complete":true,"cleanup_observed":true}}),
+        json!({"execution_usage":{"budget":{"command_id":Uuid::new_v4(),"session_id":id,"parent_session_id":f.tool.parent.owner.session_id(),"parent_run_id":f.run_id,"tokens":10,"elapsed_ms":100,"expires_at_ms":u64::MAX},"session_id":id,"run_id":id,"input_tokens":1,"output_tokens":1,"elapsed_ms":1,"complete":true,"cleanup_observed":true}}),
     ] {
         let mut value = serde_json::to_value(&parsed).unwrap();
         for (key, replacement) in invalid.as_object().unwrap() {
@@ -730,7 +734,7 @@ async fn malformed_usage_and_non_admission_proof_do_not_change_the_last_exact_ob
             f.tool
                 .parent
                 .owner
-                .assignment_result(f.run.run_id, id)
+                .assignment_result(f.run_id, id)
                 .await
                 .unwrap(),
             prior
@@ -752,7 +756,7 @@ async fn retained_completed_reconciliation_is_offline_and_unknown_obligations_bl
     f.run.confirm_local_cleanup_observed().await.unwrap();
     assert_eq!(
         f.tool.parent.owner.process_snapshot().await.unwrap()["pending_cleanup_run"],
-        json!(f.run.run_id)
+        json!(f.run_id)
     );
     let config = crate::Config {
         participants: f.tool.parent.endpoints.clone(),
@@ -761,7 +765,7 @@ async fn retained_completed_reconciliation_is_offline_and_unknown_obligations_bl
     assert!(
         crate::participant::reconcile(
             f.tool.parent.owner.clone(),
-            f.run.run_id,
+            f.run_id,
             Uuid::new_v4(),
             "owned",
             false,
@@ -772,7 +776,7 @@ async fn retained_completed_reconciliation_is_offline_and_unknown_obligations_bl
     );
     let closed = crate::participant::reconcile(
         f.tool.parent.owner.clone(),
-        f.run.run_id,
+        f.run_id,
         id,
         "owned",
         true,
@@ -786,7 +790,7 @@ async fn retained_completed_reconciliation_is_offline_and_unknown_obligations_bl
     assert_eq!(
         crate::participant::reconcile(
             f.tool.parent.owner.clone(),
-            f.run.run_id,
+            f.run_id,
             id,
             "owned",
             false,
@@ -889,7 +893,7 @@ impl crate::provider::goal_meter::Observer for Accounting {
 fn accounting(f: &mut Fixture) -> Arc<Accounting> {
     let observer = Arc::new(Accounting {
         parent_session: f.tool.parent.owner.session_id(),
-        parent_run: f.run.run_id,
+        parent_run: f.run_id,
         ..Default::default()
     });
     Arc::get_mut(&mut f.tool.parent).unwrap().meter =
@@ -913,7 +917,7 @@ async fn bounded_participant_receipts_settle_once_for_top_level_and_nested_usage
         let budget = request.budget.clone().unwrap();
         assert_eq!(budget.command_id, id);
         assert_eq!(budget.session_id, id);
-        assert_eq!(budget.parent_run_id, f.run.run_id);
+        assert_eq!(budget.parent_run_id, f.run_id);
         assert_eq!(budget.parent_session_id, f.tool.parent.owner.session_id());
         assert_eq!(budget.tokens, 50);
         assert!(budget.elapsed_ms <= 30_000);
