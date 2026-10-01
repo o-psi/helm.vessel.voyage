@@ -141,8 +141,7 @@ async fn cancellation_refuses_discovery_without_returning_a_remote_candidate() {
 async fn command_denial_prevents_local_git_process_creation() {
     let (root, mut context) = controlled_git(b"", 0);
     let config = crate::Config {
-        access: Some(crate::config::AccessMode::Unrestricted),
-        legacy_deny_commands: vec!["git".into()],
+        access: Some(crate::config::AccessMode::ReadOnly),
         ..Default::default()
     };
     context.policy = Arc::new(crate::policy::Policy::new(&config, root.path().into()).unwrap());
