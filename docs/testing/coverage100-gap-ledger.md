@@ -33,8 +33,42 @@ helper uses the existing standard test-source filename pattern before measuremen
 
 Native Root, live-provider, browser JavaScript and other-platform evidence are
 separate. The default Rust measurement does not establish those capabilities or
-full release readiness. The largest-area map below is historical until refreshed
-from this new audited export; current line addresses require these current objects.
+full release readiness. Current line addresses require these current objects. The current largest-area
+map follows; the September maps are retained separately for comparison.
+
+## Current largest areas
+
+This map uses the same retained current-object summary as the published baseline;
+no rebuild or new export was performed. Directory rows contain nested files;
+“direct files” rows contain only files directly in that source directory. These
+are measured line gaps, not a classification of reachability or assertion quality.
+The full workspace contributes **32,080 uncovered lines**; the remaining one
+reported gap is the retained standard-library mapping. No files were excluded.
+
+| Area | Uncovered lines | Measured lines |
+| --- | ---: | ---: |
+| `vessel/src/process/` | 8,509 | 18,996 |
+| `helm/src/process_client/` | 8,303 | 33,750 |
+| `voyage/src (direct files)` | 2,571 | 13,228 |
+| `installer/src/system_install/` | 2,076 | 2,449 |
+| `voyage/src/attachment/` | 1,377 | 12,458 |
+| `voyage/src/tools/` | 1,196 | 7,865 |
+| `installer/src (direct files)` | 1,024 | 2,015 |
+| `helm/src (direct files)` | 917 | 3,096 |
+| `voyage/src/server/` | 860 | 5,687 |
+| `voyage/src/github/` | 661 | 3,177 |
+| `vessel/src (direct files)` | 654 | 1,556 |
+| `installer/src/remote/` | 514 | 1,289 |
+| `voyage/src/subagent/` | 435 | 2,402 |
+| `voyage/src/provider/` | 412 | 5,747 |
+| `voyage/src/extensions/` | 384 | 1,995 |
+| `crates/voyage-storage/src/` | 248 | 643 |
+
+The largest ordinary client and supervisor areas remain the next source targets.
+Privileged, other-platform, provider and OS fault responsibilities still require
+explicit reachability/evidence accounting; a deferred native journey is not a
+passing check or permission to exclude its source. The older maps below are
+historical checkpoints for comparison, not current measured line addresses.
 
 ## Historical audited checkpoint and area map
 
@@ -96,7 +130,7 @@ They must not be relabeled untestable merely because fixtures are difficult.
 | `helm/src/main.rs` | 163 | 478 |
 | `voyage/src/accounts.rs` | 158 | 775 |
 
-## Current largest areas and concrete next assertions
+## Historical source priorities and concrete next assertions
 
 This map is derived from the current audited `53884b6` export above.
 Directory rows aggregate that directory only; the identity-helper row also
