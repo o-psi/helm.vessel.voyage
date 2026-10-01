@@ -1264,3 +1264,30 @@ GitHub request or credential helper is invoked. `github::approval::boundary_test
 checks Unicode preview integrity, final-page-only confirmation hints, minimum
 terminal dimensions and failed rendering. These paging checks do not establish
 native interactive TTY consent or keyboard-origin behavior.
+
+### Ordinary Vessel account, service and catalogue contracts
+
+`process::accounts::tests::ordinary_contract_tests` runs default-host account API
+operations in an independently spawned test binary with private HOME and every
+XDG root. The parent bounds/reaps that child. Synthetic stored API accounts cover
+owner/scoped transport-filtered lists, default CAS/exact replay, cached API usage,
+metadata-only refresh, default selection, private cancelled enrollment observation
+and cancellation, denied destinations, scoped host-configuration refusal, nil
+creation IDs and revocation without registry mutation. Enrollment resolution uses
+the built-in destination but never starts a login driver; no OAuth/provider call
+is made. The cohort measures the child's matching instrumented source too.
+
+Additional `process::service::tests` use real loopback HTTP and the production
+socket backend for credential rotation, exact protocol/private-envelope refusal,
+disconnect fencing, gateway grant/browser boundary matrices, malformed/oversized
+public bodies and capacity release without creating a voyage. The ordinary
+catalogue cases exercise SQLite publication atomicity, current-incarnation
+projection fallback, stale liveness, retained summaries, cursor bounds, bounded
+failed-refresh backoff and malformed authoritative registration refusal.
+
+These cases do not establish Root service/gateway activation, native cross-UID
+ownership, real OAuth usage refresh, model discovery/inference, interactive login,
+or successful voyage launch. SQLite foreign-key protections make invalid event
+session references unreachable through supported catalogue writers; tests retain
+those protections. Serialization and allocator/OS failures still require separate
+fault evidence, rather than invented passing outcomes or denominator exclusions.

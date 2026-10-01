@@ -621,3 +621,236 @@ mod account_routes {
         assert!(s.devices.resume_candidates().unwrap().is_empty());
     }
 }
+
+#[tokio::test]
+async fn ordinary_socket_backend_rechecks_credentials_private_envelopes_and_disconnect_fence() {
+    use crate::duplex::Backend;
+    let f = Fixture::new();
+    let supervisor = Arc::new(f.supervisor().await);
+    let vessel_id = super::super::identity::public(&f.0).unwrap().vessel_id;
+    let backend = LocalSocketBackend {
+        supervisor,
+        token_hash: Sha256::digest(TOKEN.as_bytes()).into(),
+        vessel_id,
+        sockets: std::sync::Mutex::new(HashMap::new()),
+    };
+    assert!(!backend.authorize(None).await);
+    registry::save_local_access(
+        &f.0,
+        &voyage_protocol::process::LocalAccessCredential {
+            endpoint: "http://127.0.0.1:1".into(),
+            token: TOKEN.into(),
+        },
+    )
+    .unwrap();
+    assert!(backend.authorize(None).await);
+    let socket = voyage_protocol::host_browser::HostBrowserSocket {
+        socket_id: Uuid::new_v4(),
+    };
+    let state: LocalBrowserState = Arc::default();
+    backend
+        .sockets
+        .lock()
+        .unwrap()
+        .insert(socket.socket_id, state.clone());
+    let good = backend
+        .socket_command(capabilities(), socket.socket_id)
+        .await;
+    assert!(good.error.is_none());
+    let mut unsupported = capabilities();
+    unsupported.protocol += 1;
+    for request in [
+        unsupported,
+        VesselRequest {
+            protocol: VESSEL_API_VERSION,
+            command: VesselCommand::Socket {
+                socket,
+                command: Box::new(VesselCommand::Capabilities),
+            },
+        },
+    ] {
+        let response = backend.command(request.clone()).await;
+        assert!(response.error.is_some());
+        assert!(!response.outcome_unknown);
+        let response = backend.socket_command(request, socket.socket_id).await;
+        assert!(response.error.is_some());
+        assert!(!response.outcome_unknown);
+    }
+    backend.disconnected(socket.socket_id);
+    assert!(state.lock().unwrap().closed);
+    assert!(backend.sockets.lock().unwrap().is_empty());
+    let closed = backend
+        .socket_command(capabilities(), socket.socket_id)
+        .await;
+    assert!(closed.error.is_some());
+    assert!(!closed.outcome_unknown);
+    backend.disconnected(socket.socket_id);
+    registry::save_local_access(
+        &f.0,
+        &voyage_protocol::process::LocalAccessCredential {
+            endpoint: "http://127.0.0.1:1".into(),
+            token: "b".repeat(64),
+        },
+    )
+    .unwrap();
+    assert!(!backend.authorize(None).await);
+}
+
+#[tokio::test]
+async fn gateway_rejection_matrix_never_reaches_grant_or_browser_effect_dispatch() {
+    let f = Fixture::new();
+    let supervisor = Arc::new(f.supervisor().await);
+    let auth = gateway_ipc::GrantAuth {
+        expected_vessel_id: None,
+        grant_id: Uuid::new_v4(),
+        token: TOKEN.into(),
+    };
+    for variant in 0..5 {
+        let mut invalid = auth.clone();
+        match variant {
+            0 => invalid.grant_id = Uuid::nil(),
+            1 => invalid.token.clear(),
+            2 => invalid.token = "a".repeat(65),
+            3 => invalid.token = "z".repeat(64),
+            _ => invalid.expected_vessel_id = Some(Uuid::nil()),
+        }
+        let response =
+            gateway_command(&supervisor, invalid, VesselCommand::Capabilities, None).await;
+        assert!(
+            response
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("invalid gateway grant")
+        );
+        assert!(!response.outcome_unknown);
+    }
+    let socket = voyage_protocol::host_browser::HostBrowserSocket {
+        socket_id: Uuid::new_v4(),
+    };
+    for command in [
+        VesselCommand::Socket {
+            socket,
+            command: Box::new(VesselCommand::Capabilities),
+        },
+        VesselCommand::HostBrowserDisconnected {
+            session_id: Uuid::new_v4(),
+            incarnation: Uuid::new_v4(),
+            socket,
+        },
+        VesselCommand::Granted {
+            expected_vessel_id: None,
+            grant_id: Uuid::new_v4(),
+            token: TOKEN.into(),
+            command: Box::new(VesselCommand::Capabilities),
+        },
+    ] {
+        let response = gateway_command(&supervisor, auth.clone(), command, None).await;
+        assert!(
+            response
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("private envelope refused")
+        );
+        assert!(!response.outcome_unknown);
+    }
+    let browser = VesselCommand::Voyage(VoyageRequest {
+        session_id: Uuid::new_v4(),
+        incarnation: Some(Uuid::new_v4()),
+        command: VoyageCommand::HostBrowser {
+            operation: voyage_protocol::host_browser::HostBrowserOperation::Status {},
+        },
+    });
+    let response = gateway_command(&supervisor, auth.clone(), browser, None).await;
+    assert!(
+        response
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("browser socket boundary refused")
+    );
+    let response = gateway_command(
+        &supervisor,
+        auth,
+        VesselCommand::Capabilities,
+        Some((socket, Arc::default())),
+    )
+    .await;
+    assert!(
+        response
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("browser socket boundary refused")
+    );
+    assert!(
+        super::super::database::catalogue(&f.0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn public_http_rejects_malformed_private_and_oversize_envelopes_before_effects() {
+    let f = Fixture::new();
+    let state = state(&f).await;
+    let app = server(state.clone()).await;
+    let url = format!("{}{}", app.endpoint, voyage_protocol::vessel::COMMAND_PATH);
+    let c = client();
+    for body in [
+        "{".to_owned(),
+        "null".into(),
+        json!({"protocol":1,"command":{"op":"capabilities"},"extra":"private"}).to_string(),
+        json!({"protocol":1,"command":{"op":"unknown"}}).to_string(),
+    ] {
+        let response = c
+            .post(&url)
+            .bearer_auth(TOKEN)
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+        assert_eq!(response.headers()["cache-control"], "no-store");
+    }
+    let body =
+        json!({"protocol":1,"command":{"op":"capabilities","private":"x".repeat(MAX_VESSEL_BODY)}})
+            .to_string();
+    let response = c
+        .post(&url)
+        .bearer_auth(TOKEN)
+        .header("content-type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(state.capacity.available_permits(), 2);
+    assert!(
+        super::super::database::catalogue(&f.0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn local_socket_authorization_failure_when_current_vessel_identity_is_unavailable() {
+    use crate::duplex::Backend;
+    let f = Fixture::new();
+    let supervisor = Arc::new(f.supervisor().await);
+    let identity = super::super::identity::public(&f.0).unwrap();
+    let backend = LocalSocketBackend {
+        supervisor,
+        token_hash: Sha256::digest(TOKEN.as_bytes()).into(),
+        vessel_id: Uuid::new_v4(),
+        sockets: std::sync::Mutex::new(HashMap::new()),
+    };
+    assert_ne!(backend.vessel_id, identity.vessel_id);
+    assert!(!backend.authorize(None).await);
+    assert!(!gateway_refusal("fixture refusal").outcome_unknown);
+    assert!(gateway_uncertain().outcome_unknown);
+}

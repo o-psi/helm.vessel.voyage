@@ -470,3 +470,6 @@ fn owner_connection_accounts_and_enrollment_are_dynamic_and_revocable() {
     );
     assert!(!enrollment_authorized(&f.0, &scope.actor(&f.0), connection));
 }
+
+#[path = "ordinary_contract_tests.rs"]
+mod ordinary_contract_tests;

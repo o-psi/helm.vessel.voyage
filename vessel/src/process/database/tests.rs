@@ -877,3 +877,6 @@ async fn catalogue_metadata_refresh_does_not_invent_a_live_owner_failure() {
     assert_eq!(unavailable.entries[0].state, ProcessState::Unavailable);
     drop(socket);
 }
+
+#[path = "ordinary_contract_tests.rs"]
+mod ordinary_contract_tests;
