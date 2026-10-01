@@ -155,3 +155,7 @@ fn save_to(
     file.persist(path)?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "chat_preferences_tests.rs"]
+mod tests;

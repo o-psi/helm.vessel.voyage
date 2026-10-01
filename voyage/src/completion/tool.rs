@@ -22,6 +22,10 @@ impl CompletionTool {
         Self { todos, agents }
     }
 }
+
+#[cfg(test)]
+#[path = "tool_tests.rs"]
+mod tests;
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Args {
