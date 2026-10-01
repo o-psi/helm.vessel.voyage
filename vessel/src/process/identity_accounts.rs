@@ -66,6 +66,81 @@ pub(super) enum Selection<'a> {
     Bound(&'a ProcessRegistration),
     ReviewTarget(&'a ConfiguredExecutionIdentity),
 }
+fn bound_current(registration: &ProcessRegistration, current: &ProcessRegistration) -> Result<()> {
+    ensure!(
+        current.incarnation == registration.incarnation
+            && current.peer_uids == registration.peer_uids
+            && current.command_id == registration.command_id
+            && current.token == registration.token
+            && current.workspace == registration.workspace
+            && current.config_path == registration.config_path,
+        "account runtime incarnation changed"
+    );
+    Ok(())
+}
+fn account_scope_current(
+    grant: &ProcessGrant,
+    binding: &GrantBinding,
+    registration: &ProcessRegistration,
+) -> Result<()> {
+    ensure!(
+        grant.grant_id == binding.grant_id
+            && grant.principal_id == binding.principal_id
+            && grant.revision == binding.revision
+            && grant.session_id == registration.session_id
+            && grant.workspace == registration.workspace,
+        "bound account authority mismatch"
+    );
+    Ok(())
+}
+fn helper_value(response: IdentityHelperResponse) -> Result<serde_json::Value> {
+    match response {
+        IdentityHelperResponse::Value { value } => Ok(value),
+        _ => anyhow::bail!("identity account operation unavailable"),
+    }
+}
+fn request_bound(request: &IdentityHelperRequest) -> Result<()> {
+    ensure!(
+        serde_json::to_vec(request)?.len() <= IDENTITY_HELPER_BYTES,
+        "identity account request exceeds bounds"
+    );
+    Ok(())
+}
+fn response_bound(response: &IdentityHelperResponse) -> Result<()> {
+    ensure!(
+        serde_json::to_vec(response)?.len() <= IDENTITY_HELPER_BYTES,
+        "identity helper output exceeds bounds"
+    );
+    Ok(())
+}
+fn callback_actor_current(
+    scope: &Scope,
+    workspace: &Path,
+    check: &IdentityAuthorityRequest,
+) -> bool {
+    check.actor == scope.actor(workspace)
+}
+// This metadata decision is reached only AFTER current scope/identity/OS checks.
+// It is not a substitute for those checks and confers no authority by itself.
+fn callback_permission(
+    scope: &Scope,
+    check: &IdentityAuthorityRequest,
+    projection: Option<&IdentityAccountScope>,
+) -> bool {
+    match check.right {
+        IdentityAuthorityRight::Recover => false,
+        IdentityAuthorityRight::Enroll => {
+            check.account_id.is_none() && scope.connection_allowed(check.connection_id)
+        }
+        IdentityAuthorityRight::Use => check.account_id.is_some_and(|id| {
+            projection.is_some_and(|projection| {
+                projection.full_access
+                    || projection.account_ids.contains(&id)
+                    || (projection.can_enroll && scope.connection_allowed(check.connection_id))
+            })
+        }),
+    }
+}
 
 async fn current(
     scope: &Scope,
@@ -98,15 +173,7 @@ async fn selected_for(
         Ok(current)
     } else if let Selection::Bound(registration) = selection {
         let current = database::registration(root, registration.session_id).await?;
-        ensure!(
-            current.incarnation == registration.incarnation
-                && current.peer_uids == registration.peer_uids
-                && current.command_id == registration.command_id
-                && current.token == registration.token
-                && current.workspace == registration.workspace
-                && current.config_path == registration.config_path,
-            "account runtime incarnation changed"
-        );
+        bound_current(registration, &current)?;
         database::bound_observer_identity(root, &current).await
     } else if let Selection::FrozenDefault(identity) = selection {
         let current = selected(scope, root).await?;
@@ -455,13 +522,10 @@ impl Supervisor {
         registration: Option<&ProcessRegistration>,
     ) -> Result<serde_json::Value> {
         let selection = registration.map_or(Selection::Default, Selection::Bound);
-        match self
-            .run_identity_helper(scope, workspace, right, operation, selection)
-            .await?
-        {
-            IdentityHelperResponse::Value { value } => Ok(value),
-            _ => anyhow::bail!("identity account operation unavailable"),
-        }
+        helper_value(
+            self.run_identity_helper(scope, workspace, right, operation, selection)
+                .await?,
+        )
     }
 
     async fn run_identity_helper(
@@ -503,14 +567,7 @@ impl Supervisor {
             let grant: ProcessGrant = super::access::store::load(
                 &super::access::store::grant_path(&self.directory, binding.grant_id),
             )?;
-            ensure!(
-                grant.grant_id == binding.grant_id
-                    && grant.principal_id == binding.principal_id
-                    && grant.revision == binding.revision
-                    && grant.session_id == registration.session_id
-                    && grant.workspace == registration.workspace,
-                "bound account authority mismatch"
-            );
+            account_scope_current(&grant, binding, registration)?;
             Scope::Session(grant)
         } else {
             Scope::Owner
@@ -565,10 +622,7 @@ pub(super) async fn run_owned_helper(
         workspace: workspace.to_owned(),
         operation,
     };
-    ensure!(
-        serde_json::to_vec(&request)?.len() <= IDENTITY_HELPER_BYTES,
-        "identity account request exceeds bounds"
-    );
+    request_bound(&request)?;
     let mut command = tokio::process::Command::new(binary);
     command
         .arg("identity-helper")
@@ -619,18 +673,11 @@ pub(super) async fn run_owned_helper(
                     match check {
                         Ok(check)=>{
                             let right=match check.right {IdentityAuthorityRight::Use=>ProcessRight::AccountUse,IdentityAuthorityRight::Enroll=>ProcessRight::AccountEnroll,IdentityAuthorityRight::Recover=>{super::identity_authority::reply(authority.as_mut().context("authority channel unavailable")?,false).await?;continue;}};
-                            let mut allowed=check.actor==scope.actor(workspace)
+                            let mut allowed=callback_actor_current(scope,workspace,&check)
                                 &&current(scope,root,workspace,&identity,right,selection).await.is_ok();
                             if allowed {
-                                allowed=match check.right {
-                                    IdentityAuthorityRight::Recover=>false,
-                                    IdentityAuthorityRight::Enroll=>check.account_id.is_none()&&scope.connection_allowed(check.connection_id),
-                                    IdentityAuthorityRight::Use=>if let Some(id)=check.account_id {
-                                        let projection=projection(scope,root,workspace)?;
-                                        projection.full_access||projection.account_ids.contains(&id)
-                                            ||(projection.can_enroll&&scope.connection_allowed(check.connection_id))
-                                    } else {false},
-                                };
+                                let projection=if matches!(check.right,IdentityAuthorityRight::Use)&&check.account_id.is_some() {Some(projection(scope,root,workspace)?)} else {None};
+                                allowed=callback_permission(scope,&check,projection.as_ref());
                             }
                             super::identity_authority::reply(authority.as_mut().context("authority channel unavailable")?,allowed).await?;
                         },
@@ -641,7 +688,7 @@ pub(super) async fn run_owned_helper(
                 _ = tokio::time::sleep(Duration::from_millis(100)) => current(scope, root, workspace, &identity, right, selection).await?,
             }
         };
-        ensure!(serde_json::to_vec(&response)?.len() <= IDENTITY_HELPER_BYTES, "identity helper output exceeds bounds");
+        response_bound(&response)?;
         ensure!(child.wait().await?.success(), "identity helper failed");
         current(scope, root, workspace, &identity, right, selection).await?;
         Ok(response)
@@ -657,3 +704,11 @@ pub(super) async fn run_owned_helper(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "identity_accounts_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "identity_accounts_test_fixtures.rs"]
+pub(in crate::process) mod test_fixtures;

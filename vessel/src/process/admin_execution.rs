@@ -36,7 +36,14 @@ fn kernel_authority() -> Result<Vec<String>> {
         bytes.len() <= 16384,
         "host authority observation exceeds bounds"
     );
-    let text = std::str::from_utf8(&bytes)?;
+    authority_status(&bytes)
+}
+fn authority_status(bytes: &[u8]) -> Result<Vec<String>> {
+    ensure!(
+        bytes.len() <= 16384,
+        "host authority observation exceeds bounds"
+    );
+    let text = std::str::from_utf8(bytes)?;
     let names = ["CapEff:", "CapPrm:", "CapInh:", "CapBnd:", "NoNewPrivs:"];
     let values = text
         .lines()
@@ -55,13 +62,7 @@ fn hash(domain: &[u8], bytes: &[u8]) -> String {
     hash.update(bytes);
     format!("{:x}", hash.finalize())
 }
-pub(super) fn provision(root: &Path) -> Result<Provision> {
-    ensure!(
-        unsafe { libc::getuid() } == 0 && unsafe { libc::geteuid() } == 0,
-        "privileged execution supervisor required"
-    );
-    let record: Provision =
-        serde_json::from_slice(&RootDirectory::open(root)?.read(PROVISION.as_ref(), 16384)?)?;
+fn provision_shape(record: &Provision) -> Result<()> {
     ensure!(
         record.schema == 1
             && record.identity.enabled
@@ -71,7 +72,9 @@ pub(super) fn provision(root: &Path) -> Result<Provision> {
             && !record.workspace_roots.is_empty(),
         "administrator execution was not explicitly provisioned"
     );
-    super::launch::validate_identity(&record.identity)?;
+    Ok(())
+}
+fn provision_namespace(root: &Path, record: &Provision) -> Result<()> {
     ensure!(
         record
             .data_directory
@@ -81,6 +84,46 @@ pub(super) fn provision(root: &Path) -> Result<Provision> {
                 .starts_with(root.join("administrator-config")),
         "administrator account/configuration must use separately provisioned control-root namespaces"
     );
+    Ok(())
+}
+fn provision_digest(record: &Provision) -> Result<String> {
+    Ok(hash(
+        b"voyage/administrator-provision/v1\0",
+        &serde_json::to_vec(record)?,
+    ))
+}
+fn restart_current(previous: &ProcessRegistration, next: &ProcessRegistration) -> Result<()> {
+    ensure!(
+        next.session_id == previous.session_id
+            && next.restart_from == Some(previous.incarnation)
+            && next.config_path == previous.config_path
+            && next.peer_uids == previous.peer_uids,
+        "administrator restart identity changed"
+    );
+    Ok(())
+}
+fn preflight_current(record: &Provision, facts: &IdentityConfigFacts) -> Result<()> {
+    let mut groups = record.identity.supplementary_groups.clone();
+    groups.sort_unstable();
+    groups.dedup();
+    ensure!(
+        facts.uid == record.identity.uid
+            && facts.gid == record.identity.gid
+            && facts.supplementary_groups == groups,
+        "administrator identity changed during preflight"
+    );
+    Ok(())
+}
+pub(super) fn provision(root: &Path) -> Result<Provision> {
+    ensure!(
+        unsafe { libc::getuid() } == 0 && unsafe { libc::geteuid() } == 0,
+        "privileged execution supervisor required"
+    );
+    let record: Provision =
+        serde_json::from_slice(&RootDirectory::open(root)?.read(PROVISION.as_ref(), 16384)?)?;
+    provision_shape(&record)?;
+    super::launch::validate_identity(&record.identity)?;
+    provision_namespace(root, &record)?;
     RootDirectory::open(&record.data_directory)?
         .child("helm".as_ref())?
         .child("accounts".as_ref())?;
@@ -105,6 +148,23 @@ struct NamespacePin {
     identity: IdentityRef,
     provision_digest: String,
 }
+fn namespace_current(
+    pin: &NamespacePin,
+    registration: &ProcessRegistration,
+    identity: &ConfiguredExecutionIdentity,
+    record: &Provision,
+) -> Result<()> {
+    ensure!(
+        pin.schema == 1
+            && pin.session == registration.session_id
+            && pin.command == registration.command_id
+            && pin.identity == identity.identity
+            && record.identity == *identity
+            && pin.provision_digest == provision_digest(record)?,
+        "administrator context changed after review"
+    );
+    Ok(())
+}
 pub(super) fn pin_namespace(
     root: &Path,
     session: Uuid,
@@ -116,10 +176,7 @@ pub(super) fn pin_namespace(
         session,
         command,
         identity: record.identity.identity.clone(),
-        provision_digest: hash(
-            b"voyage/administrator-provision/v1\0",
-            &serde_json::to_vec(record)?,
-        ),
+        provision_digest: provision_digest(record)?,
     };
     let bytes = serde_json::to_vec(&pin)?;
     let name = format!("{session}-{command}.json");
@@ -156,19 +213,7 @@ pub(super) fn runtime_namespace(
             .child("administrator-launches".as_ref())?
             .read(name.as_ref(), 4096)?,
     )?;
-    ensure!(
-        pin.schema == 1
-            && pin.session == registration.session_id
-            && pin.command == registration.command_id
-            && pin.identity == identity.identity
-            && record.identity == *identity
-            && pin.provision_digest
-                == hash(
-                    b"voyage/administrator-provision/v1\0",
-                    &serde_json::to_vec(&record)?
-                ),
-        "administrator context changed after review"
-    );
+    namespace_current(&pin, registration, identity, &record)?;
     Ok(Some((record.data_directory, record.config_directory)))
 }
 /// An identity-preserving restart retains its exact private namespace; it does
@@ -182,13 +227,7 @@ pub(super) fn carry_namespace(
     if identity.authority != AuthorityClass::Administrator {
         return Ok(());
     }
-    ensure!(
-        next.session_id == previous.session_id
-            && next.restart_from == Some(previous.incarnation)
-            && next.config_path == previous.config_path
-            && next.peer_uids == previous.peer_uids,
-        "administrator restart identity changed"
-    );
+    restart_current(previous, next)?;
     runtime_namespace(root, previous, identity)?;
     let record = provision(root)?;
     ensure!(
@@ -242,15 +281,7 @@ pub(super) async fn facts(
         let IdentityHelperResponse::Facts { facts } = reply else {
             anyhow::bail!("administrator account/configuration preflight unavailable")
         };
-        ensure!(
-            facts.uid == record.identity.uid && facts.gid == record.identity.gid && {
-                let mut groups = record.identity.supplementary_groups.clone();
-                groups.sort_unstable();
-                groups.dedup();
-                facts.supplementary_groups == groups
-            },
-            "administrator identity changed during preflight"
-        );
+        preflight_current(record, &facts)?;
         Ok(facts)
     })
     .await;
@@ -594,21 +625,10 @@ impl Supervisor {
                     )
                     .await;
                 let outcome = match launched {
-                    Ok(value) if value["state"] == "live" => match observation(
-                        &self.directory,
-                        original.session_id,
-                        original.incarnation,
-                    ) {
-                        Ok(observed)
-                            if observed.identity == original.identity
-                                && observed.release_digest == original.release_digest =>
-                        {
-                            ExecutionOutcome::Ready { observed }
-                        }
-                        _ => ExecutionOutcome::Unconfirmed {
-                            cleanup_obligations: vec![original.session_id],
-                        },
-                    },
+                    Ok(value) if value["state"] == "live" => observed_launch(
+                        original,
+                        observation(&self.directory, original.session_id, original.incarnation),
+                    ),
                     _ => ExecutionOutcome::Unconfirmed {
                         cleanup_obligations: vec![original.session_id],
                     },
@@ -687,6 +707,43 @@ impl Supervisor {
     }
 }
 
+fn running_review_current(
+    registration: &ProcessRegistration,
+    identity: &ConfiguredExecutionIdentity,
+    binding: &ExecutionBinding,
+    facts: &ReviewFacts,
+) -> Result<()> {
+    ensure!(
+        binding.incarnation == registration.incarnation
+            && binding.session_id == registration.session_id
+            && facts.session_id == registration.session_id
+            && facts.identity == identity.identity
+            && facts.account_context == identity.account_context
+            && binding.identity == facts.identity
+            && binding.account_context == facts.account_context
+            && binding.host_identity_digest == facts.host_identity_digest
+            && binding.policy_digest == facts.policy_digest
+            && facts.workspace == registration.workspace,
+        "administrator launch review changed"
+    );
+    Ok(())
+}
+fn observed_launch(
+    facts: &ReviewFacts,
+    observation: Result<ObservedExecution>,
+) -> ExecutionOutcome {
+    match observation {
+        Ok(observed)
+            if observed.identity == facts.identity
+                && observed.release_digest == facts.release_digest =>
+        {
+            ExecutionOutcome::Ready { observed }
+        }
+        _ => ExecutionOutcome::Unconfirmed {
+            cleanup_obligations: vec![facts.session_id],
+        },
+    }
+}
 pub(super) async fn verify_running(
     root: &Path,
     registration: &ProcessRegistration,
@@ -705,19 +762,7 @@ pub(super) async fn verify_running(
             .context("administrator grant unavailable")?,
     )
     .await?;
-    ensure!(
-        binding.incarnation == registration.incarnation
-            && binding.session_id == registration.session_id
-            && facts.session_id == registration.session_id
-            && facts.identity == identity.identity
-            && facts.account_context == identity.account_context
-            && binding.identity == facts.identity
-            && binding.account_context == facts.account_context
-            && binding.host_identity_digest == facts.host_identity_digest
-            && binding.policy_digest == facts.policy_digest
-            && facts.workspace == registration.workspace,
-        "administrator launch review changed"
-    );
+    running_review_current(registration, identity, &binding, &facts)?;
     let record = provision(root)?;
     runtime_namespace(root, registration, identity)?;
     let registry = voyage_runtime::accounts::Registry::new(
@@ -780,3 +825,7 @@ pub(super) async fn verify_running(
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "admin_execution_tests.rs"]
+mod tests;

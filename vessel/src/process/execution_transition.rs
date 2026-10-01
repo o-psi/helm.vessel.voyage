@@ -31,6 +31,100 @@ struct Intent {
     target_facts: IdentityConfigFacts,
     target_incarnation: Uuid,
 }
+fn preparation_consent(review: Uuid, command: Uuid, stop_source: bool) -> Result<()> {
+    ensure!(
+        stop_source && !review.is_nil() && !command.is_nil(),
+        "explicit source-stop consent required for identity review"
+    );
+    Ok(())
+}
+fn preparation_current(
+    existing: &Intent,
+    command: Uuid,
+    principal: Uuid,
+    session: Uuid,
+    source: Uuid,
+    target: &IdentityRef,
+) -> Result<()> {
+    ensure!(
+        existing.command_id == command
+            && existing.principal == principal
+            && existing.source.session_id == session
+            && existing.source.incarnation == source
+            && existing.target.identity == *target,
+        "transition preparation receipt conflict"
+    );
+    Ok(())
+}
+fn source_facts_current(intent: &Intent, source: &RetiredJournalFacts) -> Result<()> {
+    ensure!(
+        source.session_id == intent.source.session_id
+            && source.source_incarnation == intent.source.incarnation,
+        "source journal identity changed"
+    );
+    Ok(())
+}
+fn approval_current(
+    intent: &Intent,
+    principal: Uuid,
+    approval: &ReviewApproval,
+    saved: &SavedExecutionReview,
+) -> Result<()> {
+    ensure!(
+        intent.principal == principal
+            && intent.command_id == approval.command_id
+            && saved.review.digest == approval.digest,
+        "transition approval identity conflict"
+    );
+    Ok(())
+}
+fn review_current(
+    revision: u64,
+    grant: &ConnectionGrant,
+    intent: &Intent,
+    expected: &SavedExecutionReview,
+    saved: &SavedExecutionReview,
+) -> Result<()> {
+    ensure!(
+        revision == expected.review.facts.authority_revision.get()
+            && saved.review == expected.review
+            && saved.review.facts.connection_id == grant.grant_id
+            && saved.review.facts.connection_revision.get() == grant.revision
+            && saved.review.facts.administrative_owner_id == grant.principal_id
+            && intent.principal == grant.principal_id
+            && matches!(
+                saved.receipt.outcome,
+                ExecutionOutcome::Launching | ExecutionOutcome::Unconfirmed { .. }
+            ),
+        "reviewed transition authority changed"
+    );
+    Ok(())
+}
+fn registration_current(
+    current: &ProcessRegistration,
+    source: &ProcessRegistration,
+    message: &'static str,
+) -> Result<()> {
+    let mut immutable = current.clone();
+    immutable.state = source.state.clone();
+    ensure!(
+        serde_json::to_vec(&immutable)? == serde_json::to_vec(source)?,
+        message
+    );
+    Ok(())
+}
+fn committed_current(
+    receipt: &TransitionReceipt,
+    intent: &Intent,
+    source: &RetiredJournalFacts,
+) -> Result<()> {
+    ensure!(
+        receipt.config_digest == intent.target_facts.config_digest
+            && receipt.history_digest == source.history_digest,
+        "target handoff receipt changed"
+    );
+    Ok(())
+}
 fn directory(root: &Path) -> Result<RootDirectory> {
     RootDirectory::open(root)?.create_child("execution-transitions".as_ref())
 }
@@ -175,11 +269,7 @@ impl Supervisor {
         source: &RetiredJournalFacts,
     ) -> Result<ReviewFacts> {
         let authority = database::execution_reviews::authority(&self.directory, grant).await?;
-        ensure!(
-            source.session_id == intent.source.session_id
-                && source.source_incarnation == intent.source.incarnation,
-            "source journal identity changed"
-        );
+        source_facts_current(intent, source)?;
         let (target, path, current) = self
             .transition_target(
                 grant,
@@ -252,22 +342,19 @@ impl Supervisor {
         target: IdentityRef,
         stop_source: bool,
     ) -> Result<serde_json::Value> {
-        ensure!(
-            stop_source && !review_id.is_nil() && !command_id.is_nil(),
-            "explicit source-stop consent required for identity review"
-        );
+        preparation_consent(review_id, command_id, stop_source)?;
         database::execution_reviews::authority(&self.directory, grant).await?;
         let lock = self.bound_creation_lock(session).await?;
         let _guard = lock.lock().await;
         if let Ok(existing) = read::<Intent>(&self.directory, review_id, "intent") {
-            ensure!(
-                existing.command_id == command_id
-                    && existing.principal == grant.principal_id
-                    && existing.source.session_id == session
-                    && existing.source.incarnation == source_incarnation
-                    && existing.target.identity == target,
-                "transition preparation receipt conflict"
-            );
+            preparation_current(
+                &existing,
+                command_id,
+                grant.principal_id,
+                session,
+                source_incarnation,
+                &target,
+            )?;
             return self.observe_execution_transition(grant, review_id).await;
         }
         let source = self.registration(session).await?;
@@ -424,12 +511,7 @@ impl Supervisor {
         saved: SavedExecutionReview,
     ) -> Result<serde_json::Value> {
         let intent: Intent = read(&self.directory, approval.review_id, "intent")?;
-        ensure!(
-            intent.principal == grant.principal_id
-                && intent.command_id == approval.command_id
-                && saved.review.digest == approval.digest,
-            "transition approval identity conflict"
-        );
+        approval_current(&intent, grant.principal_id, &approval, &saved)?;
         let lock = self.bound_creation_lock(intent.source.session_id).await?;
         let _guard = lock.lock().await;
         ensure!(
@@ -490,19 +572,7 @@ impl Supervisor {
         let revision = database::execution_reviews::authority(&self.directory, grant).await?;
         let saved =
             database::execution_reviews::resolve(&self.directory, grant, intent.review_id).await?;
-        ensure!(
-            revision == expected.review.facts.authority_revision.get()
-                && saved.review == expected.review
-                && saved.review.facts.connection_id == grant.grant_id
-                && saved.review.facts.connection_revision.get() == grant.revision
-                && saved.review.facts.administrative_owner_id == grant.principal_id
-                && intent.principal == grant.principal_id
-                && matches!(
-                    saved.receipt.outcome,
-                    ExecutionOutcome::Launching | ExecutionOutcome::Unconfirmed { .. }
-                ),
-            "reviewed transition authority changed"
-        );
+        review_current(revision, grant, intent, expected, &saved)?;
         ensure!(
             database::configured_identity(&self.directory, &intent.target.identity).await?
                 == intent.target,
@@ -607,12 +677,11 @@ impl Supervisor {
                     serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":current.incarnation,"process_state":info.state,"phase":"admission_retained"},"message":"Retained admission observed. Reconciliation never repeats guardian launch."}),
                 );
             }
-            let mut immutable = current.clone();
-            immutable.state = intent.source.state.clone();
-            ensure!(
-                serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
-                "source registration changed during reconciliation"
-            );
+            registration_current(
+                &current,
+                &intent.source,
+                "source registration changed during reconciliation",
+            )?;
         }
         self.transition_facts(grant, intent, source).await?;
         let runtime = super::runtime_storage::planned_bound_directory(&self.directory, session)?;
@@ -843,11 +912,7 @@ impl Supervisor {
             anyhow::bail!("target configuration commit remains unconfirmed")
         };
         write(&self.directory, intent.review_id, "committed", &receipt)?;
-        ensure!(
-            receipt.config_digest == intent.target_facts.config_digest
-                && receipt.history_digest == source.history_digest,
-            "target handoff receipt changed"
-        );
+        committed_current(&receipt, intent, source)?;
         self.transition_authority(grant, intent, approved).await?;
         self.transition_facts(grant, intent, source).await?;
         if intent.target.authority == AuthorityClass::Administrator {
@@ -901,12 +966,11 @@ impl Supervisor {
                     serde_json::json!({"transition":{"review_id":intent.review_id,"session_id":session,"incarnation":current.incarnation,"process_state":info.state,"phase":"admission_retained"},"message":"Retained admission observed. Reconciliation never repeats guardian launch."}),
                 );
             }
-            let mut immutable = current.clone();
-            immutable.state = intent.source.state.clone();
-            ensure!(
-                serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
-                "source registration changed during reconciliation"
-            );
+            registration_current(
+                &current,
+                &intent.source,
+                "source registration changed during reconciliation",
+            )?;
         }
         write(
             &self.directory,
@@ -918,12 +982,11 @@ impl Supervisor {
             next.state = ProcessState::Stopped;
         }
         let previous = self.registration(session).await?;
-        let mut immutable = previous.clone();
-        immutable.state = intent.source.state.clone();
-        ensure!(
-            serde_json::to_vec(&immutable)? == serde_json::to_vec(&intent.source)?,
-            "source admission changed during handoff"
-        );
+        registration_current(
+            &previous,
+            &intent.source,
+            "source admission changed during handoff",
+        )?;
         self.transition_authority(grant, intent, approved).await?;
         database::transition_bound(
             &self.directory,
@@ -977,6 +1040,10 @@ impl Supervisor {
         )?)?)
     }
 }
+
+#[cfg(test)]
+#[path = "execution_transition_tests.rs"]
+mod tests;
 
 /// Protected proof that a committed target incarnation was never launched.
 /// Any retained launch intent fences this proof even without a child receipt.
