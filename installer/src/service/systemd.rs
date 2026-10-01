@@ -13,6 +13,7 @@ struct Plan {
     previous: Option<String>,
     active: bool,
     enabled: bool,
+    unit_file_state: String,
     start: bool,
     invocation: String,
     restart: bool,
@@ -72,6 +73,7 @@ fn plan(bin: &Path, start: bool) -> Result<Plan> {
         previous,
         active: active == "active",
         enabled: enabled == "enabled",
+        unit_file_state: enabled,
         start,
         invocation: command::query("InvocationID")?,
         restart,
@@ -83,6 +85,7 @@ pub(super) fn review_activation(bin: &Path) -> Result<super::Activation> {
     Ok(super::Activation {
         active: plan.active,
         enabled: plan.enabled,
+        unit_file_state: plan.unit_file_state,
         definition: plan.previous,
         state: plan.layout.state,
     })
@@ -106,6 +109,15 @@ pub(super) fn restore_activation(
         "Refusing rollback over independently changed supervisor definition"
     );
     unit::check_effective(&layout)?;
+    let enabled = command::query("UnitFileState")?;
+    ensure!(
+        enabled == prior.unit_file_state
+            || (prior.definition.is_none()
+                && current.as_deref() == Some(&candidate_definition)
+                && enabled == "disabled"
+                && !prior.enabled),
+        "Refusing rollback over independently changed supervisor enablement"
+    );
     let activation = command::query("ActiveState")?;
     if matches!(
         activation.as_str(),
@@ -115,6 +127,21 @@ pub(super) fn restore_activation(
             current.is_some(),
             "Unrecognized supervisor activation cannot be stopped"
         );
+        let pid: u32 = command::query("MainPID")?
+            .parse()
+            .context("Supervisor PID unavailable")?;
+        if pid > 1 {
+            #[cfg(test)]
+            let executable = crate::fixture_tests::executable(pid)?;
+            #[cfg(not(test))]
+            let executable = fs::read_link(format!("/proc/{pid}/exe"))?;
+            ensure!(
+                executable == candidate.join("vessel") || executable == bin.join("vessel"),
+                "Supervisor PID does not belong to the reviewed previous or candidate release"
+            );
+        } else {
+            ensure!(activation != "active", "Active supervisor PID unavailable");
+        }
         command::systemctl(&["--no-block", "stop", unit::NAME])?;
         wait_inactive()?;
     }
@@ -127,11 +154,7 @@ pub(super) fn restore_activation(
         _ => (),
     }
     command::systemctl(&["daemon-reload"])?;
-    if prior.enabled {
-        command::systemctl(&["enable", unit::NAME])?;
-    } else if prior.definition.is_some() {
-        command::systemctl(&["disable", unit::NAME])?;
-    }
+    // No enable/disable call: the exact reviewed enablement was checked above.
     if prior.active {
         ensure!(
             prior.definition.is_some(),

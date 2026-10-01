@@ -25,6 +25,7 @@ fn setup(_f: &Fixture, bin: &Path, active: bool, enabled: bool, start: bool) -> 
         previous: Some(content.clone()),
         active,
         enabled,
+        unit_file_state: if enabled { "enabled" } else { "disabled" }.into(),
         start,
         invocation: "before".into(),
         restart: false,
@@ -265,6 +266,7 @@ fn rollback_restarts_previously_active_failed_supervisor_without_broadening_enab
         let prior = super::super::Activation {
             active: true,
             enabled,
+            unit_file_state: if enabled { "enabled" } else { "disabled" }.into(),
             definition: Some(plan.content.clone()),
             state: plan.layout.state.clone(),
         };
@@ -274,12 +276,12 @@ fn rollback_restarts_previously_active_failed_supervisor_without_broadening_enab
         )
         .unwrap();
         f.effective(true);
+        f.query(
+            "UnitFileState",
+            if enabled { "enabled" } else { "disabled" },
+        );
         f.query("ActiveState", "failed");
         f.call(&["daemon-reload"], "");
-        f.call(
-            &[if enabled { "enable" } else { "disable" }, unit::NAME],
-            "",
-        );
         f.effective(true);
         f.call(&["reset-failed", unit::NAME], "");
         f.call(&["--no-block", "start", unit::NAME], "");
@@ -301,6 +303,7 @@ fn rollback_preserves_reviewed_inactive_supervisor_without_starting_it() {
     let prior = super::super::Activation {
         active: false,
         enabled: false,
+        unit_file_state: "disabled".into(),
         definition: Some(plan.content.clone()),
         state: plan.layout.state.clone(),
     };
@@ -310,9 +313,9 @@ fn rollback_preserves_reviewed_inactive_supervisor_without_starting_it() {
     )
     .unwrap();
     f.effective(true);
+    f.query("UnitFileState", "disabled");
     f.query("ActiveState", "inactive");
     f.call(&["daemon-reload"], "");
-    f.call(&["disable", unit::NAME], "");
     f.query("ActiveState", "inactive");
     restore_activation(&old, &candidate, &prior).unwrap();
     assert_eq!(fs::read_to_string(&plan.layout.unit).unwrap(), plan.content);
@@ -328,6 +331,7 @@ fn rollback_preserves_independently_changed_supervisor_definition_before_manager
     let prior = super::super::Activation {
         active: true,
         enabled: true,
+        unit_file_state: "enabled".into(),
         definition: Some(plan.content.clone()),
         state: plan.layout.state.clone(),
     };
@@ -337,4 +341,42 @@ fn rollback_preserves_independently_changed_supervisor_definition_before_manager
     assert!(restore_activation(&old, &candidate, &prior).is_err());
     assert_eq!(fs::read_to_string(&plan.layout.unit).unwrap(), text);
     f.done();
+}
+
+#[test]
+fn restoration_refuses_changed_enablement_and_unreviewed_live_pid_before_stop() {
+    for wrong_pid in [false, true] {
+        let f = Fixture::new();
+        let old = binaries(&f, "old");
+        let candidate = binaries(&f, "candidate");
+        let plan = setup(&f, &old, true, true, false);
+        let prior = super::super::Activation {
+            active: true,
+            enabled: true,
+            unit_file_state: "enabled".into(),
+            definition: Some(plan.content.clone()),
+            state: plan.layout.state.clone(),
+        };
+        fs::write(
+            &plan.layout.unit,
+            unit::render(&candidate, &plan.layout.state).unwrap(),
+        )
+        .unwrap();
+        f.effective(true);
+        f.query(
+            "UnitFileState",
+            if wrong_pid { "enabled" } else { "disabled" },
+        );
+        if wrong_pid {
+            f.query("ActiveState", "active");
+            f.query("MainPID", "77");
+            symlink(f.root.join("unreviewed/vessel"), f.root.join("pid-77")).unwrap();
+        }
+        assert!(restore_activation(&old, &candidate, &prior).is_err());
+        assert_eq!(
+            fs::read_to_string(&plan.layout.unit).unwrap(),
+            unit::render(&candidate, &plan.layout.state).unwrap()
+        );
+        f.done();
+    }
 }

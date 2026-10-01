@@ -48,6 +48,7 @@ pub fn configure(_bin: &std::path::Path, _start: bool, _dry_run: bool) -> Result
 pub(crate) struct Activation {
     pub active: bool,
     pub enabled: bool,
+    pub unit_file_state: String,
     pub definition: Option<String>,
     pub state: std::path::PathBuf,
 }
