@@ -135,7 +135,7 @@ async fn branch_success_dispatches_exact_historical_boundary_and_preserves_new_c
             .get_mut(&target)
             .unwrap()
             .draft
-            .set_text("new unsent composer");
+            .set_text("new unsent composer".into());
         let elsewhere = Target {
             route: target.route,
             session: Uuid::new_v4(),
@@ -436,7 +436,7 @@ fn archived_navigation_changes_only_visible_selection_and_preserves_all_composer
         .get_mut(&archive_target)
         .unwrap()
         .draft
-        .set_text("archived unsent input");
+        .set_text("archived unsent input".into());
     app.show_archives(true);
     assert!(app.archives);
     assert_eq!(app.selected, Some(archive_target));
