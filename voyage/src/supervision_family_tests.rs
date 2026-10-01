@@ -297,10 +297,13 @@ async fn terminal_followup_creates_a_new_child_without_rewriting_the_final_paren
     let worker = Arc::new(Worker::default());
     let runtime = runtime(worker.clone(), 1, 64);
     let supervisor = RuntimeAgentSupervisor::new(runtime.clone());
-    let parent = runtime
-        .spawn(request("completed", "finish:original", None))
-        .await
-        .unwrap();
+    let retained = tempfile::tempdir().unwrap();
+    let mut parent_request = request("completed", "finish:original", None);
+    // A terminal leaf without retained worktree metadata is archived by the
+    // runtime. This owned empty path deliberately keeps the parent retained;
+    // the scripted executor performs no Git/worktree operations.
+    parent_request.worktree = Some(retained.path().to_path_buf());
+    let parent = runtime.spawn(parent_request).await.unwrap();
     outcome(&runtime, parent).await.unwrap();
     let before = runtime.get(parent).await.unwrap();
     let child = supervisor
@@ -322,6 +325,12 @@ async fn terminal_followup_creates_a_new_child_without_rewriting_the_final_paren
     assert!(
         matches!(supervisor.send_message(AgentId(parent.0),"cannot mutate final work".into()).await,Err(SupervisionError::Failed(message)) if message.contains("terminal"))
     );
+    runtime
+        .clear_worktree(subagent::AgentId(child.0))
+        .await
+        .unwrap();
+    runtime.clear_worktree(parent).await.unwrap();
+    assert!(runtime.is_archived(parent).await.unwrap());
     retire(&runtime, &worker).await;
 }
 
@@ -346,10 +355,10 @@ async fn unknown_agents_and_executor_failure_have_distinct_bounded_supervision_e
     assert!(
         matches!(supervisor.cancel(unknown).await,Err(SupervisionError::NotFound(id)) if id==unknown)
     );
-    let failed = runtime
-        .spawn(request("failed", "fail", None))
-        .await
-        .unwrap();
+    let retained = tempfile::tempdir().unwrap();
+    let mut failed_request = request("failed", "fail", None);
+    failed_request.worktree = Some(retained.path().to_path_buf());
+    let failed = runtime.spawn(failed_request).await.unwrap();
     assert_eq!(
         outcome(&runtime, failed).await.unwrap_err(),
         "owned executor failure"
@@ -366,6 +375,8 @@ async fn unknown_agents_and_executor_failure_have_distinct_bounded_supervision_e
     assert!(
         matches!(supervisor.follow_up(AgentId(failed.0),"new work after shutdown".into()).await,Err(SupervisionError::Failed(error)) if error.contains("shutting down"))
     );
+    runtime.clear_worktree(failed).await.unwrap();
+    assert!(runtime.is_archived(failed).await.unwrap());
 }
 
 #[tokio::test]
