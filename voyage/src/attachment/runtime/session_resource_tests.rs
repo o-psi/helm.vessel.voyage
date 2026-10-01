@@ -122,12 +122,11 @@ async fn session_resource_timeout_rolls_back_and_restores_nonblocking() {
         assert!(start.elapsed() < Duration::from_secs(5));
         db.execute_batch("ROLLBACK").unwrap();
         assert_eq!(counts(&db, id), if close { (1, 1) } else { (0, 0) });
-        // A fresh Wait budget would make a leaked handler wait two seconds.
-        // Check the connection directly while another writer holds its lock.
+        // With no explicit thread budget, the installed handler must refuse
+        // immediately. Probe directly while another writer holds its lock.
         db.execute_batch("BEGIN IMMEDIATE").unwrap();
         {
             let mut store = owner.store.lock().unwrap();
-            let _budget = super::super::journal::checkpoint_wait::Wait::new(None, None);
             let start = Instant::now();
             let Store { journal, guard, .. } = &mut *store;
             assert!(
@@ -198,11 +197,10 @@ async fn session_resource_bookkeeping_survives_cancel_and_revocation() {
         assert!(!task.is_finished());
         db.execute_batch("ROLLBACK").unwrap();
         task.await.unwrap().unwrap();
-        // Verify restoration on success too, with a live callback budget.
+        // Verify the no-budget boundary after success too.
         db.execute_batch("BEGIN IMMEDIATE").unwrap();
         {
             let mut store = owner.store.lock().unwrap();
-            let _budget = super::super::journal::checkpoint_wait::Wait::new(None, None);
             let start = Instant::now();
             let Store { journal, guard, .. } = &mut *store;
             assert!(
