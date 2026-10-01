@@ -235,16 +235,9 @@ pub(super) fn suspension_candidate(root: &Path, session: Uuid, incarnation: Uuid
         serde_json::from_slice(&record.read("admission.json".as_ref(), 4096)?)?;
     let complete: Completion =
         serde_json::from_slice(&record.read("completion.json".as_ref(), 4096)?)?;
-    let stop_absent = match record.read("stop.json".as_ref(), 4096) {
-        Err(error)
-            if error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
-        {
-            true
-        }
-        _ => false,
-    };
+    let stop_absent = matches!(record.read("stop.json".as_ref(), 4096),
+        Err(error) if error.downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound));
     Ok(suspension_facts(
         &admission,
         &complete,
