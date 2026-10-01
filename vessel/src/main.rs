@@ -49,6 +49,7 @@ struct Cli {
     )]
     system_gateway_socket: Option<String>,
     /// Canonical HTTPS origin served by a TLS proxy on this host.
+    #[arg(long)]
     public_origin: Option<String>,
     /// Allow HTTP only for literal loopback development origins.
     #[arg(long, requires = "public_origin")]

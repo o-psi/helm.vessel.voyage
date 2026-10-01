@@ -1361,3 +1361,12 @@ and the owned observation is retired without replaying effects; see
 These headless cases do not establish native interactive input, Root execution
 approval, provider model discovery or OAuth behavior, and no such source is
 excluded from the full workspace measurement.
+
+### Preserved gateway origin command line (#401)
+
+The Vessel main parser regressions preserve the approved `--public-origin VALUE`
+gateway option and the process-directory dependency. They exercise the same
+canonical origin validator: HTTPS remains required except explicitly opted-in
+literal loopback development HTTP; hostname HTTP, credentials, paths and query
+secrets remain refused. See [issue #401](https://github.com/o-psi/helm.vessel.voyage/issues/401).
+These parser checks do not establish native systemd activation or complete rollback.
