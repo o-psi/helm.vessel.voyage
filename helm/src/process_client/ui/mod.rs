@@ -400,3 +400,6 @@ mod campaign_dispatch_tests;
 
 #[cfg(all(test, unix))]
 mod lifecycle_contract_tests;
+
+#[cfg(test)]
+mod observation_contract_tests;

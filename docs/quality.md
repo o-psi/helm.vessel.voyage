@@ -1340,3 +1340,24 @@ while Snapshot and Archive address canonical session state without a live-owner
 wire fence. Archive remains bound to the exact command ID and observed revision;
 these operations do not acquire live tool/browser authority. Failure fixtures
 begin in the archive listing so ordinary selection filtering is represented.
+
+### Helm observation and private account publication contracts (#400)
+
+`process_client::ui::observation_contract_tests` exercises exact account/model
+settings receipt statuses, transformed and wrapped receipt identities, retired
+routes, background focus, archive/deletion confirmation, catalogue-only hydration,
+local receipt failures, unavailable snapshots and passive inbox attention. None
+of these observations changes inferred live settings, sends a mutation, consumes
+new text or activates a different conversation merely because a background result
+arrived.
+
+`inference::account_choices::coverage_tests` additionally checks every live review
+context fence, interrupted/oversized private lists and explicit-model/provider
+preservation during host-default initialization. Live and configuration-draft
+account results require the exact current available route before host identities,
+choices or defaults are published. Retired/disconnected route results are discarded
+and the owned observation is retired without replaying effects; see
+[issue #400](https://github.com/o-psi/helm.vessel.voyage/issues/400).
+These headless cases do not establish native interactive input, Root execution
+approval, provider model discovery or OAuth behavior, and no such source is
+excluded from the full workspace measurement.

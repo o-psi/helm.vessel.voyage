@@ -152,6 +152,7 @@ impl App {
                 && match load.destination {
                     Destination::Live(t) => {
                         self.selected == Some(t)
+                            && self.clients.available(t.route)
                             && self.active_draft.is_none()
                             && self
                                 .views
@@ -159,7 +160,11 @@ impl App {
                                 .is_some_and(|v| Some(v.process.incarnation) == load.incarnation)
                     }
                     Destination::Draft(d) => {
-                        self.active_draft == Some(d) && self.new_drafts.contains_key(&d)
+                        self.active_draft == Some(d)
+                            && self
+                                .new_drafts
+                                .get(&d)
+                                .is_some_and(|draft| self.clients.available(draft.route))
                     }
                 }
                 && p.chooser.accounts_open
