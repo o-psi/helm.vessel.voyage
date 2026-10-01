@@ -11,25 +11,25 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `ca71ecdbe32e30277741eab7145d88c2d66cd7bd`, recorded in
-`coverage/latest.json`, passed **2,339 tests, zero failures, eight ignored**.
-It covers **96,873 / 131,550 lines (73.639681%)**, 8,776 / 12,018 functions
-and 152,704 / 217,634 regions. **34,677 line gaps remain**, including one known
+Clean source `53884b6e3804549819cdc2f410f55ff1b55c9a35`, recorded in
+`coverage/latest.json`, passed **2,342 tests, zero failures, eight ignored**.
+It covers **96,931 / 131,652 lines (73.626682%)**, 8,785 / 12,027 functions
+and 152,786 / 217,743 regions. **34,721 line gaps remain**, including one known
 standard-library line. This does not meet #353's reachable-production objective.
 
-All **536 current workspace files**, all **535 prior files** and the same known
+All **537 current workspace files**, all **536 prior files** and the same known
 standard-library source are retained. All 14 test targets and three integration
 entrypoints contribute 17 distinct instrumented objects. No foreign-checkout
 source maps remain. Only 248 own profiles were merged; 235 foreign profiles remain
 unchanged. The mixed default export with 2,092 source mappings was rejected.
-Exact manifests and reports remain under ignored `target/coverage-report/v103-bound-final`.
+Exact manifests and reports remain under ignored `target/coverage-report/v103-startup-private`.
 Earlier qualified raw profiles and all 17 prior object hashes were preserved.
 
-Compared with the published `83ab2bf` record: 242 more covered lines, 513 more
-measured lines and a 0.103613 percentage-point drop. New ordinary wake and
-independent guardian authority paths expand the unexecuted denominator. No
-exclusions were added. Their proof/refusal cases passed; actual native execution
-and same-browser client journeys remain separate acceptance gates.
+Compared with the published `ca71ecd` record:58 more covered lines,102 more
+measured lines and a0.012998 percentage-point drop. Startup-stage evidence and
+bounded statement workers expand measured source. No exclusions were added.
+Private-umask whole-workspace tests passed; native/final process journeys remain
+separate evidence. #353 target is not met by this measurement.
 
 Historical detailed exports require regeneration against current audited
 objects/profile before selecting line addresses. Native Root, external-provider
@@ -97,7 +97,7 @@ They must not be relabeled untestable merely because fixtures are difficult.
 
 ## Current largest areas and concrete next assertions
 
-This map is derived from the current audited `ca71ecd` export above.
+This map is derived from the current audited `53884b6` export above.
 Directory rows aggregate that directory only; the identity-helper row also
 includes its same-named entry file. An unexecuted line is not proof of an
 unreachable branch or a missing assertion. Native requirements remain required

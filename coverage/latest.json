@@ -1,35 +1,35 @@
 {
-  "measured_at_utc": "2026-10-01T03:31:08.029641+00:00",
-  "source_commit": "ca71ecdbe32e30277741eab7145d88c2d66cd7bd",
+  "measured_at_utc": "2026-10-01T18:18:12.963080+00:00",
+  "source_commit": "53884b6e3804549819cdc2f410f55ff1b55c9a35",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2339,
+    "passed": 2342,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 131550,
-      "covered": 96873,
-      "percent": 73.63968072976054
+      "count": 131652,
+      "covered": 96931,
+      "percent": 73.62668246589493
     },
     "functions": {
-      "count": 12018,
-      "covered": 8776,
-      "percent": 73.02379763687802
+      "count": 12027,
+      "covered": 8785,
+      "percent": 73.0439843685042
     },
     "regions": {
-      "count": 217634,
-      "covered": 152704,
-      "percent": 70.16550722773096
+      "count": 217743,
+      "covered": 152786,
+      "percent": 70.1680421414236
     }
   },
-  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-bound-final/html -j 8 > target/coverage-report/v103-bound-final/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-bound-final/summary-default.json -v; llvm-profdata merge -sparse -f target/coverage-report/v103-bound-final/own-profraw-list.txt -o target/coverage-report/v103-bound-final/own-workspace.profdata; explicit-object llvm-cov export arguments retained in target/coverage-report/v103-bound-final/corrected-command.json",
+  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=8G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-startup-private/html -j 2",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-startup-private/summary-default.json -v; llvm-profdata merge -sparse with248 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -39,11 +39,11 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed-source default-feature measurement: 2,339 passed, zero failed, eight ignored. No new exclusions; coverage measures execution, not correctness.",
-    "All 17 distinct current objects, 536 current workspace files, all 535 prior files and the same known standard-library source retained. No foreign-checkout source maps; checkout-specific forwarding-wrapper namespace remains in use.",
-    "Only 248 own profiles merged; all 235 foreign profiles remain byte-identical. Earlier qualified raw profiles were archived and all 17 prior measured binaries copied with verified original hashes before this measurement. Default export mixed 2,092 mapped files and was rejected.",
-    "Compared with prior published record: 242 more covered lines, 513 more measured lines, -0.103613149068 percentage-point change. New ordinary-wake and independent authority paths expand the denominator. 34677 line gaps remain, including one known standard-library line; #353 stays unfinished.",
-    "Initial strict Clippy found one redundant boolean match, corrected before this measurement. The integrated full test run passed on its first attempt. Native held-run/guardian, automatic wake, upgrade/rollback and same-browser UI journeys remain separate qualification; no paid providers used.",
-    "Profiles, HTML, detailed summary, rejected export, source/object inventory and hash provenance remain under ignored target/coverage-report/v103-bound-final. Only this compact summary is published."
+    "Clean committed-source full default-feature measurement: 2,342 passed, zero failed, eight ignored. No new exclusions; execution coverage is not correctness.",
+    "All537 current workspace files, all536 prior files, known standard-library mapping and17 current distinct objects retained. Only248 own profiles merged;235 foreign raw profiles unchanged. Mixed default export with2093 mappings rejected.",
+    "Compared with prior published record: 58 more covered lines, 102 more measured lines, -0.012998263866 percentage-point change; 34721 gaps remain including one known standard-library line. #353 remains unmet; no denominator narrowing.",
+    "Transient service isolates verification from desktop cgroup. Private umask0077,8GiB memory,zero swap,1200-second deadline. Successful service peak2GiB/0swap; prior run used manager default0022 and failed private-storage guards. All failed evidence/profiles preserved; no guards weakened.",
+    "New ordinary startup statement contention tests passed, including one closure invocation, bounded timeout,no late admission and unchanged canonical history. Browser private reclaim process passed separately; full80-turn final fixed-source rerun remains required.",
+    "Detailed reports, profiles, object/source manifests, default/rejected exports and logs remain under ignored target/coverage-report/v103-startup-private. Only compact summary is published."
   ]
 }
