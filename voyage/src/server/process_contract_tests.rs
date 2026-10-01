@@ -94,6 +94,7 @@ async fn ordinary_runtime_child() {
 struct Process {
     child: Child,
     result: PathBuf,
+    log: PathBuf,
 }
 impl Drop for Process {
     fn drop(&mut self) {
@@ -104,11 +105,26 @@ impl Drop for Process {
     }
 }
 impl Process {
+    fn diagnostics(&self) -> String {
+        // Only the cleared-environment fixture child writes these files.
+        let bytes = std::fs::read(&self.log).unwrap_or_default();
+        let mut text = String::from_utf8_lossy(&bytes[..bytes.len().min(16_384)]).into_owned();
+        if let Ok(result) = std::fs::read(&self.result)
+            && let Ok(value) = serde_json::from_slice::<Value>(&result)
+        {
+            text.push_str(&format!("\nfixture result: {value}"));
+        }
+        text
+    }
     async fn waited(&mut self) {
         tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 if let Some(status) = self.child.try_wait().unwrap() {
-                    assert!(status.success());
+                    assert!(
+                        status.success(),
+                        "ordinary child failed: {}",
+                        self.diagnostics()
+                    );
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -137,8 +153,8 @@ impl Process {
             loop {
                 assert!(
                     self.child.try_wait().unwrap().is_none(),
-                    "server exited before readiness; inspect fixture result {:?}",
-                    self.result
+                    "server exited before readiness: {}",
+                    self.diagnostics()
                 );
                 if directory.join("runtime.sock").exists() {
                     let response =
@@ -188,19 +204,25 @@ impl Fixture {
                 crate::accounts::ApiKeyInput::Stored("synthetic-local-only-key".into()),
             )
             .unwrap();
-        let mut config = provider.config();
-        config.account = Some(voyage_protocol::accounts::AccountBinding {
+        let config = provider.config();
+        let binding = voyage_protocol::accounts::AccountBinding {
             account_id: account.id,
             connection_id: connection.id,
             identity_generation: account.identity_generation,
             connection_revision: connection.revision,
             transport: voyage_protocol::accounts::Transport::OpenaiChat,
-        });
+        };
         let config_path = root.path().join("launch.json");
-        private(
-            &config_path,
-            &crate::launch_config::LaunchConfig::capture(&config, &workspace).unwrap(),
-        );
+        // The registry belongs to the child XDG namespace. Capture the safe
+        // account-free policy DTO here, then insert its exact child binding.
+        // The real child resolves and validates it in that namespace at launch;
+        // the parent never changes its process-global environment or registry.
+        let mut launch = serde_json::to_value(
+            crate::launch_config::LaunchConfig::capture(&config, &workspace).unwrap(),
+        )
+        .unwrap();
+        launch["config"]["account"] = serde_json::to_value(binding).unwrap();
+        private(&config_path, &launch);
         let registration = ProcessRegistration {
             protocol: 1,
             session_id: Uuid::new_v4(),
@@ -259,11 +281,12 @@ impl Fixture {
                 result: result.clone(),
             },
         );
+        let log_path = self.root.path().join(format!("child-{id}.log"));
         let log = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(self.root.path().join(format!("child-{id}.log")))
+            .open(&log_path)
             .unwrap();
         let mut command = Command::new(std::env::current_exe().unwrap());
         let stdin = if let Some(bytes) = input {
@@ -302,6 +325,7 @@ impl Fixture {
         Process {
             child: command.spawn().unwrap(),
             result,
+            log: log_path,
         }
     }
     async fn call(&self, command: RuntimeCommand) -> voyage_protocol::process::RuntimeResponse {

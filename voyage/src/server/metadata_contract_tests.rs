@@ -212,6 +212,7 @@ async fn active_lifecycle_model_reconciliation_and_missing_steering_fail_without
 async fn approval_route_rechecks_consent_and_replays_without_executing_a_tool() {
     let (_root, state, _provider) = family_fixture::fixture().await;
     let mut run = admitted(&state).await;
+    run.register_local_cleanup().await.unwrap();
     run.start_operator().await.unwrap();
     let run_id = run.record().await.unwrap().id;
     let decision = Uuid::new_v4();
@@ -282,7 +283,11 @@ async fn compact_preserves_canonical_text_clear_has_exact_confirmation_and_branc
     )
     .await
     .unwrap();
-    assert!(read.to_string().contains("Canonical fixture answer"));
+    // Operator final text belongs to canonical history. No streaming delta
+    // was recorded for this fixture, so RunOutput must not invent that text.
+    assert_eq!(read["run_id"], run.to_string());
+    assert_eq!(read["state"], "completed");
+    assert_eq!(read["data"], "");
     let chunk = call(
         &state,
         RuntimeCommand::MessageChunk {
@@ -388,7 +393,16 @@ async fn archive_and_delete_retire_only_after_durable_acceptance_and_deleted_rep
         );
         if deleting {
             assert!(!state.workflows.pending().await);
-            assert_eq!(call(&state, command).await.unwrap(), receipt);
+            let id = command.mutation_id().unwrap();
+            // Accepted deletion closes admission. Its exact receipt stays
+            // observable; another mutation must not reopen the retiring owner.
+            assert_eq!(
+                call(&state, RuntimeCommand::Receipt { command_id: id })
+                    .await
+                    .unwrap(),
+                receipt
+            );
+            assert!(call(&state, command).await.is_err());
         } else {
             state.workflows.clear().await;
         }
