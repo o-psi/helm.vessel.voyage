@@ -216,6 +216,11 @@ impl App {
                     .push(review.clone());
             }
         }
+        // Receipt disposition belongs to the original save, but its catalogue
+        // and labels may not be published into a replaced viewing context.
+        if review.is_some() && !current_review {
+            return;
+        }
         let Some(panel) = self.inference.profiles.panel.as_ref() else {
             return;
         };

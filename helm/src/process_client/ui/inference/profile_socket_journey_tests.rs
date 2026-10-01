@@ -598,3 +598,159 @@ async fn acknowledgement_from_wrong_save_id_cannot_consume_a_retained_original_r
     );
     peer.unchanged();
 }
+
+async fn queued_success(peer: &mut Peer) -> ProfileJobResult {
+    // Wait for the real scripted transport response without publishing it to
+    // the UI; a new one-shot lets the test control the later consumption point.
+    let mut receiver = peer.app.inference.profiles.job.take().unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            match receiver.try_recv() {
+                Ok(value) => break value,
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                    tokio::task::yield_now().await
+                }
+                Err(_) => panic!("scripted save reply must remain available"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(result.is_ok());
+    result
+}
+
+#[tokio::test]
+async fn delayed_success_settles_original_save_without_publishing_into_changed_context() {
+    for field in 0..5 {
+        let mut peer = Peer::new().await;
+        open(&mut peer).await;
+        let profile = peer.host.lock().unwrap().profile.clone();
+        peer.app.inference.profiles.editing =
+            Some((profile.id, "Acknowledged original review".into()));
+        peer.app.save_profile_settings(settings(&profile)).unwrap();
+        let original = peer
+            .app
+            .inference
+            .profiles
+            .pending_save
+            .as_ref()
+            .unwrap()
+            .clone();
+        let response = queued_success(&mut peer).await;
+        assert!(
+            response
+                .as_ref()
+                .unwrap()
+                .1
+                .profiles
+                .iter()
+                .any(|profile| profile == &original.profile)
+        );
+        match field {
+            0 => {
+                peer.app
+                    .views
+                    .get_mut(&peer.target)
+                    .unwrap()
+                    .process
+                    .workspace = peer.fixture.0.path().join("new-workspace")
+            }
+            1 => {
+                peer.app
+                    .views
+                    .get_mut(&peer.target)
+                    .unwrap()
+                    .process
+                    .incarnation = Uuid::new_v4()
+            }
+            2 => peer
+                .app
+                .cache_account_host(peer.target.route, Uuid::new_v4()),
+            3 => peer.app.clients.mark_unavailable(peer.target.route),
+            _ => peer.app.clients[peer.target.route].disconnect(),
+        }
+        let host_before = peer.app.account_host(peer.target.route);
+        let catalogue_before = peer
+            .app
+            .inference
+            .profiles
+            .panel
+            .as_ref()
+            .unwrap()
+            .catalogue
+            .clone();
+        let labels_before = peer.app.inference.profiles.labels.clone();
+        let accounts_before: Vec<_> = peer
+            .app
+            .inference
+            .profiles
+            .accounts
+            .iter()
+            .map(|account| (account.binding.clone(), account.label.clone()))
+            .collect();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        peer.app.inference.profiles.job = Some(receiver);
+        assert!(sender.send(response).is_ok());
+        peer.app.poll_profiles();
+        assert!(peer.app.inference.profiles.pending_save.is_none());
+        assert!(peer.app.inference.profiles.unconfirmed_saves.is_empty());
+        assert!(peer.app.inference.profiles.job_save_id.is_none());
+        assert_eq!(peer.app.account_host(peer.target.route), host_before);
+        assert_eq!(
+            peer.app
+                .inference
+                .profiles
+                .panel
+                .as_ref()
+                .unwrap()
+                .catalogue,
+            catalogue_before
+        );
+        assert_eq!(peer.app.inference.profiles.labels, labels_before);
+        assert_eq!(
+            peer.app
+                .inference
+                .profiles
+                .accounts
+                .iter()
+                .map(|account| (account.binding.clone(), account.label.clone()))
+                .collect::<Vec<_>>(),
+            accounts_before
+        );
+        assert!(
+            peer.app
+                .inference
+                .profiles
+                .panel
+                .as_ref()
+                .unwrap()
+                .name
+                .is_none()
+        );
+        assert_eq!(profile_changes(&peer).len(), 1);
+        peer.unchanged();
+    }
+}
+
+#[tokio::test]
+async fn delayed_success_after_panel_close_keeps_caches_and_never_reopens_review() {
+    let mut peer = Peer::new().await;
+    open(&mut peer).await;
+    let profile = peer.host.lock().unwrap().profile.clone();
+    peer.app.inference.profiles.editing = Some((profile.id, "Closed acknowledged review".into()));
+    peer.app.save_profile_settings(settings(&profile)).unwrap();
+    let response = queued_success(&mut peer).await;
+    let labels_before = peer.app.inference.profiles.labels.clone();
+    peer.app.inference.profiles.panel = None;
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    peer.app.inference.profiles.job = Some(receiver);
+    assert!(sender.send(response).is_ok());
+    peer.app.poll_profiles();
+    assert!(peer.app.inference.profiles.pending_save.is_none());
+    assert!(peer.app.inference.profiles.unconfirmed_saves.is_empty());
+    assert!(peer.app.inference.profiles.panel.is_none());
+    assert_eq!(peer.app.inference.profiles.labels, labels_before);
+    assert_eq!(profile_changes(&peer).len(), 1);
+    peer.unchanged();
+}

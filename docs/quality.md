@@ -682,6 +682,10 @@ Only a matching save response containing the exact reviewed profile confirms it.
 Unconfirmed outcomes remain bounded local bookkeeping with no automatic resend.
 Review restoration requires the same current origin; closed, reactivated or changed
 destinations cannot inherit the previous review through a later catalogue failure.
+An acknowledged save still settles its original command when the view changes,
+but neither successful nor failed replies may update that replaced panel or its
+host/account/profile caches. Delayed-success cases consume actual scripted socket
+replies after workspace, incarnation, host, route, socket or panel changes.
 The prepared cases cover those boundaries and verify read-only loads never erase
 an unrelated original save. Native root/grant and live-provider evidence remain
 separate from these presentation/transport checks.
