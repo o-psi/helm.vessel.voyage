@@ -1014,25 +1014,91 @@ async fn missing_default_account_refuses_creation_and_required_sandbox_never_sta
     let mut launch: Value = serde_json::from_slice(&std::fs::read(&f.config).unwrap()).unwrap();
     launch["config"]["sandbox"]["mode"] =
         serde_json::to_value(crate::sandbox::Mode::Required).unwrap();
+    // Reach the required-sandbox missing-worker path, not the earlier
+    // read-only policy refusal. No browser executor is admitted by this setting.
+    launch["config"]["access"] = json!("unrestricted");
     private(&f.config, &launch);
     let mut process = f.spawn(&f.registration, &f.workspace, Some(f.config.clone()));
     process.ready(&f.directory, &f.registration).await;
+    let socket = voyage_protocol::host_browser::HostBrowserSocket {
+        socket_id: Uuid::new_v4(),
+    };
+    let status = || RuntimeCommand::HostBrowser {
+        operation: voyage_protocol::host_browser::HostBrowserOperation::Status {},
+        socket,
+    };
+    let before = f.call(status()).await;
+    assert!(before.error.is_none());
+    assert!(!before.outcome_unknown);
+    assert_eq!(before.result["status"]["available"], false);
+    assert_eq!(before.result["status"]["running"], false);
+    let canonical_before = f.call(RuntimeCommand::Snapshot).await;
+    assert!(canonical_before.error.is_none());
+    assert_eq!(canonical_before.result["access"], "unrestricted");
+    let command_id = Uuid::new_v4();
     let response = f
         .call(RuntimeCommand::HostBrowser {
             operation: voyage_protocol::host_browser::HostBrowserOperation::Start {
-                command_id: Uuid::new_v4(),
+                command_id,
                 expected_revision: 0,
                 incarnation: f.registration.incarnation,
             },
-            socket: voyage_protocol::host_browser::HostBrowserSocket {
-                socket_id: Uuid::new_v4(),
-            },
+            socket,
         })
         .await;
-    assert!(response.error.is_some());
-    assert!(!response.outcome_unknown);
+    assert!(
+        response
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("host browser unavailable")
+    );
+    // Browser mutations retain their own conservative receipt. Transport does
+    // not turn this returned error into a positively fenced non-admission.
+    assert!(response.outcome_unknown);
+    let receipt = f
+        .call(RuntimeCommand::HostBrowser {
+            operation: voyage_protocol::host_browser::HostBrowserOperation::Receipt { command_id },
+            socket,
+        })
+        .await;
+    assert!(receipt.error.is_none());
+    assert!(!receipt.outcome_unknown);
+    assert_eq!(
+        receipt.result["receipt"]["command_id"],
+        command_id.to_string()
+    );
+    assert_eq!(receipt.result["receipt"]["state"], "unknown");
+    let after = f.call(status()).await;
+    assert!(after.error.is_none());
+    assert_eq!(after.result["status"]["available"], false);
+    assert_eq!(after.result["status"]["running"], false);
+    let canonical_after = f.call(RuntimeCommand::Snapshot).await;
+    assert!(canonical_after.error.is_none());
+    assert_eq!(
+        canonical_after.result["revision"],
+        canonical_before.result["revision"]
+    );
+    assert_eq!(
+        canonical_after.result["messages"],
+        canonical_before.result["messages"]
+    );
+    assert!(canonical_after.result["run"].is_null());
+    assert_eq!(canonical_after.result["session_resources"], json!([]));
+    assert!(
+        !f.directory
+            .join("journal/host-browser/worker.lock")
+            .exists()
+    );
+    assert!(
+        !f.root
+            .path()
+            .join("data/helm/host-browser-capacity")
+            .exists()
+    );
     f.call(RuntimeCommand::Stop).await;
     assert_eq!(process.exited().await["success"], true);
+    assert_eq!(f.evidence()["cleanup_observed"], true);
     assert!(provider.requests.lock().await.is_empty());
 }
 
