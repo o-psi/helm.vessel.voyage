@@ -281,3 +281,7 @@ impl Object {
 #[cfg(test)]
 #[path = "repository_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "repository_discovery_tests.rs"]
+mod discovery_tests;

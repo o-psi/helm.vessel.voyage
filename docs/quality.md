@@ -1254,3 +1254,12 @@ budgets retain unknown outcomes, withheld status, precise diagnostic-page revisi
 and cursor continuation, event replay-gap inspection, and explicit missing-state
 reporting for actions with no smaller-page option. These are offline boundary
 cases, not live provider or native system evidence.
+
+`github::repository::discovery_tests` runs an owned executable fixture through the
+production fixed-argv subprocess boundary: exact local/no-includes arguments,
+environment isolation, unavailable credentialed remotes, missing Git, invalid
+encoding/keys/names, byte/count bounds, cancellation and command denial. No live
+GitHub request or credential helper is invoked. `github::approval::boundary_tests`
+checks Unicode preview integrity, final-page-only confirmation hints, minimum
+terminal dimensions and failed rendering. These paging checks do not establish
+native interactive TTY consent or keyboard-origin behavior.

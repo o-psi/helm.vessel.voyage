@@ -162,3 +162,57 @@ pub async fn approve_terminal(request: &ApprovalRequest) -> ApprovalOutcome {
     }
     outcome
 }
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    #[test]
+    fn unicode_preview_wrapping_keeps_graphemes_and_all_exact_body_text() {
+        let body = "α🦀e\u{301}界\nexact second line";
+        let wrapped = lines(body, 4);
+        assert_eq!(wrapped.concat(), body.replace('\n', ""));
+        assert!(
+            wrapped
+                .iter()
+                .all(|line| UnicodeWidthStr::width(line.as_str()) <= 4)
+        );
+        assert!(wrapped.iter().any(|line| line.contains("e\u{301}")));
+        assert_eq!(lines("wide界", 0).concat(), "wide界");
+    }
+
+    #[test]
+    fn incomplete_preview_never_displays_confirmation_until_final_page() {
+        let body = vec!["one".into(), "two".into(), "three".into()];
+        let mut first = Vec::new();
+        assert!(!render(&mut first, &body, 0, 2).unwrap());
+        let first = String::from_utf8(first).unwrap();
+        assert!(first.contains("one\r\ntwo\r\n"));
+        assert!(first.contains("[Space] next"));
+        assert!(!first.contains("[y] confirm"));
+        let mut last = Vec::new();
+        assert!(render(&mut last, &body, 2, 2).unwrap());
+        let last = String::from_utf8(last).unwrap();
+        assert!(last.contains("three\r\n"));
+        assert!(last.contains("[y] confirm"));
+        assert!(!last.contains("[Space] next"));
+    }
+
+    #[test]
+    fn unusable_screen_and_failed_preview_do_not_report_final_presentation() {
+        for size in [(0, 0), (59, 8), (60, 7)] {
+            assert!(!usable(size));
+        }
+        assert!(usable((60, 8)));
+        struct FailedWriter;
+        impl Write for FailedWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("fixture display unavailable"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        assert!(render(&mut FailedWriter, &["exact body".into()], 0, 1).is_err());
+    }
+}
