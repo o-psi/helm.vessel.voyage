@@ -1202,3 +1202,20 @@ profiles and preserving 235 foreign profiles. This records the integrated proof
 cases, not successful native wake or active owner survival. Those native journeys
 and the new same-browser TUI/Web private reclaim case require the corrected
 packaged binaries and observed cleanup.
+
+### Local verification resource isolation
+
+Run lengthy local verification outside the desktop application's cgroup. On
+the Linux verification host, use a transient systemd user service with explicit
+MemoryMax, MemorySwapMax=0 and RuntimeMaxSec. Use the actual tool executable
+from the intended toolchain; `/usr/bin/node` can differ from the project's Node.
+A heap limit alone does not bound native RSS. Do not disable OOM protections or
+change persistent desktop settings. Retain exit status and the unit's memory peak;
+missing processes or incomplete logs are not passing verification.
+
+The separate Web repository's maintained React launcher runs files sequentially
+in independent services capped at 1 GiB, zero swap and 25 seconds. Rust iteration
+builds here have been verified under a separate 6 GiB, zero-swap, 600-second
+service with reduced concurrency. Preserve existing targets/caches and the
+checkout-specific workspace wrapper. Coverage still requires its exclusive
+source/object/profile audit; resource isolation does not replace that audit.
