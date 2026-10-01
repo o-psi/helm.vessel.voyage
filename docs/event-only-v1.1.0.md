@@ -10,6 +10,10 @@ removed by v1.1.0. The transitional event work in
 [#366](https://github.com/o-psi/helm.vessel.voyage/issues/366) retains compatibility
 and snapshot recovery; that is not the v1.1.0 endpoint.
 
+The [operation inventory](event-only-inventory.md) maps the current public
+allowlists, production callers and removal oracles. It is target mapping, not
+proof of implementation.
+
 ## Required experience and protocol
 
 Both Helm TUI and production Helm Web must use the new event protocol for every
