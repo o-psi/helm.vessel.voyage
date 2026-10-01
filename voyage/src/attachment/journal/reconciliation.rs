@@ -37,6 +37,10 @@ struct Receipt {
 fn valid_id(id: &str) -> bool {
     !id.trim().is_empty() && id.len() <= MAX_CALL_ID && !id.chars().any(char::is_control)
 }
+
+#[cfg(test)]
+#[path = "reconciliation_family_tests.rs"]
+mod family_tests;
 // Refuse ambiguous history instead of fabricating retroactive success or inserting
 // messages into its immutable prefix. Resolved legacy orphan results are tolerated
 // only before a new unresolved block, as with admission's historical compaction.

@@ -10,6 +10,10 @@ struct UsageObserver {
     command: Uuid,
     incarnation: Uuid,
 }
+
+#[cfg(test)]
+#[path = "goal_family_tests.rs"]
+mod family_tests;
 impl std::fmt::Debug for UsageObserver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("GoalUsageObserver")
