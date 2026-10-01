@@ -24,6 +24,7 @@ pub mod guardian;
 mod images;
 pub mod models;
 mod observations;
+mod startup;
 mod submission;
 pub mod suspended;
 mod suspension;
@@ -218,6 +219,7 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             Ok((workspace, config, actor))
         }
         .await;
+        let prepared = startup::checked(&directory, &registration, "bootstrap", prepared);
         let (workspace, config, actor) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -228,7 +230,12 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             }
         };
         let journal_dir = directory.join("journal");
-        let mut journal = Journal::open(journal_dir.clone())?;
+        let mut journal = startup::checked(
+            &directory,
+            &registration,
+            "session_journal",
+            Journal::open(journal_dir.clone()),
+        )?;
         match journal.load_session(args.session) {
             Ok(saved) => ensure!(
                 saved.session.workspace == workspace,
@@ -253,10 +260,18 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             Err(error) => return Err(error),
         }
         drop(journal);
-        let owner = suspended::open_owner(journal_dir, args.session).await?;
-        owner
-            .bind_notification_incarnation(args.incarnation)
-            .await?;
+        let owner = startup::checked(
+            &directory,
+            &registration,
+            "execution_owner",
+            suspended::open_owner(journal_dir, args.session).await,
+        )?;
+        startup::checked(
+            &directory,
+            &registration,
+            "notification_incarnation",
+            owner.bind_notification_incarnation(args.incarnation).await,
+        )?;
         crate::host_resources::set_process_scope(args.session, args.incarnation)?;
         drop(startup);
         // A new lifetime must establish its own shutdown evidence, even when an
