@@ -178,13 +178,13 @@ async fn branch_success_dispatches_exact_historical_boundary_and_preserves_new_c
 
 #[tokio::test]
 async fn branch_explicit_refusal_and_malformed_creation_do_not_create_a_new_view() {
-    for variant in 0..5 {
+    for variant in 0..6 {
         let mut server = Server::new(move |command| {
-            let VesselCommand::Branch {branch_id,..}=command else {panic!("branch")};
+            let VesselCommand::Branch {branch_id,incarnation,..}=command else {panic!("branch")};
             match variant {
                 0=>Err("explicit branch refusal".into()),
                 1=>Ok(json!({"malformed":true})),
-                _=>Ok(json!({"session_id":if variant==2 {Uuid::new_v4()}else {*branch_id},"incarnation":if variant==3 {Uuid::nil()}else {Uuid::new_v4()},"workspace":if variant==4 {"/different-workspace"}else {"/synthetic-workspace"},"state":"starting"})),
+                _=>Ok(json!({"session_id":if variant==2 {Uuid::new_v4()}else {*branch_id},"incarnation":if variant==3 {Uuid::nil()}else if variant==5 {*incarnation}else {Uuid::new_v4()},"workspace":if variant==4 {"/different-workspace"}else {"/synthetic-workspace"},"state":"starting"})),
             }
         })
         .await;
@@ -323,11 +323,11 @@ async fn archive_restore_uses_new_owner_revision_and_one_exact_mutation_id() {
                 assert_eq!(incarnation, pending.incarnation);
             }
             (1, VesselCommand::Voyage(request)) => {
-                assert_eq!(request.incarnation, Some(new_owner));
+                assert_eq!(request.incarnation, None);
                 assert!(matches!(request.command, VoyageCommand::Snapshot));
             }
             (2, VesselCommand::Voyage(request)) => {
-                assert_eq!(request.incarnation, Some(new_owner));
+                assert_eq!(request.incarnation, None);
                 let VoyageCommand::Archive {
                     command_id,
                     expected_revision,
@@ -371,6 +371,7 @@ async fn archive_restore_unconfirmed_identity_and_stage_failures_never_replay_ef
         let (_fixture, mut app, old) = coverage_support::app();
         let target = connect(&mut app, old, &server);
         archived(&mut app, target);
+        app.archives = true;
         let (sender, mut receiver) = mpsc::channel(8);
         app.sender = sender;
         app.restore_archive(target, true).unwrap();

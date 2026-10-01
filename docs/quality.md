@@ -1331,3 +1331,12 @@ disconnected routes, overwrite and changed revision while preserving unsent text
 and atomic local files. No direct human terminal bytes enter these fixtures, no
 unknown effect is replayed, and native interactive terminal/OS cleanup behavior
 remains separate evidence from these headless client contracts.
+
+Branch acknowledgements also reject the parent's incarnation: the ordinary
+supervisor allocates a new incarnation for the distinct branch session, and the
+catalogue prevents one incarnation from belonging to two voyages. Restore socket
+fixtures follow the actual client contract: Restart pins its original owner,
+while Snapshot and Archive address canonical session state without a live-owner
+wire fence. Archive remains bound to the exact command ID and observed revision;
+these operations do not acquire live tool/browser authority. Failure fixtures
+begin in the archive listing so ordinary selection filtering is represented.

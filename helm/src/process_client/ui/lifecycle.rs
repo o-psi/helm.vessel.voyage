@@ -88,6 +88,7 @@ impl App {
                             .filter(|process| {
                                 process.session_id == branch_id
                                     && !process.incarnation.is_nil()
+                                    && process.incarnation != incarnation
                                     && process.workspace == workspace
                             });
                     if let Some(process) = process {
