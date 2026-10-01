@@ -294,6 +294,9 @@ def main():
                  'account': binding, 'expected_revision': 0})
         config = {'provider': 'openai-chat', 'model': 'fixture-model', 'api_key_required': False,
                   'base_url': server.site+'/v1', 'provider_retry_attempts': 1,
+                  # The two-client human barrier is bounded at 300s; the normal
+                  # 60s response deadline must not retire its browser mid-journey.
+                  'provider_response_timeout_ms': 300000,
                   'access': 'unrestricted', 'context_window': 0, 'account': binding,
                   'host_browser_launch': {'node': str(args.node.resolve()), 'worker': str(repo/'voyage/browser/worker.mjs'),
                       'chromium': str(args.chromium), 'config': {'public_web': True, 'origins': [{'origin': origin, 'private_network': True} for origin in (server.site, child_server.site)],
