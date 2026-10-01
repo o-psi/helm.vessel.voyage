@@ -55,7 +55,10 @@ fn count(peer: &Peer, predicate: impl Fn(&VesselCommand) -> bool) -> usize {
         .count()
 }
 fn intent_id(intent: &storage::Intent) -> Uuid {
-    intent.command.mutation_id().unwrap()
+    match &intent.command {
+        VesselCommand::EnrollAccount { command_id, .. } => *command_id,
+        _ => panic!("retained account intent must be an exact enrollment command"),
+    }
 }
 
 #[tokio::test]
