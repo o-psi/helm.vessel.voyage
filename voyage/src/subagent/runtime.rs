@@ -1240,3 +1240,7 @@ mod supervision_contract_tests;
 #[cfg(test)]
 #[path = "runtime/boundary_tests.rs"]
 mod boundary_tests;
+
+#[cfg(test)]
+#[path = "runtime/owned_family_tests.rs"]
+mod owned_family_tests;
