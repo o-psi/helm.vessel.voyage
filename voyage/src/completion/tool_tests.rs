@@ -98,7 +98,25 @@ async fn todo_adoption_is_explicit_and_stale_reviews_never_complete_work() {
     );
     let first = f.snapshot().await;
     assert_eq!(first.total, 1);
-    assert_eq!(first.accounted, 0);
+    // Current readiness accounts retained statuses automatically. Pending work
+    // stays incomplete; an accounting count is never successful completion.
+    assert_eq!(
+        (first.accounted, first.completed, first.incomplete),
+        (1, 0, 1)
+    );
+    assert_eq!(first.incomplete_obligations, vec![Obligation::Todo(id)]);
+    assert!(
+        f.context
+            .completion
+            .as_ref()
+            .unwrap()
+            .readiness_lease(&f.tool.todos, &f.tool.agents, 64)
+            .await
+            .unwrap()
+            .seal(crate::completion::FinalOutcome::Completed, None)
+            .await
+            .is_err()
+    );
     let record = f
         .call(json!({"action":"read","kind":"todo","id":id.0}))
         .await;
