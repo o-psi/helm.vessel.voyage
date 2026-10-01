@@ -3,6 +3,86 @@ use super::*;
 use voyage_protocol::vessel::{VoyageCommand, VoyageRequest};
 
 const TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+#[tokio::test]
+async fn legacy_owner_capabilities_preserve_grant_bytes_and_refuse_new_workspace_right() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut grant = f.connection();
+    grant.full_access = true;
+    grant.workspaces.clear();
+    grant.accounts.clear();
+    grant.enrollment_connections.clear();
+    grant.token_hash = store::hash(TOKEN);
+    grant.rights = serde_json::from_value(json!([
+        "catalogue",
+        "account_use",
+        "account_enroll",
+        "create",
+        "observe",
+        "history",
+        "execute",
+        "steer",
+        "decide",
+        "cancel",
+        "lifecycle",
+        "terminal"
+    ]))
+    .unwrap();
+    f.save_connection(&grant);
+    let path = store::connection_path(&f.0, grant.grant_id);
+    let retained = std::fs::read(&path).unwrap();
+    for _ in 0..2 {
+        let caps = s
+            .connected(grant.grant_id, TOKEN, VesselCommand::Capabilities)
+            .await
+            .unwrap();
+        assert_eq!(caps["scope"], "owner");
+        assert_eq!(caps["rights"], serde_json::to_value(&grant.rights).unwrap());
+        assert_eq!(caps["vessel_id"], json!(grant.vessel_id));
+        assert_eq!(caps["principal_id"], json!(grant.principal_id));
+        assert_eq!(std::fs::read(&path).unwrap(), retained);
+    }
+    // The right check precedes registration lookup: this nonexistent session
+    // must not be opened or prepared, and an owner flag cannot supply the right.
+    let refused = s
+        .connected(
+            grant.grant_id,
+            TOKEN,
+            VesselCommand::Voyage(VoyageRequest {
+                session_id: Uuid::new_v4(),
+                incarnation: None,
+                command: VoyageCommand::WorkspaceFile {
+                    path: "new-right.txt".into(),
+                },
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("workspace permission denied"));
+    assert_eq!(std::fs::read(&path).unwrap(), retained);
+    assert!(
+        store::authenticate_connection(
+            &f.0,
+            grant.grant_id,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("access denied")
+    );
+    grant.revoked = true;
+    f.save_connection(&grant);
+    assert!(
+        s.connected(grant.grant_id, TOKEN, VesselCommand::Capabilities)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("access revoked")
+    );
+}
+
 fn issue(f: &Fixture) -> VesselCommand {
     VesselCommand::Grant {
         command_id: Uuid::new_v4(),

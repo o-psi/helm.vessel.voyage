@@ -251,17 +251,84 @@ pub fn owner_connection_right(command: &RuntimeCommand) -> Option<ProcessRight> 
 impl ConnectionGrant {
     /// Owner and scoped allowlists cannot be combined. Empty legacy scopes do not confer ownership.
     pub fn valid_owner_scope(&self) -> bool {
+        // Frozen published v1.0.2 owner representation. Recognition preserves
+        // its existing authority; it must not add WorkspaceRead or future rights.
+        const V1_0_2_OWNER: &[ProcessRight] = &[
+            ProcessRight::Catalogue,
+            ProcessRight::AccountUse,
+            ProcessRight::AccountEnroll,
+            ProcessRight::Create,
+            ProcessRight::Observe,
+            ProcessRight::History,
+            ProcessRight::Execute,
+            ProcessRight::Steer,
+            ProcessRight::Decide,
+            ProcessRight::Cancel,
+            ProcessRight::Lifecycle,
+            ProcessRight::Terminal,
+        ];
         !self.full_access
             || (self.workspaces.is_empty()
                 && self.accounts.is_empty()
                 && self.enrollment_connections.is_empty()
-                && self.rights == ProcessRight::all())
+                && (self.rights == ProcessRight::all() || self.rights.as_slice() == V1_0_2_OWNER))
     }
 }
 
 #[cfg(test)]
 mod root_grant_tests {
     use super::*;
+
+    #[test]
+    fn published_owner_record_retains_only_its_original_rights() {
+        // The old serialized record has no account/enrollment fields or
+        // WorkspaceRead right. Keep this fixture independent of all().
+        let encoded = serde_json::json!({
+            "full_access":true,"schema_version":1,"grant_id":Uuid::new_v4(),
+            "principal_id":Uuid::new_v4(),"vessel_id":Uuid::new_v4(),"revision":7,
+            "rights":["catalogue","account_use","account_enroll","create","observe",
+                "history","execute","steer","decide","cancel","lifecycle","terminal"],
+            "expires_at_ms":123456,"revoked":false,"token_hash":"retained-hash",
+            "workspaces":[]
+        });
+        let original: ConnectionGrant = serde_json::from_value(encoded).unwrap();
+        assert!(original.valid_owner_scope());
+        assert!(!original.rights.contains(&ProcessRight::WorkspaceRead));
+        let before = serde_json::to_value(&original).unwrap();
+        for _ in 0..3 {
+            assert!(original.valid_owner_scope());
+            assert_eq!(serde_json::to_value(&original).unwrap(), before);
+        }
+        for missing in 0..original.rights.len() {
+            let mut reduced = original.clone();
+            reduced.rights.remove(missing);
+            assert!(!reduced.valid_owner_scope());
+        }
+        let mut changed = original.clone();
+        changed.rights.push(ProcessRight::Observe);
+        assert!(!changed.valid_owner_scope());
+        changed = original.clone();
+        changed.rights.swap(0, 1);
+        assert!(!changed.valid_owner_scope());
+        for scope in 0..3 {
+            changed = original.clone();
+            match scope {
+                0 => changed.accounts.push(Uuid::new_v4()),
+                1 => changed.enrollment_connections.push(Uuid::new_v4()),
+                _ => changed.workspaces.push(ApprovedWorkspace {
+                    id: Uuid::new_v4(),
+                    name: "scoped".into(),
+                    path: "/scope".into(),
+                    provider_ready: None,
+                }),
+            }
+            assert!(!changed.valid_owner_scope());
+        }
+        changed = original;
+        changed.rights = ProcessRight::all();
+        assert!(changed.valid_owner_scope());
+        assert!(changed.rights.contains(&ProcessRight::WorkspaceRead));
+    }
     #[test]
     fn generic_decide_cannot_manage_filesystem_authority() {
         let mut command = RuntimeCommand::Respond {

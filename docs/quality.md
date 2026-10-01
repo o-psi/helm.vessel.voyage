@@ -1370,3 +1370,18 @@ canonical origin validator: HTTPS remains required except explicitly opted-in
 literal loopback development HTTP; hostname HTTP, credentials, paths and query
 secrets remain refused. See [issue #401](https://github.com/o-psi/helm.vessel.voyage/issues/401).
 These parser checks do not establish native systemd activation or complete rollback.
+
+### Legacy owner admission without new rights (#402)
+
+A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its
+explicit owner flag, complete prior rights vector and empty scoped allowlists
+agree. Recognition does not mutate stored credentials, identities, revision,
+expiry or rights. The protocol regression refuses missing prior rights, duplicate
+or reordered vectors and mixed owner/scoped allowlists. The supervisor regression
+checks authenticated capabilities and unchanged grant bytes, wrong-token and
+revocation refusal, and rejection of a newly introduced WorkspaceRead operation
+before any session lookup or preparation. Current owners retain the current
+representation; no new rights are inferred from the owner flag.
+See [issue #402](https://github.com/o-psi/helm.vessel.voyage/issues/402). These source
+checks require the coordinator's final workspace run and corrected deployment;
+legacy grants have not been rewritten on the production host.
