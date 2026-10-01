@@ -11,29 +11,30 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `53884b6e3804549819cdc2f410f55ff1b55c9a35`, recorded in
-`coverage/latest.json`, passed **2,342 tests, zero failures, eight ignored**.
-It covers **96,931 / 131,652 lines (73.626682%)**, 8,785 / 12,027 functions
-and 152,786 / 217,743 regions. **34,721 line gaps remain**, including one known
-standard-library line. This does not meet #353's reachable-production objective.
+Clean source `3138b823b40287e89a3974f5c1b50e14dcd3c251`, recorded in
+`coverage/latest.json`, passed **2,441 tests, zero failures, eight ignored**.
+It covers **99,667 / 131,748 lines (75.649725%)**, 9,008 / 12,040 functions
+and 157,197 / 217,922 regions. **32,081 line gaps remain**, including one
+known standard-library line. #353's reachable-production objective remains unmet.
 
-All **537 current workspace files**, all **536 prior files** and the same known
-standard-library source are retained. All 14 test targets and three integration
-entrypoints contribute 17 distinct instrumented objects. No foreign-checkout
-source maps remain. Only 248 own profiles were merged; 235 foreign profiles remain
-unchanged. The mixed default export with 2,092 source mappings was rejected.
-Exact manifests and reports remain under ignored `target/coverage-report/v103-startup-private`.
-Earlier qualified raw profiles and all 17 prior object hashes were preserved.
+All **537 current and prior workspace files** and the same known standard-library
+mapping are retained, using all14 Cargo test targets plus three integration entry
+points as17 distinct current objects. Only292 own profiles were merged;235foreign
+profiles remained byte-identical. Child libtest summaries are retained separately,
+with all outcomes passing, instead of being counted as extra Cargo targets.
+The mixed default export is rejected. Detailed reports and source/object/profile
+manifests remain under ignored `target/coverage-report/v103-final-corrected`.
 
-Compared with the published `ca71ecd` record:58 more covered lines,102 more
-measured lines and a0.012998 percentage-point drop. Startup-stage evidence and
-bounded statement workers expand measured source. No exclusions were added.
-Private-umask whole-workspace tests passed; native/final process journeys remain
-separate evidence. #353 target is not met by this measurement.
+Compared with the previous published record:2,034more covered lines,30more measured
+lines and +1.526978percentage points. The67-case ordinary server/Vessel/installer/
+Helm cohort preserves authority, exact receipts, uncertainty and cleanup assertions.
+No exclusions were added or prior production files removed. The new test-only
+helper uses the existing standard test-source filename pattern before measurement.
 
-Historical detailed exports require regeneration against current audited
-objects/profile before selecting line addresses. Native Root, external-provider
-and other-platform evidence is not inferred from this default-feature percentage.
+Native Root, live-provider, browser JavaScript and other-platform evidence are
+separate. The default Rust measurement does not establish those capabilities or
+full release readiness. The largest-area map below is historical until refreshed
+from this new audited export; current line addresses require these current objects.
 
 ## Historical audited checkpoint and area map
 

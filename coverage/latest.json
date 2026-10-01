@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-01T19:31:10.093190+00:00",
-  "source_commit": "0ba0c436ca5719a9d90e6dba6d213e53f2af9ded",
+  "measured_at_utc": "2026-10-01T21:02:35.900814+00:00",
+  "source_commit": "3138b823b40287e89a3974f5c1b50e14dcd3c251",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2374,
+    "passed": 2441,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 131718,
-      "covered": 97633,
-      "percent": 74.12274708088492
+      "count": 131748,
+      "covered": 99667,
+      "percent": 75.64972523302062
     },
     "functions": {
       "count": 12040,
-      "covered": 8849,
-      "percent": 73.49667774086379
+      "covered": 9008,
+      "percent": 74.8172757475083
     },
     "regions": {
-      "count": 217894,
-      "covered": 153947,
-      "notcovered": 63947,
-      "percent": 70.65224375154891
+      "count": 217922,
+      "covered": 157197,
+      "notcovered": 60725,
+      "percent": 72.13452519708886
     }
   },
-  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=6G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-contract-main/html -j 2",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-contract-main/summary-default.json -v; llvm-profdata merge -sparse with248 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=6G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-final-corrected/html -j 2",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-final-corrected/summary-default.json -v; llvm-profdata merge -sparse with292 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,12 +40,13 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean main source measurement:2374 passed,zero failed,eight ignored. All537 current/prior workspace files and17 distinct current objects retained; only248 own rawprofiles merged and235 foreign profiles byte-unchanged. No new exclusions.",
-    "Compared with prior published record:647 more covered lines,40 more measured lines,+0.468834 percentage points.34085 remaining gaps include one known standard-library mapping; full #353 objective remains unmet.",
-    "The same Rust/Cargo bytes previously measured on an isolated browser qualification cohort yielded four more covered lines; this final main measurement is authoritative. No source inventory was narrowed or mixed-object totals published.",
-    "Added29 substantive tests cover private persisted chat defaults,completion ownership/evidence/cancellation, real loopback history and bounded observations, localGit subprocess isolation/refusal, and attended preview boundaries. Corrected two initial fixture assumptions (retired deny-list and current automatic incomplete-work accounting); failed evidence retained.",
-    "Independent transient service:6GiB cap,zero swap,private umask0077,1200sec. Successful mainmeasurement peak6GiB/zero swap; export2.2GiB. No verification inherited the desktop app cgroup.",
-    "Worker inline geometry repair is qualified separately by25 real Chromium/worker cases,zero failure/cancel/skip,510MiB peak/zero swap. Rust source and Cargo inputs are unchanged by that later JavaScript-only repair; this measurement is attributed to clean0ba0c43,not a later commit.",
-    "Detailed reports/object/source manifests/raw profiles/logs retained under ignored target/coverage-report/v103-contract-main. Broader browser adverse/deployedTLS and native production upgrade acceptance remain separate obligations."
+    "Clean committed source3138b82:2441 parent-workspace tests passed,zero failed,eight ignored. Owned child libtest summaries are retained separately and not double-counted as Cargo targets.",
+    "All537 current/prior workspace files and17 current objects retained. Only292 own rawprofiles merged;235 foreign profiles unchanged. All nested child outcomes passed; no new exclusions or lost production mappings.",
+    "Prior published record:2034 more covered lines,30 more measured lines,+1.526978 percentage points.32081 line gaps remain including known standard-library mapping; #353 full objective is still unmet.",
+    "The67-case cohort exercises ordinary server lifetimes/imports/commands/receipts/cleanup, Vessel accounts/service/catalogue, installer identity/staging/acquisition, and Helm lifecycle identity/focus/export. #399 exact branch and restore validation is included.",
+    "Prior failed evidence retained. Corrected child registry namespace and lifecycle assumptions, held-model timeout instead of a zero-deadline ready future, required sandbox resource/unknown-receipt proof, and actual canonical restore addressing. Meaningful authority/uncertainty/cleanup assertions remain.",
+    "Coverage includes every current test/entry object. New shared test-only helper naming follows unchanged standard test-source exclusions; no production source was hidden. Detailed own/foreign manifests, nested child results and rejected mixed export remain ignored.",
+    "Independent service6GiB/zero swap/private0077/1200sec; whole measurement3min2sec,peak6GiB. Export3GiB/zero swap. Heavy processes are outside desktop application cgroup.",
+    "Browser synthetic full breadth/adversity/cleanup and Web61shared+141React/type/build/historical-Chromium replay passed separately. Deployed matching new Vessel/native embedded viewer/TLS/site/resource acceptance and stable publication remain unfinished."
   ]
 }
