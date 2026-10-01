@@ -394,3 +394,129 @@ async fn root_grant_human_decision_roundtrip_is_durable_and_cancellable() {
         ApprovalOutcome::Cancelled
     );
 }
+
+async fn idle_admission_fixture() -> (tempfile::TempDir, ManagedSessionOwner, TurnAdmission) {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().join("journal");
+    let session = crate::session::Session::new(root.path().into(), "fixture".into());
+    let mut journal = Journal::open(directory.clone()).unwrap();
+    journal.create_session(&session).unwrap();
+    drop(journal);
+    let owner = ManagedSessionOwner::open(directory, session.id)
+        .await
+        .unwrap();
+    owner.initialize_process_commands().await.unwrap();
+    let request = TurnAdmission {
+        budget: None,
+        coordination: None,
+        operator_name: None,
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: chrono::Utc::now().timestamp_millis() + 60000,
+        prompt: "once after writer release".into(),
+        parts: vec![],
+    };
+    (root, owner, request)
+}
+
+#[tokio::test]
+async fn admission_waits_for_writer_once_and_keeps_exact_receipt() {
+    let (root, owner, request) = idle_admission_fixture().await;
+    let writer = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = count.clone();
+    let exact = request.clone();
+    let task = tokio::spawn(async move {
+        let admission = owner
+            .admit_after(request, Arc::new(SystemClock), move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .await?;
+        Ok::<_, anyhow::Error>((owner, admission))
+    });
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert!(!task.is_finished());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    writer.execute_batch("ROLLBACK").unwrap();
+    let (owner, admission) = tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let Admission::New(run) = admission else {
+        panic!("one new admission required")
+    };
+    let receipt = owner.lookup_turn(exact.clone()).await.unwrap().unwrap();
+    assert_eq!(receipt.command_id, exact.command_id);
+    assert_eq!(receipt.id, run.run_id);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(owner.snapshot().await.unwrap().session.messages.len(), 1);
+    assert!(matches!(
+        owner.admit(exact).await.unwrap(),
+        Admission::Existing(_)
+    ));
+}
+
+#[tokio::test]
+async fn admission_busy_timeout_does_not_commit_or_replay_after_release() {
+    let (root, owner, request) = idle_admission_fixture().await;
+    let writer = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = count.clone();
+    let exact = request.clone();
+    let result = tokio::time::timeout(
+        Duration::from_secs(4),
+        owner.admit_after(request, Arc::new(SystemClock), move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }),
+    )
+    .await
+    .unwrap();
+    let error = result.err().expect("persistent writer must refuse");
+    assert_eq!(
+        error
+            .downcast_ref::<rusqlite::Error>()
+            .unwrap()
+            .sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy)
+    );
+    writer.execute_batch("ROLLBACK").unwrap();
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert!(owner.lookup_turn(exact).await.unwrap().is_none());
+    let saved = owner.snapshot().await.unwrap();
+    assert_eq!(saved.revision, 0);
+    assert!(saved.session.messages.is_empty());
+}
+
+#[tokio::test]
+async fn authority_revocation_interrupts_admission_wait_without_receipt() {
+    let (root, owner, request) = idle_admission_fixture().await;
+    let writer = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let authority = Arc::new(Authority(AtomicBool::new(false)));
+    let control = authority.clone();
+    let exact = request.clone();
+    let task = tokio::spawn(async move {
+        let result = owner.admit_authorized(request, authority).await;
+        (owner, result)
+    });
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert!(!task.is_finished());
+    control.0.store(true, Ordering::SeqCst);
+    let (owner, result) = tokio::time::timeout(Duration::from_secs(1), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(result.is_err());
+    writer.execute_batch("ROLLBACK").unwrap();
+    assert!(owner.lookup_turn(exact).await.unwrap().is_none());
+    assert!(owner.snapshot().await.unwrap().session.messages.is_empty());
+}

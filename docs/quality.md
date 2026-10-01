@@ -192,6 +192,15 @@ single-execution blocking workers; workspace recreation and identity publication
 are never repeated by a transaction retry loop. Runtime authority and private
 configuration checks retain their existing startup order.
 
+The `attachment::runtime::checkpoint_tests` admission cases also hold a real
+writer through new-turn admission. They require exactly one pre-admission callback,
+one exact durable receipt after release, no receipt/history effect after timeout,
+and refusal when authority is revoked during the wait. The SQLite statement
+handler remains installed after a checkpoint: its thread-local budget alone enables
+waiting, so unbudgeted operations continue to refuse immediately. Pure submit
+prelude reads and admission explicitly enable/reset their bounded budget; no
+unknown command outcome is automatically repeated.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

@@ -87,7 +87,10 @@ impl Journal {
     }
 
     pub(in crate::attachment) fn end_checkpoint_wait(&self) -> Result<()> {
-        self.connection.busy_timeout(Duration::ZERO)?;
+        // Keep the statement handler installed for the next explicit worker.
+        // Without a thread-local budget it still refuses immediately; clearing
+        // the handler disables later startup/admission budgets on this connection.
+        self.connection.busy_handler(Some(wait_for_lock))?;
         Ok(())
     }
 }

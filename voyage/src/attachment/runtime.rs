@@ -117,7 +117,11 @@ impl ManagedSessionOwner {
             let store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            store.journal.lookup_command(&request)
+            let _wait = super::journal::checkpoint_wait::Wait::new(None, None);
+            store.journal.begin_checkpoint_wait()?;
+            let result = store.journal.lookup_command(&request);
+            let reset = store.journal.end_checkpoint_wait();
+            result.and_then(|value| reset.map(|_| value))
         })
         .await?
     }
@@ -149,9 +153,17 @@ impl ManagedSessionOwner {
             let store = store
                 .lock()
                 .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            let mut snapshot = store.journal.load_session(store.session_id)?;
-            snapshot.session.revision = snapshot.revision;
-            Ok(snapshot)
+            let _wait = super::journal::checkpoint_wait::Wait::new(None, None);
+            store.journal.begin_checkpoint_wait()?;
+            let result = store
+                .journal
+                .load_session(store.session_id)
+                .map(|mut snapshot| {
+                    snapshot.session.revision = snapshot.revision;
+                    snapshot
+                });
+            let reset = store.journal.end_checkpoint_wait();
+            result.and_then(|value| reset.map(|_| value))
         })
         .await?
     }
@@ -255,53 +267,58 @@ impl ManagedSessionOwner {
             if let Some(authority) = &authority {
                 authority.check()?;
             }
-            anyhow::ensure!(
-                request.session_id == store.session_id,
-                "managed owner session mismatch"
-            );
-            if let Some(run) = store.journal.lookup_command(&request)? {
-                return Ok(Admission::Existing(run));
-            }
-            anyhow::ensure!(
-                store.turn.upgrade().is_none(),
-                "managed turn busy; callbacks or cleanup retain ownership"
-            );
-            before_admission()?;
-            let session = store.journal.load_session(store.session_id)?.session;
-            let workspace = session.workspace.canonicalize()?;
-            let Store { journal, guard, .. } = &mut *store;
-            let admission = journal.admit_turn_with_clock(guard, &request, || {
-                if let Some(authority) = &authority {
-                    authority.check()?;
+            let _wait = super::journal::checkpoint_wait::Wait::new(None, authority.clone());
+            store.journal.begin_checkpoint_wait()?;
+            let result = (|| -> anyhow::Result<Admission> {
+                anyhow::ensure!(
+                    request.session_id == store.session_id,
+                    "managed owner session mismatch"
+                );
+                if let Some(run) = store.journal.lookup_command(&request)? {
+                    return Ok(Admission::Existing(run));
                 }
-                clock.now_ms()
-            })?;
-            if admission.duplicate {
-                return Ok(Admission::Existing(admission.run));
-            }
-            // Admission may atomically consume a deferred next-turn model.
-            // Bind the run owner to that committed model, not the pre-admission copy.
-            let model = journal.load_session(request.session_id)?.session.model;
-            let run_id = admission.run.id;
-            let mut token = TurnToken::new(run_id);
-            token.execution_authority = authority;
-            let token = Arc::new(token);
-            let (steering_sender, steering_receiver) =
-                crate::agent::steering_channel(super::journal::MAX_PENDING_STEERING);
-            store.run_id = run_id;
-            store.turn = Arc::downgrade(&token);
-            drop(store);
-            Ok(Admission::New(RunOwner {
-                store: shared,
-                token,
-                run_id,
-                workspace,
-                model,
-                input: Some((session.messages, request.prompt, request.parts)),
-                steering_sender,
-                steering_receiver: Some(steering_receiver),
-                workflow_bindings: None,
-            }))
+                anyhow::ensure!(
+                    store.turn.upgrade().is_none(),
+                    "managed turn busy; callbacks or cleanup retain ownership"
+                );
+                before_admission()?;
+                let session = store.journal.load_session(store.session_id)?.session;
+                let workspace = session.workspace.canonicalize()?;
+                let Store { journal, guard, .. } = &mut *store;
+                let admission = journal.admit_turn_with_clock(guard, &request, || {
+                    if let Some(authority) = &authority {
+                        authority.check()?;
+                    }
+                    clock.now_ms()
+                })?;
+                if admission.duplicate {
+                    return Ok(Admission::Existing(admission.run));
+                }
+                // Admission may atomically consume a deferred next-turn model.
+                // Bind the run owner to that committed model, not the pre-admission copy.
+                let model = journal.load_session(request.session_id)?.session.model;
+                let run_id = admission.run.id;
+                let mut token = TurnToken::new(run_id);
+                token.execution_authority = authority;
+                let token = Arc::new(token);
+                let (steering_sender, steering_receiver) =
+                    crate::agent::steering_channel(super::journal::MAX_PENDING_STEERING);
+                store.run_id = run_id;
+                store.turn = Arc::downgrade(&token);
+                Ok(Admission::New(RunOwner {
+                    store: shared.clone(),
+                    token,
+                    run_id,
+                    workspace,
+                    model,
+                    input: Some((session.messages, request.prompt, request.parts)),
+                    steering_sender,
+                    steering_receiver: Some(steering_receiver),
+                    workflow_bindings: None,
+                }))
+            })();
+            let reset = store.journal.end_checkpoint_wait();
+            result.and_then(|admission| reset.map(|_| admission))
         })
         .await?
     }

@@ -122,7 +122,11 @@ impl ManagedSessionOwner {
             let store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
-            store.journal.process_receipt(id)
+            let _wait = super::super::journal::checkpoint_wait::Wait::new(None, None);
+            store.journal.begin_checkpoint_wait()?;
+            let result = store.journal.process_receipt(id);
+            let reset = store.journal.end_checkpoint_wait();
+            result.and_then(|value| reset.map(|_| value))
         })
         .await?
     }
