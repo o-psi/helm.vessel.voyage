@@ -282,8 +282,9 @@ fn current(
     session: Uuid,
     incarnation: Uuid,
 ) -> Result<(ProcessRegistration, ConfiguredExecutionIdentity)> {
-    // Drop this temporary runtime and its worker threads before becoming a
-    // subreaper. The guardian itself owns one synchronous kernel child tree.
+    // Drop the temporary database runtime before launch. The guardian owns
+    // its synchronous kernel child tree; a separately retained metadata-only
+    // scope listener never creates children or runs an agent executor.
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -398,6 +399,11 @@ pub fn run(args: Args) -> Result<()> {
         unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } == 0,
         "protected child guardian unavailable"
     );
+    // Keep current scope reauthorization with the independent execution
+    // guardian, so replacing the Root service cannot cancel a healthy voyage.
+    // This listener exposes protected current metadata only: no cached rights,
+    // credential material or agent loop. It is ready before any child effect.
+    let scope_service = super::scope_authority::start_guardian(&args.directory, &registration)?;
     record.publish_new(
         "admission.json".as_ref(),
         &serde_json::to_vec(&Admission {
@@ -475,6 +481,9 @@ pub fn run(args: Args) -> Result<()> {
         })?,
         4096,
     )?;
+    // The scoped listener retires only after child exit, descendant drain and
+    // the protected completion publication; readiness never means cleanup.
+    drop(scope_service);
     handoff
 }
 
