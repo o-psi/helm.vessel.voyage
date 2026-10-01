@@ -1400,3 +1400,16 @@ representation; no new rights are inferred from the owner flag.
 See [issue #402](https://github.com/o-psi/helm.vessel.voyage/issues/402). These source
 checks require the coordinator's final workspace run and corrected deployment;
 legacy grants have not been rewritten on the production host.
+
+### Owned Linux TUI event loop (#353)
+
+`event_loop_native_tests` runs the production connected TUI in an owned Linux
+PTY, using its existing Rust test executable as an explicitly selected child.
+HOME/XDG and terminal input are private synthetic state; no Client, provider or
+supervisor is created. It exercises actual menu input and kernel resize, paused
+small-geometry detach, blocked address-book recovery and the initialization error
+that occurs after raw-mode entry. The case requires matching original canonical/
+echo flags, alternate-screen retirement, successful child reaping and bounded
+reader-thread retirement. Parent environment and the user's terminal are untouched.
+Only LLVM's profile destination is inherited. This is prepared source awaiting the
+coordinator's final run; it makes no macOS/Windows, live-provider or browser claim.

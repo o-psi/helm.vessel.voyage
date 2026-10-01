@@ -403,3 +403,6 @@ mod lifecycle_contract_tests;
 
 #[cfg(test)]
 mod observation_contract_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod event_loop_native_tests;
