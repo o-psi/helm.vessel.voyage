@@ -23,13 +23,19 @@ def identity(pid):
         return None
 
 
-def memory(pid):
+def memory(item):
+    pid = item['pid']
     try:
         values = {}
         for line in Path(f'/proc/{pid}/smaps_rollup').read_text().splitlines():
             key, _, rest = line.partition(':')
             if key in ('Rss', 'Pss'):
                 values[key.lower()+'_kib'] = int(rest.split()[0])
+        # The proc path can name a replacement process by the time the read
+        # finishes. Never attribute its memory to the earlier owned identity.
+        current = identity(pid)
+        if not current or any(current[key] != item[key] for key in ('pid', 'start_ticks', 'ppid')):
+            return None
         return values if len(values) == 2 else None
     except (FileNotFoundError, ProcessLookupError, PermissionError):
         return None
@@ -74,11 +80,19 @@ def main():
     assert platform.system() == 'Linux', 'Linux process evidence only'
     assert 1 <= args.seconds <= 60 and .1 <= args.interval <= 1
     assert args.seconds / args.interval <= 600
-    meta = args.ledger.lstat()
-    assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid()
-    assert meta.st_nlink == 1 and not meta.st_mode & 0o077 and meta.st_size <= 8192
     assert args.ledger.resolve() == args.ledger.absolute()
-    ledger = json.loads(args.ledger.read_text())
+    descriptor = os.open(args.ledger, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'rb') as source:
+        meta = os.fstat(source.fileno())
+        assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid()
+        assert meta.st_nlink == 1 and not meta.st_mode & 0o077 and meta.st_size <= 8192
+        raw = source.read(8193)
+        after = os.fstat(source.fileno())
+        assert len(raw) <= 8192
+        assert (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns) == \
+               (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        assert after.st_nlink == 1 and not after.st_mode & 0o077 and after.st_uid == os.getuid()
+    ledger = json.loads(raw)
     assert set(ledger) == {'schema', 'roots'} and ledger['schema'] == 1
     roots = ledger['roots']
     assert isinstance(roots, list) and 1 <= len(roots) <= 16
@@ -107,7 +121,7 @@ def main():
                 key = (item['pid'], item['start_ticks'])
                 initial.setdefault(key, item['cpu_ticks'])
                 last[key] = item['cpu_ticks']
-                value = memory(item['pid'])
+                value = memory(item)
                 if value is None:
                     unavailable += 1
                 else:
