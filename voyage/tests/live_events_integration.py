@@ -60,7 +60,15 @@ def page(fixture, session, after=0, limit=4, projection="public-v2"):
     while True:
         response = fixture.command(session, command, allow_error=True)
         if response.get("error") is None:
-            return response["result"]
+            result = response["result"]
+            if result == {"status": "suspending", "not_dispatched": True}:
+                # The owner explicitly fenced this read before dispatch. Keep the
+                # exact cursor/envelope while its observed suspension completes.
+                assert time.monotonic() < deadline, result
+                time.sleep(.05)
+                continue
+            assert isinstance(result.get("replay_gap"), bool), result
+            return result
         # Repeat only this read after definite transient suspension contention;
         # never retry a mutation, unknown effect, or a changed cursor request.
         assert (response.get("error") == "suspended observation unavailable"
