@@ -278,3 +278,107 @@ fn unprotected_guardian_start_never_manufactures_a_root_listener() {
     let fixture = Fixture::new();
     assert!(start_guardian(&fixture.0, &fixture.registration()).is_err());
 }
+
+#[test]
+fn observer_and_execution_leases_have_independent_exact_owner_and_listener_identity() {
+    let fixture = Fixture::new();
+    let registration = fixture.registration();
+    let grant = fixture.session();
+    let binding = GrantBinding {
+        grant_id: grant.grant_id,
+        principal_id: grant.principal_id,
+        revision: grant.revision,
+    };
+    let observer_socket = socket_name(&fixture.0);
+    let execution_socket = guardian_socket_name(
+        &fixture.0,
+        registration.session_id,
+        registration.incarnation,
+    );
+    let execution = lease_identity(
+        &registration,
+        &binding,
+        "epoch-one",
+        &execution_socket,
+        false,
+    )
+    .unwrap();
+    let observer =
+        lease_identity(&registration, &binding, "epoch-one", &observer_socket, true).unwrap();
+    assert_ne!(execution, observer);
+    assert_eq!(
+        execution,
+        lease_identity(
+            &registration,
+            &binding,
+            "epoch-one",
+            &execution_socket,
+            false
+        )
+        .unwrap()
+    );
+    // Neither socket identity nor its operation role can alias the active lease.
+    assert_ne!(
+        execution,
+        lease_identity(
+            &registration,
+            &binding,
+            "epoch-one",
+            &execution_socket,
+            true
+        )
+        .unwrap()
+    );
+    assert_ne!(
+        execution,
+        lease_identity(
+            &registration,
+            &binding,
+            "epoch-one",
+            &observer_socket,
+            false
+        )
+        .unwrap()
+    );
+    let mut changed = registration.clone();
+    changed.incarnation = Uuid::new_v4();
+    assert_ne!(
+        observer,
+        lease_identity(&changed, &binding, "epoch-one", &observer_socket, true).unwrap()
+    );
+    assert_ne!(
+        observer,
+        lease_identity(&registration, &binding, "epoch-two", &observer_socket, true).unwrap()
+    );
+    let mut changed_binding = binding.clone();
+    changed_binding.revision += 1;
+    assert_ne!(
+        observer,
+        lease_identity(
+            &registration,
+            &changed_binding,
+            "epoch-one",
+            &observer_socket,
+            true
+        )
+        .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn unprotected_observer_cannot_publish_root_scope_state() {
+    let fixture = Fixture::new();
+    let registration = fixture.registration();
+    let grant = fixture.session();
+    let binding = GrantBinding {
+        grant_id: grant.grant_id,
+        principal_id: grant.principal_id,
+        revision: grant.revision,
+    };
+    assert!(
+        mint_observer(&fixture.0, &registration, &binding)
+            .await
+            .is_err()
+    );
+    assert!(!fixture.0.join("access/runtime-scope-leases").exists());
+}

@@ -83,6 +83,48 @@ pub(super) async fn mint(
     registration: &ProcessRegistration,
     binding: &GrantBinding,
 ) -> Result<ExecutionScopeHandle> {
+    mint_for(root, registration, binding, false).await
+}
+
+/// One-shot suspended observation has no live guardian and remains tied to the
+/// current supervisor. It cannot create or resume an execution owner.
+pub(super) async fn mint_observer(
+    root: &Path,
+    registration: &ProcessRegistration,
+    binding: &GrantBinding,
+) -> Result<ExecutionScopeHandle> {
+    mint_for(root, registration, binding, true).await
+}
+
+fn lease_identity(
+    registration: &ProcessRegistration,
+    binding: &GrantBinding,
+    epoch: &str,
+    socket: &str,
+    observer: bool,
+) -> Result<Uuid> {
+    let mut hash = Sha256::new();
+    hash.update(b"voyage/runtime-grant-lease/v2\0");
+    hash.update(serde_json::to_vec(&(
+        registration.session_id,
+        registration.incarnation,
+        binding.grant_id,
+        binding.principal_id,
+        binding.revision,
+        epoch,
+        socket,
+        observer,
+    ))?);
+    let bytes: [u8; 32] = hash.finalize().into();
+    Ok(Uuid::from_bytes(bytes[..16].try_into()?))
+}
+
+async fn mint_for(
+    root: &Path,
+    registration: &ProcessRegistration,
+    binding: &GrantBinding,
+    observer: bool,
+) -> Result<ExecutionScopeHandle> {
     ensure!(
         registration
             .peer_uids
@@ -95,18 +137,12 @@ pub(super) async fn mint(
     current_grant(root, registration, binding)?;
     let epoch = execution_epoch::current(root, registration.session_id)?
         .context("protected execution epoch unavailable")?;
-    let mut hash = Sha256::new();
-    hash.update(b"voyage/runtime-grant-lease/v1\0");
-    hash.update(serde_json::to_vec(&(
-        registration.session_id,
-        registration.incarnation,
-        binding.grant_id,
-        binding.principal_id,
-        binding.revision,
-        &epoch,
-    ))?);
-    let bytes: [u8; 32] = hash.finalize().into();
-    let id = Uuid::from_bytes(bytes[..16].try_into()?);
+    let socket = if observer {
+        socket_name(root)
+    } else {
+        guardian_socket_name(root, registration.session_id, registration.incarnation)
+    };
+    let id = lease_identity(registration, binding, &epoch, &socket, observer)?;
     let directory = RootDirectory::open(root)?
         .create_child("access".as_ref())?
         .create_child("runtime-scope-leases".as_ref())?;
@@ -131,11 +167,7 @@ pub(super) async fn mint(
                 grant: binding.clone(),
                 epoch: epoch.clone(),
                 handle: ExecutionScopeHandle {
-                    socket_name: guardian_socket_name(
-                        root,
-                        registration.session_id,
-                        registration.incarnation,
-                    ),
+                    socket_name: socket.clone(),
                     lease_id: id,
                     secret: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
                 },
@@ -153,8 +185,7 @@ pub(super) async fn mint(
             && lease.grant.revision == binding.revision
             && lease.epoch == epoch
             && lease.handle.lease_id == id
-            && lease.handle.socket_name
-                == guardian_socket_name(root, registration.session_id, registration.incarnation)
+            && lease.handle.socket_name == socket
             && lease.handle.secret.len() == 64,
         "retained runtime scope lease changed"
     );

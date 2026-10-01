@@ -568,7 +568,7 @@ pub(super) async fn observe(
             }
             if let Some(binding) = &authorization {
                 scope_authority =
-                    Some(super::scope_authority::mint(root, registration, binding).await?);
+                    Some(super::scope_authority::mint_observer(root, registration, binding).await?);
             }
         }
         #[cfg(not(target_os = "linux"))]
