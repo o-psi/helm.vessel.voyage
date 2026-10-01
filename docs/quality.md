@@ -48,6 +48,23 @@ fixture below calls a retired endpoint and is not a current release gate. Missin
 scripts are not a passing gate and must not be restored implicitly. This release
 workflow does not depend on `scripts/check-quality` or the old packagers.
 
+When shared-cache reuse is proven to map a workspace crate to another checkout,
+source timestamps alone may not repair every artifact. A task-local forwarding
+`RUSTC_WORKSPACE_WRAPPER` can give workspace crates a separate artifact namespace
+while retaining the same target directory and dependency caches. Its stable path
+belongs to the checkout; its entire behavior is `exec "$@"`, forwarding Cargo's
+compiler invocation unchanged. Set it only for that task's build/coverage commands,
+preserve any pre-existing wrapper, and retain the exact path/hash in ignored
+verification evidence. Cargo documents this filename-hash separation and nesting
+with `RUSTC_WRAPPER` in its [environment reference](https://doc.rust-lang.org/cargo/reference/environment-variables.html).
+
+This does not replace an exclusive coverage window: raw profile collection and
+production binary paths remain shared. Preserve earlier profiles and report
+objects before clearing raw data; freeze every executed test object and measured
+production entry point before another build. Audit all current source mappings,
+retain the prior source inventory and export from only verified current objects.
+Do not publish a report with foreign checkout mappings or mixed test executions.
+
 Linux checks need Rust, rustfmt, Clippy, matching LLVM coverage tools, Python
 3.11+, Git, native build tools, tar/checksum utilities and Bubblewrap for isolated
 installer checks. Do not run competing builds against one target directory.

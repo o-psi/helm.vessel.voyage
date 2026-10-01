@@ -346,6 +346,14 @@ only the compact summary, without local paths, credentials or test diagnostics.
   enabled. Coordinate builds; do not launch competing builds or create a fresh
   per-task target directory merely to bypass a Cargo lock. Respect the applicable
   checks' checkout and output-directory requirements in [docs/quality.md](docs/quality.md).
+- Confirmed cross-checkout workspace-artifact reuse needs source-identity repair,
+  not merely a green test command. During an exclusive shared-target window, a
+  stable task-local forwarding `RUSTC_WORKSPACE_WRAPPER` may namespace workspace
+  artifacts without changing compiler arguments or discarding dependency caches;
+  preserve existing wrappers and follow [quality guidance](docs/quality.md).
+  Freeze measured objects and retain profiles/rejected reports before releasing
+  the window. This does not authorize concurrent coverage, a narrowed denominator,
+  global compiler configuration changes or a fresh target to bypass a Cargo lock.
 - Use development builds for iteration. Reserve optimized builds and full release
   checks for changes requiring that evidence. Choose explicit compiler concurrency
   suitable for available CPU and memory, such as `cargo build -p helm --locked -j 8`.
