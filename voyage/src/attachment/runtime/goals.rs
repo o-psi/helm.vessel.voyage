@@ -211,7 +211,7 @@ impl ManagedSessionOwner {
 
     pub(crate) async fn recover_goal_turn(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
@@ -219,7 +219,7 @@ impl ManagedSessionOwner {
             journal.recover_goal_turn(guard, SystemClock.now_ms()?)?;
             journal.recover_delegated_meter(guard, SystemClock.now_ms()?)
         })
-        .await?
+        .await
     }
 }
 

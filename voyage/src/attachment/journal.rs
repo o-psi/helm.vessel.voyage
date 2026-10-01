@@ -256,6 +256,9 @@ impl Journal {
         let file = open_private_file(&database_path)?;
         drop(file);
         let mut connection = Connection::open(&database_path)?;
+        // Enable the worker's bounded budget before the first schema read.
+        // Outside an explicit checkpoint worker this still refuses immediately.
+        connection.busy_handler(Some(checkpoint_wait::wait_for_lock))?;
         // Retired worker journals must never acquire ordinary local execution authority.
         let retired: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_session')",
@@ -273,7 +276,6 @@ impl Journal {
         }
         // No thread-local wait budget means immediate refusal. Only explicit
         // blocking checkpoint workers enable bounded statement contention waits.
-        connection.busy_handler(Some(checkpoint_wait::wait_for_lock))?;
         #[cfg(windows)]
         storage::configure(&connection)?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;

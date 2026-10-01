@@ -24,14 +24,14 @@ impl ManagedSessionOwner {
             config, workspace,
         )?)?;
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.retain_initial_configuration(guard, settings)
         })
-        .await?
+        .await
     }
 
     pub(crate) async fn materialize_account_configuration(

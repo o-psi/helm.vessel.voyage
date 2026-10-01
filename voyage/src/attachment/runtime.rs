@@ -123,7 +123,7 @@ impl ManagedSessionOwner {
     }
 
     pub async fn open(directory: PathBuf, session_id: Uuid) -> anyhow::Result<Self> {
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let journal = Journal::open(directory)?;
             let guard = journal.acquire_execution(session_id)?;
             Ok(Self {
@@ -137,7 +137,7 @@ impl ManagedSessionOwner {
                 session_id,
             })
         })
-        .await?
+        .await
     }
     pub fn session_id(&self) -> Uuid {
         self.session_id
@@ -308,7 +308,7 @@ impl ManagedSessionOwner {
     /// Explicit recovery only after all prior turn/callback owners are gone.
     pub async fn recover_interrupted(&self) -> anyhow::Result<Option<RunRecord>> {
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
@@ -319,7 +319,7 @@ impl ManagedSessionOwner {
             let Store { journal, guard, .. } = &mut *store;
             journal.recover_interrupted(guard)
         })
-        .await?
+        .await
     }
 }
 

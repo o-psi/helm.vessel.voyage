@@ -179,6 +179,19 @@ input, truncated EOF and timeout cancellation without leaving a blocking stdin
 reader. Local-actor tests cover execute-only ancestor traversal, denied listing
 and symlink/non-traversable ancestor refusal.
 
+## Ordinary startup storage contention
+
+The `server::bootstrap::startup_storage_tests` cases hold an actual SQLite writer
+while the production startup session operation runs on a bounded checkpoint worker.
+They verify that the reactor remains responsive, the operation executes once,
+release permits one empty canonical session, and persistent contention refuses
+within the existing two-second SQLite budget without admission or delayed replay.
+Notification binding under an exclusive SQLite lock retains the same execution
+owner and empty history after release. Startup journal opens and owner setup use
+single-execution blocking workers; workspace recreation and identity publication
+are never repeated by a transaction retry loop. Runtime authority and private
+configuration checks retain their existing startup order.
+
 ## Historical concurrent voyage regression (not a current gate)
 
 From a source checkout, after building `vessel` and `voyage`, run:

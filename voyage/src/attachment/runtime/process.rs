@@ -59,14 +59,14 @@ impl ManagedSessionOwner {
         incarnation: Uuid,
     ) -> anyhow::Result<()> {
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.bind_notification_incarnation(guard, incarnation)
         })
-        .await?
+        .await
     }
 
     pub(crate) async fn notification_events(
@@ -87,7 +87,7 @@ impl ManagedSessionOwner {
 
     pub(crate) async fn initialize_process_commands(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
@@ -99,7 +99,7 @@ impl ManagedSessionOwner {
             journal.initialize_observations(guard)?;
             journal.initialize_cleanup_progress(guard)
         })
-        .await?
+        .await
     }
     pub(crate) async fn process_metadata(
         &self,

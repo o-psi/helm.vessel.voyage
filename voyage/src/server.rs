@@ -161,10 +161,19 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             "runtime registration changed during startup"
         );
         let prepared: Result<_> = async {
-            bootstrap::prepare_workspace(&directory, &registration)?;
+            let checkpoint_directory = directory.clone();
+            let checkpoint_registration = registration.clone();
+            Journal::blocking_checkpoint(move || {
+                bootstrap::prepare_workspace(&checkpoint_directory, &checkpoint_registration)
+            })
+            .await?;
             let workspace = args.workspace.canonicalize()?;
-            let initial =
-                Journal::open(directory.join("journal"))?.initial_configuration(args.session)?;
+            let checkpoint_directory = directory.join("journal");
+            let session_id = args.session;
+            let initial = Journal::blocking_checkpoint(move || {
+                Journal::open(checkpoint_directory)?.initial_configuration(session_id)
+            })
+            .await?;
             let initial = match initial {
                 Some(initial) => Some(initial),
                 None => Journal::frozen_branch_configuration(registration.initialize.as_ref())?,
@@ -197,7 +206,12 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
                         expected_digest.as_deref(),
                     )?;
                     if registration.initialize.is_none() {
-                        match Journal::open(directory.join("journal"))?.load_session(args.session) {
+                        let checkpoint_directory = directory.join("journal");
+                        match Journal::blocking_checkpoint(move || {
+                            Journal::open(checkpoint_directory)?.load_session(session_id)
+                        })
+                        .await
+                        {
                             Ok(_) => {}
                             Err(error)
                                 if error.downcast_ref::<rusqlite::Error>().is_some_and(|e| {
@@ -213,7 +227,12 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
                 }
             };
             let workspace = config.resolve_workspace(Some(workspace))?;
-            bootstrap::prepare_identity(&directory, &registration)?;
+            let checkpoint_directory = directory.clone();
+            let checkpoint_registration = registration.clone();
+            Journal::blocking_checkpoint(move || {
+                bootstrap::prepare_identity(&checkpoint_directory, &checkpoint_registration)
+            })
+            .await?;
             let actor = LocalActorStore::open(&directory.join("identity"))?.identity()?;
             bootstrap::initialize(&directory, &registration, &workspace).await?;
             Ok((workspace, config, actor))
@@ -230,36 +249,23 @@ async fn serve_registered(args: ServeArgs, admitted: Option<ProcessRegistration>
             }
         };
         let journal_dir = directory.join("journal");
-        let mut journal = startup::checked(
+        let checkpoint_directory = journal_dir.clone();
+        let checkpoint_registration = registration.clone();
+        let session_model = config.model.clone();
+        startup::checked(
             &directory,
             &registration,
             "session_journal",
-            Journal::open(journal_dir.clone()),
+            Journal::blocking_checkpoint(move || {
+                bootstrap::prepare_session(
+                    checkpoint_directory,
+                    &checkpoint_registration,
+                    workspace,
+                    session_model,
+                )
+            })
+            .await,
         )?;
-        match journal.load_session(args.session) {
-            Ok(saved) => ensure!(
-                saved.session.workspace == workspace,
-                "saved workspace mismatch"
-            ),
-            Err(error)
-                if error
-                    .downcast_ref::<rusqlite::Error>()
-                    .is_some_and(|e| matches!(e, rusqlite::Error::QueryReturnedNoRows)) =>
-            {
-                let mut session = Session::new(workspace, config.model.clone());
-                session.id = args.session;
-                if let Some(voyage_protocol::process::RuntimeInitialization::Participant {
-                    parent_session_id,
-                    ..
-                }) = &registration.initialize
-                {
-                    session.parent_id = Some(*parent_session_id);
-                }
-                journal.create_session(&session)?;
-            }
-            Err(error) => return Err(error),
-        }
-        drop(journal);
         let owner = startup::checked(
             &directory,
             &registration,

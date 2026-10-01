@@ -186,3 +186,40 @@ pub(super) fn prepare_identity(
 
 mod upgrade;
 pub use upgrade::{UpgradeArgs, upgrade};
+
+/// Complete one startup storage operation. The caller runs this once on a bounded
+/// checkpoint worker; contention waits apply to statements, never effect replay.
+pub(super) fn prepare_session(
+    directory: PathBuf,
+    registration: &ProcessRegistration,
+    workspace: PathBuf,
+    model: String,
+) -> Result<()> {
+    let mut journal = Journal::open(directory)?;
+    match journal.load_session(registration.session_id) {
+        Ok(saved) => ensure!(
+            saved.session.workspace == workspace,
+            "saved workspace mismatch"
+        ),
+        Err(error)
+            if error
+                .downcast_ref::<rusqlite::Error>()
+                .is_some_and(|e| matches!(e, rusqlite::Error::QueryReturnedNoRows)) =>
+        {
+            let mut session = Session::new(workspace, model);
+            session.id = registration.session_id;
+            if let Some(RuntimeInitialization::Participant {
+                parent_session_id, ..
+            }) = &registration.initialize
+            {
+                session.parent_id = Some(*parent_session_id);
+            }
+            journal.create_session(&session)?;
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod startup_storage_tests;

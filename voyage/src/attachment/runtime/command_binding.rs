@@ -20,14 +20,14 @@ impl ManagedSessionOwner {
 
     pub(crate) async fn initialize_command_bindings(&self, principal: Uuid) -> anyhow::Result<()> {
         let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
+        Journal::blocking_checkpoint(move || {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.initialize_command_bindings(guard, principal)
         })
-        .await?
+        .await
     }
     pub(crate) async fn bind_process_command(
         &self,
