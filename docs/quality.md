@@ -1154,3 +1154,16 @@ missing durability access refuses before `mkdir`. Focused cases cover existing-l
 read/publication, creation refusal and shared-leaf/symlink refusal. Final native
 qualification must retry the original-UID target handoff on the corrected binary;
 these source cases do not establish other operating-system behavior.
+
+### Combined v1.0.3 source qualification
+
+Clean source `83ab2bfb55ef37c423a82bd3c22f27772b1eb6f1` passed strict all-target,
+all-feature Clippy, formatting/diff checks and the default-feature workspace
+measurement: 2,330 passed, zero failed, eight ignored. All earlier prepared Rust
+source increments present in this source were executed in that combined run.
+The audited export retains all 535 workspace files, all 533 prior files and 17
+current objects with checkout-specific workspace artifact names. Only 248 own
+raw profiles were merged; 235 foreign profiles remain unchanged.
+`coverage/latest.json` and the current gap ledger record the actual totals.
+Native system/identity journeys, hosted packaging and deployment are separate
+obligations; this result does not establish complete release acceptance.

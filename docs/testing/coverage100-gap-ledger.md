@@ -11,34 +11,34 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-The full default-feature workspace measurement on clean source
-`202544f765d416e8e778f8748742465bfb4759c2`, recorded in `coverage/latest.json`
-and integrated on main, passed **2,235 tests, zero failures, eight ignored**:
-**94,702 / 130,212 lines (72.729088%)**, 8,576 / 11,907 functions and
-149,536 / 215,511 regions. **35,510 line gaps remain**, including one known
+The clean-source measurement `83ab2bfb55ef37c423a82bd3c22f27772b1eb6f1`,
+recorded in `coverage/latest.json`, passed **2,330 tests, zero failures, eight ignored**.
+It covers **96,631 / 131,037 lines (73.743294%)**, 8,758 / 11,986 functions
+and 152,366 / 216,837 regions. **34,406 line gaps remain**, including one known
 standard-library line. This does not meet #353's reachable-production objective.
 
-The current-object audit retains all **533 current workspace source files**, all
-**504 previously measured files**, and the same standard-library source. Its
-17 distinct objects include every one of the 14 executed workspace test targets
-and the three production binaries used by integration tests. The default export
-mixed 69 cached objects and 1,289 source mappings and was rejected. Later ordinary
-builds replaced public Helm/Voyage binary paths; the exact instrumented measured
-objects were recovered through their unchanged hash/size/timestamp-matching deps
-aliases. Source and profile provenance, the rejected export and full audit remain
-under ignored `target/coverage-report/v103-final-clean` (#251).
+All **535 current workspace files**, all **533 prior files** and the same known
+standard-library source are retained. All 14 test targets and three integration
+entrypoints contribute 17 distinct instrumented object hashes. The maintained
+checkout-absolute forwarding wrapper separates workspace artifact filenames;
+no foreign-checkout source mappings remain. All 235 foreign raw profiles are
+unchanged; only 248 own profiles were merged. The default export mixed 2,091
+source mappings and was rejected. Exact source/object/profile manifests, rejected
+reports and current summary remain under ignored
+`target/coverage-report/v103-profile-corrected` (#251).
 
-Compared with the earlier published clean-source record `782354d`, this adds
-5,412 covered lines and 13,431 measured lines, dropping 3.730268 percentage points.
-New identity, adoption, recovery and supervisor behavior expands the unexecuted
-denominator. No source exclusion or narrower object selection was used to raise
-the percentage. New work after this named source requires another coordinated
-measurement; prepared assertions below are not passing results or new percentages.
+Compared with the prior published `202544f` measurement: 1,929 more covered lines,
+825 more measured lines and a 1.014206 percentage-point improvement. No denominator
+exclusions were added. Identity-helper, scope authority, private validator and Helm
+account/profile pipeline assertions are now executed. Native Root transport, UID
+drop, adoption, service activation and process cleanup remain separate gates.
+An initial completed run failed the obsolete-profile-panel closure assertion; its
+production ordering was corrected and the failed run's 248 profiles preserved
+before this independent passing measurement.
 
-The retained detailed export `coverage353-current-detailed.json` uses exactly the
-audited objects, profile and ignore scope and reproduces the audited totals. It
-adds segment/function addresses for selecting behavior gaps without running tests
-or builds. Summary-only exports do not provide those addresses.
+The detailed export `coverage353-current-detailed.json` from the older
+`202544f` measurement is historical. Its line addresses must be regenerated
+against the current audited objects/profile before selecting new gaps.
 
 ## Historical audited checkpoint and area map
 
@@ -102,7 +102,7 @@ They must not be relabeled untestable merely because fixtures are difficult.
 
 ## Current largest areas and concrete next assertions
 
-This map is derived from the audited September 30 current-source export above.
+This map is derived from the current audited `83ab2bf` export above.
 Directory rows aggregate that directory only; the identity-helper row also
 includes its same-named entry file. An unexecuted line is not proof of an
 unreachable branch or a missing assertion. Native requirements remain required
@@ -110,21 +110,21 @@ evidence, without being removed from this denominator.
 
 | Area | Uncovered lines | Total lines |
 |---|---:|---:|
-| `helm/src/process_client/` | 8,890 | 33,605 |
-| `vessel/src/process/` | 8,776 | 18,166 |
-| `installer/src/` | 3,899 | 7,258 |
-| `voyage/src/server/` | 1,740 | 5,338 |
-| `voyage/src/attachment/` | 1,634 | 12,360 |
-| `voyage/src/tools/` | 1,393 | 7,865 |
+| `helm/src/process_client/` | 8,594 | 33,720 |
+| `vessel/src/process/` | 8,398 | 18,483 |
+| `installer/src/` | 3,899 | 7,287 |
+| `voyage/src/server/` | 1,761 | 5,611 |
+| `voyage/src/attachment/` | 1,640 | 12,432 |
+| `voyage/src/tools/` | 1,391 | 7,865 |
 | `voyage/src/github/` | 788 | 3,137 |
-| `voyage/src/identity_helper.rs` and `identity_helper/` | 700 | 1,503 |
+| `voyage/src/identity_helper.rs` and `identity_helper/` | 336 | 1,503 |
 | `voyage/src/subagent/` | 478 | 2,402 |
-| `voyage/src/provider/` | 473 | 5,747 |
+| `voyage/src/provider/` | 424 | 5,747 |
 | `voyage/src/extensions/` | 384 | 1,995 |
 
 The largest individually unexecuted modules are system adoption (1,623 lines),
-Vessel migration (1,064), identity transition (893), administrative execution
-(647), and identity-account supervision (526). Do not treat them as passing
+Vessel migration (1,064), identity transition (819), administrative execution
+(528), and identity-account supervision (448). Do not treat them as passing
 because ordinary metadata or fixture checks succeeded. Their scoped admission,
 durable exact-effect claims, credential separation, boot/service publication,
 retired-owner transfer and rollback paths require meaningful local fault
@@ -146,8 +146,8 @@ refusal of unprotected minting and malformed request identities, bounded local
 framing/timeout with fixed sanitized refusal, and observed cleanup of an owned
 Tokio task. They retain the production root/epoch/UID gates. They do not establish
 successful root service startup, positive cross-UID lease delivery or native
-process cleanup. These new source assertions have not been executed or measured;
-the parent coordinates their final verification and coverage with concurrent work.
+process cleanup. These source assertions passed in the current full-workspace run; they do not
+replace the separate native qualification obligations above.
 
 ## Environment-specific evidence still required
 

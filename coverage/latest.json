@@ -1,35 +1,35 @@
 {
-  "measured_at_utc": "2026-09-30T20:15:04.451043+00:00",
-  "source_commit": "202544f765d416e8e778f8748742465bfb4759c2",
+  "measured_at_utc": "2026-10-01T01:52:10.402224+00:00",
+  "source_commit": "83ab2bfb55ef37c423a82bd3c22f27772b1eb6f1",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2235,
+    "passed": 2330,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 130212,
-      "covered": 94702,
-      "percent": 72.72908794888336
+      "count": 131037,
+      "covered": 96631,
+      "percent": 73.74329387882813
     },
     "functions": {
-      "count": 11907,
-      "covered": 8576,
-      "percent": 72.02485932644663
+      "count": 11986,
+      "covered": 8758,
+      "percent": 73.06858001001169
     },
     "regions": {
-      "count": 215511,
-      "covered": 149536,
-      "percent": 69.38671343922121
+      "count": 216837,
+      "covered": 152366,
+      "percent": 70.26752814325968
     }
   },
-  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2; cargo llvm-cov clean --profraw-only; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-final-clean/html -j 8 > target/coverage-report/v103-final-clean/run.log 2>&1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-final-clean/summary.json -v; audited llvm-cov export preserving default ignore-filename-regex and all 14 executed workspace targets plus three measured integration entry points with explicit current-object arguments",
+  "command": "umask 077; export CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward; preserve foreign raw profiles and clear only own workspace prefix; cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-profile-corrected/html -j 8 > target/coverage-report/v103-profile-corrected/run.log 2>&1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-profile-corrected/summary-default.json -v; llvm-profdata merge -sparse -f own-profraw-list.txt; audited llvm-cov export preserving standard ignore-filename-regex with all14 executed workspace targets and three measured integration entrypoints, explicit17 current objects and248 own workspace profiles",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -39,12 +39,11 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed-source full default-feature workspace measurement: 2,235 passed, zero failed, eight ignored. No new exclusions. Coverage measures execution, not correctness.",
-    "Corrected export includes 17 distinct measured object hashes, all 533 current workspace files and the same known standard-library source. All 504 prior workspace files retained. Default report mixed 69 cached object paths and 1,289 mapped files and was rejected (#251).",
-    "Public target/debug/helm and voyage paths were replaced after inventory by noninstrumented ordinary-build artifacts from an unidentified caller. Exact measured instrumented binaries were preserved in deps, with matching original hashes, sizes, timestamps, package version and source entry points. Stable measured aliases were used; original/rejected reports, hashes and provenance were retained.",
-    "Relative to prior published baseline: lines +5,412 covered and +13,431 total, a 3.73026759696742 percentage-point drop. Added identity, adoption, recovery and supervisor source expands unexecuted behavior. No denominator narrowing; remaining 35,510 line gaps stay open under #353.",
-    "Initial combined run failed six newly prepared assertions; required fixture/strict failure-frame repairs were made, corrected affected libraries passed, and raw profiles only were cleared before this independent passing full measurement. All failed evidence was retained.",
-    "Doctests, ignored/native fixtures, Python/JavaScript/browser/manual checks and branch coverage remain separate. Browser24/Python44/Web188 checks do not count toward this Rust percentage. Native and deployed release acceptance is pending.",
-    "Detailed JSON, HTML, profiles, exact measured object inventory and logs remain under ignored target/coverage-report/v103-final-clean; only this compact summary is published."
+    "Clean committed-source default-feature workspace measurement:2330 passed, zero failed, eight ignored. Coverage measures execution, not correctness; no new exclusions.",
+    "Checkout-absolute maintained RUSTC_WORKSPACE_WRAPPER namespace separates all current workspace objects while retaining shared target and dependency caches. All17 distinct object hashes,535 current workspace files, all533 prior files and the same known standard-library source retained; no foreign-checkout source maps.",
+    "All235 foreign raw profiles remain byte-identical. Only248 own workspace profiles merged. Default export mixed2091 mapped files and was rejected; corrected explicit-object report, source/object/profile manifests and rejected reports are retained under ignored target/coverage-report/v103-profile-corrected.",
+    "Compared with prior published record:1929 more covered lines and825 more measured lines; line coverage improves by1.01420592994477 percentage points.34406 line gaps remain, including one known standard-library line; #353 is unfinished. No denominator narrowing.",
+    "The first attempted namespace run was interrupted during compilation before any tests when review found late-success origin leakage. First completed run failed one real obsolete-panel closure assertion; its ordering defect was corrected and248 failed-run profiles preserved before this independent passing measurement.",
+    "Default scope excludes ignored/native/live-provider fixtures and doctests. Native VM, Python, browser and Web journeys remain separate evidence; no paid provider calls were authorized. Only this compact summary is published."
   ]
 }
