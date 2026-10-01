@@ -399,6 +399,15 @@ mod recovery_tests;
 #[cfg(all(test, unix))]
 mod image_upload_tests;
 
+#[cfg(all(test, unix))]
+mod command_contract_tests;
+#[cfg(all(test, unix))]
+mod family_fixture;
+#[cfg(all(test, unix))]
+mod metadata_contract_tests;
+#[cfg(all(test, unix))]
+mod process_contract_tests;
+
 #[cfg(unix)]
 fn bound_projection(directory: &std::path::Path, registration: &ProcessRegistration) -> Result<()> {
     use std::{io::Write, os::unix::fs::OpenOptionsExt};
