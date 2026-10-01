@@ -111,11 +111,49 @@ async function layout(page,label){
 }
 async function sameBrowserWeb(item, browserId){
  const peer=await connect({...item},false),page=await browser.newPage(),trace=[];
+ const safeCategory=value=>{
+  if(value==null)return null;
+  const categories=['private browser belongs to another principal','private owner unavailable',
+   'attachment already live','socket already attached','stale browser binding',
+   'browser viewer admission unavailable','browser operation refused or outcome unknown',
+   'browser mirror authority changed','browser command identity conflict',
+   'browser attachment missing','browser attachment authority mismatch'];
+  return categories.includes(value)?value:'other refusal';
+ };
+ // Only public control metadata is retained. Never record request/response
+ // bodies, input, mirror data, private page metadata, URLs or credentials.
  await page.exposeFunction('webExchange',async request=>{
-  const response=await peer.exchange(request),operation=request.command.operation;
-  if(operation?.action==='control')trace.push({action:operation.action,mode:operation.mode});
-  if(response.result?.incarnation)peer.item.incarnation=response.result.incarnation;
-  return response;
+  const operation=request.command.operation;
+  const traced=['control','attach','detach'].includes(operation?.action);
+  const entry=traced?{action:operation.action,
+   mode:['agent','human','private'].includes(operation.mode)?operation.mode:null,
+   ...(await page.evaluate(()=>{
+    const session=window.mounted?.session,status=session?.status;
+    const matches=!!status?.binding&&status.controller===status.binding.attachment_id;
+    const phases=['idle','connecting','live','switching','recovering','error','closed'];
+    const issues=['control-unknown','page-unavailable','status-unavailable','connection-unavailable'];
+    return {current_attachment_matches_controller:matches,
+     privateDisconnected:status?.mode==='private'&&!matches&&!session?.controls,
+     controls:session?.controls===true,attached:session?.attached===true,
+     phase:phases.includes(session?.phase)?session.phase:'other phase',
+     issue:session?.issue==null?null:issues.includes(session.issue)?session.issue:'other issue'};
+   }))}:null;
+  if(entry){trace.push(entry);evidence.sameBrowserWebTrace=trace;save();}
+  try{
+   const response=await peer.exchange(request);
+   if(entry){entry.outer_error=safeCategory(response.error);
+    entry.inner_error=safeCategory(response.result?.error);
+    entry.outcome_unknown=response.outcome_unknown===true||response.result?.outcome_unknown===true;
+    const status=response.result?.result?.status;
+    entry.returned_mode=['agent','human','private'].includes(status?.mode)?status.mode:null;
+    entry.returned_attachment_matches_controller=!!status?.binding&&status.controller===status.binding.attachment_id;
+    save();}
+   if(response.result?.incarnation)peer.item.incarnation=response.result.incarnation;
+   return response;
+  }catch(error){
+   if(entry){entry.transport_error='transport rejected; response unavailable';save();}
+   throw error;
+  }
  });
  await page.goto(cfg.site+'/receiver');
  await page.evaluate(async item=>{
@@ -155,7 +193,11 @@ async function native(item,observer){
   await page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));
   assert.equal((await observer.op('status')).status.mode,'private','private detach must not resume agent');
   await mode(joint.page,'Browse privately','private',false);
-  assert.equal(joint.trace.at(-1).mode,'private','reclaim must not publish private browsing as human mode');
+  const reclaim=joint.trace.slice(-2);
+  assert.deepEqual(reclaim.map(step=>step.action),['detach','attach'],'explicit reclaim must retire stale attachment and acknowledge a fresh join');
+  assert.ok(reclaim.every(step=>step.returned_mode==='private'&&!step.outer_error&&!step.inner_error&&!step.outcome_unknown),'reclaim must remain private and confirmed');
+  assert.equal(reclaim.at(-1).returned_attachment_matches_controller,true,'fresh private attachment must own control');
+  assert.equal(joint.trace.some(step=>step.action==='control'&&step.mode==='human'),false,'private reclaim must never publish human mode');
   await mode(joint.page,'Continue agent','agent');
   await joint.page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await joint.page.waitForFunction(()=>!document.querySelector('.browser-next-mirror'));

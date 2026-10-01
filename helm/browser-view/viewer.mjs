@@ -260,9 +260,31 @@ export class BrowserConnection {
         if(!this.attached||this.busy||!['agent','human','private'].includes(mode))return;
         this.busy=true;this.phase='switching';this.emit();
         let committed=false;
-        try{await this.request(this.operation('control',{mode}));committed=true;this.clearMirror();await this.pull();this.issue=null;}
+        const reclaim=mode==='private'&&this.status.mode==='private'&&!this.controls;
+        try{
+            if(reclaim){
+                // Private control evicts observing worker attachments. Explicit
+                // reclaim retires this stale attachment, then lets the owner
+                // authorize a fresh join to its retained private controller.
+                // Neither operation returns the browser to public human mode.
+                const epoch=++this.epoch;
+                clearTimeout(this.pollTimer);this.pollTimer=null;
+                this.discardQueued('private_reclaim');this.clearMirror();
+                await this.request(this.operation('detach'),epoch);
+                if(this.status.mode!=='private'||this.attached)throw Error('private_detach_unconfirmed');
+                await this.request(this.operation('attach',{binding:{...this.status.binding,attachment_id:this.uuid()}}),epoch);
+                if(this.status.mode!=='private'||!this.controls)throw Error('private_attach_unconfirmed');
+                this.sequence=Number.isSafeInteger(this.status.input_sequence)?this.status.input_sequence:0;
+                committed=true;
+                await this.pull(epoch);
+            }else{
+                await this.request(this.operation('control',{mode}));committed=true;
+                this.clearMirror();await this.pull();
+            }
+            this.issue=null;
+        }
         catch{this.fail(committed?'page-unavailable':'control-unknown');}
-        finally{this.busy=false;this.emit();}
+        finally{this.busy=false;this.schedulePoll();this.emit();}
     }
     async claimInput(input){
         if(!this.canClaim)return false;
