@@ -80,3 +80,21 @@ no deployment request was issued. Authenticated production TLS/client acceptance
 and exact deployed-source verification remain open. These journeys also do not
 establish Root-bound public transport, native macOS/Windows, arbitrary public-site
 security, installer behavior or observed cleanup on other platforms.
+
+## Visible inline control fragments
+
+The worker now checks at most 32 viewport-clipped nonzero client rectangles,
+retaining the existing shadow/ancestor hit test and all authority, privacy,
+reference, sequence and enabled-state checks. Agent clicks use Playwright's
+non-force actionability checks; cursor and drag positions use a validated
+visible fragment rather than the combined bounding rectangle's center.
+
+The full worker suite passed 25 cases with zero failures, cancellations or skips
+on Node 26.8.2 and the existing pinned Chromium/Playwright toolchain. Its new
+real-Chromium case proves that a wrapped link's combined center can miss all
+clickable fragments, requires one agent and one human effect with exact receipt
+replay, and refuses opaque overlays. The expanded client journey separately
+passed both clients' file/tab/scroll and suspension phases; its adverse phase
+remains unfinished. This does not establish complete #333 or deployed TLS
+acceptance. The earlier Web refusal's exact cause remains unproven because its
+ephemeral input receipt was removed during observed cleanup.

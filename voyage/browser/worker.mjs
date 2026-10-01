@@ -9,13 +9,25 @@ import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
 
 class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
-const exposed = e => {
-  const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;
-  let hit=document.elementFromPoint(x,y);
-  for(let depth=0;depth<32&&hit?.shadowRoot;depth++){
-    const next=hit.shadowRoot.elementFromPoint(x,y);if(!next||next===hit)break;hit=next;
+const exposed = (e,point=false) => {
+  // Inline controls can have several line fragments. Their aggregate rectangle
+  // may have its center in whitespace or another element. Inspect at most 32
+  // visible fragments; never treat an overlapping element as the target.
+  const bounds=e.getBoundingClientRect(),rects=e.getClientRects();
+  if(!bounds.width||!bounds.height)return false;
+  for(let i=0;i<Math.min(32,rects.length);i++){
+    const r=rects[i],left=Math.max(0,r.left),top=Math.max(0,r.top);
+    const right=Math.min(innerWidth,r.right),bottom=Math.min(innerHeight,r.bottom);
+    if(right<=left||bottom<=top)continue;
+    const x=(left+right)/2,y=(top+bottom)/2;
+    let hit=document.elementFromPoint(x,y);
+    for(let depth=0;depth<32&&hit?.shadowRoot;depth++){
+      const next=hit.shadowRoot.elementFromPoint(x,y);if(!next||next===hit)break;hit=next;
+    }
+    for(let node=hit;node;node=node.parentElement||node.getRootNode()?.host){
+      if(node===e)return point?{x:(x-bounds.left)/bounds.width,y:(y-bounds.top)/bounds.height}:true;
+    }
   }
-  for(let node=hit;node;node=node.parentElement||node.getRootNode()?.host)if(node===e)return true;
   return false;
 };
 
@@ -492,19 +504,22 @@ export class Worker {
           if(typeof a.checked!=='boolean'||!await h.evaluate(e=>e.tagName==='INPUT'&&['checkbox','radio'].includes(e.type)))beforeEffect('unsupported_check');if(!a.checked&&await h.evaluate(e=>e.type==='radio'))beforeEffect('unsupported_radio_uncheck');guard();await h.setChecked(a.checked,{timeout:3000});
         }else if(a.kind==='double_click')await h.dblclick({timeout:3000});
         else{
-          const target=await observedRef(a.target);guard();if(!await target.isVisible()||!await target.evaluate(exposed))beforeEffect('element_obscured');guard();
+          const sourcePoint=await h.evaluate(exposed,true);guard();
+          const target=await observedRef(a.target);guard();const targetPoint=await target.evaluate(exposed,true);guard();if(!await target.isVisible()||!sourcePoint||!targetPoint)beforeEffect('element_obscured');guard();
           const from=await h.boundingBox(),to=await target.boundingBox();guard();if(!from||!to)beforeEffect('element_hidden');
-          await page.mouse.move(from.x+from.width/2,from.y+from.height/2);guard();await page.mouse.down();try{guard();await page.mouse.move(to.x+to.width/2,to.y+to.height/2,{steps:10});guard();}finally{await page.mouse.up();}
+          await page.mouse.move(from.x+from.width*sourcePoint.x,from.y+from.height*sourcePoint.y);guard();await page.mouse.down();try{guard();await page.mouse.move(to.x+to.width*targetPoint.x,to.y+to.height*targetPoint.y,{steps:10});guard();}finally{await page.mouse.up();}
         }return null;
       }
       case 'click':case 'fill':{
         const h=await observedRef(a.ref);guard();const box=await h.boundingBox();guard();if(!box||!await h.isVisible())beforeEffect('element_hidden');guard();
         if(!await h.isEnabled())beforeEffect('element_disabled');guard();
         if(a.kind==='fill'&&!await h.isEditable())beforeEffect('element_not_editable');guard();
-        if(!await h.evaluate(exposed))beforeEffect('element_obscured');guard();
+        const point=await h.evaluate(exposed,true);guard();if(!point)beforeEffect('element_obscured');guard();
         if(a.kind==='fill')text(a.text);
-        this.agentCursor={x:box.x+box.width/2,y:box.y+box.height/2,width:this.config.width,height:this.config.height,at:Date.now()};
-        await page.mouse.click(box.x+box.width/2,box.y+box.height/2,{timeout:3000});
+        this.agentCursor={x:box.x+box.width*point.x,y:box.y+box.height*point.y,width:this.config.width,height:this.config.height,at:Date.now()};
+        // Playwright performs its own non-force actionable hit-test and chooses
+        // a real content quad, rather than clicking the aggregate box center.
+        await h.click({timeout:3000});
         if(a.kind==='click'){this.guard(stamp);if(page!==this.page)refuse('tab_changed');return null;}
         guard();
         if(a.kind==='fill'){await page.keyboard.press('ControlOrMeta+A');guard();await page.keyboard.insertText(a.text);}return null;

@@ -123,3 +123,36 @@ test('inspection during a slow navigation preserves the page and can be retried'
  const viewer=randomUUID();await call('join',{viewer});await call('control',{viewer,mode:'private'});
  const fenced=await w.request({id:randomUUID(),op:'agent',...w.status(),action:{kind:'inspect'}});assert.equal(fenced.error.code,'agent_fenced');assert.equal(fenced.result,undefined);
 });
+
+test('wrapped inline fragments click once for agent and human while an overlay refuses',{timeout:30000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'browser-inline-')),w=new Worker();
+ t.after(async()=>{await w.dispose();await fs.rm(root,{recursive:true,force:true});});
+ const call=callFor(w);
+ await call('init',{config:{root,executable,public_web:false,origins:[],width:640,height:480}});await call('open');
+ await w.page.setContent('<style>body{margin:8px;font:16px monospace;line-height:48px}#wrap{width:130px}</style><div id="wrap"><a id="target" href="#fragment" onclick="event.preventDefault();window.fixtureClicks=(window.fixtureClicks||0)+1">Download fixture bytes</a></div>');
+ const geometry=await w.page.locator('#target').evaluate(e=>{
+  const r=e.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+  return {fragments:e.getClientRects().length,aggregate_center_hits_target:hit===e||e.contains(hit)};
+ });
+ assert.ok(geometry.fragments>=2,'fixture must actually wrap the inline control');
+ assert.equal(geometry.aggregate_center_hits_target,false,'the previous aggregate-center guard misses valid fragments');
+ let found=await call('agent',{action:{kind:'inspect'}}),target=found.elements.find(e=>e.tag==='a');
+ assert.equal(target.obscured,false,'visible fragment is an actionable target');
+ const agentId=randomUUID(),agent={id:agentId,op:'agent',...w.status(),action:{kind:'click',ref:target.ref}};
+ assert.equal((await w.request(agent)).ok,true);assert.equal(await w.page.evaluate(()=>window.fixtureClicks),1);
+ assert.equal((await w.request(agent)).ok,true);assert.equal(await w.page.evaluate(()=>window.fixtureClicks),1,'exact receipt must not click again');
+ await w.page.evaluate(()=>{const cover=document.createElement('div');cover.id='cover';cover.style.cssText='position:fixed;inset:0;z-index:1000;background:white';document.body.append(cover);});
+ found=await call('agent',{action:{kind:'inspect'}});target=found.elements.find(e=>e.tag==='a');assert.equal(target.obscured,true);
+ const blockedId=randomUUID(),blocked=await w.request({id:blockedId,op:'agent',...w.status(),action:{kind:'click',ref:target.ref}});
+ assert.deepEqual(blocked.error,{code:'element_obscured',state:'refused'});assert.equal(w.journal.records.get(blockedId).state,'refused');
+ assert.equal(await w.page.evaluate(()=>window.fixtureClicks),1,'overlay refusal has no agent effect');
+ await w.page.locator('#cover').evaluate(e=>e.remove());
+ const viewer=randomUUID();await call('join',{viewer});await call('control',{viewer,mode:'private'});await call('mirror',{viewer,since:0});
+ const node=await w.page.evaluate(()=>globalThis.__voyageMirror.id(document.querySelector('#target')));
+ const humanId=randomUUID(),human={id:humanId,op:'input',...w.status(),viewer,seq:1,action:{kind:'element',action:'click',node_id:node,button:'left'}};
+ assert.equal((await w.request(human)).ok,true);assert.equal(await w.page.evaluate(()=>window.fixtureClicks),2);
+ assert.equal((await w.request(human)).ok,true);assert.equal(await w.page.evaluate(()=>window.fixtureClicks),2,'human receipt must not click again');
+ await w.page.evaluate(()=>{const cover=document.createElement('div');cover.id='cover';cover.style.cssText='position:fixed;inset:0;z-index:1000;background:white';document.body.append(cover);});
+ const refused=await w.request({id:randomUUID(),op:'input',...w.status(),viewer,seq:2,action:{kind:'element',action:'click',node_id:node,button:'left'}});
+ assert.deepEqual(refused.error,{code:'element_obscured',state:'refused'});assert.equal(await w.page.evaluate(()=>window.fixtureClicks),2,'overlay refusal has no human effect');
+});
