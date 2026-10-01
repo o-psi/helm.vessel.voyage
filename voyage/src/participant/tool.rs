@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 pub struct ParticipantTool {
     parent: Arc<Parent>,
 }
+
+#[cfg(test)]
+#[path = "family_tests.rs"]
+mod family_tests;
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Args {

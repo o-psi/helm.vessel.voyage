@@ -390,3 +390,7 @@ impl AgentSupervisor for NoAgentSupervisor {
         self.events.subscribe()
     }
 }
+
+#[cfg(test)]
+#[path = "supervision_family_tests.rs"]
+mod supervision_family_tests;
