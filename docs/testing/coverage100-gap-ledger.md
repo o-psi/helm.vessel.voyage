@@ -108,9 +108,9 @@ evidence, without being removed from this denominator.
 | `helm/src/process_client/` | 8,595 | 33,720 |
 | `vessel/src/process/` | 8,677 | 18,996 |
 | `installer/src/` | 3,899 | 7,287 |
-| `voyage/src/server/` | 1,748 | 5,611 |
-| `voyage/src/attachment/` | 1,640 | 12,432 |
-| `voyage/src/tools/` | 1,397 | 7,865 |
+| `voyage/src/server/` | 1,788 | 5,687 |
+| `voyage/src/attachment/` | 1,624 | 12,432 |
+| `voyage/src/tools/` | 1,389 | 7,865 |
 | `voyage/src/github/` | 788 | 3,137 |
 | `voyage/src/identity_helper.rs` and `identity_helper/` | 336 | 1,503 |
 | `voyage/src/subagent/` | 478 | 2,402 |
