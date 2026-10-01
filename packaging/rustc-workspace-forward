@@ -1,0 +1,4 @@
+#!/bin/sh
+# Cargo hashes the checkout-absolute workspace wrapper path into member artifacts.
+# Forward compiler arguments unchanged; dependency compilation stays shared.
+exec "$@"

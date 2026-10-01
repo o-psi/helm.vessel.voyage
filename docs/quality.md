@@ -14,6 +14,7 @@ does not disable the runtime's storage checks.
 Run from clean committed source, retaining logs under ignored `target/`:
 
 ```sh
+export RUSTC_WORKSPACE_WRAPPER="$PWD/packaging/rustc-workspace-forward"
 cargo fmt --all -- --check
 cargo clippy --workspace --locked --all-targets --all-features -j 8 -- -D warnings
 cargo build --workspace --release --locked -j 8
@@ -33,7 +34,19 @@ file appears in the union. If confirmed, refresh the source-root timestamps for
 all workspace targets returned by `cargo metadata --no-deps --format-version 1`
 without changing bytes, verify clean Git content, clear raw profiles only, and
 repeat the full measurement. Preserve rejected reports and dependency caches;
-never publish the reduced inventory or hide missing source (#251). Verify the extracted release with
+never publish the reduced inventory or hide missing source (#251).
+The maintained forwarding wrapper uses Cargo's
+[`RUSTC_WORKSPACE_WRAPPER` filename namespace](https://doc.rust-lang.org/cargo/reference/environment-variables.html)
+without changing compiler arguments. Use its checkout-absolute path to separate
+workspace objects from other checkout paths while keeping dependency caches.
+Maintain an exclusive window through the final source/object/profile audit,
+because `target/debug/helm`, `vessel` and `voyage` remain shared publication paths.
+Preserve foreign raw profiles; with a shared target, clear and merge only the
+measured workspace's profile prefix. Reject foreign maps rather than renaming
+them or changing exclusions. The wrapper's actual source-switch qualification
+belongs in #251; this documentation does not establish that a measurement passed.
+
+Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
 [release guide](releases-v1.0.2.md#maintainer-install-check).
 Its `--hosted` mode simulates the bootstrap's systemd user-manager reachability

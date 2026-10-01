@@ -297,8 +297,9 @@ Run locally from the workspace root, respecting runtime permissions:
 
 ```sh
 export CARGO_LLVM_COV_TARGET_DIR="$PWD/target"
+export RUSTC_WORKSPACE_WRAPPER="$PWD/packaging/rustc-workspace-forward"
 mkdir -p target/coverage-report
-cargo llvm-cov clean --workspace --profraw-only
+cargo llvm-cov clean --profraw-only
 cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run.log 2>&1
 cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary.json
 ```
@@ -310,6 +311,18 @@ as passing tests. Resolve permission failures through the normal approval mechan
 never by weakening runtime policy. Clear only raw coverage profiles before an
 independent measurement, preserving compiled artifacts and previous report evidence.
 Coordinate this run with other builds and keep the measured source unchanged.
+The raw-only clean scans every `target/*.profraw` with cargo-llvm-cov 0.9.1.
+When another checkout shares that target, preserve its profiles and clear only
+the current workspace's profile prefix; export with an explicitly merged current
+profile set. Do not erase another task's evidence to start a measurement.
+
+Use the checkout-absolute forwarding workspace wrapper above for local Cargo
+quality commands sharing a target. It forwards compiler arguments unchanged and
+gives workspace artifacts a checkout-specific filename namespace while retaining
+dependency caches. Cargo nests it with cargo-llvm-cov's compiler wrapper. Keep
+exclusive build/test/profile/audit windows: shared production binary paths can
+still be overwritten. A namespace is not evidence of passing tests or correct
+source maps; validate every measured object and preserve rejected evidence.
 
 Update `coverage/latest.json` from `data[0].totals` in the JSON report: preserve
 covered/total counts and percentages for lines, functions and regions. Also record
