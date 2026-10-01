@@ -402,6 +402,7 @@ mod image_upload_tests;
 #[cfg(all(test, unix))]
 mod command_contract_tests;
 #[cfg(all(test, unix))]
+#[path = "server/family_fixture_tests.rs"]
 mod family_fixture;
 #[cfg(all(test, unix))]
 mod metadata_contract_tests;

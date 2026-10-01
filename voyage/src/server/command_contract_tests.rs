@@ -2,7 +2,7 @@
 //! These cases use owned files, synthetic HTTP and actual journal receipts.
 use super::family_fixture::*;
 use super::*;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,

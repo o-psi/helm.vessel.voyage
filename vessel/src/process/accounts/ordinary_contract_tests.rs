@@ -6,8 +6,15 @@ use super::*;
 fn isolated_ordinary_account_contracts() {
     const MODE: &str = "VESSEL_ORDINARY_ACCOUNT_CONTRACT_CHILD";
     if std::env::var_os(MODE).is_none() {
-        let root = tempfile::tempdir().unwrap();
+        let root = Fixture::new();
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
         command.args(["--exact","process::accounts::tests::ordinary_contract_tests::isolated_ordinary_account_contracts","--nocapture"])
             .env(MODE,"1").stdin(std::process::Stdio::null());
         for name in [
@@ -17,7 +24,7 @@ fn isolated_ordinary_account_contracts() {
             "XDG_STATE_HOME",
             "XDG_CACHE_HOME",
         ] {
-            let path = root.path().join(name);
+            let path = root.0.join(name);
             std::fs::create_dir(&path).unwrap();
             command.env(name, path);
         }
