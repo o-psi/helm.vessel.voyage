@@ -67,7 +67,9 @@ export class BrowserConnection {
         const library=globalThis.rrweb;
         if(!library?.Replayer)throw Error('replayer_unavailable');
         const player=new library.Replayer([],{root,liveMode:true,mouseTail:false,
-            showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
+            // Historical reset mutations are synchronous in rrweb. Live
+            // addEvent has no virtual-DOM Flush, so apply them to the real DOM.
+            useVirtualDom:false,showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
         const replayDocument=player.iframe.contentDocument;
         const policy=replayDocument.createElement('meta');
         policy.httpEquiv='Content-Security-Policy';policy.content=replayPolicy;

@@ -98,3 +98,17 @@ passed both clients' file/tab/scroll and suspension phases; its adverse phase
 remains unfinished. This does not establish complete #333 or deployed TLS
 acceptance. The earlier Web refusal's exact cause remains unproven because its
 ephemeral input receipt was removed during observed cleanup.
+
+## Historical live replay recovery
+
+The shared viewer uses rrweb's supported `useVirtualDom: false` option so old
+reset mutations apply to the visible DOM during live `addEvent`. The previous
+virtual DOM path acknowledged those events without a live Flush, leaving the
+view stale after read recovery. Timestamps, private fencing, CSP, authority and
+unknown effect handling are unchanged.
+
+A real Chromium regression passed at desktop and mobile widths with natural
+recorded timestamps: aged snapshot0 plus mutation1 recovered visible1, then a
+fresh delta progressed to2. It retained the existing frame/focus/private cases
+and bounded replay instances, payload and recovery time. Full adverse crash and
+cleanup qualification remains a separate obligation.
