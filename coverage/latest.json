@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-01T18:46:47.119834+00:00",
-  "source_commit": "34bea0f51c55ca51150ac7d4857ab6506f4d39da",
+  "measured_at_utc": "2026-10-01T19:31:10.093190+00:00",
+  "source_commit": "0ba0c436ca5719a9d90e6dba6d213e53f2af9ded",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2345,
+    "passed": 2374,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 131678,
-      "covered": 96986,
-      "percent": 73.65391333404213
+      "count": 131718,
+      "covered": 97633,
+      "percent": 74.12274708088492
     },
     "functions": {
-      "count": 12033,
-      "covered": 8793,
-      "percent": 73.07404637247569
+      "count": 12040,
+      "covered": 8849,
+      "percent": 73.49667774086379
     },
     "regions": {
-      "count": 217806,
-      "covered": 152893,
-      "notcovered": 64913,
-      "percent": 70.19687244612179
+      "count": 217894,
+      "covered": 153947,
+      "notcovered": 63947,
+      "percent": 70.65224375154891
     }
   },
-  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=6G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-admission-corrected/html -j 2",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-admission-corrected/summary-default.json -v; llvm-profdata merge -sparse with248 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=6G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-contract-main/html -j 2",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-contract-main/summary-default.json -v; llvm-profdata merge -sparse with248 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,11 +40,12 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed-source measurement:2345 passed,zero failed,eight ignored. No new exclusions; execution coverage is not correctness.",
-    "All537 current and prior workspace files retained;17 distinct current objects. Only248 own profiles merged;235 foreign profiles byte-unchanged. Mixed default artifact export rejected; exact standard exclusions unchanged.",
-    "Prior record:55 more covered lines,26 more measured lines,+0.027231 percentage points.34692 gaps remain including one known standard-library line; #353 remains unmet.",
-    "Independent transient service:private umask0077,6GiB cap,zero swap,1200-second deadline. Passing measurement peak5.2GiB; export peak2.6GiB. No desktop cgroup inheritance or OOM kills.",
-    "Three admission regressions passed: writer release single callback/exact receipt,bounded timeout without late replay,revocation during wait without receipt. Prior failed full run retained; two direct no-budget probes corrected to the documented installed-handler contract.",
-    "Full reports/object and source manifests/profiles/logs retained under ignored target/coverage-report/v103-admission-corrected. Fresh80-turn runtime journey and hosted repair build remain separate obligations."
+    "Clean main source measurement:2374 passed,zero failed,eight ignored. All537 current/prior workspace files and17 distinct current objects retained; only248 own rawprofiles merged and235 foreign profiles byte-unchanged. No new exclusions.",
+    "Compared with prior published record:647 more covered lines,40 more measured lines,+0.468834 percentage points.34085 remaining gaps include one known standard-library mapping; full #353 objective remains unmet.",
+    "The same Rust/Cargo bytes previously measured on an isolated browser qualification cohort yielded four more covered lines; this final main measurement is authoritative. No source inventory was narrowed or mixed-object totals published.",
+    "Added29 substantive tests cover private persisted chat defaults,completion ownership/evidence/cancellation, real loopback history and bounded observations, localGit subprocess isolation/refusal, and attended preview boundaries. Corrected two initial fixture assumptions (retired deny-list and current automatic incomplete-work accounting); failed evidence retained.",
+    "Independent transient service:6GiB cap,zero swap,private umask0077,1200sec. Successful mainmeasurement peak6GiB/zero swap; export2.2GiB. No verification inherited the desktop app cgroup.",
+    "Worker inline geometry repair is qualified separately by25 real Chromium/worker cases,zero failure/cancel/skip,510MiB peak/zero swap. Rust source and Cargo inputs are unchanged by that later JavaScript-only repair; this measurement is attributed to clean0ba0c43,not a later commit.",
+    "Detailed reports/object/source manifests/raw profiles/logs retained under ignored target/coverage-report/v103-contract-main. Broader browser adverse/deployedTLS and native production upgrade acceptance remain separate obligations."
   ]
 }
