@@ -1,5 +1,5 @@
 use super::{App, observe::Update, state::Target};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 impl App {
     pub(super) fn export(&mut self, target: Target, path: &str) -> Result<()> {
         ensure!(
@@ -13,7 +13,12 @@ impl App {
         let path = std::path::PathBuf::from(path);
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
-        let incarnation = self.views[&target].process.incarnation;
+        let incarnation = self
+            .views
+            .get(&target)
+            .context("selected voyage unavailable")?
+            .process
+            .incarnation;
         self.status = "Saving your conversation...".into();
         tokio::spawn(async move {
             let result = crate::process_client::export::markdown(&client, target.session, &path)

@@ -397,3 +397,6 @@ mod socket_support_tests;
 
 #[cfg(all(test, unix))]
 mod campaign_dispatch_tests;
+
+#[cfg(all(test, unix))]
+mod lifecycle_contract_tests;

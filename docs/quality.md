@@ -1311,3 +1311,23 @@ Root/native service outcomes or interactive installer consent. Real acquisition
 timeouts, unobservable OS cleanup failures and foreign-UID filesystem failures
 remain separately observable gates; tests do not shorten production deadlines or
 exclude their source from the coverage denominator.
+
+### Frozen ordinary Helm lifecycle reviews (#399)
+
+`process_client::ui::lifecycle_contract_tests` covers the full headless branch,
+archive-restore and export dispatch family over the existing real loopback socket
+fixture. Branch review refusals preserve draft/receipt state without dispatch;
+exact historical boundaries and command IDs stay frozen. Malformed, wrong-session,
+nil-owner or changed-workspace branch replies remain unconfirmed and cannot emit
+an accepted receipt or create a different voyage view. See
+[issue #399](https://github.com/o-psi/helm.vessel.voyage/issues/399).
+
+Restore follows one exact Restart, new-owner Snapshot and revision-bound Archive
+sequence. Invalid returned owner/session/workspace metadata refuses before further
+reads or mutation. Tests exercise every remote stage refusal, receipt persistence
+failure, late selection, existing pending work and positively observed archive
+cleanup requirements. Export refuses missing/stale selection, blank destination,
+disconnected routes, overwrite and changed revision while preserving unsent text
+and atomic local files. No direct human terminal bytes enter these fixtures, no
+unknown effect is replayed, and native interactive terminal/OS cleanup behavior
+remains separate evidence from these headless client contracts.

@@ -40,6 +40,7 @@ impl App {
         );
         let command_id = Uuid::new_v4();
         let incarnation = view.process.incarnation;
+        let workspace = view.process.workspace.clone();
         view.pending = Some(Pending {
             account_host: None,
             command_id,
@@ -68,6 +69,13 @@ impl App {
                         })
                         .await?,
                 )?;
+                ensure!(
+                    process.session_id == target.session
+                        && !process.incarnation.is_nil()
+                        && process.incarnation != incarnation
+                        && process.workspace == workspace,
+                    "Restart response identity was not confirmed; retain the exact receipt and inspect it before deciding another action"
+                );
                 let _ = sender
                     .send(Update::Created {
                         origin: target,

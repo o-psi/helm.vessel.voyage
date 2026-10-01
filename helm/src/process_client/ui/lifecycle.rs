@@ -6,7 +6,7 @@ use super::{
 };
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::vessel::VesselCommand;
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand};
 
 impl App {
     pub(super) fn branch(
@@ -40,6 +40,7 @@ impl App {
         );
         let expected_revision = review.revision;
         let incarnation = view.process.incarnation;
+        let workspace = view.process.workspace.clone();
         let command_id = Uuid::new_v4();
         let branch_id = review.branch_id;
         let through_message = review.through_message();
@@ -81,15 +82,36 @@ impl App {
             });
             match result {
                 Ok(value) => {
-                    let _=sender.send(Update::Command {target,command_id,refused:false,result:Ok(serde_json::json!({"command_id":command_id,"branch_id":branch_id,"status":"accepted"}))}).await;
-                    let result = serde_json::from_value(value).map_err(|error| error.to_string());
-                    let _ = sender
-                        .send(Update::Created {
-                            origin: target,
-                            route: target.route,
-                            result,
-                        })
-                        .await;
+                    let process =
+                        serde_json::from_value::<ProcessInfo>(value)
+                            .ok()
+                            .filter(|process| {
+                                process.session_id == branch_id
+                                    && !process.incarnation.is_nil()
+                                    && process.workspace == workspace
+                            });
+                    if let Some(process) = process {
+                        let _ = sender.send(Update::Command {
+                            target,
+                            command_id,
+                            refused: false,
+                            result: Ok(serde_json::json!({"command_id":command_id,"branch_id":branch_id,"status":"accepted"})),
+                        }).await;
+                        let _ = sender
+                            .send(Update::Created {
+                                origin: target,
+                                route: target.route,
+                                result: Ok(process),
+                            })
+                            .await;
+                    } else {
+                        let _ = sender.send(Update::Command {
+                            target,
+                            command_id,
+                            refused: false,
+                            result: Err("Branch response identity was not confirmed; retain the exact command receipt and inspect it before deciding another action.".into()),
+                        }).await;
+                    }
                 }
                 Err(error) => {
                     let _ = sender
