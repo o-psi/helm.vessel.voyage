@@ -122,7 +122,7 @@ impl App {
                 })
                 .unwrap_or_default();
             format!(
-                "# Host browser\n\n{}\n\nBrowser placement: Voyage executing host.\nVoyage: {}\nVessel: {}\n\nF6 opens the shared viewer. Start/Connect, navigation, tabs, private/human/agent control and video are in the viewer.\n\n/browser detach closes only this viewer. /browser close explicitly closes the remote browser. Disconnecting Helm leaves the host browser running. Changing voyages never redirects this viewer. A stale socket refuses effects without replay.{}",
+                "# Host browser\n\n{}\n\nBrowser placement: Voyage executing host.\nVoyage: {}\nVessel: {}\n\nF6 opens the shared page viewer and connects automatically. Navigate and switch tabs in the viewer. Choose Browse privately before entering private information; Continue agent returns browser control to the agent.\n\n/browser detach closes only this viewer. /browser close explicitly closes the remote browser. Disconnecting Helm leaves the host browser running. Changing voyages never redirects this viewer. A stale socket refuses effects without replay.{}",
                 safe(&state.summary),
                 safe(&target.session.to_string()),
                 self.route_label(target.route),
