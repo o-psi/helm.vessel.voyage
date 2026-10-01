@@ -54,8 +54,19 @@ class Fixture(BaseFixture):
         return session
 
 def page(fixture, session, after=0, limit=4, projection="public-v2"):
-    return fixture.command(session, {"op": "events", "after": after,
-        "limit": limit, "wait_ms": 0, "projection": projection})
+    command = {"op": "events", "after": after, "limit": limit,
+               "wait_ms": 0, "projection": projection}
+    deadline = time.monotonic() + 5
+    while True:
+        response = fixture.command(session, command, allow_error=True)
+        if response.get("error") is None:
+            return response["result"]
+        # Repeat only this read after definite transient suspension contention;
+        # never retry a mutation, unknown effect, or a changed cursor request.
+        assert (response.get("error") == "suspended observation unavailable"
+                and response.get("outcome_unknown") is False), response
+        assert time.monotonic() < deadline, response
+        time.sleep(.05)
 
 
 def collect(fixture, session, projection="public-v2"):

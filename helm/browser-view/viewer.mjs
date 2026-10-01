@@ -270,6 +270,10 @@ export class BrowserConnection {
                 const epoch=++this.epoch;
                 clearTimeout(this.pollTimer);this.pollTimer=null;
                 this.discardQueued('private_reclaim');this.clearMirror();
+                // The other controller may have changed capture/control fences.
+                // Observe current fences before minting this explicit operation.
+                await this.request({action:'status'},epoch);
+                if(this.status.mode!=='private')throw Error('private_reclaim_changed');
                 await this.request(this.operation('detach'),epoch);
                 if(this.status.mode!=='private'||this.attached)throw Error('private_detach_unconfirmed');
                 await this.request(this.operation('attach',{binding:{...this.status.binding,attachment_id:this.uuid()}}),epoch);
