@@ -721,12 +721,26 @@ async fn model_discovery_auth_rate_invalid_display_and_timeout_errors_never_expo
         process.frame().await["model_catalog_error"],
         serde_json::to_value(Failure::DisplayValidation).unwrap()
     );
-    let mut config = provider.config();
-    config.command_timeout_secs = 0;
+    // A zero-duration timeout may poll a ready future to completion. Hold the
+    // owned model response instead, so this case requires actual cancellation
+    // of an outstanding catalogue request rather than a scheduling assumption.
+    let held = Provider::with_models(
+        vec![],
+        Reply {
+            status: 200,
+            body: json!({"data":[{"id":"fixture"}]}).to_string(),
+            held: true,
+        },
+    )
+    .await;
+    let mut config = held.config();
+    config.command_timeout_secs = 2;
     let result = super::models::discover(&config, &f.workspace)
         .await
         .unwrap_err();
     assert!(result.to_string().contains("model_catalog:timeout"));
+    held.wait_disconnected().await;
+    assert!(held.requests.lock().await.is_empty());
     assert!(provider.requests.lock().await.is_empty());
 }
 
