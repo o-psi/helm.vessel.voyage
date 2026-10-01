@@ -320,3 +320,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "history_boundary_tests.rs"]
+mod boundary_tests;

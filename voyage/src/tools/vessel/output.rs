@@ -185,3 +185,7 @@ pub(super) fn output(
     report.synchronize();
     Ok(report)
 }
+
+#[cfg(test)]
+#[path = "output_boundary_tests.rs"]
+mod boundary_tests;

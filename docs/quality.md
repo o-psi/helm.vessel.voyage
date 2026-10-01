@@ -1241,3 +1241,16 @@ builds here have been verified under a separate 6 GiB, zero-swap, 600-second
 service with reduced concurrency. Preserve existing targets/caches and the
 checkout-specific workspace wrapper. Coverage still requires its exclusive
 source/object/profile audit; resource isolation does not replace that audit.
+
+### Ordinary Vessel tool observation boundary cases
+
+`tools::vessel::history::boundary_tests` uses bounded synthetic loopback public
+HTTP responses to verify role-filtered search cursor progress, exact redacted
+UTF-8 offsets, incomplete full-message search, revision invalidation of earlier
+matches, malformed/no-progress history refusal, and secret redaction across wire
+chunks. Peers accept only history/message-chunk reads; no runtime wake or mutation
+is dispatched. `tools::vessel::output::boundary_tests` verifies that small output
+budgets retain unknown outcomes, withheld status, precise diagnostic-page revision
+and cursor continuation, event replay-gap inspection, and explicit missing-state
+reporting for actions with no smaller-page option. These are offline boundary
+cases, not live provider or native system evidence.
