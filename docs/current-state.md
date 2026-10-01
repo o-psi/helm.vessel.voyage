@@ -631,7 +631,15 @@ history, using the current Vessel runtime binary. Conversation summaries label s
 Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
 uses the time-based styling and compact title presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
-serve suspended observations without waking an executor. Supervisor-owned reads
+serve suspended observations without waking an executor. On the privileged Linux
+path, ordinary automatic wake additionally requires same-boot protected successful
+guardian cleanup without a stop request or reason and positive original-UID fenced
+suspension evidence. It rechecks the configured host identity, saved execution
+configuration, selected account and scoped operation authority before admitting a
+fresh incarnation under the existing lifecycle lock. Administrator execution and
+retired live-resource operations require their applicable explicit admission.
+Native qualification of this increment is recorded separately; source presence
+alone is not native evidence. Supervisor-owned reads
 and scoped stop checks use the currently configured runtime binary, not a retired
 executable saved before an upgrade; this does not change the persisted owner
 incarnation or its cleanup proof. Initialization and

@@ -221,6 +221,62 @@ pub(super) fn cleanup_observed(root: &Path, session: Uuid, incarnation: Uuid) ->
     Ok(complete.cleanup_observed)
 }
 
+/// Necessary protected retirement proof for automatic ordinary wake. This is
+/// not sufficient alone: an original-UID fenced observer must also positively
+/// attest the runtime's suspended disposition. Old boots, Stop, failed handoff
+/// and authority loss never become automatic execution admission.
+pub(super) fn suspension_candidate(root: &Path, session: Uuid, incarnation: Uuid) -> Result<bool> {
+    let control = RootDirectory::open(root)?
+        .child("guardians".as_ref())?
+        .child(session.to_string().as_ref())?;
+    let _fence = control.lock("owner.lock".as_ref())?;
+    let record = control.child(incarnation.to_string().as_ref())?;
+    let admission: Admission =
+        serde_json::from_slice(&record.read("admission.json".as_ref(), 4096)?)?;
+    let complete: Completion =
+        serde_json::from_slice(&record.read("completion.json".as_ref(), 4096)?)?;
+    let stop_absent = match record.read("stop.json".as_ref(), 4096) {
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            true
+        }
+        _ => false,
+    };
+    Ok(suspension_facts(
+        &admission,
+        &complete,
+        session,
+        incarnation,
+        boot()?,
+        stop_absent,
+    ))
+}
+
+fn suspension_facts(
+    admission: &Admission,
+    complete: &Completion,
+    session: Uuid,
+    incarnation: Uuid,
+    current_boot: Uuid,
+    stop_absent: bool,
+) -> bool {
+    admission.session_id == session
+        && admission.incarnation == incarnation
+        && admission.boot_id == current_boot
+        && complete.session_id == session
+        && complete.incarnation == incarnation
+        && complete.boot_id == current_boot
+        && complete.cleanup_observed
+        && complete.handoff_completed
+        && complete.child_exited_successfully
+        && complete.child_exit_code == Some(0)
+        && complete.stop_reason.is_none()
+        && stop_absent
+}
+
 fn current(
     root: &Path,
     session: Uuid,
@@ -457,3 +513,7 @@ fn send_registration(
 #[cfg(test)]
 #[path = "guardian_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "guardian_suspension_tests.rs"]
+mod suspension_tests;

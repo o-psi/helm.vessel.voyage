@@ -16,6 +16,31 @@ pub(super) async fn inspect(root: &Path, registration: &ProcessRegistration) -> 
         .unwrap_or(false)
     {
         info.state = ProcessState::Stopped;
+        if !matches!(
+            registration.state,
+            ProcessState::Stopped | ProcessState::CleanupUnconfirmed
+        ) && guardian::suspension_candidate(
+            root,
+            registration.session_id,
+            registration.incarnation,
+        )
+        .unwrap_or(false)
+            && let Ok(directory) = runtime_storage::directory(root, registration).await
+            && let Ok(response) = super::suspension::observe(
+                Some(root),
+                &directory,
+                registration,
+                RuntimeCommand::Health,
+                None,
+            )
+            .await
+            && super::bound_resume::suspension_response(&response, registration).is_ok()
+            && database::bound_observer_identity(root, registration)
+                .await
+                .is_ok()
+        {
+            info.state = ProcessState::Suspended;
+        }
         return info;
     }
     if super::migration::dormant(root, registration.session_id, registration.incarnation)
@@ -295,6 +320,18 @@ impl Supervisor {
     ) -> Result<serde_json::Value> {
         let lock = self.lifecycle_lock(session_id).await?;
         let _guard = lock.lock().await;
+        self.restart_bound_locked(command_id, session_id, incarnation)
+            .await
+    }
+
+    // The caller retains the session lifecycle admission. Automatic wake must
+    // not acquire this same mutex a second time or drop it before replacement.
+    pub(super) async fn restart_bound_locked(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        incarnation: Uuid,
+    ) -> Result<serde_json::Value> {
         let previous = self.registration(session_id).await?;
         let command = VesselCommand::Restart {
             command_id,
@@ -455,7 +492,7 @@ impl Supervisor {
 
     pub(super) async fn dispatch_bound(
         &self,
-        registration: ProcessRegistration,
+        mut registration: ProcessRegistration,
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
@@ -478,12 +515,15 @@ impl Supervisor {
         } else {
             None
         };
+        let current = self.registration(registration.session_id).await?;
         ensure!(
-            self.registration(registration.session_id)
-                .await?
-                .incarnation
-                == registration.incarnation,
+            current.incarnation == registration.incarnation,
             "runtime changed while awaiting lifecycle admission"
+        );
+        registration = current;
+        ensure!(
+            registration.state != ProcessState::Relinquished,
+            "source ownership has been permanently relinquished"
         );
 
         // Bound configuration/account changes need their executing-identity
@@ -509,25 +549,118 @@ impl Supervisor {
         if matches!(command, RuntimeCommand::Stop) {
             return self.bound_stop(&registration, authorization).await;
         }
-        let directory = runtime_storage::directory(&self.directory, &registration).await?;
-        let result = routing::forward_bound(
-            &self.directory,
-            &directory,
-            &registration,
-            command.clone(),
-            authorization.clone(),
-        )
-        .await;
-        if result
-            .as_ref()
-            .is_err_and(|e| e.downcast_ref::<routing::NotConnected>().is_some())
-            && command.observes_saved()
-        {
-            return self
-                .observe_current(&directory, &registration, command, authorization)
-                .await;
+        let original_incarnation = registration.incarnation;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+        let mut resumed = false;
+        let mut response = loop {
+            let directory = runtime_storage::directory(&self.directory, &registration).await?;
+            let absent = matches!(std::fs::symlink_metadata(directory.join("runtime.sock")),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound);
+            if absent && command.observes_saved() {
+                // Saved observations take the executing identity's fences, not
+                // a replacement owner, even after an abandoned process.
+                break self
+                    .observe_current(
+                        &directory,
+                        &registration,
+                        command.clone(),
+                        authorization.clone(),
+                    )
+                    .await?;
+            }
+            if absent && command.observes_suspended() {
+                ensure!(
+                    super::bound_resume::retired(&self.directory, &registration),
+                    "suspended observation requires protected observed retirement"
+                );
+                break self
+                    .observe_current(
+                        &directory,
+                        &registration,
+                        command.clone(),
+                        authorization.clone(),
+                    )
+                    .await?;
+            }
+            if absent && !command.observes_suspended() {
+                ensure!(
+                    !resumed && _guard.is_some(),
+                    "replacement owner is unavailable; inspect retained admission"
+                );
+                // The owner removes its socket before its guardian publishes
+                // descendant-cleanup completion. Absence is before dispatch,
+                // but cannot itself admit a replacement during that interval.
+                if !matches!(
+                    registration.state,
+                    ProcessState::Stopped | ProcessState::CleanupUnconfirmed
+                ) && !guardian::suspension_candidate(
+                    &self.directory,
+                    registration.session_id,
+                    registration.incarnation,
+                )
+                .unwrap_or(false)
+                    && tokio::time::Instant::now() < deadline
+                {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                self.resume_bound_locked(&registration, &command, authorization.as_ref())
+                    .await?;
+                registration = self.registration(registration.session_id).await?;
+                resumed = true;
+            }
+            let directory = runtime_storage::directory(&self.directory, &registration).await?;
+            let result = routing::forward_bound(
+                &self.directory,
+                &directory,
+                &registration,
+                command.clone(),
+                authorization.clone(),
+            )
+            .await;
+            match result {
+                Ok(response)
+                    if response.error.is_none()
+                        && response.result["status"] == "suspending"
+                        && response.result["not_dispatched"] == true =>
+                {
+                    // This authenticated result proves dispatch did not run.
+                    // A transport failure or unknown receipt never retries here.
+                    ensure!(
+                        tokio::time::Instant::now() < deadline,
+                        "runtime is completing suspension; command was not dispatched"
+                    );
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(error)
+                    if error.downcast_ref::<routing::NotConnected>().is_some()
+                        && command.observes_saved() =>
+                {
+                    break self
+                        .observe_current(
+                            &directory,
+                            &registration,
+                            command.clone(),
+                            authorization.clone(),
+                        )
+                        .await?;
+                }
+                // Only connect failure is positively before request bytes. The
+                // next pass still needs the protected suspension proof.
+                Err(error)
+                    if error.downcast_ref::<routing::NotConnected>().is_some()
+                        && !resumed
+                        && _guard.is_some()
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                result => break result?,
+            }
+        };
+        if resumed {
+            response.resumed_from = Some(original_incarnation);
         }
-        let response = result?;
         database::bound_observer_identity(&self.directory, &registration).await?;
         if response.error.is_none() {
             let name = match &command {

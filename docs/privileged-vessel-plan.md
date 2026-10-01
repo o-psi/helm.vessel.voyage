@@ -714,9 +714,16 @@ automatic reconciliation of that gap remains unfinished.
 
 Authenticated restart handoff allows Voyage to retire the prior local process
 resource scope while retaining unresolved external cleanup and tool outcomes.
-No uncertain tool effect is replayed. User-facing automatic bound resume,
-identity-scoped account operations, scoped grant propagation, and supported system
-installation remain outstanding. An explicit system layout refuses account,
+No uncertain tool effect is replayed. Ordinary bound automatic wake now requires
+same-boot protected successful guardian retirement without a stop request or stop
+reason, followed by a positive original-UID fenced suspended-health observation.
+The retained private configuration, selected account, current host identity and
+scoped operation grant are checked before locked fresh-incarnation admission.
+Administrator wake and retired live-resource operations are refused. Saved reads
+and delivery resolution use bounded observers without starting an executor.
+Native qualification of this automatic-wake increment remains required; the source
+change alone does not establish the native gate. Identity-scoped account operations,
+scoped grant propagation and system installation have their own delivery records. An explicit system layout refuses account,
 model and implicit-identity start operations that would otherwise use root's
 login namespace. Enrollment bookkeeping uses a separate control-root account
 registry; this does not implement administrator account selection.
