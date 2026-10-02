@@ -1180,3 +1180,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
 #[cfg(test)]
 #[path = "forward_recovery_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "forward_owned_transaction_tests.rs"]
+mod owned_transaction_tests;
