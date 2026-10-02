@@ -131,7 +131,14 @@ async fn search_paste_resize_and_release_stay_inside_private_modal_and_do_not_se
     peer.app.input(Event::Resize(20, 10)).unwrap();
     input(&mut peer, KeyCode::Enter);
     assert!(peer.app.accounts.open());
+    assert_eq!(peer.app.viewport.get(), Some((20, 10)));
+    assert_eq!(peer.app.accounts.picker.as_ref().unwrap().query, "Lo");
+    assert_eq!(mutation_count(&peer), 0);
+    let mut small = Terminal::new(TestBackend::new(20, 10)).unwrap();
+    small.draw(|frame| peer.app.draw_accounts(frame)).unwrap();
     assert!(!peer.app.accounts.visible.get());
+    assert!(peer.app.accounts.hits.borrow().is_empty());
+    peer.app.input(Event::Resize(110, 36)).unwrap();
     paint(&peer);
     input(&mut peer, KeyCode::Backspace);
     assert_eq!(peer.app.accounts.picker.as_ref().unwrap().query, "L");
@@ -164,7 +171,7 @@ async fn device_connection_keyboard_filter_rejects_bad_alias_before_signin_then_
             .as_ref()
             .unwrap()
             .notice
-            .contains("alias")
+            .contains("1–64 letters, digits, underscore or hyphen")
     );
     assert_eq!(mutation_count(&peer), 0);
     input(&mut peer, KeyCode::Esc);

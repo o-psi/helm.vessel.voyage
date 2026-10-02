@@ -579,10 +579,15 @@ async fn explicit_setting_selection_retains_one_revision_bound_command_and_never
         .find(|r| matches!(r.command, VoyageCommand::SetAccountInference { .. }))
         .unwrap();
     assert_eq!(mutation.session_id, peer.target.session);
+    // This mutation is session/revision/account scoped, unlike a live-resource
+    // action. The durable pending record retains its observed incarnation while
+    // the authoritative command contract intentionally omits it on the wire.
     assert_eq!(
-        mutation.incarnation,
-        Some(peer.app.views[&peer.target].process.incarnation)
+        pending.incarnation,
+        peer.app.views[&peer.target].process.incarnation
     );
+    assert!(!mutation.command.requires_incarnation());
+    assert_eq!(mutation.incarnation, None);
     assert!(
         matches!(mutation.command,VoyageCommand::SetAccountInference {command_id,..} if command_id==pending.command_id)
     );
