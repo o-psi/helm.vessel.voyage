@@ -24,7 +24,8 @@ The prepared cases cover:
 - Explicit Start preparation with the same command ID and observed revision,
   original/prepared incarnation acceptance, and refusal of arbitrary owners.
 - Native control modes, explicit Close, a bounded queue, no implicit start/close
-  without an attachment, and exact original-binding Detach on cleanup.
+  without an attachment, and full exact-current-binding Detach on cleanup,
+  including all owner/browser/attachment/tab identities and updated epochs.
 - Nonclaim input serialization with explicit private control, claim input,
   dialog and navigation Stop interrupting the gate. Invalid/foreign intents
   never reach the socket.
@@ -41,7 +42,11 @@ They cover pre-effect open guards; same-target reuse; panel swallowing Paste /
 Enter until one Esc; retained drafts; F6 reuse; background panel updates that
 preserve selection and other panels; owner/lifecycle retirement; route-scoped
 viewer cancellation; explicit detach completion before a new launcher; and
-the four-viewer bound including pending cleanup. The relative opener-path
+the four-viewer bound including actual pending Handle cleanup: a real fourth
+viewer emits Detach, its reply is held while three active viewers plus that
+retiring resource refuse another viewer, and admission resumes only after the
+original reply and observed launcher removal / Handle.finish retirement.
+The relative opener-path
 case refuses before OS process creation. Valid desktop openers are never run.
 
 Every created adapter directory is the production code's unique `host-view-*`
@@ -52,6 +57,9 @@ relax filesystem/runtime checks. HTTP, peer observation and cleanup have
 explicit finite deadlines. The application runtime's 15-second bound stays
 unchanged; the dropped HTTP observer is an intentionally shorter fixture-side
 observation, with no transport replay.
+Successful cleanup assertions establish observed removal of their owned
+resources. On an assertion panic, fixture Drop only requests stop/disconnect;
+that cancellation is not positive failure-cleanup evidence.
 
 ## Measurement and remaining obligations
 

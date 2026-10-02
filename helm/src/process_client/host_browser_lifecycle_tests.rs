@@ -160,8 +160,8 @@ impl Live {
             "an unrequested command or replay crossed the synthetic peer"
         );
     }
-    async fn detached(&mut self) {
-        let expected = self.handle.owner.lock().unwrap().0;
+    async fn detached(&mut self, expected: &HostBrowserBinding) {
+        assert_eq!(expected.incarnation, self.handle.owner.lock().unwrap().0);
         self.handle.stop();
         let (id, op) = self.command().await;
         let Op::Detach {
@@ -172,7 +172,7 @@ impl Live {
             panic!("cleanup may only detach")
         };
         assert!(!command_id.is_nil());
-        assert_eq!(binding.incarnation, expected);
+        assert_eq!(&binding, expected);
         self.reply(id, json!({"detached":true})).await;
         self.finish().await;
     }
@@ -379,7 +379,7 @@ async fn actual_start_retains_exact_intent_and_prepared_owner_context_only() {
     assert!(live.handle.accepts_incarnation(prepared));
     assert!(!live.handle.accepts_incarnation(Uuid::new_v4()));
     assert_eq!(*live.handle.owner.lock().unwrap(), (prepared, 23));
-    live.detached().await;
+    live.detached(&binding).await;
 }
 
 #[tokio::test]
@@ -424,7 +424,7 @@ async fn queued_native_controls_have_exact_binding_distinct_ids_and_only_explici
         )
         .await;
     }
-    live.detached().await;
+    live.detached(&binding).await;
     live.no_command().await;
 }
 
@@ -521,7 +521,7 @@ async fn mirror_refusal_retains_viewer_and_current_bound_private_control() {
         json!({"status":{"running":true,"mode":"private","binding":binding}}),
     )
     .await;
-    live.detached().await;
+    live.detached(&binding).await;
 }
 
 #[tokio::test]
@@ -567,7 +567,7 @@ async fn unknown_effect_reply_poisoning_fences_live_http_without_replaying_the_e
     if let Ok(reply) = late {
         assert_eq!(reply.status(), StatusCode::CONFLICT);
     }
-    live.detached().await;
+    live.detached(&binding).await;
     live.no_command().await;
 }
 
@@ -631,7 +631,7 @@ async fn pending_ordinary_input_gate_refuses_overlap_but_explicit_private_contro
         live.handle.state.borrow().summary,
         "Executing-host browser: running; control: private"
     );
-    live.detached().await;
+    live.detached(&updated).await;
 }
 
 #[tokio::test]
@@ -687,7 +687,7 @@ async fn claim_dialog_and_navigation_stop_interrupt_the_gate_without_unrequested
         live.reply(held_id, value).await;
         assert_eq!(held.await.unwrap().status(), StatusCode::OK);
     }
-    live.detached().await;
+    live.detached(&binding).await;
     live.no_command().await;
 }
 
@@ -805,7 +805,7 @@ async fn dropped_http_observer_does_not_replay_a_late_effect_and_detach_removes_
     assert_eq!(exact, op);
     assert!(observer.await.unwrap().is_err());
     let socket = live.peer.client.connection_state().borrow().socket_id;
-    live.detached().await;
+    live.detached(&binding).await;
     // The adapter server is already gone. This original late response cannot
     // redirect to a new viewer or create a second effect on the retained socket.
     live.reply(

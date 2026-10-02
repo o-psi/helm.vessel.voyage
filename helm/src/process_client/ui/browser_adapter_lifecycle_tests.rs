@@ -98,6 +98,7 @@ async fn status(app: &mut App, target: Target, peer: &mut Peer) -> HostBrowserBi
     assert_eq!(url.host_str(), Some("127.0.0.1"));
     let http = reqwest::Client::builder()
         .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(WAIT)
         .build()
         .unwrap();
@@ -429,15 +430,66 @@ async fn viewer_capacity_counts_pending_cleanup_and_admits_only_after_observed_r
         let next = add_view(&mut app, target.route);
         paths.push(opened(&mut app, next).await);
     }
-    let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
-    app.browser_retired.push(tokio::spawn(async move {
-        receiver.await.unwrap();
-        Ok(())
-    }));
     let fourth = add_view(&mut app, target.route);
-    assert!(app.browser_command(fourth, "/browser open").is_err());
+    let fourth_path = opened(&mut app, fourth).await;
+    paths.push(fourth_path.clone());
+    let binding = status(&mut app, fourth, &mut peer).await;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
+    app.sender = sender;
+    app.browser_command(fourth, "/browser detach").unwrap();
+    let (detach_id, command) = peer.command().await;
+    let VesselCommand::Voyage(VoyageRequest {
+        session_id,
+        incarnation,
+        command:
+            VoyageCommand::HostBrowser {
+                operation:
+                    Op::Detach {
+                        command_id,
+                        binding: exact,
+                    },
+            },
+    }) = command
+    else {
+        panic!("only the fourth viewer's exact Detach is allowed");
+    };
+    assert_eq!(session_id, fourth.session);
+    assert_eq!(incarnation, Some(binding.incarnation));
+    assert_eq!(exact, binding);
+    assert!(!command_id.is_nil());
     assert_eq!(app.browsers.len(), 3);
-    sender.send(()).unwrap();
+    assert!(!app.browsers.contains_key(&fourth));
+    assert_eq!(app.browser_retired.len(), 1);
+    assert!(!app.browser_retired[0].is_finished());
+    assert!(fourth_path.exists());
+    assert!(app.browsers.values().all(|handle| !handle.finished()));
+    let fifth = add_view(&mut app, target.route);
+    assert!(app.browser_command(fifth, "/browser open").is_err());
+    assert_eq!(app.browsers.len(), 3);
+    assert!(app.views[&fifth].panel.is_none());
+    assert_eq!(app.views[&fifth].draft.text, "other retained draft");
+    assert!(matches!(
+        receiver.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+    ));
+    no_command(&mut peer).await;
+    // Release the observed original Detach only after capacity refusal. A local
+    // cancellation request alone has not freed this viewer's resource slot.
+    peer.voyage_reply(
+        detach_id,
+        fourth.session,
+        binding.incarnation,
+        json!({"detached":true}),
+    )
+    .await;
+    let update = tokio::time::timeout(WAIT, receiver.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(&update, super::super::Update::Browser { target:exact,result:Ok(notice) } if *exact==fourth && notice=="Viewer detached; host browser remains owned by Voyage")
+    );
+    app.update(update);
     tokio::time::timeout(WAIT, async {
         while !app.browser_retired.last().unwrap().is_finished() {
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -445,14 +497,18 @@ async fn viewer_capacity_counts_pending_cleanup_and_admits_only_after_observed_r
     })
     .await
     .unwrap();
-    paths.push(opened(&mut app, fourth).await);
-    let fifth = add_view(&mut app, target.route);
-    assert!(app.browser_command(fifth, "/browser open").is_err());
+    assert!(!fourth_path.exists());
+    assert!(!fourth_path.parent().unwrap().exists());
+    assert_eq!(app.views[&fourth].draft.text, "other retained draft");
+    paths.push(opened(&mut app, fifth).await);
+    let sixth = add_view(&mut app, target.route);
+    assert!(app.browser_command(sixth, "/browser open").is_err());
     assert_eq!(app.browsers.len(), 4);
-    assert!(app.views[&fifth].panel.is_none());
-    assert_eq!(app.views[&fifth].draft.text, "other retained draft");
+    assert!(app.views[&sixth].panel.is_none());
+    assert_eq!(app.views[&sixth].draft.text, "other retained draft");
     no_command(&mut peer).await;
     finish(&mut app, &paths).await;
+    no_command(&mut peer).await;
 }
 
 #[tokio::test]
