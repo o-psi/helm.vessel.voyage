@@ -311,7 +311,7 @@ async fn recipient_binding_and_command_collisions_refuse_without_new_inbox_effec
                 destination_id: d.id,
             },
         ] {
-            assert!(s.notifications(op, Some(actor)).await.is_err());
+            assert!(s.notifications(op, Some(actor.clone())).await.is_err());
         }
         assert_eq!(entries(&f, &d).len(), 1);
         assert_eq!(entries(&f, &d)[0].receipt.state, ReceiptState::Available);

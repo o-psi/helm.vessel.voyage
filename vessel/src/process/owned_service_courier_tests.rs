@@ -9,7 +9,6 @@ use std::{
     time::Instant,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_util::sync::CancellationToken;
 use voyage_protocol::{
     notifications::*,
     process::{RuntimeCommand, RuntimeRequest, RuntimeResponse, read_frame, write_frame},
@@ -18,6 +17,23 @@ use voyage_protocol::{
 const ROLE: &str = "VESSEL_OWNED_COURIER_ROLE_353";
 const TEST: &str = "process::service::owned_service_courier_tests::ordinary_service_courier_ownership_receipts_restart_and_cleanup";
 const KEY: &str = "owned-synthetic-courier-key";
+
+#[derive(Clone)]
+struct Release(tokio::sync::watch::Sender<bool>);
+impl Release {
+    fn new() -> Self {
+        Self(tokio::sync::watch::channel(false).0)
+    }
+    fn cancel(&self) {
+        self.0.send_replace(true);
+    }
+    async fn cancelled(&self) {
+        let mut receiver = self.0.subscribe();
+        while !*receiver.borrow_and_update() {
+            receiver.changed().await.expect("owned release witness");
+        }
+    }
+}
 
 fn voyage_binary() -> PathBuf {
     let current = std::env::current_exe().unwrap();
@@ -261,7 +277,7 @@ impl Api {
 struct Provider {
     url: String,
     requests: Arc<std::sync::Mutex<Vec<Value>>>,
-    release: CancellationToken,
+    release: Release,
     task: tokio::task::JoinHandle<()>,
 }
 impl Provider {
@@ -270,7 +286,7 @@ impl Provider {
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
         let capture = requests.clone();
-        let release = CancellationToken::new();
+        let release = Release::new();
         let released = release.clone();
         let task = tokio::spawn(async move {
             let mut tasks = tokio::task::JoinSet::new();
