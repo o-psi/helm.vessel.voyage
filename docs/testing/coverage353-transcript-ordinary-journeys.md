@@ -63,8 +63,35 @@ command is a reproducer; its mixed summary is not a publication measurement:
 cargo llvm-cov --workspace --no-clean --json --summary-only --output-path target/verification-v103/transcript-focused-summary.json --locked -j1 -- transcript::ordinary_journey_tests
 ```
 
-The full local measurement/audit above is complete. Normal publication with the
-compact summary and actual hosted build/artifact follow-through remain the
-parent-owned delivery stage; update that outcome only after actual qualification.
+The local measurement/audit and normal source publication/hosted artifact
+qualification are complete as recorded below.
 Keep prior failure evidence and foreign profiles. Source preparation or improving
 a percentage does not close #353 or any native/browser acceptance obligation.
+
+## Published source and qualified hosted artifact
+
+Normal Main publication is **`4c330e658b1f0eb5f2822d0f8b6d747a0a5fb60a`**.
+The clean measured source remains **`beb0e01be386ae896af74c2ea97f423b24974b13`**;
+these identities are distinct because publication includes the result documents
+and compact coverage record.
+
+[Hosted run36990358002](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36990358002)
+completed **SUCCESS**, produced rather than skipped. Actual checkout log,
+artifact name, public target and BUILD all identify exact published `4c330e6`.
+[Public nightly1.0.3-nightly.20261002.36990358002.1](https://github.com/o-psi/helm.vessel.voyage/releases/tag/nightly-1.0.3-nightly.20261002.36990358002.1)
+contains the archive and checksum. Anonymous downloads verified45,666,156bytes,
+SHA256 **`f5fed123ebf2335da6a62fed89e1b9708bb72a63bc75265e395c5b76ade2336c`**,
+matching checksum and GitHub asset digest. Both asset digests, exact bounded
+unique/no-link/no-path-escape membership, all four executable hashes/modes and
+all123 browser asset hashes (including worker/guardian) passed. Verification was
+exit0/1.649s/9.6MiB/zero swap under1GiB/120s. CI remained build-only.
+
+[Original #401 repair acceptance closed with evidence](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5949504704);
+[the release checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/375#issuecomment-5949519592)
+retains the remaining scopes. No `4c330e6` native installation/worker-retention
+claim is made: CT106 remains on separately qualified613 while its owned browser
+fixtures are pending. CT129's transitioning/PID0/unknown lifetime remains an
+explicit release disposition, not readiness, never-ran or whole-cleanup proof.
+#333 actual browser acceptance, #353 full100% reachable production and #375 stable
+publication remain open; this documentation update requires no new Rust
+measurement or duplicate hosted build.

@@ -1,6 +1,6 @@
 # Legacy gateway restoration and original #401 acceptance
 
-Verified local follow-up to the
+Delivered verified follow-up to the
 [recorded source defect](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5948674655).
 Four new Rust parents (seven service-boundary scenarios) executed and passed
 at clean `beb0e01be386ae896af74c2ea97f423b24974b13`. Private manager/PID seams are not native
@@ -65,9 +65,9 @@ Clean measured source `beb0e01be386ae896af74c2ea97f423b24974b13` passed final fo
 
 The four new service parents and existing rollback gateway/service/held-pointer
 families passed in that full run. Normal publication with the compact summary
-and actual hosted build/artifact qualification are still required before
-declaring this repair delivered. Source/private failed/native records remain
-independently resumable; no native operation was replayed.
+and actual hosted artifact qualification are complete as recorded below.
+Source/private failed/native records remain independently resumable; no native
+operation was replayed.
 
 ## Independent original-acceptance audit
 
@@ -85,7 +85,7 @@ native records. It adds no host action or new test requirement.
 | Helper death at pre-proof boundary | Same record's CT127: exact owned helper/updater retired; old service/schema1/full histories and per-read cleanup qualified. Original proof is absent at that boundary; requiring a fabricated proof/restore marker would be incorrect. Original uncertain receipt remains. |
 | Local updater interruption/missing restore proof | [CT126](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5946815896): supported status strictly after unchanged deadline gives bounded unconfirmed outcome, old schema/pointer/quarantine retained, stopped service, no replay; original target retirement and history/lease observations are separate. This is not successful rollback or independent remote UpdateApply worker death. |
 | Independent namespace/unit/enablement change | [CT129–131](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5948285504): real exact pause/change/continue, original operator changes preserved, unconfirmed receipts, retained proof/backup/quarantine and exact raw histories; no successful reconciliation/rollback claimed. Installed four executables/123 assets verified. |
-| Original independent gateway restoration | **Source repair and local exact regression/strict/full coverage verified above**. Normal publication and actual hosted artifact qualification are the remaining delivery gate before closure. Existing local gateway matrix is not a native gateway fault; CT106 forward recovery cannot be relabelled rollback. |
+| Original independent gateway restoration | **Source repair, exact local regression/strict/full coverage, normal publication and actual hosted artifact verified**; original #401 repair scope closed with the linked final evidence below. Existing local gateway matrix is not a native gateway fault; CT106 forward recovery cannot be relabelled rollback. |
 
 The changed-context negative cases are not required to become successful
 rollbacks. Neither original #401 nor the runbook requires converting original
@@ -107,3 +107,31 @@ witnesses. This audit demonstrates no additional product defect from PID0 alone.
 
 Full browser #333, 100% reachable coverage #353, Root/system/native macOS/Windows
 scope and stable publication remain distinct; this audit closes none of them.
+
+## Published source and qualified hosted artifact
+
+Normal Main publication is **`4c330e658b1f0eb5f2822d0f8b6d747a0a5fb60a`**.
+The clean measured source remains **`beb0e01be386ae896af74c2ea97f423b24974b13`**;
+these identities are distinct because publication includes the result documents
+and compact coverage record.
+
+[Hosted run36990358002](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36990358002)
+completed **SUCCESS**, produced rather than skipped. Actual checkout log,
+artifact name, public target and BUILD all identify exact published `4c330e6`.
+[Public nightly1.0.3-nightly.20261002.36990358002.1](https://github.com/o-psi/helm.vessel.voyage/releases/tag/nightly-1.0.3-nightly.20261002.36990358002.1)
+contains the archive and checksum. Anonymous downloads verified45,666,156bytes,
+SHA256 **`f5fed123ebf2335da6a62fed89e1b9708bb72a63bc75265e395c5b76ade2336c`**,
+matching checksum and GitHub asset digest. Both asset digests, exact bounded
+unique/no-link/no-path-escape membership, all four executable hashes/modes and
+all123 browser asset hashes (including worker/guardian) passed. Verification was
+exit0/1.649s/9.6MiB/zero swap under1GiB/120s. CI remained build-only.
+
+[Original #401 repair acceptance closed with evidence](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5949504704);
+[the release checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/375#issuecomment-5949519592)
+retains the remaining scopes. No `4c330e6` native installation/worker-retention
+claim is made: CT106 remains on separately qualified613 while its owned browser
+fixtures are pending. CT129's transitioning/PID0/unknown lifetime remains an
+explicit release disposition, not readiness, never-ran or whole-cleanup proof.
+#333 actual browser acceptance, #353 full100% reachable production and #375 stable
+publication remain open; this documentation update requires no new Rust
+measurement or duplicate hosted build.
