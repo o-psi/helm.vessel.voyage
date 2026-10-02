@@ -18,9 +18,11 @@ directory with the current `voyage` executable. `local::connect` observes this
 service; it cannot start a service in the developer account. Vessel launches the
 ordinary Voyage independently through its production process supervisor.
 
-The only provider is an owned literal-loopback HTTP/SSE listener, with credentials
-disabled and a randomly named absent API-key environment variable. It asserts that
-no Authorization header is sent. Counted held inference establishes active work
+The only provider is an owned literal-loopback HTTP/SSE listener, with one private child-local synthetic account bound to that exact endpoint.
+New ordinary creation requires a named host account; the fixture preserves that
+admission rule. It asserts that only the fixed synthetic test credential reaches
+its owned server; inherited real credentials are cleared and an unused random
+API-key environment variable is absent. Counted held inference establishes active work
 before release. It offers only synthetic models and a fixed canonical response,
 or one synthetic HTTP 500 refusal with one permitted attempt. There is no login,
 paid provider, Root identity, system unit, human terminal, browser or external API.
@@ -100,3 +102,10 @@ prepared plain terminal work. Audit all prior/current source/object/profile
 membership before publishing the compact summary and update the shared #353
 record with exact checks, source and remaining gaps. No 100% or native remote/provider
 claim follows from these five ordinary local journeys alone.
+
+The public plain frontend future is intentionally not Send because its connection
+uses a local command-identity cell. Owned children drive it through a current-thread
+Tokio LocalSet and spawn_local; production synchronization is unchanged. A run
+that returns before the held request is diagnosed directly. Failed fixture state
+and daemon diagnostics remain private for inspection; unknown creation is never
+replayed. This correction is prepared source until focused/full verification passes.

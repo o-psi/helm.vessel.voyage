@@ -17,6 +17,7 @@ use voyage_protocol::{
 };
 
 const CHILD: &str = "HELM_OWNED_FRONTEND_353";
+const SYNTHETIC_KEY: &str = "owned-frontend-synthetic-local-only";
 const TEST: &str = "process_client::frontend::owned_process_tests::owned_ordinary_frontend_preserves_canonical_history_exact_delivery_and_cleanup";
 
 fn binary(name: &str) -> PathBuf {
@@ -208,7 +209,8 @@ impl Provider {
                                 if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") { break index + 4; }
                             };
                             let headers = String::from_utf8(bytes[..end].to_vec()).unwrap();
-                            assert!(!headers.to_ascii_lowercase().contains("authorization:"), "fixture must never send provider credentials");
+                            let authorization = headers.lines().filter_map(|line| { let (name, value) = line.split_once(':')?; name.eq_ignore_ascii_case("authorization").then(|| value.trim()) }).collect::<Vec<_>>();
+                            assert_eq!(authorization, vec![format!("Bearer {SYNTHETIC_KEY}")], "only the fixed private-fixture credential may reach the owned loopback server");
                             let length = headers.lines().find_map(|line| { let (name, value) = line.split_once(':')?; name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap()) }).unwrap_or(0);
                             assert!(length <= 131072);
                             while bytes.len() < end + length { let mut buffer = [0u8; 4096]; let count = stream.read(&mut buffer).await.unwrap(); assert!(count > 0); bytes.extend_from_slice(&buffer[..count]); }
@@ -236,12 +238,35 @@ impl Provider {
         }
     }
     fn config(&self) -> crate::Config {
+        let registry = voyage_runtime::accounts::Registry::default_host().unwrap();
+        let connection = registry
+            .add_connection(
+                "owned-loopback".into(),
+                self.url.clone(),
+                vec![voyage_protocol::accounts::Transport::OpenaiChat],
+            )
+            .unwrap();
+        let account = registry
+            .add_api(
+                connection.id,
+                "owned".into(),
+                "Owned synthetic account".into(),
+                voyage_runtime::accounts::ApiKeyInput::Stored(SYNTHETIC_KEY.into()),
+            )
+            .unwrap();
         crate::Config {
             provider: crate::config::ProviderKind::OpenaiChat,
             model: "owned-model".into(),
             base_url: Some(self.url.clone()),
-            api_key_required: false,
+            api_key_required: true,
             api_key_env: format!("OWNED_UNUSED_{}", Uuid::new_v4().simple()),
+            account: Some(voyage_protocol::accounts::AccountBinding {
+                account_id: account.id,
+                connection_id: connection.id,
+                identity_generation: account.identity_generation,
+                connection_revision: connection.revision,
+                transport: voyage_protocol::accounts::Transport::OpenaiChat,
+            }),
             access: Some(crate::config::AccessMode::ReadOnly),
             provider_retry_attempts: 1,
             provider_response_timeout_ms: 10000,
