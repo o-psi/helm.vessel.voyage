@@ -32,6 +32,7 @@ mod qualification {
         pub(super) fn connected(&mut self) {}
     }
     impl Meter {
+        pub(super) fn bind(&self, _: uuid::Uuid, _: uuid::Uuid) {}
         pub(super) fn attempt(self: &std::sync::Arc<Self>) -> Attempt {
             Attempt
         }
@@ -40,7 +41,7 @@ mod qualification {
         pub(super) fn heard(&self) {}
         pub(super) fn retired(&self, _: bool) {}
     }
-    pub(super) fn from_env(_: uuid::Uuid) -> Option<std::sync::Arc<Meter>> {
+    pub(super) fn from_env(_: uuid::Uuid, _: bool) -> Option<std::sync::Arc<Meter>> {
         None
     }
 }
@@ -223,19 +224,18 @@ impl Slot {
                 }
             });
         }
-        let configured_measurement = if client.is_local() {
-            None
-        } else {
-            qualification::from_env(client.id())
-        };
-        let mut measured_attempt = configured_measurement.as_ref().map(|meter| meter.attempt());
         let (request, pin) = client.socket_request()?;
-        let measurement = if request.uri().scheme_str() == Some("wss") {
-            configured_measurement
+        // Local discovery validates the private executing-account credential and
+        // loopback endpoint. The observer never supplies a replacement route.
+        let local_measurement = client.is_local() && request.uri().scheme_str() == Some("ws");
+        let measurement = if local_measurement
+            || (!client.is_local() && request.uri().scheme_str() == Some("wss"))
+        {
+            qualification::from_env(client.id(), local_measurement)
         } else {
-            drop(measured_attempt.take());
             None
         };
+        let mut measured_attempt = measurement.as_ref().map(|meter| meter.attempt());
         let config = WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME_BYTES))
             .max_frame_size(Some(MAX_FRAME_BYTES))
@@ -291,6 +291,9 @@ impl Slot {
                 "Vessel identity changed on reconnect"
             );
             *observed = Some(vessel_id);
+        }
+        if let Some(meter) = &measurement {
+            meter.bind(vessel_id, socket_id);
         }
         if let Some(attempt) = &mut measured_attempt {
             attempt.connected();

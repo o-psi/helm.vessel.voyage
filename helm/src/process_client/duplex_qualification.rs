@@ -1,4 +1,4 @@
-//! Opt-in private measurement of the existing native WSS application boundary.
+//! Opt-in private measurement of existing native local/public socket payloads.
 //! No frame content, credential, URL, command ID or routing input is retained.
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
@@ -15,6 +15,9 @@ use uuid::Uuid;
 #[derive(Default)]
 struct Counts {
     route: Option<Uuid>,
+    vessel: Option<Uuid>,
+    socket: Option<Uuid>,
+    identity_changed: bool,
     multiple_routes: bool,
     attempts: u64,
     connections: u64,
@@ -55,9 +58,14 @@ pub(super) struct Meter {
     pid: u32,
     start_ticks: u64,
     started: Instant,
+    local: bool,
 }
 impl Meter {
+    #[cfg(test)]
     fn open(path: &Path, label: String) -> Result<Self> {
+        Self::open_route(path, label, false)
+    }
+    fn open_route(path: &Path, label: String, local: bool) -> Result<Self> {
         ensure!(path.is_absolute(), "qualification output must be absolute");
         ensure!(
             (1..=48).contains(&label.len())
@@ -103,6 +111,7 @@ impl Meter {
             pid,
             start_ticks,
             started: Instant::now(),
+            local,
         })
     }
     pub(super) fn route(&self, id: Uuid) {
@@ -112,6 +121,14 @@ impl Meter {
             Some(first) if first != id => c.multiple_routes = true,
             _ => (),
         }
+    }
+    pub(super) fn bind(&self, vessel: Uuid, socket: Uuid) {
+        let mut c = self.counts.lock().unwrap();
+        if vessel.is_nil() || socket.is_nil() || c.vessel.is_some_and(|old| old != vessel) {
+            c.identity_changed = true;
+        }
+        c.vessel = Some(vessel);
+        c.socket = Some(socket);
     }
     pub(super) fn attempt(self: &Arc<Self>) -> Attempt {
         let mut c = self.counts.lock().unwrap();
@@ -151,7 +168,9 @@ impl Meter {
     fn snapshot(&self) -> Value {
         let c = self.counts.lock().unwrap();
         let expired = self.started.elapsed() >= Duration::from_secs(600);
-        json!({"schema":1,"scope":"native WSS Text application bytes; excludes HTTP upgrade, TLS/TCP and control frames",
+        json!({"schema":1,"scope":if self.local {"native local WS Text application bytes; excludes HTTP upgrade, TCP and control frames"}else{"native WSS Text application bytes; excludes HTTP upgrade, TLS/TCP and control frames"},
+            "transport":if self.local {"local_ws"}else{"public_wss"},"authority":if self.local {"existing local account owner"}else{"existing public scoped credential"},
+            "vessel_id":c.vessel,"socket_id":c.socket,
             "label":self.label,"pid":self.pid,"start_ticks":self.start_ticks,
             "captured_at_ms":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
             "elapsed_ms":self.started.elapsed().as_millis(),"connections":c.connections,"routes":if c.multiple_routes {2} else {usize::from(c.route.is_some())},
@@ -159,7 +178,7 @@ impl Meter {
             "source_age_ms":c.last_received.map(|at|at.elapsed().as_millis()),
             "sent_bytes":c.sent_bytes,"received_bytes":c.received_bytes,"sent_frames":c.sent_frames,"received_frames":c.received_frames,
             "transport_failures":c.transport_failures,
-            "status":if expired {"expired"} else if c.transport_failures>0 || c.multiple_routes {"unknown"} else if c.active==0 {"disconnected"} else {"observed"}})
+            "status":if expired {"expired"} else if c.transport_failures>0 || c.multiple_routes || c.identity_changed || c.vessel.is_none() || c.socket.is_none() {"unknown"} else if c.active==0 {"disconnected"} else {"observed"}})
     }
     fn flush(&self) -> Result<()> {
         let value = serde_json::to_vec(&self.snapshot())?;
@@ -183,13 +202,32 @@ impl Meter {
         Ok(())
     }
 }
-pub(super) fn from_env(route: Uuid) -> Option<Arc<Meter>> {
-    static METER: OnceLock<Option<Arc<Meter>>> = OnceLock::new();
-    let meter = METER
+pub(super) fn from_env(route: Uuid, local: bool) -> Option<Arc<Meter>> {
+    static PUBLIC: OnceLock<Option<Arc<Meter>>> = OnceLock::new();
+    static LOCAL: OnceLock<Option<Arc<Meter>>> = OnceLock::new();
+    // Ambiguous opt-in cannot create a mislabeled observer. No routing input is changed.
+    if std::env::var_os("HELM_QUALIFICATION_WSS_OUTPUT").is_some()
+        && std::env::var_os("HELM_QUALIFICATION_LOCAL_OUTPUT").is_some()
+    {
+        return None;
+    }
+    let meter = if local { &LOCAL } else { &PUBLIC };
+    let meter = meter
         .get_or_init(|| {
-            let path = std::env::var_os("HELM_QUALIFICATION_WSS_OUTPUT")?;
-            let label = std::env::var("HELM_QUALIFICATION_WSS_LABEL").ok()?;
-            let meter = Arc::new(Meter::open(Path::new(&path), label).ok()?);
+            let (output, label_key) = if local {
+                (
+                    "HELM_QUALIFICATION_LOCAL_OUTPUT",
+                    "HELM_QUALIFICATION_LOCAL_LABEL",
+                )
+            } else {
+                (
+                    "HELM_QUALIFICATION_WSS_OUTPUT",
+                    "HELM_QUALIFICATION_WSS_LABEL",
+                )
+            };
+            let path = std::env::var_os(output)?;
+            let label = std::env::var(label_key).ok()?;
+            let meter = Arc::new(Meter::open_route(Path::new(&path), label, local).ok()?);
             meter.flush().ok()?;
             let writer = meter.clone();
             let _writer = std::thread::Builder::new()
@@ -218,7 +256,9 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     fn meter(root: &Path) -> Meter {
         std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).unwrap();
-        Meter::open(&root.join("private-counts.json"), "native-a".into()).unwrap()
+        let meter = Meter::open(&root.join("private-counts.json"), "native-a".into()).unwrap();
+        meter.bind(Uuid::new_v4(), Uuid::new_v4());
+        meter
     }
     #[test]
     fn exact_text_bytes_have_no_content_and_unknown_transport_cannot_pass() {
@@ -290,5 +330,48 @@ mod tests {
         assert_eq!(m.snapshot()["handshake_failures"], 1);
         assert_eq!(m.snapshot()["active"], 0);
         assert_eq!(m.snapshot()["connections"], 1);
+    }
+    #[test]
+    fn local_text_counters_pin_validated_identity_without_public_tls_claim_or_content() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let m = Meter::open_route(&root.path().join("local.json"), "native-local".into(), true)
+            .unwrap();
+        m.route(Uuid::new_v4());
+        m.connected();
+        assert_eq!(m.snapshot()["status"], "unknown");
+        let vessel = Uuid::new_v4();
+        let socket = Uuid::new_v4();
+        m.bind(vessel, socket);
+        let secret = "fixture private input 日本語";
+        m.sent(secret.len());
+        m.received(123);
+        m.flush().unwrap();
+        let raw = std::fs::read(&m.path).unwrap();
+        let value: Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(value["transport"], "local_ws");
+        assert_eq!(value["authority"], "existing local account owner");
+        assert_eq!(value["vessel_id"], vessel.to_string());
+        assert_eq!(value["socket_id"], socket.to_string());
+        assert_eq!(value["sent_bytes"], secret.len());
+        assert_eq!(value["received_bytes"], 123);
+        assert_eq!(value["status"], "observed");
+        assert!(!String::from_utf8(raw).unwrap().contains(secret));
+        m.bind(Uuid::new_v4(), Uuid::new_v4());
+        assert_eq!(m.snapshot()["status"], "unknown");
+    }
+    #[test]
+    fn local_observer_cannot_admit_nil_hello_or_disguise_retired_socket() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let m = Meter::open_route(&root.path().join("local.json"), "native-local".into(), true)
+            .unwrap();
+        m.route(Uuid::new_v4());
+        m.bind(Uuid::new_v4(), Uuid::nil());
+        m.connected();
+        assert_eq!(m.snapshot()["status"], "unknown");
+        m.retired(false);
+        assert_eq!(m.snapshot()["active"], 0);
+        assert_eq!(m.snapshot()["disconnected"], 1);
     }
 }

@@ -39,6 +39,38 @@ def private_json(path, limit=1024*1024):
     return json.loads(data)
 
 
+def native_selection(config):
+    route = config.get('native_route', {'mode':'public'})
+    assert isinstance(route, dict) and route.get('mode') in ('local','public')
+    native_args = ['--no-start']
+    discovery_pin = None
+    if route['mode'] == 'local':
+        assert set(route) == {'mode','directory','expected_vessel_id'} and 'access_file' not in config
+        assert str(uuid.UUID(route['expected_vessel_id'])) == route['expected_vessel_id'] and uuid.UUID(route['expected_vessel_id']).int
+        directory = Path(route['directory'])
+        assert directory.is_absolute() and directory.resolve(strict=True) == directory and str(directory) != '/'
+        meta = directory.lstat()
+        assert stat.S_ISDIR(meta.st_mode) and meta.st_uid == os.getuid() and not meta.st_mode & 0o077
+        # Shape/inode only; the token is consumed solely by ordinary Helm discovery.
+        fd = os.open(directory/'process-http.json',os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        try:
+            meta = os.fstat(fd)
+            assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid() and meta.st_nlink == 1 and not meta.st_mode & 0o077 and 0 < meta.st_size < 4096
+            discovery_pin = (meta.st_dev,meta.st_ino,meta.st_size,meta.st_mtime_ns,meta.st_ctime_ns)
+        finally:os.close(fd)
+        native_args += ['--directory',str(directory)]
+    else:
+        assert set(route) == {'mode'}
+        access = Path(config['access_file']);assert access.is_absolute()
+        fd = os.open(access,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        try:
+            meta = os.fstat(fd)
+            assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid() and meta.st_nlink == 1 and not meta.st_mode & 0o077
+        finally:os.close(fd)
+        native_args += ['--access-file',str(access)]
+    return route, native_args, discovery_pin
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
@@ -55,16 +87,9 @@ def main():
         assert Path(item['workspace']).is_absolute() and item['workspace'] != '/'
     helm, node = Path(config['helm']), Path(config['node'])
     assert helm.is_absolute() and helm.is_file() and node.is_absolute() and node.is_file()
-    access = Path(config['access_file'])
-    assert access.is_absolute()
-    # Native Helm validates/decrypts this credential through its existing policy.
-    # Do not parse, export or log its token in the harness.
-    fd = os.open(access, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    try:
-        meta = os.fstat(fd)
-        assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid() and meta.st_nlink == 1 and not meta.st_mode & 0o077
-    finally:
-        os.close(fd)
+    route, native_args, discovery_pin = native_selection(config)
+    config['native_route'] = route
+    if route['mode']=='local':directory=Path(route['directory'])
     os.umask(0o077)
     output = Path(config['output']).resolve(); output.mkdir(mode=0o700)
     root = Path(tempfile.mkdtemp(prefix='browser-production-'))
@@ -89,7 +114,7 @@ def main():
     config['native_metrics_files']=[]
     driver=Path(__file__).with_name('host_browser_production.mjs')
     def cli(*parts):
-        result=subprocess.run([str(helm),'connect','--access-file',str(access),'--no-start',*parts],
+        result=subprocess.run([str(helm),'connect',*native_args,*parts],
                               env=env,capture_output=True,timeout=30)
         assert result.returncode==0,'public route refused; private diagnostics remain with operator'
         assert len(result.stdout)<=4*1024*1024
@@ -100,20 +125,41 @@ def main():
             checked=subprocess.run([str(node),str(driver),'--validate',str(preflight_config)],stdout=log,stderr=log,timeout=10)
         assert checked.returncode==0, 'private qualification config refused before browser effects'
         catalogue=cli('list');assert isinstance(catalogue,list)
+        if route['mode']=='local':
+            meta=(directory/'process-http.json').lstat()
+            assert discovery_pin==(meta.st_dev,meta.st_ino,meta.st_size,meta.st_mtime_ns,meta.st_ctime_ns)
+            report['native_route']={'mode':'local','expected_vessel_id':route['expected_vessel_id'],'discovery_inode':discovery_pin[:2],'authority':'existing local account owner'}
         for item in config['sessions']:
             process=next(entry for entry in catalogue if entry['session_id']==item['id'])
             assert process.get('name')==item['title'] and process['workspace']==item['workspace']
             snap=cli('inspect',item['id'])
             assert snap['session_id']==item['id'] and not snap['messages'] and not snap.get('run') and snap.get('pending_cleanup_run') is None
             captured=root/(item['label']+'-launcher')
-            metrics=output/('native-'+item['label']+'-wss-private.json')
+            metrics=output/('native-'+item['label']+'-'+route['mode']+'-transport-private.json')
             config['native_metrics_files'].append(str(metrics))
+            meter_prefix='HELM_QUALIFICATION_LOCAL' if route['mode']=='local' else 'HELM_QUALIFICATION_WSS'
             use_env={**env,'QUALIFICATION_LAUNCHER':str(captured),
-                     'HELM_QUALIFICATION_WSS_OUTPUT':str(metrics),
-                     'HELM_QUALIFICATION_WSS_LABEL':'native-'+item['label']}
-            client=launch([str(helm),'connect','--access-file',str(access),'--no-start'],use_env,root,output/(item['label']+'-private.pty'),120,36)
+                     meter_prefix+'_OUTPUT':str(metrics),meter_prefix+'_LABEL':'native-'+item['label']}
+            client=launch([str(helm),'connect',*native_args],use_env,root,output/(item['label']+'-private.pty'),120,36)
             clients.append(client)
             wait(lambda:item['title'] in screen(client),40)
+            def meter_ready():
+                if not metrics.exists():return False
+                try:
+                    value=private_json(metrics,4096)
+                    return value.get('status')=='observed' and value.get('pid')==client['pid'] and value.get('active')==1
+                except (json.JSONDecodeError,AssertionError):return False
+            # The pinned observer writes every 200ms; repeat metadata reads only,
+            # never authentication, effects or process replacement.
+            wait(meter_ready,5)
+            meter=private_json(metrics,4096)
+            assert meter['status']=='observed' and meter['pid']==client['pid'] and meter['active']==1
+            assert str(uuid.UUID(meter['socket_id']))==meter['socket_id'] and uuid.UUID(meter['socket_id']).int
+            assert meter['transport']==('local_ws' if route['mode']=='local' else 'public_wss')
+            if route['mode']=='local':
+                assert meter['vessel_id']==route['expected_vessel_id'] and meter['authority']=='existing local account owner'
+                meta=(directory/'process-http.json').lstat()
+                assert discovery_pin==(meta.st_dev,meta.st_ino,meta.st_size,meta.st_mtime_ns,meta.st_ctime_ns)
             paste(client,'/use '+item['id']);send(client,'\r');send(client,'\x1b[17~')
             wait(lambda:captured.exists() or client['process'].poll() is not None,40)
             assert captured.exists() and client['process'].poll() is None

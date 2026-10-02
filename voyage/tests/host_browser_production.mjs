@@ -18,8 +18,11 @@ const hash=value=>createHash('sha256').update(value).digest('hex');
 const effect=action=>!['status','mirror','receipt'].includes(action);
 const tracked=new WeakMap();
 const https=value=>{const url=new URL(value);assert.equal(url.protocol,'https:');assert.ok(!url.username&&!url.password&&!url.hash);return url;};
+const nativeMode=cfg=>cfg.native_route?.mode||'public';
+const nativeScope=cfg=>nativeMode(cfg)==='local'?'owned native Helm local WS application bytes':'owned native Helm public WSS application bytes';
+const nativeCounterScope=cfg=>nativeMode(cfg)==='local'?'native local WS Text application bytes; excludes HTTP upgrade, TCP and control frames':'native WSS Text application bytes; excludes HTTP upgrade, TLS/TCP and control frames';
 function nativeWireSummary(wire,cfg){
- assert.equal(wire.schema,1);assert.equal(wire.scope,'owned native Helm public WSS application bytes');assert.equal(wire.verified_identity,true);
+ assert.equal(wire.schema,1);assert.equal(wire.scope,nativeScope(cfg));assert.equal(wire.verified_identity,true);
  assert.equal(wire.roots.length,2);
  for(let i=0;i<2;i++)for(const key of ['label','pid','start_ticks'])assert.equal(wire.roots[i][key],cfg.client_roots[i][key]);
  assert.equal(wire.windows.length,9);const conditions=['a_one_viewer','a_two_viewers','ab_four_viewers'];
@@ -28,6 +31,23 @@ function nativeWireSummary(wire,cfg){
   assert.ok(Number.isSafeInteger(w.sent_bytes)&&w.sent_bytes>=0&&Number.isSafeInteger(w.received_bytes)&&w.received_bytes>0);
   return {condition:w.condition,index:w.index,sent_bytes:w.sent_bytes,received_bytes:w.received_bytes};
  })};
+}
+async function localAuthorityProof(cfg,items,prior=null){
+ if(nativeMode(cfg)!=='local')return null;
+ const native=await nativeSnapshot(cfg);
+ const sessions=items.map((item,i)=>({label:cfg.sessions[i].label,session_id:cfg.sessions[i].id,
+  socket_id:native[i].socket_id,root:cfg.sessions[i].host_browser_root,claims:[...item.state.native_claims.values()]}));
+ assert.ok(sessions.every(s=>s.claims.length>0&&s.claims.length<=32),'completed native noninput receipt required');
+ const h=cfg.host_observer;const reply=JSON.parse(await sshCommand(cfg,[h.python,'-I',h.probe_script,'local-authority'],
+  {schema:1,directory:cfg.native_route.directory,vessel_id:cfg.native_route.expected_vessel_id,sessions}));
+ assert.equal(reply.mode,'local');assert.equal(reply.no_effects,true);assert.equal(reply.identities.length,2);
+ for(let i=0;i<2;i++){
+  const row=reply.identities[i];for(const key of ['label','session_id','socket_id'])assert.equal(row[key],sessions[i][key]);
+  assert.equal(row.vessel_id,cfg.native_route.expected_vessel_id);assert.ok(uuid(row.principal_id)&&uuid(row.installation_id));
+  assert.deepEqual(row.completed_native_receipt_ids,sessions[i].claims.map(c=>c.command_id));
+  if(prior)for(const key of ['session_id','principal_id','installation_id','actor_sha256','vessel_id'])assert.equal(row[key],prior.identities[i][key]);
+ }
+ return reply;
 }
 async function nativeSnapshot(cfg){
  const values=[];
@@ -41,7 +61,9 @@ async function nativeSnapshot(cfg){
   cfg.native_metrics_identity??=[];const pinned=cfg.native_metrics_identity[i]??=value.identity;
   assert.deepEqual(value.identity,pinned);value={...value.value,inode:pinned};
   const root=cfg.client_roots[i];for(const key of ['label','pid','start_ticks'])assert.equal(value[key],root[key]);
-  assert.equal(value.scope,'native WSS Text application bytes; excludes HTTP upgrade, TLS/TCP and control frames');
+  assert.equal(value.scope,nativeCounterScope(cfg));assert.equal(value.transport,nativeMode(cfg)==='local'?'local_ws':'public_wss');
+  assert.ok(uuid(value.vessel_id)&&uuid(value.socket_id));
+  if(nativeMode(cfg)==='local'){assert.equal(value.vessel_id,cfg.native_route.expected_vessel_id);assert.equal(value.authority,'existing local account owner');}
   assert.equal(value.status,'observed');assert.equal(value.routes,1);assert.ok(value.connections>=1);assert.equal(value.transport_failures,0);
   assert.equal(value.active,1);assert.equal(value.handshake_failures,0);
   assert.ok(Date.now()-value.captured_at_ms>=0&&Date.now()-value.captured_at_ms<=1000);
@@ -55,16 +77,17 @@ function nativeWindow(condition,index,before,after){
  const clients=selected.map(i=>{
   assert.ok(after[i].captured_at_ms>before[i].captured_at_ms);
   assert.deepEqual(after[i].inode,before[i].inode);
+  assert.equal(after[i].vessel_id,before[i].vessel_id);assert.equal(after[i].socket_id,before[i].socket_id);
   for(const key of ['attempts','connections','disconnected','transport_failures'])assert.equal(after[i][key],before[i][key]);
   for(const sample of [before[i],after[i]])assert.ok(Number.isFinite(sample.source_age_ms)&&sample.source_age_ms<=2000);
   for(const key of ['sent_bytes','received_bytes'])assert.ok(after[i][key]>=before[i][key]);
-  return {label:before[i].label,started_at_ms:before[i].captured_at_ms,ended_at_ms:after[i].captured_at_ms,
+  return {label:before[i].label,vessel_id:before[i].vessel_id,socket_id:before[i].socket_id,authority:before[i].authority,started_at_ms:before[i].captured_at_ms,ended_at_ms:after[i].captured_at_ms,
    sent_bytes:after[i].sent_bytes-before[i].sent_bytes,received_bytes:after[i].received_bytes-before[i].received_bytes};
  });
  return {condition,index,sent_bytes:clients.reduce((n,c)=>n+c.sent_bytes,0),received_bytes:clients.reduce((n,c)=>n+c.received_bytes,0),clients};
 }
 async function saveNativeWire(cfg,windows){
- const wire={schema:1,scope:'owned native Helm public WSS application bytes',verified_identity:true,
+ const wire={schema:1,scope:nativeScope(cfg),transport:nativeMode(cfg),verified_identity:true,
   roots:cfg.client_roots.map(({label,pid,start_ticks})=>({label,pid,start_ticks})),windows};
  await save(cfg.native_wire_evidence,wire);return nativeWireSummary(wire,cfg);
 }
@@ -80,7 +103,11 @@ async function privateJson(file,limit=1024*1024,withIdentity=false){
 async function save(file,value){await fs.writeFile(file,JSON.stringify(value,null,2),{mode:0o600,flag:'wx'});}
 async function until(predicate,ms=30000){const deadline=performance.now()+ms;while(!await predicate()){assert.ok(performance.now()<deadline,'bounded observation expired');await sleep(50);}}
 function validate(cfg,{launchers=true}={}){
- assert.equal(cfg.schema,1);assert.equal(cfg.sessions.length,2);assert.equal(new Set(cfg.sessions.map(s=>s.id)).size,2);
+ assert.equal(cfg.schema,1);
+ const native=cfg.native_route||{mode:'public'};assert.ok(['public','local'].includes(native.mode));
+ if(native.mode==='local'){assert.deepEqual(Object.keys(native).sort(),['directory','expected_vessel_id','mode']);assert.ok(path.isAbsolute(native.directory)&&native.directory!=='/'&&uuid(native.expected_vessel_id));assert.equal(cfg.access_file,undefined);}
+ else {assert.deepEqual(Object.keys(native),['mode']);assert.ok(path.isAbsolute(cfg.access_file));}
+ assert.equal(cfg.sessions.length,2);assert.equal(new Set(cfg.sessions.map(s=>s.id)).size,2);
  assert.ok(uuid(cfg.web_connection));https(cfg.console_origin);const socket=new URL(cfg.web_socket);
  assert.equal(socket.protocol,'wss:');assert.equal(socket.pathname,'/v1/vessel/browser-socket');
  assert.ok(!socket.username&&!socket.password&&!socket.search&&!socket.hash&&(!socket.port||socket.port==='443'));
@@ -112,7 +139,7 @@ function validate(cfg,{launchers=true}={}){
  if(cfg.web_mode==='cua')assert.ok(path.isAbsolute(cfg.cua_mailbox));
  for(const key of ['python','cost_script','probe_script','capacity','ledger_a','ledger_ab'])assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(host[key]));
  for(const key of ['cost_sha256','probe_sha256'])assert.ok(/^[a-f0-9]{64}$/.test(host[key]));
- for(const s of cfg.sessions)assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(s.host_browser_root));
+ for(const s of cfg.sessions){assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(s.host_browser_root));if(native.mode==='local')assert.equal(s.host_browser_root,path.join(native.directory,'sessions',s.id,'journal','host-browser'));}
  if(host.mode==='local'){
   assert.ok(host.programs&&typeof host.programs==='object','qualified local program pins required');
   assert.deepEqual(Object.keys(host.programs).sort(),['guardian','node','python','voyage','worker']);
@@ -135,12 +162,23 @@ async function mailbox(directory,kind,operation,timeout=45000){
 }
 // This observer retains only selected fixture status/fences, fixed counters and
 // command categories. Raw payloads/tokens/URLs/text are never stored or logged.
+function nativeReceiptClaim(operation){
+ if(!['attach','control','detach'].includes(operation?.action))return null;
+ const keys=operation.action==='control'?['action','binding','command_id','mode']:['action','binding','command_id'];
+ assert.deepEqual(Object.keys(operation).sort(),keys.sort());assert.ok(uuid(operation.command_id));
+ const binding=operation.binding;assert.deepEqual(Object.keys(binding).sort(),['attachment_id','browser_id','capture_epoch','controller_epoch','document_epoch','incarnation','tab_id','viewport_epoch']);
+ for(const key of ['attachment_id','browser_id','incarnation','tab_id'])assert.ok(uuid(binding[key]));
+ for(const key of ['capture_epoch','controller_epoch','document_epoch','viewport_epoch'])assert.ok(Number.isSafeInteger(binding[key])&&binding[key]>0);
+ if(operation.action==='control')assert.ok(['agent','human','private'].includes(operation.mode));
+ return {...operation,binding:{...binding}}; // Only typed IDs/epochs/mode, never human input.
+}
 function observation(page,session,socketUrl,{native=false}={}){
- const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),pending_effects:0,confirmed:0,unknown:0,refused:0,
+ const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),native_claims:new Map(),pending_effects:0,confirmed:0,unknown:0,refused:0,
   connections:0,hellos:0,duplicate_effect:false,overflow:false,
   traffic:{sent_bytes:0,received_bytes:0,sent_frames:0,received_frames:0}};
  tracked.set(page,state);
  const accept=(operation,reply)=>{
+  if(native&&operation.claim&&reply?.outcome_unknown!==true&&reply?.error==null&&reply?.status?.binding)state.native_claims.set(operation.command_id,operation.claim);
   if(reply?.status==='prepared'&&reply.not_dispatched===true){state.effects.delete(operation.command_id);return;}
   if(reply?.status?.binding)state.status={binding:reply.status.binding,mode:reply.status.mode,
    running:reply.status.running,controller:reply.status.controller,input_sequence:reply.status.input_sequence,
@@ -160,7 +198,7 @@ function observation(page,session,socketUrl,{native=false}={}){
   page.on('request',request=>{
    const url=new URL(request.url());if(url.pathname!=='/operation'||url.hostname!=='127.0.0.1')return;
    const body=request.postData();if(!body||body.length>256*1024){state.overflow=true;return;}
-   try{const op=JSON.parse(body);sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
+   try{const op=JSON.parse(body);sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
   });
   page.on('requestfailed',request=>{const op=state.pending.get(request);if(op&&effect(op.action)){state.unknown++;state.pending_effects--;}state.pending.delete(request);});
   page.on('response',async response=>{
@@ -328,9 +366,10 @@ async function reclaimNative(context,cfg,old,openPage=()=>context.newPage()){
 export async function runProductionQualification(context,cfg){
  validate(cfg);context.setDefaultTimeout(30000);
  const report={schema:1,status:'pending',source:'actual production routes; no adapter/mock socket',
-  stages:[],matrix:[],native_windows:[],latencies:[],sites:[],cleanup:{},limitations:['Native viewer HTTP bytes are not native public WSS wire bytes.',
+  stages:[],matrix:[],native_windows:[],latencies:[],sites:[],cleanup:{},limitations:['Native viewer HTTP request/response payload and native Vessel socket application bytes are separate layers, not total TCP/TLS traffic.',
    'Renderer task duration is not whole-client OS CPU. RSS includes shared pages; PSS apportions them.',
    'Both TUI clients are connected; fixture B browser is opened only for its own viewer condition.']};
+ report.transport_context={native:nativeMode(cfg),web:'deployed HTTPS/browser WSS',native_public_tls_requested:nativeMode(cfg)==='public'};
  const pages=[],states=[],closeAttempts=new Set();let resources=null;
  const stage=value=>{report.stage=value;report.stages.push(value);};
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
@@ -362,7 +401,7 @@ export async function runProductionQualification(context,cfg){
     '-I',path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
     '--seconds','10','--interval','0.25','--output','-'],{timeout:20000,maxBuffer:256*1024},(error,stdout)=>error?reject(Error('owned client measurement failed')):resolve(stdout)));
    const [hostRaw,clientRaw,trafficEnd,nativeEnd]=await Promise.all([hostPromise,localPromise,trafficAfter,nativeAfter]);
-   const measurements=await Promise.all(costs.map(cost=>cost.stop()));
+   const measurements=await Promise.all(costs.map(cost=>cost.stop()));assert.ok(measurements.every(m=>m.status==='observed'));
    report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
    const host=JSON.parse(hostRaw),client=JSON.parse(clientRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
    assert.ok(host.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));assert.ok(client.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
@@ -385,7 +424,7 @@ export async function runProductionQualification(context,cfg){
   const webB=await newWeb(cfg.sessions[1]);states.push(webB.state);await loaded(webB.page,cfg.fixture);
   assert.equal(webB.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
   assert.notEqual(nativeA.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
-  stage('pin_actual_host_resources');resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'before'],hostRequest()));
+  stage('pin_actual_host_resources');report.native_authority=await localAuthorityProof(cfg,[nativeA,nativeB]);resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'before'],hostRequest()));
   await save(path.join(cfg.output,'owned-resources-private.json'),resources);
   await measure('ab_four_viewers',[nativeA,webA,nativeB,webB],cfg.host_observer.ledger_ab);
   stage('one_intent_visible_in_both_clients');await ready(nativeA.page);
@@ -426,6 +465,7 @@ export async function runProductionQualification(context,cfg){
   await mode(freshA.page,'Continue agent','agent');await ready(freshA.page);
   await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();
   await Promise.all([count(freshA.page,cfg.fixture.counter_selector,1),count(webA.page,cfg.fixture.counter_selector,1)]);
+  report.native_authority_after_reclaim=await localAuthorityProof(cfg,[freshA,nativeB],report.native_authority);
   report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
   stage('actual_ticket_renewal');await until(()=>webA.state.hellos>=2&&webB.state.hellos>=2,140000);
   await count(webA.page,cfg.fixture.counter_selector,1);assert.equal(webA.state.status.binding.browser_id,old.browser_id);
@@ -458,8 +498,9 @@ export async function runCuaProductionQualification(context,cfg){
  validate(cfg);assert.equal(cfg.web_mode,'cua');context.setDefaultTimeout(30000);
  const report={schema:1,status:'pending',mode:'actual native pages plus authenticated CUA Web tabs',
   matrix:[],native_windows:[],sites:[],latencies:[],cleanup:{},limitations:['CUA Web renderer metrics must be supplied from actual per-tab observation; unavailable metrics do not pass.',
-   'Native HTTP bridge bytes are not native public WSS application bytes.',
+   'Native HTTP bridge payload and native Vessel socket payload are separate layers; local mode is not public WSS/TLS qualification.',
    'Host reports are produced through the separately authorized host conduit; this process performs no service changes.']};
+ report.transport_context={native:nativeMode(cfg),web:'deployed HTTPS/browser WSS',native_public_tls_requested:nativeMode(cfg)==='public'};
  const native=[],nativeStates=[],attempted=new Set(),ownedNative=nativePageOwner(context);let resources=null;
  const web=async(operation,fields={})=>mailbox(cfg.cua_mailbox,'cua_web',{operation,...fields});
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
@@ -510,7 +551,7 @@ export async function runCuaProductionQualification(context,cfg){
      window_aligned:Number.isFinite(v.captured_at_ms)&&Math.abs(v.captured_at_ms-Date.parse(started))<1000&&Math.abs(v.elapsed_ms-10000)<1000};
    });
    report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
-    cua_web:summaries,native:await Promise.all(nativeCosts.map(c=>c.stop()))});
+    cua_web:summaries,native:await Promise.all(nativeCosts.map(c=>c.stop())).then(values=>{assert.ok(values.every(v=>v.status==='observed'));return values;})});
   }
  }
  try{
@@ -534,6 +575,7 @@ export async function runCuaProductionQualification(context,cfg){
    url:new URL(`/voyages/${cfg.web_connection}/${cfg.sessions[1].id}`,cfg.console_origin).href,
    title:cfg.sessions[1].title,fixture_selector:cfg.fixture.ready_selector,counter_selector:cfg.fixture.counter_selector,counter:0},
    ['authenticated_existing_session','exact_selected_voyage','browser_dock_open','fixture_visible','counter_matches','other_web_tab_retained']);
+  report.native_authority=await localAuthorityProof(cfg,native);
   resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'before'],hostRequest()));
   await save(path.join(cfg.output,'owned-resources-private.json'),resources);
   await measure('ab_four_viewers',native,cfg.sessions.map(s=>s.label),cfg.host_observer.ledger_ab);
@@ -582,6 +624,7 @@ export async function runCuaProductionQualification(context,cfg){
   await mode(freshA.page,'Continue agent','agent');await ready(freshA.page);
   await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();await count(freshA.page,cfg.fixture.counter_selector,1);
   await proof('observe_counter',{label:cfg.sessions[0].label,selector:cfg.fixture.counter_selector,value:1},['counter_matches','no_input_sent']);
+  report.native_authority_after_reclaim=await localAuthorityProof(cfg,native,report.native_authority);
   report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
   stage('actual_cua_renewal');await proof('observe_real_renewal',{labels:cfg.sessions.map(s=>s.label)},
    ['both_actual_connections_renewed','browser_identity_retained','no_effect_replay','no_transport_rewrite']);

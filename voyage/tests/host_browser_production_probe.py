@@ -15,6 +15,7 @@ from pathlib import Path
 import stat
 import sys
 import uuid
+import sqlite3
 
 # Explicit maintained sibling import supports isolated Python (-I), without
 # user-site startup or adding a caller-controlled module directory.
@@ -252,13 +253,68 @@ def initialize_ledger(request):
             'scope': 'selected current Voyage leaves and browser guardian descendants; excludes unrelated host services',
             'clients': request['clients'], 'bindings': bindings, 'ledger': {'schema': 1, 'roots': roots}}
 
+def local_authority(request):
+    assert set(request) == {'schema','directory','vessel_id','sessions'} and type(request['schema']) is int and request['schema'] == 1
+    base = directory(request['directory'])
+    vessel = str(uuid.UUID(request['vessel_id']));assert vessel == request['vessel_id'] and uuid.UUID(vessel).int
+    assert isinstance(request['sessions'],list) and len(request['sessions']) == 2
+    identities = []
+    assert len({item['label'] for item in request['sessions']}) == 2
+    for item in request['sessions']:
+        assert isinstance(item['label'],str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,40}',item['label'])
+        assert set(item) == {'label','session_id','socket_id','root','claims'}
+        session = str(uuid.UUID(item['session_id']));assert session == item['session_id'] and uuid.UUID(session).int
+        socket = str(uuid.UUID(item['socket_id']));assert socket == item['socket_id'] and uuid.UUID(socket).int
+        root = directory(item['root']);assert root == base/'sessions'/session/'journal/host-browser'
+        actor_raw, actor_pin = private(root.parent.parent/'identity/actor.json',1024,True)
+        actor = json.loads(actor_raw)
+        assert set(actor) == {'version','actor'} and type(actor['version']) is int and actor['version'] == 1 and set(actor['actor']) == {'installation_id','principal_id'}
+        for value in actor['actor'].values():assert str(uuid.UUID(value)) == value and uuid.UUID(value).int
+        claims = item['claims'];assert isinstance(claims,list) and 1 <= len(claims) <= 32
+        ids, digests = [], []
+        for claim in claims:
+            assert claim['action'] in ('attach','control','detach')
+            assert set(claim) == ({'action','command_id','binding','mode'} if claim['action']=='control' else {'action','command_id','binding'})
+            binding = claim['binding'];assert set(binding) == {'incarnation','browser_id','attachment_id','tab_id','document_epoch','viewport_epoch','controller_epoch','capture_epoch'}
+            for key in ('incarnation','browser_id','attachment_id','tab_id'):
+                assert str(uuid.UUID(binding[key])) == binding[key] and uuid.UUID(binding[key]).int
+            for key in ('document_epoch','viewport_epoch','controller_epoch','capture_epoch'):
+                assert type(binding[key]) is int and 0 < binding[key] < 2**53
+            if claim['action']=='control':assert claim['mode'] in ('agent','human','private')
+            value = claim['command_id'];assert str(uuid.UUID(value)) == value and uuid.UUID(value).int
+            ids.append(value)
+            serialized = json.dumps({'operation':claim,'socket':socket,'principal':actor['actor']['principal_id']},sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()
+            digests.append(hashlib.sha256(serialized).hexdigest())
+        assert len(set(ids)) == len(ids)
+        path = root/'receipts.sqlite3'
+        raw, pin = private(path,64*1024*1024,True)
+        del raw  # Never expose or retain private receipt contents.
+        db = sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,timeout=1)
+        try:
+            db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
+            rows = [db.execute('SELECT principal,digest,state FROM receipts WHERE id=?',(value,)).fetchone() for value in ids]
+            assert all(row == (actor['actor']['principal_id'],digest,'completed') for row,digest in zip(rows,digests))
+        finally:db.close()
+        _, after = private(path,64*1024*1024,True);assert after == pin
+        actor_after, actor_identity = private(root.parent.parent/'identity/actor.json',1024,True)
+        assert actor_after == actor_raw and actor_identity == actor_pin
+        identities.append({'label':item['label'],'session_id':session,'vessel_id':vessel,'socket_id':socket,
+            **actor['actor'],'actor_sha256':hashlib.sha256(actor_raw).hexdigest(),
+            'completed_native_receipt_ids':ids,'authority':'existing local account owner',
+            'scope':'exact local runtime principal and socket-bound completed native receipt; identifiers do not grant authority'})
+    assert len({item['session_id'] for item in identities}) == 2
+    return {'schema':1,'mode':'local','identities':identities,'no_effects':True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=['before','after','ledger'])
+    parser.add_argument('phase', choices=['before','after','ledger','local-authority'])
     args = parser.parse_args()
     assert __debug__ and sys.platform == 'linux'
     data = sys.stdin.buffer.read(65537); assert len(data) <= 65536
     request = json.loads(data)
+    if args.phase == 'local-authority':
+        json.dump(local_authority(request),sys.stdout);return
     if args.phase == 'ledger':
         json.dump(initialize_ledger(request), sys.stdout)
         return

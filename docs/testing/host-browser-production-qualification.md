@@ -9,11 +9,11 @@ to collect production evidence, or call these remaining gates passed.
 
 | Path | Maintained implementation | Required private input |
 | --- | --- | --- |
-| Native TUI | `helm connect --access-file ... --no-start`, actual F6; `helm/src/process_client/host_browser.rs`; shared viewer | Existing public paired credential and selected fixture Voyage. Its grant must permit the actual observe/execute/history operations. |
+| Native TUI | Explicit `helm connect --access-file ... --no-start` **or** `helm connect --directory ... --no-start`, actual F6; `helm/src/process_client/host_browser.rs`; shared viewer | Existing public paired credential, or the same ordinary account’s private local discovery directory; selected fixture Voyage. The public grant must permit actual observe/execute/history operations. |
 | Deployed React dock | `resources/react/App.tsx`, `HostBrowser.tsx`, `workspace.ts`; `resources/js/host-browser.js` | Existing authenticated operator tenant/session and saved Vessel connection. |
 | Browser bootstrap | `ConsoleAuthController::ticket`, `ConsoleAccess::ticket`, `VesselGateway::browser-credentials`, `resources/js/vessel-fleet.js` | Same-origin CSRF POST `/console/ticket`; valid stored grant, pinned Vessel identity and tenant entitlement. |
 | Actual Web transport | Origin-bound 120-second credential, `voyage.vessel.v1`, `/v1/vessel/browser-socket` | Real configured Web Origin and normal certificate trust; renewal must remain observable. |
-| Native transport | Same pinned public HTTPS origin, `/v1/vessel/socket`; private localhost viewer bootstrap | Original authenticated socket/owner fences. Keep the launcher secret private and one-use. |
+| Native transport | Public mode: pinned HTTPS `/v1/vessel/socket`. Local mode: maintained private directory discovery and loopback `/v1/vessel/socket`. Both use the private localhost viewer bootstrap | Original authenticated socket/owner fences. Local is existing executing-account authority, never a copied Web grant or public TLS claim. Keep the launcher private and one-use. |
 
 The present owner-related connection refusal is a real admission blocker. Require
 an authenticated capabilities/snapshot observation for the selected fixture
@@ -111,12 +111,12 @@ private directory; earlier evidence is not overwritten.
 | Fields | Meaning |
 | --- | --- |
 | `helm`, `node`, `chromium`, `playwright_module` | Absolute paths to already installed/current qualified executables and Playwright module. No build/download step is performed. Chromium sandboxing and normal TLS validation remain enabled. |
-| `access_file`, `output` | Existing native paired credential path and new private evidence directory. The credential is consumed by Helm's normal validation/decryption, not exported or parsed by this harness. Existing `VOYAGE_CREDENTIAL_KEY_FILE`, when required, remains a path only. |
+| `native_route`, `access_file`, `output` | Optional `{mode:"public"}` preserves the existing paired credential path. Explicit `{mode:"local",directory:"/canonical/private/Vessel",expected_vessel_id:"UUID"}` instead uses existing local discovery and forbids `access_file`. New private evidence directory. The credential is consumed by Helm's normal validation/decryption, not exported or parsed by this harness. Existing `VOYAGE_CREDENTIAL_KEY_FILE`, when required, remains a path only. |
 | `sessions` | Exactly two `{id,title,workspace,label,host_browser_root}` objects. UUIDs distinct; title begins `qualification-333-` and is at most 64 characters; absolute non-root workspace; distinct short safe labels. The actual catalogue's name/workspace must match and canonical history/run must be empty before effects. `host_browser_root` is each actual `journal/host-browser` directory. |
 | `console_origin`, `web_connection`, `web_socket` | Actual HTTPS console origin, saved Web connection database UUID and pinned real `wss://…/v1/vessel/browser-socket` endpoint. The physical Vessel UUID is not the saved connection UUID. |
 | `web_mode` | `playwright` or `cua`, as described below. |
 | `client_ledger` | `automatic` generates an exact private PID/starttime ledger for this process's two TUI clients and its own Chromium server. Alternatively an existing private ledger may include explicitly owned renderer/native client roots. It must not include unrelated browser tabs/processes. |
-| `native_wire_evidence` | New private result path. The harness produces nine windows from the opt-in source-owned native WSS collector; bridge/TCP/TLS bytes are not substitutes. |
+| `native_wire_evidence` | New private result path. The harness produces nine windows from the opt-in source-owned native socket collector, explicitly labelled `public_wss` or `local_ws`; bridge/TCP/TLS bytes are not substitutes. |
 | `fixture` | `{url,ready_selector,counter_selector,click_name,private:{url,ready_selector,input_label}}` for the approved owned HTTPS fixture. Standard counter is `/ui`, `h1`, `#count`, `Increment task counter`; private page is `/private`, `h1`, `Synthetic private input`. |
 | `site_classes` | `{url,ready_selector,asset_selector,asset_width,shadow_selector,shadow_text,css_color,frame_texts}`. Standard values: `/site-classes`, `#result`, `#authenticated-asset`, `40`, `#shadow`, `Open shadow content`, `rgb(17, 51, 85)`, `["Cross-origin child content","Nested child content"]`. |
 | `sites` | Three to six explicitly approved `{label,kind,url,ready_selector}` records, including `static`, `dynamic`, `frame-media`. URLs must be pinned canonical final HTTPS URLs, because navigation waits for authoritative URL/new document epoch and the replay marker. Add `{fallback_selector:".browser-next-visual",minimum_fallback_images:3}` to the owned `/media` case. At least one record per class must be an approved representative site if those claims are to be made; using only the owned fixture does not prove broader fidelity. |
@@ -576,10 +576,9 @@ explicitly Continues agent, sends one new benign counter click, and Web observes
 that public result. Native also performs its own final browser close; a different
 Web principal is never asked to reclaim or close a private controller. All old
 and fresh native observation counters remain checked; the two original TUI
-process identities, public WSS byte windows and host cleanup proofs are unchanged.
+process identities, selected native socket byte windows and host cleanup proofs remain required.
 This fixes a qualification dependency, not runtime authority. It creates no new
-authority, wrapper, pairing or transport rewrite. The legitimate existing native
-public file/key input remains necessary.
+authority, wrapper, pairing or transport rewrite. Public mode retains its legitimate existing file/key input. Explicit Local mode requires the actual private directory/owner instead; it does not fabricate that file.
 
 Prepared focused source contracts are `host_browser_native_reopen_tests.py`
 (`python3 -I -B`) and `host_browser_native_reopen.test.mjs` (`node --test`). They
@@ -587,3 +586,69 @@ simulate the panel swallowing Paste/Enter until Esc, typed callbacks/private
 files and test exact identity, one attempt, pre-key receipt, failed dismissal,
 unknown result and refusal of arbitrary fields; they establish
 no native/deployed browser behavior.
+
+
+## Explicit NativeLocal qualification mode
+
+[Requirements audit/source record](https://github.com/o-psi/helm.vessel.voyage/issues/333#issuecomment-5947487555)
+adds a supported NativeLocal choice. #333 requires both real clients and deployed
+TLS qualification; it does not prescribe a paired public Native credential for
+this fixture. The original public route remains available and unchanged. Neither
+choice changes the executing Voyage, runtime policy, site approvals or Web TLS.
+
+Set `native_route` to `{mode:"local",directory,expected_vessel_id}` and omit
+`access_file`. The directory must be the existing canonical private ordinary
+Vessel namespace with its existing single-link private `process-http.json`.
+Only normal Helm parses/uses the credential; qualification observes file identity,
+never exports/parses its token or creates credentials. The launcher passes
+`--directory --no-start` consistently for reads and the real TUI/F6. It checks the
+validated greeting's actual Vessel/socket IDs and private meter identity before
+F6. Discovery replacement or another physical Vessel refuses. Local metadata
+queries are restricted to the two owned `directory/sessions/UUID` roots.
+
+The default-off `HELM_QUALIFICATION_LOCAL_OUTPUT`/`_LABEL` enables the same private
+bounded count-only native observer for actual local WS Text sends/receives.
+Public mode retains `HELM_QUALIFICATION_WSS_OUTPUT`/`_LABEL`. Supplying both output
+choices disables observation. Counts carry transport/authority and actual validated
+Vessel/socket identity; a changed Vessel, nil greeting, stale stream, reconnect,
+ambiguous route, file substitution or missed window cannot supply passing metrics.
+They count application payload, excluding HTTP upgrade, control frames and TCP/TLS
+overhead. Local counts never qualify Native public WSS or TLS.
+
+Read-only `local-authority` proof binds each actual runtime's existing
+`identity/actor.json` principal/installation to exact completed Attach/Control/Detach receipt claims observed from that Native
+viewer. The unchanged operation digest includes its actual native socket and
+runtime actor principal; mismatched sockets/bindings fail. Claims contain only
+typed IDs/epochs/mode, never human input. IDs are attribution, not credentials. The
+initial and explicit fresh private-reclaim proofs must retain the same actor and
+physical Vessel. Browser binding/attachment/incarnation/controller fences and
+observed same native client/socket remain mandatory; Web never borrows this actor.
+The ordinary Linux route is not a native macOS/Windows or protected Root claim.
+
+Native graphical metrics separately count UTF8 HTTP request bodies begun and
+decoded response bodies completed inside each observation window. Encoded response
+transfer bytes and requests crossing the window boundary are separate fields.
+Missing bodies, failure or overflow produce unknown metrics. No page/private text,
+URL, header, cookie, command body or token is retained. These bridge and native
+Vessel socket layers overlap and must **not** be summed as total bandwidth.
+CPU/RSS/heap/latency and actual deployed Web public WSS scopes remain distinct.
+
+This mode preserves the full site/media/private/control/reopen/renewal/multi-voyage
+and cleanup programme and all strict Web TLS/CSRF/tenant/principal checks.
+Prepared 2 Rust, 6 Python and 4 Node contract parents have not run. Source checks
+are AST, Rust formatting, Node syntax and diff; Root owns the final focused/full
+coverage/source publication/artifact gate and actual host qualification.
+
+
+Prepared focused commands (run only inside the parent's coordinated bounded gate):
+
+```sh
+/usr/bin/python3 -I -B voyage/tests/host_browser_native_local_tests.py
+node --test voyage/tests/host_browser_native_local_cost.test.mjs
+```
+
+Rust filter: `duplex::qualification::tests`. All current native and Web ordinary
+transport tests remain required, then strict checks/full current workspace
+coverage and actual hosted artifact qualification. No client/auth endpoint is
+mocked or rewritten during production execution; pure event-source contracts
+are explicitly separate evidence.
