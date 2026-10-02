@@ -1312,25 +1312,32 @@ async fn scoped_public_run_wrapper_preserves_history_and_canonical_usage_without
     assert_eq!(observed.requests.lock().unwrap().len(), 1);
 }
 
+struct CanonicalOnly {
+    id: uuid::Uuid,
+    snapshots: Mutex<Vec<Vec<Message>>>,
+}
+#[async_trait]
+impl RunCheckpoint for CanonicalOnly {
+    fn run_id(&self) -> uuid::Uuid {
+        self.id
+    }
+    async fn canonical(&self, messages: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+        self.snapshots.lock().unwrap().push(messages.to_vec());
+        Ok(())
+    }
+    async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn default_optional_checkpoint_hooks_allow_canonical_only_embedders_to_complete() {
-    struct CanonicalOnly(Mutex<Vec<Vec<Message>>>);
-    #[async_trait]
-    impl RunCheckpoint for CanonicalOnly {
-        fn run_id(&self) -> uuid::Uuid {
-            uuid::Uuid::nil()
-        }
-        async fn canonical(&self, messages: &[Message], _: &Usage) -> Result<(), CheckpointError> {
-            self.0.lock().unwrap().push(messages.to_vec());
-            Ok(())
-        }
-        async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
-            Ok(())
-        }
-    }
     let root = tempfile::tempdir().unwrap();
     let (agent, observed) = fixture(root.path(), vec![answer("Canonical-only answer")], false);
-    let checkpoint = CanonicalOnly(Mutex::new(Vec::new()));
+    let checkpoint = CanonicalOnly {
+        id: uuid::Uuid::new_v4(),
+        snapshots: Mutex::new(Vec::new()),
+    };
     let outcome = agent
         .run_checkpointed(
             vec![],
@@ -1346,7 +1353,7 @@ async fn default_optional_checkpoint_hooks_allow_canonical_only_embedders_to_com
     assert_eq!(outcome.answer, "Canonical-only answer");
     assert!(
         checkpoint
-            .0
+            .snapshots
             .lock()
             .unwrap()
             .last()
@@ -1356,6 +1363,35 @@ async fn default_optional_checkpoint_hooks_allow_canonical_only_embedders_to_com
                 && message.content == "Canonical-only answer")
     );
     assert_eq!(observed.requests.lock().unwrap().len(), 1);
+    assert_eq!(outcome.usage.input_tokens, 7);
+    assert_eq!(outcome.usage.output_tokens, 3);
+    assert_eq!(observed.executions.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn nil_checkpoint_identity_refuses_before_canonical_writes_or_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![], false);
+    let checkpoint = CanonicalOnly {
+        id: uuid::Uuid::nil(),
+        snapshots: Mutex::new(Vec::new()),
+    };
+    let result = agent
+        .run_checkpointed(
+            vec![],
+            "Current prompt".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "loop-model".into(),
+        )
+        .await;
+    assert!(matches!(result, Err(AgentError::Checkpoint(_))));
+    assert!(checkpoint.snapshots.lock().unwrap().is_empty());
+    assert!(observed.requests.lock().unwrap().is_empty());
+    assert_eq!(observed.discoveries.load(Ordering::SeqCst), 0);
+    assert_eq!(observed.executions.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
 }
 
 #[test]

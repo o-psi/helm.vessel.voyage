@@ -187,6 +187,7 @@ pub trait EventSink: Send + Sync {
 /// must commit before returning success and keep provider continuation on the executing machine.
 #[async_trait]
 pub trait RunCheckpoint: Send + Sync {
+    /// Stable non-nil admitted run identity. Nil is refused before writes or dispatch.
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
     /// Content-free attempt state, persisted before dispatch and before retry.
