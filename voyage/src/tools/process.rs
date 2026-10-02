@@ -1115,3 +1115,6 @@ mod screen_tests {
 
 #[cfg(all(test, unix))]
 mod lifecycle_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod owned_lifetime_tests;

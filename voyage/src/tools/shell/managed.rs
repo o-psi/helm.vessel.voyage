@@ -509,3 +509,7 @@ mod linux {
         result
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "owned_lifetime_tests.rs"]
+mod owned_lifetime_tests;
