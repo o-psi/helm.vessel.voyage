@@ -155,6 +155,7 @@ class ObserverWatch:
         self.image = self.binary.stat()
         self.directories = {os.fsencode(q.STATE / 'sessions' / session) for session in sessions}
         self.witnesses, self.errors = {}, []
+        self.active_read, self.reads = None, []
         self.stop = threading.Event()
         self.deadline = time.monotonic() + 35
         self.closed, self.outcome = False, None
@@ -214,15 +215,30 @@ class ObserverWatch:
                         == (self.image.st_dev,self.image.st_ino,self.image.st_uid,self.image.st_mode,self.image.st_size,self.image.st_mtime_ns,self.image.st_ctime_ns)
                         and (proc / 'cmdline').read_bytes() == raw,
                         'observer does not execute exact qualified old image/argv')
+                interval = self.active_read
+                attribution = interval[0] if interval is not None and arguments[3] == os.fsencode(self.q.STATE / 'sessions' / interval[1]) else None
                 self.witnesses[key] = {'descriptor':descriptor,'pid':pid,'start_ticks':started,'uid':1000,
                     'parent_pid':self.supervisor,'parent_start_ticks':self.started,
-                    'executable_sha256':self.expected_sha,'argv_sha256':hashlib.sha256(raw).hexdigest()}
+                    'executable_sha256':self.expected_sha,'argv_sha256':hashlib.sha256(raw).hexdigest(),
+                    'snapshot_read_interval':attribution, 'session_id':Path(os.fsdecode(arguments[3])).name}
                 descriptor = None
             except (OSError, RuntimeError, ValueError):
                 self.errors.append('child_identity_observation_unconfirmed')
             finally:
                 if descriptor is not None:os.close(descriptor)
         return identities
+
+    def begin_read(self, session):
+        require(self.active_read is None, 'overlapping old public reads refused')
+        # Capture already-running metadata children before opening this interval;
+        # they cannot serve as a newly observed Snapshot helper witness.
+        self.scan()
+        index = len(self.reads)
+        self.reads.append({'index':index,'session_id':session})
+        self.active_read = (index, session)
+
+    def end_read(self):
+        self.active_read = None
 
     def observe(self):
         while not self.stop.wait(.001):
@@ -245,11 +261,17 @@ class ObserverWatch:
                 records.append({**{k:v for k,v in witness.items() if k!='descriptor'},
                                 'pidfd_exit_observed':self.q.pidfd_exited(witness['descriptor']),
                                 'exit_and_reaping_observed':retired})
-            known = bool(records) and all(row['exit_and_reaping_observed'] for row in records)
+            read_witnesses = [{'index':read['index'],'session_id':read['session_id'],
+                               'observed_helpers':[(row['pid'],row['start_ticks']) for row in records
+                                    if row.get('snapshot_read_interval') == read['index']
+                                    and row.get('session_id') == read['session_id']]} for read in self.reads]
+            known = (bool(read_witnesses) and all(read['observed_helpers'] for read in read_witnesses)
+                     and all(row['exit_and_reaping_observed'] for row in records))
             # No sampled helper is not a fabricated witness of a transient helper.
             self.outcome = {'supervisor_pid':self.supervisor,'supervisor_start_ticks':self.started,
                     'direct_children_baseline':sorted(self.baseline),'direct_children_end':sorted(final),
                     'direct_children_unchanged':self.baseline==final,'observed_helpers':records,
+                    'snapshot_read_intervals':read_witnesses,
                     'cleanup_observation':'observed' if known and self.baseline==final and not self.errors else 'unknown',
                     'pending_observation_categories':sorted(set(self.errors)), 'no_signals_or_effects':True}
             return self.outcome
@@ -300,7 +322,8 @@ def qualify_restored(q, args):
             result = read_json(q.WORK / 'fault-helper-snapshot-result.json')
             require(result.get('signal_delivered') is True and result.get('boundary') == 'helper-snapshot'
                     and result.get('role') == 'local-owner-updater'
-                    and result.get('independent_remote_worker') is False,
+                    and result.get('independent_remote_worker') is False
+                    and isinstance(result.get('operation_id'), str),
                     'original local-owner/helper signal evidence unavailable')
             identities = result.get('identities') or {}
             require(set(identities) == {'updater', 'helper'}, 'exact owned helper/updater witnesses unavailable')
@@ -348,8 +371,12 @@ def qualify_restored(q, args):
             revision = q.sqlite_observe(q.STATE / 'sessions' / session / 'journal/journal.sqlite3',
                                         'SELECT revision FROM sessions WHERE id=?', (session,))
             require(len(revision) == 1 and type(revision[0][0]) is int, 'old journal revision unavailable')
-            public_reads.append(verify_snapshot(reader.command(session, {'op': 'snapshot'}),
-                                                session, saved['messages'], revision[0][0]))
+            observer.begin_read(session)
+            try:
+                public_reads.append(verify_snapshot(reader.command(session, {'op': 'snapshot'}),
+                                                    session, saved['messages'], revision[0][0]))
+            finally:
+                observer.end_read()
         observer_cleanup = observer.finish()
         observer = None
         after = q.observation()
@@ -366,7 +393,7 @@ def qualify_restored(q, args):
                 'upgrade_or_signal_replayed': False, 'complete_db_before_after_equal': True,
                 'original_operation_id': original['operation_id'],
                 'qualified_target_release': original['release_id'],
-                'original_legacy_proof_present': original.get('legacy_proof') is not None,
+                'original_record_legacy_proof_present': original.get('legacy_proof') is not None,
                 'old_observer_cleanup': observer_cleanup,
                 'old_public_history_reads': public_reads, 'original_owned_identities': records,
                 'observed': after, 'restored_supervisor_start_ticks': restored_start,

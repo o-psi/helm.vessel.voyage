@@ -47,8 +47,9 @@ an unreaped zombie remains an obligation, and a reused PID is never signalled.
 It binds the restored supervisor PID/start before each read interval and rechecks
 it afterward. Around actual Snapshot reads it samples only that supervisor’s
 direct children across its bounded thread inventory: exact qualified old Voyage
-image, `observe-suspended --directory` and original fixture session paths. Open
-pidfds bind every captured helper PID/start; positive exit/reaping and unchanged
+image, `observe-suspended --directory` and original fixture session paths. Each Snapshot read has a separate session-bound interval and must capture its
+own distinct helper identity; one sampled helper cannot qualify a second missed
+read. Open pidfds bind every captured helper PID/start; positive exit/reaping and unchanged
 baseline/end child identities are observed separately. A missed transient helper
 is **cleanup unknown**, never a fabricated witness or unrelated global absence.
 No signal is sent. The helper watcher and descriptor lifecycle are bounded.
@@ -72,6 +73,6 @@ identity and delivery. Helper premutation absence of legacy proof remains
 explicit, with no invented backup requirement. No current production, authority,
 rollback or coverage exclusion is changed by this fixture correction.
 
-This preparation contains thirteen pure projection/readonly-orchestration/helper
+This preparation contains fourteen pure projection/readonly-orchestration/helper
 cleanup test parents. AST/diff checks are complete; tests have **not run**. They
 await the parent’s coordinated gate with the browser/frontdoor source cohorts.

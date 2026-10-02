@@ -163,6 +163,8 @@ class ReadOnlyCheckpointContracts(unittest.TestCase):
                 fake=types.ModuleType('delivery_recovery');fake.Fixture=Reader
                 class Observer:
                     def __init__(_self,*_args):pass
+                    def begin_read(_self,_session):pass
+                    def end_read(_self):pass
                     def finish(_self):return {'cleanup_observation':'observed','direct_children_unchanged':True,'observed_helpers':[{'pid':900,'start_ticks':600,'exit_and_reaping_observed':True}]}
                 with patch.dict(sys.modules,{'delivery_recovery':fake}),patch.object(m,'ObserverWatch',Observer):
                     if drift=='none':m.qualify_restored(shim,types.SimpleNamespace(case='startup'))
@@ -174,7 +176,7 @@ class ReadOnlyCheckpointContracts(unittest.TestCase):
                 self.assertEqual((work/'readonly-restored-startup-qualified.json').exists(),drift=='none')
                 if drift=='none':
                     self.assertEqual(writes['readonly-restored-startup-qualified.json']['restored_supervisor_start_ticks'],500)
-                    self.assertFalse(writes['readonly-restored-startup-qualified.json']['original_legacy_proof_present'])
+                    self.assertFalse(writes['readonly-restored-startup-qualified.json']['original_record_legacy_proof_present'])
                 with self.assertRaises(FileExistsError):m.qualify_restored(shim,types.SimpleNamespace(case='startup'))
 
     def test_positive_original_retirement_never_signals_or_accepts_same_start_zombie(self):
@@ -199,7 +201,7 @@ class ObserverCleanupContracts(unittest.TestCase):
         watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
         watcher.stop=types.SimpleNamespace(set=lambda:None)
         watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
-        watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[];watcher.witnesses={}
+        watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[];watcher.witnesses={};watcher.reads=[{'index':0,'session_id':SESSION}]
         watcher.scan=lambda:set()
         result=watcher.finish()
         self.assertEqual(result['cleanup_observation'],'unknown');self.assertEqual(result['observed_helpers'],[])
@@ -211,13 +213,29 @@ class ObserverCleanupContracts(unittest.TestCase):
             watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
             watcher.stop=types.SimpleNamespace(set=lambda:None)
             watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
-            watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[]
-            watcher.witnesses={(900,600):{'descriptor':41,'pid':900,'start_ticks':600,'uid':1000}}
+            watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[];watcher.reads=[{'index':0,'session_id':SESSION}]
+            watcher.witnesses={(900,600):{'descriptor':41,'pid':900,'start_ticks':600,'uid':1000,'snapshot_read_interval':0,'session_id':SESSION}}
             watcher.scan=lambda:set();watcher.q=types.SimpleNamespace(retired=lambda _w:retired,pidfd_exited=lambda _fd:True)
             with patch.object(m.os,'close') as close:
                 result=watcher.finish();self.assertEqual(result['cleanup_observation'],'observed' if retired else 'unknown')
                 self.assertEqual(result['observed_helpers'][0]['exit_and_reaping_observed'],retired)
                 close.assert_called_once_with(41);self.assertIs(watcher.finish(),result);close.assert_called_once_with(41)
+
+
+    def test_two_reads_with_only_one_observed_helper_keep_cleanup_unknown(self):
+        watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
+        watcher.stop=types.SimpleNamespace(set=lambda:None)
+        watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
+        watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[]
+        watcher.reads=[{'index':0,'session_id':SESSION},{'index':1,'session_id':'other-exact-session'}]
+        watcher.witnesses={(900,600):{'descriptor':41,'pid':900,'start_ticks':600,'uid':1000,
+                                     'snapshot_read_interval':0,'session_id':SESSION}}
+        watcher.scan=lambda:set();watcher.q=types.SimpleNamespace(retired=lambda _w:True,pidfd_exited=lambda _fd:True)
+        with patch.object(m.os,'close') as close:
+            result=watcher.finish();close.assert_called_once_with(41)
+        self.assertEqual(result['cleanup_observation'],'unknown')
+        self.assertTrue(result['snapshot_read_intervals'][0]['observed_helpers'])
+        self.assertEqual(result['snapshot_read_intervals'][1]['observed_helpers'],[])
 
 
 if __name__=='__main__':unittest.main()
