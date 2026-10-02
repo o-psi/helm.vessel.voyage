@@ -29,10 +29,28 @@ fn flags(fd: libc::c_int) -> libc::tcflag_t {
 fn until_output(receiver: &sync::Receiver<Vec<u8>>, output: &mut Vec<u8>, marker: &str) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if String::from_utf8_lossy(output).contains(marker) {
+        // Ratatui draws differential cells, not contiguous prose. Keep raw
+        // checks for terminal control receipts and reconstruct visible text.
+        let visible = if marker.starts_with('\u{1b}') {
+            String::from_utf8_lossy(output).into_owned()
+        } else {
+            let (rows, cols) = if marker == "Input paused" {
+                (8, 20)
+            } else {
+                (36, 120)
+            };
+            let mut parser = vt100::Parser::new(rows, cols, 0);
+            parser.process(output);
+            parser.screen().contents()
+        };
+        if visible.contains(marker) {
             return;
         }
-        assert!(Instant::now() < deadline, "owned TUI did not show {marker}");
+        assert!(
+            Instant::now() < deadline,
+            "owned TUI did not show {marker}: {}",
+            visible.chars().take(2048).collect::<String>()
+        );
         match receiver.recv_timeout(Duration::from_millis(50)) {
             Ok(chunk) => {
                 assert!(
