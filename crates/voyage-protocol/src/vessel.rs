@@ -785,7 +785,8 @@ fn unknown_outcome() -> bool {
 
 pub use crate::process::{
     AssignmentRequest, ParticipantBinding, ParticipantGrantBinding, SignedArtifact,
-    TransferManifest, TransferPreparation, VesselIdentity, read_frame, write_frame,
+    TransferCompletion, TransferManifest, TransferPreparation, TransferStatus, TransferStatusState,
+    VesselIdentity, read_frame, write_frame,
 };
 
 // Upload bytes must never enter diagnostics via enclosing request Debug derives.

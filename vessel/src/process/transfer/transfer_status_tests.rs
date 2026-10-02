@@ -715,3 +715,250 @@ async fn missing_runtime_image_retains_actual_admission_unknown_then_readonly_pe
             .exists()
     );
 }
+
+// These deterministic helper-boundary journeys use the same production namespace
+// scope as transfer startup. They do not inject a pause/fault into start_initialized
+// or claim that two independent API activations can bypass registration serial.
+fn original_namespace(f: &Journey) -> (u64, u64) {
+    load(&f.destination.0, f.id())
+        .unwrap()
+        .catalogue_namespace
+        .unwrap()
+}
+fn readonly_count(path: &Path, table: &str) -> i64 {
+    assert!(matches!(
+        table,
+        "voyages" | "lifecycle_commands" | "creation_receipts"
+    ));
+    let db = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )
+    .unwrap();
+    db.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+        row.get(0)
+    })
+    .unwrap()
+}
+#[tokio::test]
+async fn nested_transfer_context_requires_same_root_and_namespace_before_operation() {
+    let f = Journey::new().await;
+    let namespace = original_namespace(&f);
+    let before = graph(&f.destination.0);
+    let source_before = graph(&f.source.0);
+    tokio::time::timeout(
+        WAIT,
+        database::in_transfer_namespace(&f.destination.0, namespace, async {
+            let entered = std::cell::Cell::new(false);
+            assert!(
+                database::in_transfer_namespace(&f.source.0, namespace, async {
+                    entered.set(true);
+                    Ok(())
+                })
+                .await
+                .is_err()
+            );
+            assert!(!entered.get());
+            assert!(
+                database::in_transfer_namespace(
+                    &f.destination.0,
+                    (namespace.0, namespace.1 ^ 1),
+                    async {
+                        entered.set(true);
+                        Ok(())
+                    }
+                )
+                .await
+                .is_err()
+            );
+            assert!(!entered.get());
+            assert!(
+                database::check_transfer_namespace(&f.source.0)
+                    .await
+                    .is_err()
+            );
+            database::in_transfer_namespace(&f.destination.0, namespace, async {
+                database::check_transfer_namespace(&f.destination.0).await
+            })
+            .await?;
+            Ok(())
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(graph(&f.destination.0) == before && graph(&f.source.0) == source_before);
+    // Outside the scoped future the ordinary, unpinned no-op is restored.
+    database::check_transfer_namespace(&f.source.0)
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn cancelled_context_and_concurrent_unpinned_database_operation_do_not_share_authority() {
+    let f = Journey::new().await;
+    let before = graph(&f.destination.0);
+    let namespace = original_namespace(&f);
+    let unrelated = f.source.registration();
+    let pending = tokio::time::timeout(
+        Duration::from_millis(25),
+        database::in_transfer_namespace(
+            &f.destination.0,
+            namespace,
+            std::future::pending::<Result<()>>(),
+        ),
+    );
+    let ordinary = database::save(&f.source.0, &unrelated);
+    let (cancelled, written) =
+        tokio::time::timeout(WAIT, async { tokio::join!(pending, ordinary) })
+            .await
+            .unwrap();
+    assert!(cancelled.is_err());
+    written.unwrap();
+    assert_eq!(
+        database::registration(&f.source.0, unrelated.session_id)
+            .await
+            .unwrap()
+            .incarnation,
+        unrelated.incarnation
+    );
+    database::check_transfer_namespace(&f.source.0)
+        .await
+        .unwrap();
+    // A fresh operation after cancellation remains outside the old context too.
+    let next = f.source.registration();
+    database::save(&f.source.0, &next).await.unwrap();
+    assert_eq!(
+        database::registration(&f.source.0, next.session_id)
+            .await
+            .unwrap()
+            .incarnation,
+        next.incarnation
+    );
+    assert!(graph(&f.destination.0) == before);
+}
+#[tokio::test]
+async fn namespace_replaced_after_intent_refuses_actual_admission_without_creating_or_reserving() {
+    let f = Journey::new().await;
+    f.accept().await;
+    f.intent(f.activation);
+    let namespace = original_namespace(&f);
+    tokio::time::timeout(
+        WAIT,
+        database::in_transfer_namespace(&f.destination.0, namespace, async {
+            f.replace_catalogue();
+            let before = graph(&f.destination.0);
+            let registration = f.registration();
+            assert!(
+                database::admit(
+                    &f.destination.0,
+                    &registration,
+                    serde_json::to_vec(&f.activate()).unwrap()
+                )
+                .await
+                .is_err()
+            );
+            assert!(graph(&f.destination.0) == before);
+            assert_eq!(
+                readonly_count(&f.destination.0.join("catalogue.sqlite3"), "voyages"),
+                0
+            );
+            assert_eq!(
+                readonly_count(
+                    &f.destination.0.join("catalogue.sqlite3"),
+                    "lifecycle_commands"
+                ),
+                0
+            );
+            Ok(())
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        load(&f.destination.0, f.id()).unwrap().activation_command,
+        Some(f.activation)
+    );
+    assert!(!registry::directory(&f.destination.0, f.manifest.payload.session_id).exists());
+    f.refuse(f.request()).await;
+}
+#[tokio::test]
+async fn namespace_replaced_after_actual_admission_fails_prelaunch_check_and_retains_original_unknown()
+ {
+    let f = Journey::new().await;
+    f.accept().await;
+    f.intent(f.activation);
+    let namespace = original_namespace(&f);
+    let result = tokio::time::timeout(
+        WAIT,
+        database::in_transfer_namespace(&f.destination.0, namespace, async {
+            f.admit().await;
+            f.replace_catalogue();
+            let before = graph(&f.destination.0);
+            let result = database::check_transfer_namespace(&f.destination.0).await;
+            assert!(graph(&f.destination.0) == before);
+            // Same unknown classification as the production prelaunch callsite;
+            // no launch function is called by this boundary-level fixture.
+            result.map_err(|error| error.context(crate::process::routing::OutcomeUnknown))
+        }),
+    )
+    .await
+    .unwrap();
+    let reply = crate::process::api::response(result.map(|()| serde_json::Value::Null));
+    assert!(reply.error.is_some() && reply.outcome_unknown && reply.result.is_null());
+    let retained = f.destination.0.join("original-catalogue-retained");
+    assert_eq!(readonly_count(&retained, "voyages"), 1);
+    assert_eq!(readonly_count(&retained, "lifecycle_commands"), 1);
+    assert_eq!(readonly_count(&retained, "creation_receipts"), 0);
+    let db = rusqlite::Connection::open_with_flags(
+        &retained,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let (command, bytes): (String, Vec<u8>) = db
+        .query_row(
+            "SELECT command_id,request FROM lifecycle_commands WHERE namespace='commands'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(command, f.activation.to_string());
+    assert!(bytes == serde_json::to_vec(&f.activate()).unwrap());
+    drop(db);
+    assert_eq!(
+        load(&f.destination.0, f.id()).unwrap().activation_command,
+        Some(f.activation)
+    );
+    assert!(!f.supervisor.binary.exists());
+    f.refuse(f.request()).await;
+    f.refuse(f.upload(ARTIFACT)).await;
+}
+#[tokio::test]
+async fn pinned_writes_preserve_namespace_checks_across_own_admission_and_receipt_changes() {
+    let f = Journey::new().await;
+    f.accept().await;
+    let namespace = original_namespace(&f);
+    let registration = tokio::time::timeout(
+        WAIT,
+        database::in_transfer_namespace(&f.destination.0, namespace, async {
+            let r = f.admit().await;
+            database::check_transfer_namespace(&f.destination.0).await?;
+            // Logical historical fixture only: this does not establish runtime health.
+            let mut historical = ProcessInfo::from(&r);
+            historical.state = ProcessState::Suspended;
+            database::settle_creation(&f.destination.0, f.activation, &historical).await?;
+            database::check_transfer_namespace(&f.destination.0).await?;
+            Ok(r)
+        }),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let status = f.no_write_status().await;
+    assert_eq!(status.state, TransferStatusState::Complete);
+    assert_eq!(
+        status.completion.unwrap().incarnation,
+        registration.incarnation
+    );
+    assert!(!f.supervisor.binary.exists());
+}

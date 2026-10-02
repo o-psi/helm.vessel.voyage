@@ -1,8 +1,7 @@
 # Ordinary signed courier failure and recovery cohort (#353)
 
-Source checkpoint only: the 18 Helm whole-loop and 16 actual Supervisor parents
-are uncompiled/unrun. Additional pinned-context boundary cases are being prepared
-before the coordinator's source-final gate. This independent work starts from
+Source checkpoint only: the 18 Helm whole-loop and 21 actual Supervisor parents
+are uncompiled/unrun. This independent work starts from
 qualified published `c3f997f`; it changes no Main, target, profile, running host,
 provider or real credential. Scope and production findings precede implementation:
 [courier admission](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5951104943),
@@ -30,6 +29,10 @@ does not become a conversation executor or manufacture another canonical owner.
   IDs, retained signed manifest/digest, pinned source/destination/session and
   signed artifact identity. Pending never authorizes effects. Complete contains
   a sanitized exact historical creation receipt, never current process liveness.
+  Old cached courier results are not completion proof: they are reconciled through
+  status too, because an older duplicate activation could return an unavailable
+  process projection without a creation receipt. Pending/refusal preserves that
+  original result; a missing retained manifest refuses before contact.
 - Supplying the retained manifest permits readonly validation even when the
   old journal checkpoint preceded Accept. Status does not accept, save, pin or
   reserve that manifest or any activation ID. Only a verified Receiving result
@@ -79,7 +82,7 @@ chunk and status/ACK boundaries, awaited cancellation and observed socket/task/
 listener/lock retirement. Signature envelopes are typed opaque fixtures: no
 cryptographic trust, native ownership or real conversation is inferred.
 
-The 16 Supervisor parents invoke the actual dispatcher with real local signing
+The 21 Supervisor parents invoke the actual dispatcher with real local signing
 keys and private SQLite metadata. They compare the entire bounded private graph
 (bytes/inodes/modes/times) across readonly/error calls; exercise pre-Accept,
 partial/full artifact observations, prior namespace/intent/admission fences,
@@ -88,6 +91,12 @@ database/unsafe artifact refusal, owner/scoped capability isolation and held
 transfer/registration locks. Historical receipt rows are explicit metadata
 fixtures. A fixed missing runtime image demonstrates actual admitted Unknown
 before a process can launch; this is not native owner or cleanup acceptance.
+The five pinned-context cases additionally exercise root/namespace nesting,
+cancellation and concurrent unpinned operations, changed namespace before actual
+admission and after actual admission before the production prelaunch check,
+original request/intent retention, and own admission/receipt writes within the
+same namespace. The prelaunch case qualifies the actual boundary function with
+no launch call; it does not claim a raced live process fixture.
 
 Failed fixture journals remain private. Requests, buffers, peers, metadata,
 graphs and waits have explicit bounds. Cancellation is not called observed

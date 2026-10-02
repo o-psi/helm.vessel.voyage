@@ -894,12 +894,19 @@ struct ReadonlyCatalogue {
     file: fs::File,
     path: std::path::PathBuf,
     before: fs::Metadata,
+    journal: Option<(fs::File, fs::Metadata)>,
 }
 impl ReadonlyCatalogue {
     fn open(root: &Path, expected: Option<(u64, u64)>) -> Result<Self> {
         Self::open_mode(root, expected, false)
     }
     fn open_mode(root: &Path, expected: Option<(u64, u64)>, writable: bool) -> Result<Self> {
+        #[cfg(target_os = "linux")]
+        if unsafe { libc::geteuid() } == 0 {
+            // Preserve open_file's protected ancestry guard even for this
+            // existing-only path. This grants no new Root transfer capability.
+            let _control = voyage_storage::protected_linux::RootDirectory::open(root)?;
+        }
         let directory = fs::symlink_metadata(root)?;
         ensure!(
             directory.is_dir()
@@ -934,18 +941,31 @@ impl ReadonlyCatalogue {
                 "readonly catalogue requires a known rollback-journal namespace"
             );
         }
-        match fs::symlink_metadata(root.join(format!("{FILE}-journal"))) {
-            Ok(journal) => ensure!(
-                journal.is_file()
-                    && !journal.file_type().is_symlink()
-                    && journal.nlink() == 1
-                    && journal.uid() == unsafe { libc::geteuid() }
-                    && journal.mode() & 0o077 == 0,
-                "unsafe existing catalogue journal"
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        let journal_path = root.join(format!("{FILE}-journal"));
+        let journal = match fs::symlink_metadata(&journal_path) {
+            Ok(journal) => {
+                ensure!(
+                    journal.is_file()
+                        && !journal.file_type().is_symlink()
+                        && journal.nlink() == 1
+                        && journal.uid() == unsafe { libc::geteuid() }
+                        && journal.mode() & 0o077 == 0,
+                    "unsafe existing catalogue journal"
+                );
+                let file = OpenOptions::new()
+                    .read(true)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+                    .open(&journal_path)?;
+                let current = file.metadata()?;
+                ensure!(
+                    (journal.dev(), journal.ino()) == (current.dev(), current.ino()),
+                    "catalogue journal changed before open"
+                );
+                Some((file, current))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
-        }
+        };
         let access = if writable {
             OpenFlags::SQLITE_OPEN_READ_WRITE
         } else {
@@ -955,32 +975,49 @@ impl ReadonlyCatalogue {
             &path,
             access | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
-        db.busy_timeout(Duration::from_secs(2))?;
-        if writable {
-            db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA journal_size_limit=1048576")?;
-        } else {
-            db.execute_batch("PRAGMA query_only=ON")?;
-        }
-        let version: i64 =
-            db.query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
-                r.get(0)
-            })?;
-        ensure!(
-            CATALOGUE_WRITE_SCHEMAS.contains(&version),
-            "readonly transfer catalogue schema unavailable; no migration performed"
-        );
-        let present:i64=db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('voyages','incarnations','lifecycle_commands','creation_receipts')",[],|r|r.get(0))?;
-        ensure!(
-            present == 4,
-            "readonly transfer catalogue namespace incomplete"
-        );
         let catalogue = Self {
             db,
             file,
             path,
             before,
+            journal,
         };
+        // SQLite opens the pathname separately from our private descriptor.
+        // Bind its actual VFS inode before ANY SQL/configuration can touch it.
+        catalogue.check_namespace()?;
+        catalogue.check_journal()?;
+        catalogue.db.busy_timeout(Duration::from_secs(2))?;
+        let version: i64 =
+            catalogue
+                .db
+                .query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
+                    r.get(0)
+                })?;
+        ensure!(
+            CATALOGUE_WRITE_SCHEMAS.contains(&version),
+            "readonly transfer catalogue schema unavailable; no migration performed"
+        );
+        let present:i64=catalogue.db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('voyages','incarnations','lifecycle_commands','creation_receipts')",[],|r|r.get(0))?;
+        ensure!(
+            present == 4,
+            "readonly transfer catalogue namespace incomplete"
+        );
         catalogue.check()?;
+        if writable {
+            catalogue.db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA journal_size_limit=1048576")?;
+            let page_size: u64 = catalogue
+                .db
+                .pragma_query_value(None, "page_size", |row| row.get(0))?;
+            ensure!(page_size > 0, "invalid supervisor catalogue page size");
+            catalogue.db.pragma_update(
+                None,
+                "max_page_count",
+                (512 * 1024 * 1024u64) / page_size,
+            )?;
+        } else {
+            catalogue.db.execute_batch("PRAGMA query_only=ON")?;
+        }
+        catalogue.check_namespace()?;
         Ok(catalogue)
     }
     fn check(&self) -> Result<()> {
@@ -1014,7 +1051,47 @@ impl ReadonlyCatalogue {
                 ),
             "supervisor catalogue changed during readonly observation"
         );
+        self.check_journal()?;
         self.check_namespace()
+    }
+    fn check_journal(&self) -> Result<()> {
+        let path = self.path.with_file_name(format!("{FILE}-journal"));
+        match (&self.journal, fs::symlink_metadata(path)) {
+            (None, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            (Some((file, before)), Ok(leaf)) => {
+                let after = file.metadata()?;
+                ensure!(
+                    !leaf.file_type().is_symlink()
+                        && (leaf.dev(), leaf.ino()) == (before.dev(), before.ino())
+                        && (
+                            before.dev(),
+                            before.ino(),
+                            before.len(),
+                            before.uid(),
+                            before.mode(),
+                            before.nlink(),
+                            before.mtime(),
+                            before.mtime_nsec(),
+                            before.ctime(),
+                            before.ctime_nsec()
+                        ) == (
+                            after.dev(),
+                            after.ino(),
+                            after.len(),
+                            after.uid(),
+                            after.mode(),
+                            after.nlink(),
+                            after.mtime(),
+                            after.mtime_nsec(),
+                            after.ctime(),
+                            after.ctime_nsec()
+                        ),
+                    "catalogue journal namespace changed during observation"
+                );
+                Ok(())
+            }
+            _ => anyhow::bail!("catalogue journal namespace changed during observation"),
+        }
     }
     fn check_namespace(&self) -> Result<()> {
         let after = self.file.metadata()?;

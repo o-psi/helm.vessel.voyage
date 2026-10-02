@@ -78,6 +78,10 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
             saved.phase != Some(Phase::ActivationPending) || saved.manifest.is_some(),
             "pending activation has no retained manifest"
         );
+        ensure!(
+            saved.version != 0 || saved.result.is_none() || saved.manifest.is_some(),
+            "legacy result lacks a retained manifest; original evidence preserved"
+        );
     }
     let recovering_manifest = saved.as_ref().is_some_and(|saved| saved.manifest.is_some());
     let destination = Client::local(args.destination_directory.clone());
@@ -120,7 +124,13 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
         save(&args.journal, &saved)?;
         saved
     };
-    if let Some(result) = &journal.result {
+    if let Some(result) = &journal.result
+        && journal.version == 1
+    {
+        ensure!(
+            journal.phase == Some(Phase::ActivationPending),
+            "cached courier result has no activation checkpoint"
+        );
         return Ok(result.clone());
     }
     if journal.preparation.is_none() {
@@ -182,6 +192,10 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
                 return Ok(result);
             }
             TransferStatusState::Receiving => {
+                ensure!(
+                    journal.result.is_none(),
+                    "legacy cached result conflicts with receiving proof; original retained without effects"
+                );
                 artifact_ready = status.received_bytes == Some(manifest.payload.artifact_bytes);
                 journal.version = 1;
                 journal.phase = Some(Phase::Receiving);
