@@ -67,10 +67,13 @@ CARGO_LLVM_COV_TARGET_DIR="$PWD/target" \
 LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata \
 RUSTC_WORKSPACE_WRAPPER="$PWD/packaging/rustc-workspace-forward" \
 RUST_TEST_THREADS=2 \
-cargo llvm-cov --locked --no-clean --no-report -p voyage-installer -j1 \
+cargo llvm-cov --workspace --locked --no-clean --json --summary-only \
+  --output-path target/coverage-report/forward-owned-focused-summary.json -j1 \
   -- forward_recovery::owned_transaction_tests
 ```
 
+The focused JSON can contain retained mixed objects; keep it ignored/unpublished.
+Do not combine `--no-clean` with `--no-report` on the installed coverage version.
 Use the existing instrumentation/target and a bounded systemd user unit under an
 ordinary account. The system-refusal test intentionally refuses a root test runner;
 it must not inspect or change a real system installation. Resolve concrete compile,
