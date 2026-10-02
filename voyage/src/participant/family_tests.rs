@@ -365,8 +365,14 @@ async fn cancellation_monitor_survives_tool_return_and_requires_observed_fence_r
                 .await
                 .unwrap();
             if prior["cleanup_observed"] == true {
-                assert_eq!(prior["admission_closed"], false);
-                assert_eq!(prior["run_id"], json!(id));
+                // False is deliberately omitted on the wire. Decode the strict
+                // observation rather than interpreting a missing JSON key as a
+                // different admission proof.
+                let observed: AssignmentObservation = serde_json::from_value(prior).unwrap();
+                assert!(!observed.admission_closed);
+                assert_eq!(observed.run_id, Some(id));
+                assert_eq!(observed.child_incarnation, Some(id));
+                assert_eq!(observed.state, "cancelled");
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -753,7 +759,9 @@ async fn retained_completed_reconciliation_is_offline_and_unknown_obligations_bl
         .finish_operator(Ok("parent finished while delivery unknown".into()), false)
         .await
         .unwrap();
-    f.run.confirm_local_cleanup_observed().await.unwrap();
+    // This error retains the local observation without certifying the unknown
+    // remote obligation as clean. Reconciliation below must close that exact ID.
+    assert!(f.run.confirm_local_cleanup_observed().await.is_err());
     assert_eq!(
         f.tool.parent.owner.process_snapshot().await.unwrap()["pending_cleanup_run"],
         json!(f.run_id)

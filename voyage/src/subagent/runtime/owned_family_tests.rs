@@ -164,6 +164,29 @@ impl Fixture {
             .await
             .unwrap();
     }
+    async fn refuse_active_adoption(&self, run: &RunHandle, id: AgentId) {
+        let before = run.snapshot(&self.todos, &self.store(), 64).await.unwrap();
+        let error = run
+            .adopt_existing(
+                &self.todos,
+                &self.store(),
+                Obligation::Agent(id),
+                before.revision,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("wait or cancel active work before adoption")
+        );
+        assert!(!run.owns(Obligation::Agent(id)).await.unwrap());
+        assert_eq!(
+            serde_json::to_value(run.snapshot(&self.todos, &self.store(), 64).await.unwrap())
+                .unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+    }
     async fn shutdown(&self) {
         tokio::time::timeout(Duration::from_secs(5), self.runtime.shutdown())
             .await
@@ -267,13 +290,11 @@ async fn cross_run_child_requires_explicit_adoption_and_terminal_parent_then_use
     );
     assert_eq!(f.worker.entered.load(Ordering::SeqCst), 1);
     assert_eq!(f.runtime.list().await.len(), 1);
-    f.adopt(&f.b, parent).await;
-    assert!(
-        matches!(f.runtime.spawn_for_run(f.request("new",Some(parent)),Some(f.b.clone())).await,Err(RuntimeError::Invalid(message)) if message.contains("terminal adopted parent"))
-    );
+    f.refuse_active_adoption(&f.b, parent).await;
     f.runtime.cancel(parent).await.unwrap();
     assert!(f.runtime.wait(parent).await.unwrap().is_err());
     let original = f.runtime.get(parent).await.unwrap();
+    f.adopt(&f.b, parent).await;
     let child = f
         .runtime
         .spawn_for_run(f.request("new", Some(parent)), Some(f.b.clone()))
@@ -307,8 +328,9 @@ async fn legacy_parent_cannot_silently_become_owned_and_same_run_cancelled_paren
     assert!(
         matches!(f.runtime.spawn_for_run(f.request("owned",Some(legacy)),Some(f.a.clone())).await,Err(RuntimeError::Invalid(message)) if message.contains("explicitly adopt legacy parent"))
     );
-    f.adopt(&f.a, legacy).await;
+    f.refuse_active_adoption(&f.a, legacy).await;
     f.finish(legacy).await;
+    f.adopt(&f.a, legacy).await;
     let child = f
         .runtime
         .spawn_for_run(f.request("owned", Some(legacy)), Some(f.a.clone()))
@@ -355,7 +377,7 @@ async fn foreign_or_absent_persistent_coordinator_refuses_before_registering_new
 }
 
 #[tokio::test]
-async fn owned_followup_requires_current_run_adoption_before_even_a_live_inbox_message() {
+async fn owned_followup_requires_original_run_authority_before_a_live_inbox_message() {
     let f = Fixture::new().await;
     let parent = f
         .runtime
@@ -372,10 +394,12 @@ async fn owned_followup_requires_current_run_adoption_before_even_a_live_inbox_m
         f.runtime.control(parent).await.unwrap().inbox.capacity(),
         64
     );
-    f.adopt(&f.b, parent).await;
+    f.refuse_active_adoption(&f.b, parent).await;
+    // Live input uses the already registered original run. Cross-run adoption
+    // cannot manufacture authority over an active worker.
     assert_eq!(
         f.runtime
-            .follow_up_in_run(None, parent, "finish", Some(f.b.clone()))
+            .follow_up_in_run(None, parent, "finish", Some(f.a.clone()))
             .await
             .unwrap(),
         parent
