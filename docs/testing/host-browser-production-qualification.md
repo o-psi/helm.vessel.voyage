@@ -529,5 +529,13 @@ Submit, start a Goal, use a provider or change grants while preparing this pass.
 Prepared offline initializer contract cases are in
 `voyage/tests/host_browser_production_probe_tests.py` (run with `python3 -I -B`
 after the source-ready verification gate). They use mocked process metadata and
-private file fixtures; they establish no native/production behavior. No test,
-new browser journey or measurement has been run by this source batch.
+private file fixtures; they establish no native/production behavior.
+
+The source delivery gate ran all eight offline probe contracts successfully,
+`node --check` for the maintained production driver, and isolated AST parsing for
+the changed Python files. The bounded unit used private umask, 1 GiB/no swap and
+a five-minute cap; it completed in 151 ms at 23.6 MiB peak. No browser journey,
+host resource measurement or native cleanup qualification was performed by this
+gate. Rust source/Cargo inputs are unchanged; the previous truthful Rust coverage
+measurement remains recorded. Live use still requires the qualified program pins,
+exact same-host bootstrap/ownership proof and the production matrix above.
