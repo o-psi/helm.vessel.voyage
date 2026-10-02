@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-10-02T17:13:05+00:00",
-  "source_commit": "6ae8774cfa1218ae010118a991de20bb4eed6fbf",
+  "measured_at_utc": "2026-10-02T17:52:17+00:00",
+  "source_commit": "90bb586e2e76fa50330f33bac5e7a060029739c8",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
@@ -14,23 +14,23 @@
   "totals": {
     "lines": {
       "count": 135808,
-      "covered": 109994,
-      "percent": 80.99228322337417
+      "covered": 110020,
+      "percent": 81.01142789820923
     },
     "functions": {
       "count": 12371,
-      "covered": 9932,
-      "percent": 80.28453641581117
+      "covered": 9933,
+      "percent": 80.29261983671489
     },
     "regions": {
       "count": 225021,
-      "covered": 173517,
-      "notcovered": 51504,
-      "percent": 77.11146959617102
+      "covered": 173555,
+      "notcovered": 51466,
+      "percent": 77.12835690891072
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-ordinary-ui-helper-operator-budget-final/html -j1; inside bounded systemd user unit voyage-v103-ordinary-ui-helper-operator-budget-final after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-ordinary-ui-helper-operator-budget-final/summary-default.json -v; llvm-profdata merge -sparse with570 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-native-bootstrap-source-final/html -j1; inside bounded systemd user unit voyage-v103-native-bootstrap-source-final after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-native-bootstrap-source-final/summary-default.json -v; llvm-profdata merge -sparse with573 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,14 +40,13 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean source6ae8774:3092 parent-workspace tests passed, zero failed, eight ignored across15 Cargo targets.120 new semantic parents (20shellPTY,39ordinaryhelper,22HelmUI,33GitHub/agent,6complete-response byte contracts) plus1 inert child entry; nested child summaries excluded. Formatting and strict all-target/all-feature Clippy passed; focused CUA selected-tab collector7/7 passed separately.",
-    "Exactly18 current objects:15 test targets and3 instrumented real entrypoints.570 own profiles merged;235 foreign profiles byte-identical. All543 prior workspace mappings retained plus one previously retained standard-library mapping. Summary/detail/HTML agree;18 hash-archived objects. Standard exclusions unchanged.",
-    "Compared with2802782:1222 additional covered lines,81 additional measured production lines, +0.852002 percentage points.25814 aggregate gaps remain; full100% reachable-production objective remains unmet, no denominator narrowing.",
-    "Pre-test compiler gate found typed terminal method shadowing and null-escape fixture source errors, corrected to exact public trait and raw shell string. d5379f4 fullgate12 fixture failures were corrected together:7durable UI wire-incarnation oracles,4policy-refused arithmetic fixture commands,1nil positive checkpoint. All assertions retained/strengthened and separate nil refusal added. c7ffb4c fullgate then exposed real production#404: oversized complete read report consumed unseen cursor output. Failed reports/logs/profiles remain retained; no failing measurement published as passing.",
-    "#404 complete status/body/remaining/privacy metadata and lossy UTF-8 expansion are budgeted before original-byte cursor commit. Unfit status/body/privacy budgets refuse without consumption. Existing real Registry/PTY case keeps256bytes and verifies tiny-budget failure, exact delivered-source mapping, typed gap/cursor and owned cleanup. Six contracts cover ASCII, all2/3/4byte valid widths, invalid bytes, privacy notices and known dropped fragments. Execution authority, external effects and deadlines unchanged.",
-    "Passing gate567s,10737418240B peak,zero swap,j1; invocation6bc6201f4a16469aae3d095487c174d4. Export27s,8317296640B peak, invocationb18ce1cdda474a5cbdf161589aa2e4e0. Accounting315928576B peak, invocationaabc92ef77014cafa58eebc3365dfedc. All actual terminal exits0 retained with RemainAfterExit, explicitly bound to clean measured source rather than later summary commit.",
-    "Line accounting reconstructs544files/12371function groups/everyJSON-LCOVcounter:25814aggregate gaps versus23756unique zero addresses; difference2058=136instantiation maxima/union+1949overlap-27shadowing. Counting reconciliation is not complete reachability classification.",
-    "First native browser attempt refused before bridge/driver admission and was observed retired with original Web settings restored. Fresh separate attempt01576a49 admitted original613driver, then failed its native fixture-title bootstrap predicate before any CUA request. Owned browser roots absent and native clients exited per launcher; exact helper/config retirement requested and source correction pending. Native/fullsite/privacy/cost/renewal/cleanup acceptance remains unqualified. Existing5385 equivalent route restoration remains owed. Stable1.0.3 and #333/#353/#375/#404 remain open at summary creation.",
-    "Latest earlier public source88735d4 hosted37029734692 was successful and its anonymous archive/checksum/4binaries/123assets/source/version verified. This new completed source and compact measurement require normal main publication and exact hosted build/archive follow-through. No native installation of that earlier artifact is inferred."
+    "Clean90bb586 full current-source workspace gate3092pass/0fail/8ignored across15parenttargets; strictalltarget/allfeatureClippy andformat passed. Corrected native-bootstrap focusedPython20/20 passed separately, no host effects in those callback/geometry/hash/refusal contracts.",
+    "Exactly18current objects,573ownprofiles,235foreign byte-identical,all543workspace mappings retained plus priorstdmapping. Summary/detail/HTML and archived-objectLCOV agree,544files/12371groups/everylinecounter reconciled. Standardexclusions unchanged.",
+    "Rust source unchanged from prior measured6ae8774; native driver/Python contracts/docs changed. Full required remeasurement observed26morecoveredlines,unchanged135808denominator,+0.019144674835 percentagepoints due execution variation, not attributed to Python coverage. Lines110020/135808=81.01142789820923%;25788aggregate gaps remain. Reachable100% still unmet.",
+    "Accounting25788aggregate gaps vs23722uniquezeros;2066difference=144maxima/union+1949overlap-27shadowing. No source filtering or reachability claim from accounting.",
+    "Gate69dba7ff337b449eafe273881aef38db exit0,300s,1805049856Bpeak; exporta765c5ff3d3541ceaa46192e047fe15e exit0,23s,9080872960Bpeak; accounting3ee0965a80754964ae1cbaecf9e56192 exit0. Bounded10GiB,zeroswap,j1,RemainAfterExit,actualterminal evidence retained.",
+    "Native driver now pins authenticated native meter/route/process before input, normal /use exactSID, actual read-only settings SID/route/freshrevision and freshcanonical empty fixture/owner proof before F6. Shared40second bootstrap/600secondjob guards retained. Actual120x36 settings overlay has116cell body and only bottom border;100char identityline fits.20callback/frame/hash/refusal contracts establish source behavior only, not actual native browser acceptance.",
+    "#404 completed sourcea636282 actual hosted37040771104 successful archive45945915B SHA f2b46c71336042433ee1ba3b41c2a4d35807e1c168837a62ca46c2a0037c64d5; anonymous checksum/source/version/4binaries/123assets verified. Issue404 closed with evidence. No native installation inferred.",
+    "Both earlier native attempts retired with original dotenv053c restored disabled, helper cgroups/children/listeners/socket/ownedkeys retired and original fixtures/media/evidence preserved.015driver failed full-title-before-selection predicate before Webrequest/browserroot creation; corrected source now requires publication before distinctattempt03.Original5385route restoration still owed.Three milestone gates333/353/375 remain open, stable1.0.3 unpublished. New correctedsource main publication pending at recordcreation; no renewed hosted build required solely for Python/docs changes, existingRustbuild exacta636282 remains bound to its source."
   ]
 }

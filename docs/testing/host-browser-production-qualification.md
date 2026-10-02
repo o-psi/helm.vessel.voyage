@@ -746,3 +746,25 @@ node --test voyage/tests/host_browser_qualification_windows.test.mjs
 
 All these commands remain unexecuted source preparation. The parent runs them
 with the existing reopen/cost/native transport suite in the single coordinated gate.
+
+### Corrected bootstrap delivery verification
+
+Clean source `90bb586e2e76fa50330f33bac5e7a060029739c8` passed the20 maintained
+NativeLocal callback, source-derived120×36 settings-frame and exact route-hash
+contracts, plus full workspace3092passed/0failed/8ignored, formatting and strict
+all-target/all-feature Clippy. No native browser effect was executed by these
+focused contracts.
+
+Current-source coverage audits18objects,573ownprofiles,235unchangedforeignprofiles,
+all543workspace mappings and matching summary/detail/HTML/archived-object LCOV.
+Every544file/12371group line counter reconciles. Lines110020/135808=81.01142789820923%;
+Rust source is unchanged from6ae8774 and the26-covered-line variation is execution
+variation, not Python coverage. Full100% reachable objective remains unfinished.
+Compact `coverage/latest.json` binds this clean source; detailed evidence stays
+ignored under `target/coverage-report/v103-native-bootstrap-source-final/`.
+
+Earlier Rust deliverya636282 has successful hosted37040771104 and independently
+verified public archive/checksum/source/version/4binaries/123assets; #404 closed.
+This Python/docs-only bootstrap delivery does not require a duplicate hosted
+Rust build. Its publication and a distinct actual native pass remain necessary;
+source contracts are not native/fullsite/cost/privacy/renewal/cleanup acceptance.
