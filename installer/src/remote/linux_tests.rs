@@ -1,5 +1,7 @@
 use super::*;
 use crate::fixture_tests::Fixture;
+#[path = "linux_legacy_service_tests.rs"]
+mod legacy_services;
 const OP: &str = "10000000-0000-4000-8000-000000000001";
 
 fn args(values: &[&str]) -> Vec<String> {

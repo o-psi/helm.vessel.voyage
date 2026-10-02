@@ -480,6 +480,33 @@ fn restore_previous(record: &Record, error: anyhow::Error) -> Result<()> {
     ))
 }
 
+// Called only after exact old pointer and original activation-context proof;
+// published candidates first require held snapshot restoration. A failed
+// supervisor attempt must not hide the
+// independent outcome of each unchanged reviewed gateway or old image check.
+fn restore_legacy_services(
+    record: &Record,
+    previous: &std::path::Path,
+    candidate: &std::path::Path,
+    activation: &service::Activation,
+) -> Result<()> {
+    let supervisor =
+        service::restore_activation(&previous.join("bin"), &candidate.join("bin"), activation);
+    let gateways = rollback_gateways(record, previous);
+    let observed = verified_service("voyage-vessel.service", previous);
+    let failures = [supervisor, gateways, observed]
+        .into_iter()
+        .filter_map(Result::err)
+        .map(|failure| failure.to_string())
+        .collect::<Vec<_>>();
+    ensure!(
+        failures.is_empty(),
+        "Legacy service rollback remains unconfirmed: {}",
+        failures.join("; ")
+    );
+    Ok(())
+}
+
 fn prepare_worker(record: &mut Record) -> Result<()> {
     record.gateways = gateways()?;
     let cancel = source::Cancellation::new()?;
@@ -935,13 +962,7 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
             // Release journal exclusion only after the original snapshot is back.
             drop(guard.take());
             service::verify_legacy_activation_context(&activation, &activation_context)?;
-            service::restore_activation(
-                &previous.join("bin"),
-                &candidate.join("bin"),
-                &activation,
-            )?;
-            rollback_gateways(record, &previous)?;
-            verified_service("voyage-vessel.service", &previous)?;
+            restore_legacy_services(record, &previous, &candidate, &activation)?;
             verified_legacy_activation(record, &previous, true)?;
             service::verify_legacy_activation_context(&activation, &activation_context)?;
             crate::legacy::clear(&activation.state, &record.operation_id)?;
