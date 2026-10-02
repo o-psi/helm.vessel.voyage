@@ -1,9 +1,12 @@
 # Prepared saved-owner and steering journeys (#353)
 
-This cohort is source preparation on `coverage353-saved-owner-steering`, based on
-`fede3e8d25ecb3e0063d1d3ea323f6392a9123be`. It has not been compiled or executed.
-No Cargo command, shared target/profile mutation, provider call, production host
-operation or native browser journey was performed while preparing it. The scope
+All ten saved-owner and eight steering parents passed in the corrected
+coordinated full workspace measurement of clean
+`1d49636e47bd42a7aef3dc4c54741209f5790335`. Source preparation was on
+`coverage353-saved-owner-steering`, based on
+`fede3e8d25ecb3e0063d1d3ea323f6392a9123be`; it performed no Cargo command,
+shared target/profile mutation, provider call, production host operation or
+native browser journey. The scope
 was recorded before implementation in [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5949762192).
 
 ## Selection and boundaries
@@ -49,9 +52,11 @@ historical descendant cleanup.
 
 ## One coordinated gate
 
-Run only after the complete source cohort is integrated and frozen by the gate
-owner. Use the existing target, private umask, bounded independent ordinary-user
-unit, one compiler job and coordinated instrumentation:
+The following are maintained optional focused entrypoints, not commands claimed
+executed for this delivery. The coordinator instead ran the combined full
+workspace gate after all source was integrated and frozen, using the existing
+target, private umask, bounded independent ordinary-user unit, one compiler job
+and coordinated instrumentation:
 
 ```sh
 CARGO_LLVM_COV_TARGET_DIR="$PWD/target" \
@@ -78,3 +83,34 @@ coverage after the final relevant edit. Preserve prior evidence and foreign raw
 profiles, audit all current workspace objects and publish the compact summary
 with main delivery and actual hosted archive follow-through. Source preparation
 and focused passing assertions alone do not close #353 or the milestone.
+
+## Verified measurement and remaining delivery
+
+The corrected full workspace gate measured clean
+`1d49636e47bd42a7aef3dc4c54741209f5790335`: **2,860 passed, zero failed and
+eight ignored** across fifteen Cargo parent test targets. All **56** new parents
+passed: eighteen Helm observation, ten saved-owner, eight steering and twenty
+public-gateway cases. Child processes are not extra test parents. Formatting
+and strict workspace Clippy passed.
+
+The terminal export/audit selected **18 distinct current objects**: fifteen test
+objects and three actual workspace entrypoints. It retained 499 owned profiles;
+all 235 foreign profiles remained unchanged. All prior mappings were retained
+across 542 workspace files plus one standard-library source. Summary, detailed
+JSON and HTML totals agree, and the exact objects were archived. Lines are
+**107,223 / 134,975 (79.439155%)**, functions **9,710 / 12,300**, and regions
+**169,252 / 223,661**. Compared with clean BEB, covered lines increased by 606,
+the denominator by 24 and coverage by 0.434924 percentage points. Accounting
+reconstructed all 543 files and 12,300 function groups: 27,752 aggregate uncovered
+line units versus 25,629 unique zero addresses, a difference of 2,123 = 116
+maximum/union + 2,034 overlap − 27 shadowing. These are accounting categories,
+not a production reachability count or exclusions.
+
+The [compact coverage record](../../coverage/latest.json) belongs to this measured
+source. Full evidence remains ignored and retained by the coordinator. Publication
+and the actual hosted build/archive are pending at this checkpoint; no native
+installation of this newly measured source is claimed. Existing native acceptance
+remains bound to its separately recorded qualified source, including `613`.
+The full measured denominator and 100% reachable-production objective stay
+unchanged; [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353) and
+[release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375) remain open.

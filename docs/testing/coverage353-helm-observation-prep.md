@@ -1,10 +1,10 @@
 # Ordinary Helm observation cohort (#353)
 
-Eighteen new parent scenarios. The first coordinated gate compiled/executed
-them; the receipt recovery fixture correction below remains uncompiled/unrun.
-This independent cohort starts from frozen `4b6b744`; it changes no parent target,
-profile, environment, credential or running release. The current gate and
-prepared transcript/completion/#401 work remain separate. The input b315144
+All eighteen new parent scenarios passed in the corrected coordinated full
+workspace measurement of clean `1d49636e47bd42a7aef3dc4c54741209f5790335`.
+This independent cohort started from frozen `4b6b744`; its source preparation
+changed no parent target, profile, environment, credential or running release.
+The preceding transcript/completion/#401 delivery remains separate. The input b315144
 address map has 183 observer, 24 catalogue-watch, 75 reducer and 99 update
 candidate addresses; those counts are not promised coverage gains. The full
 denominator and 100% reachable-production objective stay intact.
@@ -95,9 +95,11 @@ is not mislabelled deletion of authoritative conversation history.
 The coordinator's frozen `95b6159` full measurement produced a Helm result of
 841 passed and one failed among 842 parents. The failed parent was the new frozen
 pending-receipt journey; its original generic wait did not identify the stage.
-The workspace measurement was still running
-when this isolated correction was prepared, so no whole-workspace outcome is
-inferred here. Failed evidence remains in the coordinator's retained report.
+That full attempt subsequently terminated unsuccessfully: 2,859 passed, one
+failed and eight ignored across fifteen Cargo parent test targets. The twenty
+new public-gateway and eighteen saved-owner/steering parents passed in that
+attempt. Failed evidence remains retained; the original elapsed stage remains
+unknown rather than being inferred from the source diagnosis.
 
 Source inspection found that the scripted session event used revision 18, while the later cursor-21 full
 snapshot inherited the helper's default revision 17. App correctly refused that
@@ -108,13 +110,43 @@ or wait deadline. All three waits in this parent have explicit fixed stage names
 so another failure identifies subscription, event ACK or gap recovery. This is a
 fixture correction, not an observed production observation defect.
 
-## Pending delivery gate
+## Corrected coordinated gate
 
-Rustfmt and diff checks are source checks. After independent review and every
-source edit is final, the root coordinator owns the sole bounded focused gate
-for `process_client::ui::observe::`, the existing reducer/observation tests,
-strict workspace checks and source-final full coverage with current-object audit.
-The compact summary, normal Main publication and actual hosted artifact remain
-required. No skipped execution is called passing and no numerator/denominator
-is narrowed. This cohort qualifies no live provider, deployed browser/TLS/cost,
-Root/adoption identity, macOS/Windows or stable release acceptance.
+The corrected source passed formatting and strict workspace Clippy, followed by
+the full workspace coverage command and exact current-object audit described
+below. No separate focused execution is claimed. The fixture now uses revision
+18 and the same applied name for cursor-21 recovery; the canonical revision
+guard, original pending identity, draft/history assertions and wait deadline
+remain intact. No provider, deployed browser/TLS/cost, protected identity,
+macOS/Windows or stable-release acceptance follows from these tests.
+
+## Verified measurement and remaining delivery
+
+The corrected full workspace gate measured clean
+`1d49636e47bd42a7aef3dc4c54741209f5790335`: **2,860 passed, zero failed and
+eight ignored** across fifteen Cargo parent test targets. All **56** new parents
+passed: eighteen Helm observation, ten saved-owner, eight steering and twenty
+public-gateway cases. Child processes are not extra test parents. Formatting
+and strict workspace Clippy passed.
+
+The terminal export/audit selected **18 distinct current objects**: fifteen test
+objects and three actual workspace entrypoints. It retained 499 owned profiles;
+all 235 foreign profiles remained unchanged. All prior mappings were retained
+across 542 workspace files plus one standard-library source. Summary, detailed
+JSON and HTML totals agree, and the exact objects were archived. Lines are
+**107,223 / 134,975 (79.439155%)**, functions **9,710 / 12,300**, and regions
+**169,252 / 223,661**. Compared with clean BEB, covered lines increased by 606,
+the denominator by 24 and coverage by 0.434924 percentage points. Accounting
+reconstructed all 543 files and 12,300 function groups: 27,752 aggregate uncovered
+line units versus 25,629 unique zero addresses, a difference of 2,123 = 116
+maximum/union + 2,034 overlap − 27 shadowing. These are accounting categories,
+not a production reachability count or exclusions.
+
+The [compact coverage record](../../coverage/latest.json) belongs to this measured
+source. Full evidence remains ignored and retained by the coordinator. Publication
+and the actual hosted build/archive are pending at this checkpoint; no native
+installation of this newly measured source is claimed. Existing native acceptance
+remains bound to its separately recorded qualified source, including `613`.
+The full measured denominator and 100% reachable-production objective stay
+unchanged; [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353) and
+[release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375) remain open.

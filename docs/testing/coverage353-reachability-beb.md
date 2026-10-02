@@ -88,3 +88,18 @@ side-table oracle corrections. They remain **source-only/unrun** at this audit;
 no results are attributed to BEB. Their combined focused/strict/full current-object
 measurement/publication/build gate remains with the parent. This planning note
 implements no runtime, resumes no positive1.1 work and removes no hard lines.
+
+## Subsequent coordinated execution checkpoint
+
+The source-only status above describes this historical BEB reachability audit,
+not the later measurement. Clean `1d49636e47bd42a7aef3dc4c54741209f5790335`
+subsequently passed formatting, strict Clippy and full workspace coverage:
+2,860 passed, zero failed and eight ignored across fifteen parent test targets.
+All 56 new observation, saved-owner/steering and public-gateway parents passed.
+The exact 18-current-object audit, source totals and accounting are recorded in
+[the observation result](coverage353-helm-observation-prep.md#verified-measurement-and-remaining-delivery).
+Publication and hosted artifact verification remain pending at this checkpoint.
+No newer result is attributed to BEB; the 145 sampled spans and nineteen files
+remain a partial planning sample, not a complete reachable-production graph.
+All source, denominator, exclusions, native authority boundaries and the full
+100% objective remain unchanged.

@@ -1,8 +1,9 @@
 # Ordinary public gateway cohort (#353)
 
-Source preparation only: twenty new integration-test parents are uncompiled and
-unrun. This independent work starts at `04c7abe`, after the source-final ordinary
-Helm observation cohort. It changes no production handler, test seam, Cargo
+All twenty new integration-test parents passed in the corrected coordinated full
+workspace measurement of clean `1d49636e47bd42a7aef3dc4c54741209f5790335`.
+This independent work started at `04c7abe`, after the source-final ordinary
+Helm observation cohort. Source preparation changed no production handler, test seam, Cargo
 input, parent checkout, target or profile. Scope was recorded before source in
 [#353 comment 5950077501](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5950077501)
 and belongs to [release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375).
@@ -84,12 +85,45 @@ successful case follows the positive ownership/cleanup assertions.
 
 ## Required gate
 
-Rustfmt and diff checks only are source validation. Once every combined source
-cohort is final, the coordinator owns the one bounded focused integration target
-`cargo test -p vessel --locked --test ordinary_public_gateway_tests`, strict
-workspace checks, full source-final Rust coverage and the complete current-object
-audit. This source has not been tested during preparation. The compact summary,
-normal Main publication and hosted build follow-through remain required.
+Source preparation used rustfmt and diff checks. The coordinator subsequently
+passed formatting, strict workspace Clippy and the source-final full workspace
+coverage gate with the complete current-object audit. The maintained optional
+focused entrypoint is `cargo test -p vessel --locked --test ordinary_public_gateway_tests`;
+no separate focused run is claimed for this delivery. The actual instrumented
+Vessel CLI child and this new integration target are included in the audited
+current objects. Normal Main publication and hosted build follow-through remain
+pending at this checkpoint.
 
 No production authority is broadened, no provider is contacted, and no native
 Root/adoption/macOS/Windows or #333 public-browser/TLS/cost acceptance is claimed.
+
+## Verified measurement and remaining delivery
+
+The corrected full workspace gate measured clean
+`1d49636e47bd42a7aef3dc4c54741209f5790335`: **2,860 passed, zero failed and
+eight ignored** across fifteen Cargo parent test targets. All **56** new parents
+passed: eighteen Helm observation, ten saved-owner, eight steering and twenty
+public-gateway cases. Child processes are not extra test parents. Formatting
+and strict workspace Clippy passed.
+
+The terminal export/audit selected **18 distinct current objects**: fifteen test
+objects and three actual workspace entrypoints. It retained 499 owned profiles;
+all 235 foreign profiles remained unchanged. All prior mappings were retained
+across 542 workspace files plus one standard-library source. Summary, detailed
+JSON and HTML totals agree, and the exact objects were archived. Lines are
+**107,223 / 134,975 (79.439155%)**, functions **9,710 / 12,300**, and regions
+**169,252 / 223,661**. Compared with clean BEB, covered lines increased by 606,
+the denominator by 24 and coverage by 0.434924 percentage points. Accounting
+reconstructed all 543 files and 12,300 function groups: 27,752 aggregate uncovered
+line units versus 25,629 unique zero addresses, a difference of 2,123 = 116
+maximum/union + 2,034 overlap − 27 shadowing. These are accounting categories,
+not a production reachability count or exclusions.
+
+The [compact coverage record](../../coverage/latest.json) belongs to this measured
+source. Full evidence remains ignored and retained by the coordinator. Publication
+and the actual hosted build/archive are pending at this checkpoint; no native
+installation of this newly measured source is claimed. Existing native acceptance
+remains bound to its separately recorded qualified source, including `613`.
+The full measured denominator and 100% reachable-production objective stay
+unchanged; [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353) and
+[release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375) remain open.
