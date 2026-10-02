@@ -661,3 +661,7 @@ mod tests {
 #[cfg(all(test, unix))]
 #[path = "host_browser_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "host_browser_lifecycle_tests.rs"]
+mod lifecycle_tests;

@@ -204,3 +204,7 @@ impl App {
 #[cfg(test)]
 #[path = "browser_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "browser_adapter_lifecycle_tests.rs"]
+mod adapter_lifecycle_tests;
