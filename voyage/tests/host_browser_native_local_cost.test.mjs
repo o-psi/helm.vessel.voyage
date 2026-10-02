@@ -27,7 +27,7 @@ test('missing private request body or failed transport cannot be passing cost ev
 test('crossing window request stays explicitly inflight not a fabricated response byte count',async()=>{
  const f=fixture();const meter=await browserCost(f.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
  f.cdp.emit('Network.requestWillBeSent',{requestId:'owned',request:{url:'http://127.0.0.1:1/operation',postData:'{}'}});
- const value=await meter.stop();assert.equal(value.traffic.http_operation_inflight_at_window_end,1);assert.equal(value.traffic.http_operation_response_payload_bytes,0);
+ const value=await meter.stop();assert.equal(value.status,'unknown');assert.equal(value.traffic.http_operation_inflight_at_window_end,1);assert.equal(value.traffic.http_operation_response_payload_bytes,0);
  assert.ok(value.traffic_scope.includes('observation window'));
 });
 test('unavailable response body refuses complete byte attribution',async()=>{
@@ -35,4 +35,17 @@ test('unavailable response body refuses complete byte attribution',async()=>{
  const meter=await browserCost(f.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
  f.cdp.emit('Network.requestWillBeSent',{requestId:'owned',request:{url:'http://127.0.0.1:1/operation',postData:'{}'}});
  f.cdp.emit('Network.loadingFinished',{requestId:'owned',encodedDataLength:7});const value=await meter.stop();assert.equal(value.status,'unknown');assert.equal(value.traffic.http_operation_body_unavailable,1);
+});
+
+test('empty selected native source and missing/nonboolean encoding stay unknown',async()=>{
+ const empty=fixture();const zero=await browserCost(empty.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
+ assert.equal((await zero.stop()).status,'unknown');
+ for(const encoding of [undefined,null,'false',0]){
+  const f=fixture();const original=f.cdp.send;f.cdp.send=async(name)=>name==='Network.getResponseBody'?{body:'private encoding fixture',base64Encoded:encoding}:original(name);
+  const meter=await browserCost(f.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
+  f.cdp.emit('Network.requestWillBeSent',{requestId:'owned',request:{url:'http://127.0.0.1:1/operation',postData:'{}'}});
+  f.cdp.emit('Network.loadingFinished',{requestId:'owned',encodedDataLength:42});
+  const value=await meter.stop();assert.equal(value.status,'unknown');assert.equal(value.traffic.http_operation_body_unavailable,1);
+  assert.equal(value.traffic.http_operation_response_payload_bytes,0);assert.ok(!JSON.stringify(value).includes('private encoding fixture'));
+ }
 });

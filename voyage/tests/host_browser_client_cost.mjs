@@ -38,6 +38,7 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
   // Count the actual decoded application body, never retain/return its content.
   const reading=(async()=>{try{
    const body=await cdp.send('Network.getResponseBody',{requestId:event.requestId});
+   if(typeof body.base64Encoded!=='boolean'){traffic.http_operation_body_unavailable++;return;}
    if(typeof body.body!=='string'||body.body.length>8*1024*1024){overflow=true;return;}
    const bytes=body.base64Encoded?Buffer.from(body.body,'base64').length:Buffer.byteLength(body.body,'utf8');
    if(bytes>4*1024*1024){overflow=true;return;}traffic.http_operation_response_payload_bytes+=bytes;
@@ -60,7 +61,7 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
     traffic.http_operation_inflight_at_window_end=requests.size;
     await Promise.race([Promise.all([...bodyReads]),new Promise(resolve=>setTimeout(()=>{if(bodyReads.size)traffic.http_operation_body_unavailable+=bodyReads.size;resolve();},1000))]);
     return {elapsed_ms:performance.now()-started,before,after:await read(),traffic:{...traffic},
-    status:overflow?'scope_overflow':traffic.http_operation_failures||traffic.http_operation_body_unavailable?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&traffic.selected_ws_connections_seen>0,
+    status:overflow?'scope_overflow':traffic.http_operation_failures||traffic.http_operation_body_unavailable||traffic.http_operation_inflight_at_window_end||(httpSelected.size>0&&(traffic.http_operation_requests===0||traffic.http_operation_responses===0))?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&traffic.selected_ws_connections_seen>0,
     cpu_scope:'renderer task time; whole-browser OS CPU/RSS require the owned PID ledger',
     traffic_scope:'selected WebSocket payload and native HTTP requests begun/responses completed in observation window (inflight-at-end counted separately); UTF8 request/decoded response application bytes; encoded response transfer bytes separate; excludes headers/TCP/TLS and native Helm Vessel socket bytes'};}
    finally{for(const [name,handler] of handlers)cdp.off(name,handler);await cdp.detach();}

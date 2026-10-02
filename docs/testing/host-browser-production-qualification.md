@@ -628,14 +628,16 @@ The ordinary Linux route is not a native macOS/Windows or protected Root claim.
 Native graphical metrics separately count UTF8 HTTP request bodies begun and
 decoded response bodies completed inside each observation window. Encoded response
 transfer bytes and requests crossing the window boundary are separate fields.
-Missing bodies, failure or overflow produce unknown metrics. No page/private text,
+Missing bodies, nonboolean/missing response encoding, transport failure,
+requests still in flight at window end, or a selected native source with no
+observed requests/responses produce unknown metrics. Overflow cannot pass. No page/private text,
 URL, header, cookie, command body or token is retained. These bridge and native
 Vessel socket layers overlap and must **not** be summed as total bandwidth.
 CPU/RSS/heap/latency and actual deployed Web public WSS scopes remain distinct.
 
 This mode preserves the full site/media/private/control/reopen/renewal/multi-voyage
 and cleanup programme and all strict Web TLS/CSRF/tenant/principal checks.
-Prepared 2 Rust, 6 Python and 4 Node contract parents have not run. Source checks
+Prepared 2 Rust, 6 Python and 5 Node contract parents have not run. Source checks
 are AST, Rust formatting, Node syntax and diff; Root owns the final focused/full
 coverage/source publication/artifact gate and actual host qualification.
 
