@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T03:20:19.584454+00:00",
-  "source_commit": "4c28730343ef1b3cd2ace6e477f340a09e1a9c25",
+  "measured_at_utc": "2026-10-02T03:46:33.356581+00:00",
+  "source_commit": "993f730413791aa46e90e6bc716c03dfd730a170",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2616,
+    "passed": 2621,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 133957,
-      "covered": 103430,
-      "percent": 77.2113439387266
+      "count": 134095,
+      "covered": 103588,
+      "percent": 77.24971102576531
     },
     "functions": {
-      "count": 12210,
-      "covered": 9400,
-      "percent": 76.986076986077
+      "count": 12222,
+      "covered": 9414,
+      "percent": 77.02503681885126
     },
     "regions": {
-      "count": 221892,
-      "covered": 163024,
-      "notcovered": 58868,
-      "percent": 73.46997638490798
+      "count": 222071,
+      "covered": 163232,
+      "notcovered": 58839,
+      "percent": 73.50441975764508
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=8G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-clipboard-paste-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-clipboard-paste-final/summary-default.json -v; llvm-profdata merge -sparse with 381 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-observed-forward-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-observed-forward-final/summary-default.json -v; llvm-profdata merge -sparse with 381 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,15 +40,13 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed source 4c28730: 2616 parent-workspace tests passed, zero failed, eight ignored. The clipboard parent validates 27 private self-library children; child execution is not counted as additional Cargo targets.",
+    "Clean committed source 993f730: 2621 parent-workspace tests passed, zero failed, eight ignored. Nested private self-library children are retained separately and not counted as additional Cargo targets.",
     "All 541 current workspace files and all 541 prior files retained with 17 distinct current objects (14 Cargo test targets plus three integration entrypoints). Only 381 own profiles merged; 235 foreign raw profiles byte-identical. Known standard-library mapping retained; no denominator exclusions changed.",
-    "Compared with previous e68d65f record: 323 more covered lines, unchanged 133957 measured lines and +0.241122 percentage points. 30527 line gaps remain; #353 full reachable-production objective is unmet.",
-    "Owned Linux clipboard adapter/helper bounds, MIME preference, environment secrecy, PID/start/PGID/provenance and observed leaf-helper retirement passed; Linux-hosted constant PowerShell adapter cases are synthetic and do not establish native Windows APIs or a human clipboard result.",
-    "Nine private paste/image tests passed: changed-field/owner/cancel/cleanup fences, actual owned task retirement, image admission, immutable private public-envelope receipt reopen and upload refusal without Submit or draft loss. No paid provider, Root/system or browser effect was exercised.",
-    "Initial fixture compile errors were corrected to the actual SubmitContent ordered-parts contract and KeyEvent import; focused tests, full formatting and strict workspace all-target/all-feature Clippy -D warnings passed. No production behavior or Cargo dependency changed.",
-    "Small execution/submission branch variation (-3 covered lines across unchanged runtime files) remains in the full measurement; no source or counters were removed to raise the percentage.",
-    "409 prior/focused own profiles were hash-inventoried and archived before the independent measurement; preceding audited objects/export retained. Mixed default HTML/summary rejected. Current corrected summary/detailed JSON/HTML have identical totals/file inventories and 17 objects are archived with hash identity.",
-    "Separate 8GiB/no-swap/private-umask/j1 full measurement passed in 2min34.825sec, peak991.8MiB; exact-object export/detailed/archive passed in 27.109sec under3GiB/no-swap. All evidence remains under ignored target/coverage-report/v103-clipboard-paste-final.",
-    "Prior qualified native CT119 normal bootstrap/critical #403 artifact evidence remains separate. Remaining CT106/rollback/death/context, original-owner Web, browser TLS/full-site/media/cost, Root/platform and full reachable-production obligations are not inferred from this cohort."
+    "Compared with previous 4c28730 record: 158 more covered lines, 138 additional measured lines and +0.038367 percentage points. 30507 line gaps remain; #353 full reachable-production objective is unmet.",
+    "Forward-only admission pins actual schema2, complete observed journal/protocol formats and exact executing recovery installer identity to current source-derived target declarations. Ordinary update/rollback guards remain unchanged; no prior reader declaration, backup or rollback promise is fabricated.",
+    "Focused legacy14 and forward18 tests passed, including real synthetic SQLite format evidence and held-proof mutation refusal. Focused test selections overlap and are not added to the full-suite count. Formatting and strict workspace all-target/all-feature Clippy -D warnings passed.",
+    "381 prior/focused own profiles were archived before the independent measurement; preceding audited objects/export retained. Mixed default HTML/summary rejected. Current corrected summary/detailed JSON/HTML have identical totals/file inventories and 17 objects are archived with hash identity.",
+    "Separate 10GiB/no-swap/private-umask/j1 full measurement passed in 2min34.224sec, peak1.2GiB; corrected export passed in12.577sec under3GiB/no-swap. Evidence remains under ignored target/coverage-report/v103-observed-forward-final.",
+    "Actual CT106 prepare refused the prior qualified artifact because the approved running source predates compatibility declarations. This fix has not yet established native forward recovery; new qualified artifact and fresh owner-reviewed prepare/apply remain required. Native legacy fault/death/context, original-owner Web, browser TLS/full-site/media/cost and full release gates remain open."
   ]
 }

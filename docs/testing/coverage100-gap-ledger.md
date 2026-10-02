@@ -11,10 +11,10 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `4c28730343ef1b3cd2ace6e477f340a09e1a9c25`, recorded in
-`coverage/latest.json`, passed **2,616 tests, zero failures, eight ignored**.
-It covers **103,430 / 133,957 lines (77.211344%)**, 9,400 / 12,210 functions
-and 163,024 / 221,892 regions. **30,527 line gaps remain**, including one
+Clean source `993f730413791aa46e90e6bc716c03dfd730a170`, recorded in
+`coverage/latest.json`, passed **2,621 tests, zero failures, eight ignored**.
+It covers **103,588 / 134,095 lines (77.249711%)**, 9,414 / 12,222 functions
+and 163,232 / 222,071 regions. **30,507 line gaps remain**, including one
 known standard-library line. #353's full reachable-production objective is unmet.
 
 All **541 current workspace files and all 541 prior files** and the same known
@@ -23,22 +23,23 @@ integration entry points as 17 distinct current objects. Only 381 own profiles
 were merged; 235 foreign profiles remained byte-identical. The mixed default
 export is rejected. Exact corrected summary/detailed JSON/HTML agree in totals and
 source inventory; 17 current objects are archived with hash identity. Evidence
-remains under ignored `target/coverage-report/v103-clipboard-paste-final`.
+remains under ignored `target/coverage-report/v103-observed-forward-final`.
 
-Compared with the prior e68d65f record: **323 more covered lines, unchanged measured
-scope and +0.241122 percentage points**. The clipboard parent validates 27 private
-Linux self-library/helper scenarios; nine paste/image tests retain current field/
-owner, exact receipts, private drafts and no automatic Submit after upload refusal.
-Small unchanged execution/submission branch variation remains measured (-3 lines),
-without exclusions. Focused execution, formatting and strict workspace all-target/
-all-feature Clippy passed. 409 prior/focused own profiles and previous object/export
-evidence were preserved before this independent measurement.
+Compared with the prior 4c28730 record: **158 more covered lines, 138 additional
+measured lines and +0.038367 percentage points**. The new forward-only format
+admission derives target formats from current compiled source, pins every observed
+schema/protocol and the executing installer hash, and preserves ordinary rollback
+refusal and strict held raw proof. Focused legacy14 and forward18 selections passed
+(they overlap); formatting and strict workspace all-target/all-feature Clippy passed.
+381 prior/focused own profiles and previous object/export evidence were preserved.
 
-No human clipboard, native Windows/macOS API, paid provider, Root/system, browser
-or 100% result is inferred. Native CT119 normal legacy bootstrap and the critical
-#403 artifact remain separate evidence; CT106/forced rollback/death/context,
-original-owner Web/browser TLS/full-site/media/client cost and full release readiness
-retain their unfinished obligations. See [reachability map](coverage353-reachability-map.md),
+Native CT106 fresh prepare/apply remains required after a qualified new archive.
+No native Windows/macOS API, paid provider, Root/system, browser or 100% result is
+inferred. Native CT119 normal legacy bootstrap and #403's archive remain separate;
+forced rollback/death/context, original-owner Web/browser TLS/full-site/media/client
+cost and full release readiness retain their unfinished obligations. See
+[reachability map](coverage353-reachability-map.md),
+[forward recovery](ordinary-forward-recovery.md),
 [clipboard cohort](coverage353-owned-clipboard-prep.md) and
 [paste/image cohort](coverage353-owned-paste-prep.md).
 
@@ -46,20 +47,20 @@ retain their unfinished obligations. See [reachability map](coverage353-reachabi
 
 Directory rows contain nested files; direct-file rows contain only files directly
 in that directory. These are measured gaps, not universal reachability or assertion
-classifications. Workspace source contributes **30,526 uncovered lines**; one
+classifications. Workspace source contributes **30,506 uncovered lines**; one
 retained standard-library gap remains. No production file was excluded.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
 | `vessel/src/process/` | 8,536 | 19,111 |
-| `helm/src/process_client/` | 7,657 | 34,087 |
-| `voyage/src (direct files)` | 2,228 | 13,237 |
+| `helm/src/process_client/` | 7,658 | 34,087 |
+| `voyage/src (direct files)` | 2,211 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
-| `installer/src/remote/` | 1,384 | 2,542 |
+| `installer/src/remote/` | 1,393 | 2,680 |
 | `voyage/src/tools/` | 1,191 | 7,865 |
 | `installer/src (direct files)` | 1,109 | 2,308 |
 | `voyage/src/attachment/` | 862 | 12,458 |
-| `voyage/src/server/` | 775 | 5,687 |
+| `voyage/src/server/` | 762 | 5,687 |
 | `helm/src (direct files)` | 520 | 3,096 |
 | `vessel/src (direct files)` | 654 | 1,556 |
 | `voyage/src/github/` | 521 | 3,177 |
