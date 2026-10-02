@@ -566,15 +566,38 @@ async fn same_session_new_reply_owner_is_refused_before_catalogue_has_caught_up(
 }
 
 #[tokio::test]
-async fn actual_pending_read_deadline_keeps_options_unavailable_and_late_reply_never_replays() {
+async fn actual_transport_read_deadline_keeps_options_unavailable_and_late_reply_never_replays() {
     let mut j = Journey::new().await;
     j.text("/tool ");
     j.app.sync_completion();
     let wire = j.command("tools", None).await;
-    let update = tokio::time::timeout(Duration::from_secs(28), j.updates.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let started = tokio::time::Instant::now();
+    let mut heartbeat_replies = 0;
+    let update = tokio::time::timeout(Duration::from_secs(28), async {
+        loop {
+            tokio::select! {
+                update=j.updates.recv()=>break update.unwrap(),
+                frame=j.peer.socket.next()=>match frame {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Ping(bytes)))=>{
+                        j.peer.socket.send(tokio_tungstenite::tungstenite::Message::Pong(bytes)).await.unwrap();
+                        heartbeat_replies+=1;
+                    },
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Pong(_)))=>{},
+                    other=>panic!("held read must retain the actual socket and emit no new Commands: {other:?}"),
+                }
+            }
+        }
+    }).await.unwrap();
+    // This ready connection reaches the protocol request deadline before the
+    // completion's outer25s bound; actual Ping/Pong prevents a liveness failure
+    // from masquerading as a completed request timeout.
+    assert!(
+        started.elapsed() >= Duration::from_secs(voyage_protocol::duplex::DEADLINE_SECONDS - 1)
+    );
+    assert!(
+        heartbeat_replies >= 2,
+        "actual heartbeat replies keep this socket live through request expiry"
+    );
     j.app.update(update);
     assert!(j.paint().contains("Options unavailable"));
     j.preserved("/tool ");
@@ -745,7 +768,9 @@ async fn real_private_account_modal_consumes_input_and_periodic_completion_sends
     tokio::time::timeout(WAIT, async {
         loop {
             j.app.account_tick();
-            if j.paint_accounts().contains("account-aware upgrade") {
+            if j.paint_accounts()
+                .contains("Accounts unavailable or access denied")
+            {
                 break;
             }
             tokio::task::yield_now().await;
@@ -753,6 +778,10 @@ async fn real_private_account_modal_consumes_input_and_periodic_completion_sends
     })
     .await
     .unwrap();
+    assert!(
+        !j.paint_accounts().contains("account-aware upgrade"),
+        "internal capability diagnostic is not the public modal notice"
+    );
     j.key(KeyCode::Char('X'));
     j.app
         .input(Event::Paste("SYNTHETIC-PRIVATE-MODAL-PAYLOAD".into()))
@@ -1007,22 +1036,22 @@ async fn current_inference_choices_reject_unsafe_values_and_never_apply_them_on_
 
 #[tokio::test]
 async fn pending_decision_suggestions_are_current_incarnation_and_kind_without_decision_effects() {
-    let mut j = Journey::new().await;
     let approval = Uuid::new_v4();
     let question = Uuid::new_v4();
     let foreign = Uuid::new_v4();
     let run = Uuid::new_v4();
     let expires = chrono::Utc::now().timestamp_millis().max(0) as u64 + 60000;
-    j.app.views.get_mut(&j.target).unwrap().snapshot.as_mut().unwrap().decisions=serde_json::from_value(json!([
-        {"decision_id":approval,"run_id":run,"incarnation":j.incarnation,"expires_at_ms":expires,"request":{"kind":"approval"}},
-        {"decision_id":question,"run_id":run,"incarnation":j.incarnation,"expires_at_ms":expires,"request":{"kind":"question"}},
-        {"decision_id":foreign,"run_id":run,"incarnation":Uuid::new_v4(),"expires_at_ms":expires,"request":{"kind":"approval"}}
-    ])).unwrap();
     for (command, id, suffix) in [
         ("approve", approval, ""),
         ("deny", approval, ""),
         ("answer", question, " "),
     ] {
+        let mut j = Journey::new().await;
+        j.app.views.get_mut(&j.target).unwrap().snapshot.as_mut().unwrap().decisions=serde_json::from_value(json!([
+            {"decision_id":approval,"run_id":run,"incarnation":j.incarnation,"expires_at_ms":expires,"request":{"kind":"approval"}},
+            {"decision_id":question,"run_id":run,"incarnation":j.incarnation,"expires_at_ms":expires,"request":{"kind":"question"}},
+            {"decision_id":foreign,"run_id":run,"incarnation":Uuid::new_v4(),"expires_at_ms":expires,"request":{"kind":"approval"}}
+        ])).unwrap();
         let text = format!("/{command} ");
         j.text(&text);
         j.app.sync_completion();
@@ -1031,18 +1060,28 @@ async fn pending_decision_suggestions_are_current_incarnation_and_kind_without_d
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, expected);
         assert!(!j.paint().contains(&foreign.to_string()));
-        j.key(KeyCode::Tab);
+        assert!(
+            j.app
+                .completion_input(&KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
+                .unwrap()
+        );
         j.preserved(&expected);
+        // The full input dispatcher synchronizes the current pending-decision
+        // form first. Its Tab is form navigation, never a composer completion.
+        j.text(&text);
+        j.key(KeyCode::Tab);
+        j.preserved(&text);
+        assert!(j.app.interactions.borrow().focused);
+        assert_eq!(
+            j.app.views[&j.target]
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .decisions
+                .len(),
+            3
+        );
+        j.quiet().await;
+        j.finish().await;
     }
-    assert_eq!(
-        j.app.views[&j.target]
-            .snapshot
-            .as_ref()
-            .unwrap()
-            .decisions
-            .len(),
-        3
-    );
-    j.quiet().await;
-    j.finish().await;
 }
