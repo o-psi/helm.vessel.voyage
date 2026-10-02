@@ -10,6 +10,7 @@ import json
 import sys
 import tempfile
 import types
+import threading
 from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('native_legacy_history',Path(__file__).with_name('native_legacy_history.py'))
@@ -198,7 +199,7 @@ class ReadOnlyCheckpointContracts(unittest.TestCase):
 
 class ObserverCleanupContracts(unittest.TestCase):
     def test_no_captured_helper_never_fabricates_a_cleanup_witness(self):
-        watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
+        watcher=object.__new__(m.ObserverWatch);watcher.lock=threading.RLock();watcher.closed=False;watcher.outcome=None
         watcher.stop=types.SimpleNamespace(set=lambda:None)
         watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
         watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[];watcher.witnesses={};watcher.reads=[{'index':0,'session_id':SESSION}]
@@ -210,7 +211,7 @@ class ObserverCleanupContracts(unittest.TestCase):
 
     def test_exact_observed_helper_requires_pidfd_exit_and_positive_reaping(self):
         for retired in [False,True]:
-            watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
+            watcher=object.__new__(m.ObserverWatch);watcher.lock=threading.RLock();watcher.closed=False;watcher.outcome=None
             watcher.stop=types.SimpleNamespace(set=lambda:None)
             watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
             watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[];watcher.reads=[{'index':0,'session_id':SESSION}]
@@ -223,7 +224,7 @@ class ObserverCleanupContracts(unittest.TestCase):
 
 
     def test_two_reads_with_only_one_observed_helper_keep_cleanup_unknown(self):
-        watcher=object.__new__(m.ObserverWatch);watcher.closed=False;watcher.outcome=None
+        watcher=object.__new__(m.ObserverWatch);watcher.lock=threading.RLock();watcher.closed=False;watcher.outcome=None
         watcher.stop=types.SimpleNamespace(set=lambda:None)
         watcher.thread=types.SimpleNamespace(join=lambda timeout:None,is_alive=lambda:False)
         watcher.supervisor=1037;watcher.started=500;watcher.baseline=set();watcher.errors=[]

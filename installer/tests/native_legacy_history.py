@@ -154,6 +154,7 @@ class ObserverWatch:
         self.expected_sha = q.digest(self.binary)
         self.image = self.binary.stat()
         self.directories = {os.fsencode(q.STATE / 'sessions' / session) for session in sessions}
+        self.lock = threading.RLock()
         self.witnesses, self.errors = {}, []
         self.active_read, self.reads = None, []
         self.stop = threading.Event()
@@ -184,6 +185,10 @@ class ObserverWatch:
         return children
 
     def scan(self):
+        with self.lock:
+            return self._scan()
+
+    def _scan(self):
         identities = set()
         for pid in self.children():
             descriptor = None
@@ -229,16 +234,18 @@ class ObserverWatch:
         return identities
 
     def begin_read(self, session):
-        require(self.active_read is None, 'overlapping old public reads refused')
-        # Capture already-running metadata children before opening this interval;
-        # they cannot serve as a newly observed Snapshot helper witness.
-        self.scan()
-        index = len(self.reads)
-        self.reads.append({'index':index,'session_id':session})
-        self.active_read = (index, session)
+        with self.lock:
+            require(self.active_read is None, 'overlapping old public reads refused')
+            # Capture already-running metadata children before opening this interval;
+            # they cannot serve as a newly observed Snapshot helper witness.
+            self.scan()
+            index = len(self.reads)
+            self.reads.append({'index':index,'session_id':session})
+            self.active_read = (index, session)
 
     def end_read(self):
-        self.active_read = None
+        with self.lock:
+            self.active_read = None
 
     def observe(self):
         while not self.stop.wait(.001):
@@ -253,36 +260,37 @@ class ObserverWatch:
         if self.closed:return self.outcome
         self.stop.set();self.thread.join(timeout=3)
         require(not self.thread.is_alive(), 'observer watcher retirement unconfirmed')
-        records = []
-        try:
-            final = self.scan()
-            for witness in self.witnesses.values():
-                retired = self.q.retired(witness)
-                records.append({**{k:v for k,v in witness.items() if k!='descriptor'},
-                                'pidfd_exit_observed':self.q.pidfd_exited(witness['descriptor']),
-                                'exit_and_reaping_observed':retired})
-            read_witnesses = [{'index':read['index'],'session_id':read['session_id'],
-                               'observed_helpers':[(row['pid'],row['start_ticks']) for row in records
-                                    if row.get('snapshot_read_interval') == read['index']
-                                    and row.get('session_id') == read['session_id']]} for read in self.reads]
-            known = (bool(read_witnesses) and all(read['observed_helpers'] for read in read_witnesses)
-                     and all(row['exit_and_reaping_observed'] for row in records))
-            # No sampled helper is not a fabricated witness of a transient helper.
-            self.outcome = {'supervisor_pid':self.supervisor,'supervisor_start_ticks':self.started,
-                    'direct_children_baseline':sorted(self.baseline),'direct_children_end':sorted(final),
-                    'direct_children_unchanged':self.baseline==final,'observed_helpers':records,
-                    'snapshot_read_intervals':read_witnesses,
-                    'cleanup_observation':'observed' if known and self.baseline==final and not self.errors else 'unknown',
-                    'pending_observation_categories':sorted(set(self.errors)), 'no_signals_or_effects':True}
-            return self.outcome
-        finally:
-            close_error = None
-            for witness in self.witnesses.values():
-                try:os.close(witness['descriptor'])
-                except OSError as error:close_error = close_error or error
-            self.witnesses.clear();self.closed = True
-            if self.outcome is None:self.outcome = {'cleanup_observation':'unknown','no_signals_or_effects':True}
-            if close_error is not None:raise close_error
+        with self.lock:
+            records = []
+            try:
+                final = self.scan()
+                for witness in self.witnesses.values():
+                    retired = self.q.retired(witness)
+                    records.append({**{k:v for k,v in witness.items() if k!='descriptor'},
+                                    'pidfd_exit_observed':self.q.pidfd_exited(witness['descriptor']),
+                                    'exit_and_reaping_observed':retired})
+                read_witnesses = [{'index':read['index'],'session_id':read['session_id'],
+                                   'observed_helpers':[(row['pid'],row['start_ticks']) for row in records
+                                        if row.get('snapshot_read_interval') == read['index']
+                                        and row.get('session_id') == read['session_id']]} for read in self.reads]
+                known = (bool(read_witnesses) and all(read['observed_helpers'] for read in read_witnesses)
+                         and all(row['exit_and_reaping_observed'] for row in records))
+                # No sampled helper is not a fabricated witness of a transient helper.
+                self.outcome = {'supervisor_pid':self.supervisor,'supervisor_start_ticks':self.started,
+                        'direct_children_baseline':sorted(self.baseline),'direct_children_end':sorted(final),
+                        'direct_children_unchanged':self.baseline==final,'observed_helpers':records,
+                        'snapshot_read_intervals':read_witnesses,
+                        'cleanup_observation':'observed' if known and self.baseline==final and not self.errors else 'unknown',
+                        'pending_observation_categories':sorted(set(self.errors)), 'no_signals_or_effects':True}
+                return self.outcome
+            finally:
+                close_error = None
+                for witness in self.witnesses.values():
+                    try:os.close(witness['descriptor'])
+                    except OSError as error:close_error = close_error or error
+                self.witnesses.clear();self.closed = True
+                if self.outcome is None:self.outcome = {'cleanup_observation':'unknown','no_signals_or_effects':True}
+                if close_error is not None:raise close_error
 
 
 def qualify_restored(q, args):
