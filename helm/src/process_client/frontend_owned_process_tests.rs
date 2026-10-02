@@ -551,15 +551,21 @@ async fn journey(mode: &str) {
             assert_eq!(deletion["status"], "applied");
             assert_eq!(deletion["cleanup"], "observed");
             assert!(Uuid::parse_str(deletion["command_id"].as_str().unwrap()).is_ok());
+            let retained = snapshot(&client, &process).await;
+            assert_eq!(retained["lifecycle"]["deleted"], true);
+            assert!(retained["messages"].as_array().unwrap().is_empty());
             assert!(
-                client
-                    .voyage(
-                        process.session_id,
-                        process.incarnation,
-                        VoyageCommand::Snapshot
-                    )
-                    .await
-                    .is_err()
+                owned_pids(&vessel.directory, &vessel.voyage)
+                    .into_iter()
+                    .all(|(pid, _)| {
+                        let arguments =
+                            std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                        !matches!(
+                            arguments.split(|byte| *byte == 0).nth(1),
+                            Some(b"serve" | b"serve-bound")
+                        )
+                    }),
+                "deleted snapshot observation revived an execution owner"
             );
         } else {
             let saved = terminal(&client, process).await;
