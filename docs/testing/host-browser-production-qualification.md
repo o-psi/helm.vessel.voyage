@@ -195,6 +195,7 @@ CUA requests are explicit UI/observation operations:
 | Operation | Actual action and proof |
 | --- | --- |
 | `open_fixture` | Open exact supplied route in the existing authenticated browser; verify selected title/route; click real Browser dock once; replay marker/counter. Keep the other fixture tab open. |
+| `measure_arm` | Poll the already installed real CDP observers, choose a shared UTC start about 15 seconds ahead, and return `{started_at_ms}`. Root writes the exact private arm response before that time. This admits no website action. |
 | `measure_window` | Observe only the supplied qualification Web tabs for the actual 10-second window. Per viewer return label, exact scope `actual CUA qualification Web tab renderer and public WSS application payload`, task seconds, heap-used bytes, sent/received application bytes and `selected_connection_observed:true`. If that observer is unavailable, return `{label,status:"unavailable"}`. Interaction continues but measurements cannot pass. Never substitute whole-browser/task-proxy metrics. |
 | `observe_counter`, `observe_public_site`, `observe_site_classes` | Read replay only, no input. Verify exact counter/marker or CSS/shadow/authenticated image/cross+nested frames. Public screenshots may be retained here. |
 | `nested_child_once_return` | Observe the native dynamic/child result, click the nested child's benign button exactly once in Web, observe its replay change, explicitly Continue agent. Preserve refusal/unknown and never retry. |
@@ -280,6 +281,26 @@ heap/node deltas and actual start/duration; the harness checks Web/host alignmen
 A late sample is incomplete. Root must coordinate actual CT/CUA windows rather
 than filling numbers for an interval that already ended. These collectors and
 regressions are prepared source, not executed native/cost proof.
+
+The executable CUA path uses an explicit arm handshake for every measured Web
+window. On `measure_arm`, Root polls each owned observer, chooses
+`started_at_ms = Date.now() + 15000`, and returns that timestamp through the
+approved host conduit. CT publishes `measure_window` immediately and waits for
+that future start before running its native/host observers. Root then runs one
+bounded CUA call:
+
+```js
+const viewers = await Promise.all(ownedObservers.map(
+  observer => observer.measureAt(EXACT_ARMED_UTC_START, 10000)
+));
+// Return only {viewers} to this window's matching private response.
+```
+
+This waits for the real future interval within the active tool call; it assumes
+no detached CDP/background timer survives a tool turn. Arm receipt must reach CT
+with at least one second remaining, within 30 seconds, and the real sample must
+align within one second. A delayed host conduit is incomplete, never a reason to
+backdate metrics or increase effect timeouts. The overall 600-second bound stays.
 
 ### Exact Home Proxmox → CT106 preparation order
 

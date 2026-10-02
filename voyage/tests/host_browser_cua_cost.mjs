@@ -90,7 +90,7 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
   if(metricNames.some(name=>!Number.isFinite(all[name])))fail();
   return Object.fromEntries(metricNames.map(name=>[name,all[name]]));
  }
- return {
+ const observer={
   poll,
   async begin(){
    await poll();if(sockets.size!==1||totals.authenticated_acks!==totals.connections||!totals.connections||window)fail();
@@ -114,4 +114,10 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
   },
   async stop(){closed=true;await cap.send('Performance.disable',{}, {target});await cap.send('Network.disable',{}, {target});}
  };
+ observer.measureAt=async(startedAt,milliseconds=10000)=>{
+  if(!Number.isSafeInteger(startedAt)||milliseconds!==10000||startedAt-Date.now()>30000||Date.now()-startedAt>1000)fail();
+  await new Promise(resolve=>setTimeout(resolve,Math.max(0,startedAt-Date.now())));
+  await observer.begin();await new Promise(resolve=>setTimeout(resolve,milliseconds));return observer.finish();
+ };
+ return observer;
 }

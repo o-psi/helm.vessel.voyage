@@ -412,11 +412,21 @@ export async function runCuaProductionQualification(context,cfg){
  async function measure(condition,pages,webLabels,ledger){
   stage('cost_'+condition);
   for(let index=0;index<3;index++){
+   let scheduled=Date.now();
+   if(webLabels.length){
+    const arm=await web('measure_arm',{condition,index,milliseconds:10000,labels:webLabels});
+    assert.ok(Number.isSafeInteger(arm.started_at_ms)&&arm.started_at_ms-Date.now()>=1000&&arm.started_at_ms-Date.now()<=30000);
+    scheduled=arm.started_at_ms;
+   }
+   // Publish the exact requested future window before it starts. Root's CUA
+   // collector awaits that time in one bounded call; no background API or
+   // retrospectively manufactured metric sample is needed.
+   const actualWeb=webLabels.length?web('measure_window',{condition,index,milliseconds:10000,started_at_ms:scheduled,labels:webLabels}):Promise.resolve({viewers:[]});
+   await sleep(Math.max(0,scheduled-Date.now()));
    const started=new Date().toISOString();await save(path.join(cfg.output,`window-${condition}-${index}.json`),{schema:1,condition,index,started});
    const nativeBefore=await nativeSnapshot(cfg);
    const nativeAfter=sleep(10000).then(()=>nativeSnapshot(cfg));
    const nativeCosts=await Promise.all(pages.map(item=>browserCost(context,item.page,{nativeOperationUrls:[new URL('/operation',item.page.url()).href],maxMilliseconds:10000})));
-   const actualWeb=webLabels.length?web('measure_window',{condition,index,milliseconds:10000,started_at_ms:Date.parse(started),labels:webLabels}):Promise.resolve({viewers:[]});
    const [hostRaw,client,cua,nativeEnd]=await Promise.all([
     sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000),
     localCost(),actualWeb,nativeAfter]);
