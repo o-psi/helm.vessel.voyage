@@ -1,36 +1,38 @@
 {
-  "measured_at_utc": "2026-10-02T19:36:02+00:00",
-  "source_commit": "fb7ca4bf1116e07dbcc8bcab21e6fcadf6da6d0e",
+  "measured_at_utc": "2026-10-02T20:40:17.628062+00:00",
+  "source_commit": "71d0d8bd8c38ac6da3ffac0df87940bf5d10ca18",
   "dirty": false,
+  "source_fingerprint_sha256": "deb89a921c49c45937baf576568b50cd784ace9e91e3c30fb41b7e8523cb07f0",
+  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo file names, NUL, exact bytes, NUL",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 3092,
+    "passed": 3100,
     "failed": 0,
-    "ignored": 8
+    "ignored": 10
   },
   "totals": {
     "lines": {
-      "count": 135808,
-      "covered": 109986,
-      "percent": 80.98639255419415
+      "count": 136905,
+      "covered": 110870,
+      "percent": 80.98316350754172
     },
     "functions": {
-      "count": 12371,
-      "covered": 9932,
-      "percent": 80.28453641581117
+      "count": 12477,
+      "covered": 10012,
+      "percent": 80.24364831289573
     },
     "regions": {
-      "count": 225021,
-      "covered": 173508,
-      "notcovered": 51513,
-      "percent": 77.1074699694695
+      "count": 226767,
+      "covered": 174932,
+      "notcovered": 51835,
+      "percent": 77.14173579048098
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-viewer-opening-intent-account-isolated-final/html -j1; inside bounded systemd user unit voyage-v103-viewer-opening-intent-account-isolated-final after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-viewer-opening-intent-account-isolated-final/summary-default.json -v; llvm-profdata merge -sparse with572 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
+  "command": "CARGO_TARGET_DIR=$VOYAGE_SHARED_TARGET CARGO_LLVM_COV_TARGET_DIR=$VOYAGE_SHARED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata RUST_TEST_THREADS=1 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $VOYAGE_COVERAGE_REPORT/automatic-html -j 8; bounded systemd user service MemoryMax=26G, MemorySwapMax=0, UMask=0077, RuntimeMaxSec=2400",
+  "report_command": "llvm-profdata merge -sparse -f $WORKSPACE_PROFILE_LIST -o $CURRENT_PROFDATA; llvm-cov export/show with all 19 archived current workspace objects and unchanged cargo-llvm-cov filename exclusions; packaging/reconcile_coverage_lines.py --detailed $DETAILED --lcov $LCOV --source-root $PWD --output $ACCOUNTING",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,13 +42,11 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean measured source fb7ca4b: 3092 workspace Rust tests passed, 0 failed, 8 ignored across15 parent Cargo targets. Formatting and strict all-target/all-feature Clippy passed. Focused shared browser source checks passed26/26 separately; JavaScript tests are not Rust coverage.",
-    "Exactly18 current objects (15test targets and3 real entrypoints),572 own profiles,235 foreign profiles byte-identical; all543 previous workspace mappings retained plus prior standard-library mapping. Explicit current-object summary/detail/HTML/LCOV agree. Default cached mixed-object report retained but not published.",
-    "Lines109986/135808=80.98639255419415%; 34 fewer covered lines than prior90bb586, unchanged denominator/exclusions. Eight current-file deltas total-34 and arise in unchanged terminal/decoder/command recovery/suspension/browser/resource/main source paths; run-to-run execution variation is not a correctness failure or justification to narrow scope. The fixture isolation changes are under cfg(test) and original participant criteria remain intact.",
-    "Every544 file summary/12371 function group/JSON-LCOV line counter reconciled:25822 aggregate gaps vs23757 distinct zeros;2065=143 maximum/union+1949 overlapping groups-27 shadowing. No reachability claim or scope change.",
-    "Gate744b7d8403574640bf2ff03d270b18b3 exit0,360seconds,7521562624Bpeak; export0e4eab3c019d48669d9559005f134ca2 exit0,7480037376Bpeak; accountingf98661c144f6456fb1579c6b23262c16 exit0. Resource bounds retained:10GiB/zero swap/j1/UMask0077/2400seconds and separately1GiB accounting. All evidence retained under ignored target.",
-    "Prior9539 gate3d49bca335d04058adf0fa5f939d3239 failed four participant fixtures at device-service construction because production default_host selected the real user account registry. Corrected tests construct an explicit owned Registry and real DeviceService authorization callback without HOME/XDG changes, private user-store reads or policy weakening. Failed logs/profiles are preserved, not counted passing.",
-    "Browser viewer startOnConnect and Web consumed opening intent prevent incidental remounts from restarting a stopped browser while retaining explicit Start and normal default/native opening. Web424d8d2 full214checks/typecheck/build passed and actual scoped deployment8164933cd4a944efa432e684d8bf0abf completed, public manifest/sixassets matched and authenticated5/5 reload observed. Native full333 qualification remains pending.",
-    "User moved353 to v1.1.1. Current v1.0.3 open scope is333/375; stable release unpublished. Owned replacement browser08a21 has exact16-process guardian/scratch/lock/slot cleanup proof, expired job770 retired and dotenv disabled; original5385 route restoration remains owed. CT129 disposable lifetime stopped with receipts/quarantine/operator changes preserved. This new core delivery still requires publication and hosted build/artifact follow-through."
+    "Full default workspace scope, 16 parent test targets: 3100 passed, 0 failed, 10 ignored. Ignored live-provider checks were separately authorized and executed; they are not included in these coverage counters.",
+    "Exact 19 current workspace objects and 573 workspace-prefixed profiles; 546 mapped files include the same distribution std support map retained in the prior record. No foreign workspace maps. Automatic reports selecting historical binaries were rejected; every current target remains in the audited exports.",
+    "Summary/detail/archived-object LCOV/HTML agree; every file and line counter reconciled with unchanged exclusions. Source content fingerprint remained unchanged during the measurement. Shared compilation cache and a real private fixture target directory avoid unsafe symlink ancestors without weakening checks.",
+    "Lines 110870/136905 = 80.98316350754172%; delta -0.0032290466524358408 percentage points. Scope gained 1097 lines; no scope narrowing.",
+    "Strict affected-package all-target/all-feature Clippy, formatting and documentation paths/links passed. SuperGrok browser device authorization, three streamed retained-context/tool replies, standard native schemas, 15-model discovery, and an independent supervised file-tool journey with observed cleanup passed separately. No API-key fallback, native macOS/Windows or installation claim.",
+    "Earlier failing measurements and diagnostics remain in ignored evidence. CLI read-side metadata initialization was corrected; fixture layout was corrected; the existing managed-shell cleanup case passed an inspected bounded retry and both later complete measurements. xAI u64 schema interoperability was fixed without changing authoritative runtime tool contracts."
   ]
 }
