@@ -332,6 +332,38 @@ try {
 } catch { root.textContent='Viewer unavailable. Return to Helm and explicitly open a fresh viewer. Host browser has not been closed.'; }
 "#;
 
+// Cancellation also completes Axum's graceful server future. If both select
+// branches are ready, a healthy requested shutdown is still normal retirement;
+// unsolicited completion, I/O failure and join failure remain explicit errors.
+fn viewer_server_completion(
+    completion: &std::result::Result<std::io::Result<()>, tokio::task::JoinError>,
+    stop_requested: bool,
+) -> Result<()> {
+    ensure!(
+        stop_requested && matches!(completion, Ok(Ok(()))),
+        "Local viewer server ended"
+    );
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ViewerServerRetirement {
+    Graceful,
+    BoundedAbort,
+}
+fn viewer_server_retirement(
+    completion: std::result::Result<std::io::Result<()>, tokio::task::JoinError>,
+    abort_requested: bool,
+) -> Result<ViewerServerRetirement> {
+    match completion {
+        Ok(Ok(())) => Ok(ViewerServerRetirement::Graceful),
+        Err(error) if abort_requested && error.is_cancelled() => {
+            Ok(ViewerServerRetirement::BoundedAbort)
+        }
+        _ => anyhow::bail!("Local viewer server ended"),
+    }
+}
+
 async fn run(
     client: Client,
     session: Uuid,
@@ -402,6 +434,7 @@ async fn run(
             .with_graceful_shutdown(shutdown.cancelled_owned())
             .await
     });
+    let mut completed_server = None;
     let result: Result<()> = async {
         loop {
             tokio::select! {
@@ -420,7 +453,12 @@ async fn run(
                         a.exchange(op).await?;
                     } else { status.send_modify(|s|s.summary="Connect the viewer before requesting browser control or close".into()); }
                 }
-                _ = &mut server => { anyhow::bail!("Local viewer server ended"); }
+                completed = &mut server => {
+                    let checked = viewer_server_completion(&completed, stop.is_cancelled());
+                    completed_server = Some(completed);
+                    checked?;
+                    break;
+                }
             }
         }
         Ok(())
@@ -442,18 +480,24 @@ async fn run(
             )
             .await;
     }
-    if !server.is_finished()
-        && tokio::time::timeout(Duration::from_secs(2), &mut server)
-            .await
-            .is_err()
-    {
-        server.abort();
-        let _ = server.await;
-    }
+    // A selected completion was consumed once above. Otherwise poll/await even
+    // an already-finished task; is_finished alone is not a successful I/O result.
+    let (completion, abort_requested) = if let Some(completed) = completed_server {
+        (completed, false)
+    } else {
+        match tokio::time::timeout(Duration::from_secs(2), &mut server).await {
+            Ok(completed) => (completed, false),
+            Err(_) => {
+                server.abort();
+                (server.await, true)
+            }
+        }
+    };
+    let retirement = viewer_server_retirement(completion, abort_requested);
     std::fs::remove_file(&launcher).context("Private launcher cleanup failed")?;
     drop(_private);
     std::fs::remove_dir(&root).context("Private viewer directory cleanup failed")?;
-    result
+    result.and(retirement.map(|_| ()))
 }
 
 pub(super) async fn run_connected(client: Client, session: Uuid) -> Result<()> {

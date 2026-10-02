@@ -32,7 +32,7 @@ fn add_view(app: &mut App, route: super::super::state::Route) -> Target {
     let mut view = View::new(serde_json::from_value(json!({"session_id":target.session,"incarnation":Uuid::new_v4(),"workspace":"/synthetic-workspace","state":"live","name":"Other synthetic voyage"})).unwrap());
     view.snapshot = Some(
         serde_json::from_value(
-            json!({"session_id":target.session,"revision":17,"messages":[],"decisions":[]}),
+            json!({"session_id":target.session,"revision":17,"model":"synthetic-model","messages":[],"decisions":[]}),
         )
         .unwrap(),
     );

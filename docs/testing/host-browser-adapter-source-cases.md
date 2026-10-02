@@ -78,3 +78,24 @@ legitimate Native public credential and the authorized deployed fixture run.
 No lines or targets are excluded from coverage, no platform is classified as
 unreachable by these tests, and loopback results do not qualify native
 macOS/Windows or an actual website/browser process.
+
+
+## Observed shutdown correction from the first full gate
+
+Frozen source `78ff047c63114ae972b1e6aa5868ba957814d5b8` failed six Helm
+parents. Four App helpers omitted the required Snapshot `model` fixture field.
+The mirror-refusal and queued-control cases exposed a production lifetime race:
+requested Handle cancellation also completes Axum graceful shutdown, so an
+unbiased select could treat that healthy completion as unexpected. The cleanup
+tail also skipped inspecting a server result that was already finished.
+
+[Recorded defect](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5947330710).
+The correction retains any selected join/I/O completion exactly once, accepts
+only requested healthy completion in the select branch, and inspects even an
+already-finished server during cleanup. Bounded explicit abort retirement is
+distinct from graceful completion; unsolicited completion or I/O/join errors
+remain errors. Original socket, full Detach binding, private path removal, queue
+and unknown-effect/no-replay assertions remain unchanged. Two prepared boundary
+cases use actual Tokio completions to cover healthy/cancelled/failed outcomes.
+These changes are source-only; focused and fresh full verification are pending.
+The failed full log/report remains retained and is not a passing measurement.

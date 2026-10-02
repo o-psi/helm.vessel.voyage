@@ -905,3 +905,67 @@ async fn missing_socket_handle_ends_without_launcher_or_implicit_host_start() {
     assert!(client.connection_state().borrow().socket_id.is_none());
     assert!(!root.path().join("absent-vessel").exists());
 }
+
+#[tokio::test]
+async fn requested_healthy_server_completion_is_normal_but_failure_and_unsolicited_end_are_not() {
+    let stop = CancellationToken::new();
+    stop.cancel();
+    let healthy = tokio::spawn(async { Ok::<(), std::io::Error>(()) });
+    viewer_server_completion(&healthy.await, stop.is_cancelled()).unwrap();
+    let unsolicited = tokio::spawn(async { Ok::<(), std::io::Error>(()) });
+    assert!(viewer_server_completion(&unsolicited.await, false).is_err());
+    for stop_requested in [false, true] {
+        let failed = tokio::spawn(async {
+            Err::<(), _>(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "owned fixture",
+            ))
+        });
+        assert!(viewer_server_completion(&failed.await, stop_requested).is_err());
+    }
+    let interrupted = tokio::spawn(std::future::pending::<std::io::Result<()>>());
+    interrupted.abort();
+    assert!(viewer_server_completion(&interrupted.await, true).is_err());
+}
+
+#[tokio::test]
+async fn completed_server_result_and_bounded_abort_retirement_are_inspected_exactly_once() {
+    let healthy = tokio::spawn(async { Ok::<(), std::io::Error>(()) });
+    tokio::time::timeout(WAIT, async {
+        while !healthy.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        viewer_server_retirement(healthy.await, false).unwrap(),
+        ViewerServerRetirement::Graceful
+    );
+    let failed = tokio::spawn(async {
+        Err::<(), _>(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "owned fixture",
+        ))
+    });
+    tokio::time::timeout(WAIT, async {
+        while !failed.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(viewer_server_retirement(failed.await, false).is_err());
+    let bounded = tokio::spawn(std::future::pending::<std::io::Result<()>>());
+    bounded.abort();
+    assert_eq!(
+        viewer_server_retirement(bounded.await, true).unwrap(),
+        ViewerServerRetirement::BoundedAbort
+    );
+    let unsolicited = tokio::spawn(std::future::pending::<std::io::Result<()>>());
+    unsolicited.abort();
+    assert!(viewer_server_retirement(unsolicited.await, false).is_err());
+    let failed_during_stop =
+        tokio::spawn(async { Err::<(), _>(std::io::Error::other("owned fixture")) });
+    assert!(viewer_server_retirement(failed_during_stop.await, true).is_err());
+}
