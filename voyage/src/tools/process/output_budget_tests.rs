@@ -31,25 +31,28 @@ fn bounded_ascii_reads_deliver_all_source_once_with_exact_remaining_metadata() {
 }
 #[test]
 fn valid_unicode_budget_boundaries_never_create_replacement_characters() {
-    let capture = capture("界".repeat(32).as_bytes());
-    for max in 32..=48 {
-        let mut cursor = 0;
-        let mut delivered = String::new();
-        while cursor < capture.bytes.len() {
-            let (text, next) = unread_chunk(&capture, cursor, max).unwrap();
-            assert!(text.len() <= max && next > cursor && next <= capture.bytes.len());
-            assert_eq!(next % "界".len(), 0);
-            assert!(!text.contains('\u{fffd}'));
-            assert_eq!(
-                payload(&text),
-                std::str::from_utf8(&capture.bytes[cursor..next]).unwrap()
-            );
-            delivered.push_str(payload(&text));
-            cursor = next;
+    for glyph in ["é", "界", "🛶"] {
+        let capture = capture(glyph.repeat(32).as_bytes());
+        for max in 32..=48 {
+            let mut cursor = 0;
+            let mut delivered = String::new();
+            while cursor < capture.bytes.len() {
+                let (text, next) = unread_chunk(&capture, cursor, max).unwrap();
+                assert!(text.len() <= max && next > cursor && next <= capture.bytes.len());
+                assert_eq!(next % glyph.len(), 0);
+                assert!(!text.contains('\u{fffd}'));
+                assert_eq!(
+                    payload(&text),
+                    std::str::from_utf8(&capture.bytes[cursor..next]).unwrap()
+                );
+                delivered.push_str(payload(&text));
+                cursor = next;
+            }
+            assert_eq!(delivered, glyph.repeat(32));
         }
-        assert_eq!(delivered, "界".repeat(32));
     }
 }
+
 #[test]
 fn invalid_utf8_expansion_stays_bounded_and_consumes_exact_source_bytes() {
     let capture = capture(&[0xff; 128]);

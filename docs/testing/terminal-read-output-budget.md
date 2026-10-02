@@ -48,7 +48,7 @@ character into a subsequent complete Unicode slice. Observed shutdown and owned
 process retirement remain required.
 
 Six focused byte-contract cases cover complete ASCII delivery under repeated
-small reads; valid Unicode boundaries across several budgets; adversarial invalid
+small reads; two-, three- and four-byte Unicode boundaries across several budgets; adversarial invalid
 UTF-8 expansion with exact source consumption; metadata-only/character-too-small
 refusal and empty output; complete private notice bounds; and the exact lossy
 mapping of a fragment already dropped from capture. The usual standard test-file
