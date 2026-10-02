@@ -10,6 +10,9 @@ use std::{
 };
 const ROLE: &str = "VOYAGE_OWNED_LIFETIME_CASE_353";
 pub fn run(name: &str, body: impl FnOnce()) {
+    // module_path includes the crate name; libtest's exact names do not. Refuse
+    // a zero-test child rather than treating an empty successful runner as proof.
+    let name = name.split_once("::").expect("qualified owned test name").1;
     if let Ok(selected) = std::env::var(ROLE) {
         assert_eq!(selected, name);
         assert!(unsafe { libc::geteuid() } > 0);
@@ -86,6 +89,13 @@ pub fn run(name: &str, body: impl FnOnce()) {
     if !status.success() {
         let _evidence = root.keep();
         panic!("owned lifetime source case failed; private evidence retained");
+    }
+    let summary = fs::read(root.path().join("stdout-private.log")).unwrap();
+    assert!(summary.len() <= 1024 * 1024);
+    let summary = String::from_utf8_lossy(&summary);
+    if !summary.contains("running 1 test") || !summary.contains("1 passed; 0 failed") {
+        let _evidence = root.keep();
+        panic!("owned exact test entry did not execute once; private evidence retained");
     }
 }
 pub fn context() -> crate::tools::ToolContext {
