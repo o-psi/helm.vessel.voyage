@@ -11,60 +11,63 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `c15ef79b6568616fc7c0d24350ef3defdd97ee67`, recorded in
-`coverage/latest.json`, passed **2,568 tests, zero failures, eight ignored**.
-It covers **101,885 / 132,836 lines (76.699840%)**, 9,250 / 12,113 functions
-and 160,534 / 219,765 regions. **30,951 line gaps remain**, including one
+Clean source `e68d65f0b10a4f8e03178f2433e749b700920009`, recorded in
+`coverage/latest.json`, passed **2,605 tests, zero failures, eight ignored**.
+It covers **103,107 / 133,957 lines (76.970222%)**, 9,375 / 12,210 functions
+and 162,540 / 221,892 regions. **30,850 line gaps remain**, including one
 known standard-library line. #353's reachable-production objective remains unmet.
 
-All **539 current workspace files and all 539 prior files** and the same known
+All **541 current workspace files and all 539 prior files** and the same known
 standard-library mapping are retained, using all 14 Cargo test targets plus three
-integration entry points as 17 distinct current objects. Only 297 own profiles
+integration entry points as 17 distinct current objects. Only 354 own profiles
 were merged; 235 foreign profiles remained byte-identical. Child libtest summaries
 are retained separately, with all outcomes passing, instead of being counted as
 extra Cargo targets. The mixed default export is rejected. Detailed reports and
 source/object/profile manifests remain under ignored
-`target/coverage-report/v103-lint-final`.
+`target/coverage-report/v103-forward-browser-final`.
 
-Compared with the previous published record: 2,218 more covered lines, 1,088 more
-measured lines and +1.050115 percentage points. Ordinary participant/subagent,
-Helm route/PTY, frozen owner grant, origin and quiescent legacy updater cases retain
-authority, exact receipts, uncertainty and cleanup assertions. No exclusions were
-added or prior production files removed. Failed/focused profiles and current
-binaries were preserved before this independent measurement.
+Compared with the prior published c15 record: 1,222 more covered lines, 1,121 more
+measured lines and +0.270381 percentage points. Actual ordinary frontend, owned
+terminal, administration, counter and raw/semantic forward proof cases preserve
+exact identity, unknown outcomes and observed cleanup. #403 repairs no-save cleanup
+and prepared-owner observation without replay. No exclusions were added or prior
+production files removed. Failed/focused profiles and19 premeasurement objects were
+preserved before this independent measurement.
 
 Native Root, live-provider, browser JavaScript and other-platform evidence are
-separate. The default Rust measurement does not establish those capabilities or
-full release readiness. Native legacy bootstrap/rollback/death windows, corrected
-production deployment and browser TLS/full-site/media/client cost remain unfinished.
+separate. Native CT119 normal legacy bootstrap passed independently; forced rollback,
+death/context, CT106 forward recovery and original-owner/browser TLS/full-site/media/
+client cost remain unfinished. Postcomplete idle notification SQLite physical drift
+is explicit; full logical contents remain verified. These checks do not establish
+full release readiness or the 100% reachable-production objective.
 
 ## Current largest areas
 
 This map uses the same retained current-object summary as the published baseline.
 Directory rows contain nested files; “direct files” rows contain only files directly
 in that source directory. These are measured line gaps, not a classification of
-reachability or assertion quality. The full workspace contributes **30,950 uncovered
+reachability or assertion quality. The full workspace contributes **30,849 uncovered
 lines**; the remaining one reported gap is the retained standard-library mapping.
 No files were excluded.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
 | `vessel/src/process/` | 8,536 | 19,111 |
-| `helm/src/process_client/` | 7,928 | 33,756 |
-| `voyage/src (direct files)` | 2,270 | 13,237 |
+| `helm/src/process_client/` | 7,835 | 34,087 |
+| `voyage/src (direct files)` | 2,227 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
+| `installer/src/remote/` | 1,384 | 2,542 |
 | `voyage/src/tools/` | 1,191 | 7,865 |
-| `installer/src (direct files)` | 1,104 | 2,239 |
-| `helm/src (direct files)` | 908 | 3,096 |
-| `installer/src/remote/` | 881 | 1,821 |
-| `voyage/src/attachment/` | 865 | 12,458 |
-| `voyage/src/server/` | 847 | 5,687 |
-| `voyage/src/github/` | 661 | 3,177 |
+| `installer/src (direct files)` | 1,109 | 2,308 |
+| `voyage/src/attachment/` | 862 | 12,458 |
+| `voyage/src/server/` | 774 | 5,687 |
+| `helm/src (direct files)` | 666 | 3,096 |
 | `vessel/src (direct files)` | 654 | 1,556 |
-| `voyage/src/provider/` | 396 | 5,747 |
+| `voyage/src/github/` | 521 | 3,177 |
+| `voyage/src/provider/` | 404 | 5,747 |
 | `voyage/src/extensions/` | 384 | 1,995 |
-| `crates/voyage-storage/src/` | 248 | 643 |
 | `voyage/src/subagent/` | 244 | 2,402 |
+| `crates/voyage-storage/src/` | 225 | 643 |
 
 The largest ordinary client and supervisor areas remain the next source targets.
 Privileged, other-platform, provider and OS fault responsibilities still require

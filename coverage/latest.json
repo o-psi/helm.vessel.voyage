@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T00:54:36.046015+00:00",
-  "source_commit": "c15ef79b6568616fc7c0d24350ef3defdd97ee67",
+  "measured_at_utc": "2026-10-02T03:02:15.957233+00:00",
+  "source_commit": "e68d65f0b10a4f8e03178f2433e749b700920009",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2568,
+    "passed": 2605,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 132836,
-      "covered": 101885,
-      "percent": 76.69984040470956
+      "count": 133957,
+      "covered": 103107,
+      "percent": 76.97022178758856
     },
     "functions": {
-      "count": 12113,
-      "covered": 9250,
-      "percent": 76.36423677041195
+      "count": 12210,
+      "covered": 9375,
+      "percent": 76.78132678132678
     },
     "regions": {
-      "count": 219765,
-      "covered": 160534,
-      "notcovered": 59231,
-      "percent": 73.04802857597889
+      "count": 221892,
+      "covered": 162540,
+      "notcovered": 59352,
+      "percent": 73.25185225244714
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=8G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-lint-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-lint-final/summary-default.json -v; llvm-profdata merge -sparse with 297 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-forward-browser-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-forward-browser-final/summary-default.json -v; llvm-profdata merge -sparse with 354 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,11 +40,14 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed source c15ef79: 2568 parent-workspace tests passed, zero failed, eight ignored. Owned child libtest summaries are retained separately and not double-counted as Cargo targets.",
-    "All 539 current workspace files and all 539 prior files retained with 17 current objects (14 Cargo targets plus three integration entrypoints). Only 297 own raw profiles merged; 235 foreign profiles unchanged. The known standard-library mapping remains; no denominator exclusions changed.",
-    "Compared with prior published source3138 record: 2218 more covered lines, 1088 more measured lines, +1.050115 percentage points. 30951 line gaps remain; #353 full reachable-production objective is unmet.",
-    "Final ordinary account-route, frozen legacy owner grant, origin parsing, quiescent updater proof/namespace, participant/subagent and production owned PTY fixtures passed. Actual native legacy bootstrap/rollback/death windows, corrected production deployment and browser TLS/full-site/media/client cost acceptance remain separate unfinished gates.",
-    "Failed/focused own profiles and 17 premeasurement binaries retained before this independent measurement. Mixed default object export rejected; corrected inventory/profile/source audit passed with no lost production mappings.",
-    "Independent service 8 GiB cap, zero swap, private umask 0077, 2400-second bound; measurement 3min49.568sec, peak8GiB. Audited export 3GiB cap/zero swap,13.941sec. Heavy processes remain outside desktop application cgroup."
+    "Clean committed source e68d65f: 2605 parent-workspace tests passed, zero failed, eight ignored. Owned child libtest summaries are retained separately and not double-counted as Cargo targets.",
+    "All 541 current workspace files and all 539 prior files retained with 17 current objects (14 Cargo targets plus three integration entrypoints). Only 354 own raw profiles merged; 235 foreign profiles unchanged. The known standard-library mapping remains; no denominator exclusions changed.",
+    "Compared with prior published c15 record: 1222 more covered lines, 1121 more measured lines, +0.270381 percentage points. 30850 line gaps remain; #353 full reachable-production objective is unmet.",
+    "Actual current-binary ordinary frontend saved/resume, temporary success/failure, configured branch and dropped accepted Submit/Resolve/no replay/disconnect/cleanup journeys passed; real owned plain terminal cases, private administration, exact no-save fences, forward raw/semantic proof and counter contracts passed. Counts do not establish native production/browser/cost outcomes.",
+    "#403 retains positively accepted run UUID through following, waits only on the same terminal cleanup, rechecks exact deletion and observes the actual prepared owner. Unknown delivery/changed/malformed/active/deadline state retains data; no cancellation or effect replay.",
+    "Forward live-source review pins full notification schema/metadata/typed rows/clock and every other file. Only idle physical notification SQLite/cold-journal layout may drift before quiescence; original raw hashes and strict held snapshot proof remain. No files are excluded.",
+    "Prior failed/focused profiles and 19 premeasurement objects retained. Corrected source/object/profile audit has no lost production mappings; mixed default report is rejected. Detailed JSON/HTML and current audited object bytes are retained separately.",
+    "Independent service 10GiB cap/zero swap/private umask0077/2400sec:6min30.336sec,peak10GiB. A prior8GiB instrumented Voyage libtest compile was OOM-killed; the bounded cap rose after35GiB host availability was verified, without global policy changes. Audited export3GiB/13.880sec/2.1GiB peak.",
+    "Qualified native CT119 old-seed/cleanup/offline baseline and one normal3632 bootstrap upgrade passed separately; canonical/account/full logical notification data retained, session journals byte-identical. Postcomplete notification physical drift is explicit. Forced rollback/death/context/CT106 forward recovery, original-owner Web, actual browser TLS/full-site/media/cost and stable publication remain unfinished."
   ]
 }
