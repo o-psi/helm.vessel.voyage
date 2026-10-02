@@ -237,12 +237,10 @@ case!(
     {
         let mut r = Rig::new(1, 1024);
         r.context.max_output_bytes = 256;
-        let id = r
-            .start(
-                "bounded",
-                "i=0; while [ $i -lt 900 ]; do printf '界'; i=$((i+1)); done; /bin/cat",
-            )
-            .await;
+        // Literal fixture output exercises the admitted production command
+        // path; arithmetic expansion is deliberately refused by shell policy.
+        let command = format!("printf '%s' '{}'; /bin/cat", "界".repeat(900));
+        let id = r.start("bounded", &command).await;
         owned::until(|| {
             r.tool.processes.lock().unwrap()[&id]
                 .output

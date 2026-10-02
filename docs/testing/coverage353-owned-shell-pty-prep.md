@@ -1,6 +1,7 @@
 # Ordinary managed shell and PTY lifetime cohort (#353)
 
-Source only: twenty new parent cases are uncompiled/unrun. Scope was approved and
+Twenty parent cases were prepared. The coordinated gate and current unrun
+source correction are recorded below. Scope was approved and
 [recorded before source](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5953953228),
 linked to [release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375).
 This isolated cohort starts from published `036ea6e`; it does not hold the current
@@ -75,3 +76,21 @@ Source formatting/diff checks are separate from execution. Independent review,
 one next coordinated source-final coverage/current-object measurement, compact
 summary, normal Main publication and hosted build follow-through remain required.
 No tests/Cargo/Main/target/native effects were performed during preparation.
+
+
+## Observed admission failures and source correction
+
+The source-final coordinated gate at `d5379f4` failed four new shell/PTY parents.
+The Unicode-output child retained an explicit shell-policy denial for unsupported
+`arithmetic_expansion`, before its PTY could start. The three timeout/dropped
+waiter/shutdown children elapsed while waiting for a PID marker; their shared
+held-command fixture used the same unsupported arithmetic form and published no
+witness. Those failures do not establish a production retirement failure.
+
+The corrected Unicode fixture supplies a fixed literal string to `printf`.
+The shared held fixture uses an admitted fixed sleeping loop and explicitly
+checks its command policy before launch, so a future admission refusal cannot
+masquerade as an observed waiting process. Existing production execution timeout,
+cancellation, parent/stage limits and positive retirement assertions are kept.
+No policy is weakened and no timeout is increased. These corrections are source
+only until Root completes the next coordinated full gate.

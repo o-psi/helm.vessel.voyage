@@ -76,13 +76,20 @@ impl Rig {
         (pid, fields[19].into())
     }
     fn held(&self, name: &str) -> String {
-        format!(
-            "printf '%s' $$ > '{}.next'; mv '{}.next' '{}'; i=0; while [ ! -f '{}' ] && [ $i -lt 400 ]; do sleep .02; i=$((i+1)); done",
+        // The production timeout/cancellation remains the execution bound.
+        // Keep this fixed waiting command in the admitted shell grammar; a
+        // counter with arithmetic expansion is refused before any PID marker.
+        let command = format!(
+            "printf '%s' $$ > '{}.next'; mv '{}.next' '{}'; while :; do sleep .02; done",
             self.path(name).display(),
             self.path(name).display(),
-            self.path(name).display(),
-            self.path("release").display()
-        )
+            self.path(name).display()
+        );
+        assert!(matches!(
+            self.context.policy.command(&command),
+            crate::policy::Decision::Allow
+        ));
+        command
     }
 }
 impl Drop for Rig {
