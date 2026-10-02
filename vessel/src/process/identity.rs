@@ -47,6 +47,34 @@ fn key(root: &Path) -> Result<(VesselIdentity, Ed25519KeyPair)> {
 pub(super) fn public(root: &Path) -> Result<VesselIdentity> {
     Ok(key(root)?.0)
 }
+/// Observe only an existing coherent identity; status must not initialize or
+/// repair a missing key/public projection while proving current bindings.
+pub(super) fn existing_public(root: &Path) -> Result<VesselIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let directory = root.join("identity");
+    let metadata = std::fs::symlink_metadata(&directory)?;
+    ensure!(
+        metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "existing Vessel identity unavailable"
+    );
+    let saved: IdentityKey = store::load(&directory.join("key.json"))?;
+    let document = STANDARD.decode(saved.pkcs8)?;
+    let pair = Ed25519KeyPair::from_pkcs8(&document)
+        .map_err(|_| anyhow::anyhow!("invalid existing signing identity"))?;
+    let expected = VesselIdentity {
+        vessel_id: saved.vessel_id,
+        public_key: STANDARD.encode(pair.public_key().as_ref()),
+    };
+    let public: VesselIdentity = store::load(&directory.join("public.json"))?;
+    ensure!(
+        !expected.vessel_id.is_nil() && public == expected,
+        "existing Vessel identity projection changed"
+    );
+    Ok(public)
+}
 pub(super) fn sign<T: Serialize>(root: &Path, payload: T) -> Result<SignedArtifact<T>> {
     let (_, key) = key(root)?;
     let mut bytes = b"voyage/process-transfer/v1\0".to_vec();
@@ -82,9 +110,17 @@ pub(super) fn verify<T: Serialize>(
     let identity: VesselIdentity =
         store::load(&root.join("trusted-vessels").join(format!("{peer}.json")))?;
     ensure!(identity.vessel_id == peer, "trusted identity mismatch");
+    verify_public(&identity, artifact)
+}
+/// Uses either an independently pinned peer or the current local public key;
+/// calling this does not pin, mint or adopt a supplied identity.
+pub(super) fn verify_public<T: Serialize>(
+    identity: &VesselIdentity,
+    artifact: &SignedArtifact<T>,
+) -> Result<()> {
     let mut bytes = b"voyage/process-transfer/v1\0".to_vec();
     bytes.extend(serde_json::to_vec(&artifact.payload)?);
-    UnparsedPublicKey::new(&ED25519, STANDARD.decode(identity.public_key)?)
+    UnparsedPublicKey::new(&ED25519, STANDARD.decode(&identity.public_key)?)
         .verify(&bytes, &STANDARD.decode(&artifact.signature)?)
         .map_err(|_| anyhow::anyhow!("transfer signature rejected"))
 }

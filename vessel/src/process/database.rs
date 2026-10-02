@@ -274,8 +274,63 @@ async fn blocking<T: Send + 'static>(
     root: &Path,
     f: impl FnOnce(&mut Connection) -> Result<T> + Send + 'static,
 ) -> Result<T> {
+    let pinned = TRANSFER_NAMESPACE.try_with(Clone::clone).ok();
+    if let Some(pinned) = &pinned {
+        ensure!(pinned.root == root, "pinned transfer database root changed");
+    }
     let root = root.to_owned();
-    tokio::task::spawn_blocking(move || f(&mut open(&root)?)).await?
+    tokio::task::spawn_blocking(move || {
+        if let Some(pinned) = pinned {
+            let mut catalogue = ReadonlyCatalogue::open_mode(&root, Some(pinned.namespace), true)?;
+            let result = f(&mut catalogue.db)?;
+            catalogue.check_namespace()?;
+            Ok(result)
+        } else {
+            f(&mut open(&root)?)
+        }
+    })
+    .await?
+}
+
+#[derive(Clone)]
+struct TransferNamespace {
+    root: std::path::PathBuf,
+    namespace: (u64, u64),
+}
+tokio::task_local! {static TRANSFER_NAMESPACE:TransferNamespace;}
+
+/// Scope only the existing transfer startup. Each DB call captures this before
+/// crossing spawn_blocking; callers cannot supply a tool or environment flag.
+pub(super) async fn in_transfer_namespace<T>(
+    root: &Path,
+    namespace: (u64, u64),
+    operation: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    if let Ok(current) = TRANSFER_NAMESPACE.try_with(Clone::clone) {
+        ensure!(
+            current.root == root && current.namespace == namespace,
+            "nested transfer catalogue context changed"
+        );
+        operation.await
+    } else {
+        TRANSFER_NAMESPACE
+            .scope(
+                TransferNamespace {
+                    root: root.to_owned(),
+                    namespace,
+                },
+                operation,
+            )
+            .await
+    }
+}
+
+pub(super) async fn check_transfer_namespace(root: &Path) -> Result<()> {
+    if let Ok(pinned) = TRANSFER_NAMESPACE.try_with(Clone::clone) {
+        ensure!(pinned.root == root, "pinned transfer database root changed");
+        existing_catalogue(root, Some(pinned.namespace), |_, _| Ok(())).await?;
+    }
+    Ok(())
 }
 pub async fn save(root: &Path, registration: &ProcessRegistration) -> Result<()> {
     let r = registration.clone();
@@ -824,6 +879,258 @@ pub async fn creation_receipt(root: &Path, id: Uuid) -> Result<Option<ProcessInf
     })
     .await
 }
+
+pub(super) struct TransferAdmissionObservation {
+    pub exact_admission: bool,
+    pub any_activation: bool,
+    pub registration: Option<ProcessRegistration>,
+    pub any_registration: bool,
+    pub completion: Option<ProcessInfo>,
+    pub completed_registration: Option<ProcessRegistration>,
+}
+
+struct ReadonlyCatalogue {
+    db: Connection,
+    file: fs::File,
+    path: std::path::PathBuf,
+    before: fs::Metadata,
+}
+impl ReadonlyCatalogue {
+    fn open(root: &Path, expected: Option<(u64, u64)>) -> Result<Self> {
+        Self::open_mode(root, expected, false)
+    }
+    fn open_mode(root: &Path, expected: Option<(u64, u64)>, writable: bool) -> Result<Self> {
+        let directory = fs::symlink_metadata(root)?;
+        ensure!(
+            directory.is_dir()
+                && !directory.file_type().is_symlink()
+                && directory.uid() == unsafe { libc::geteuid() }
+                && directory.mode() & 0o077 == 0,
+            "existing supervisor catalogue directory unavailable"
+        );
+        let path = root.join(FILE);
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+            .open(&path)?;
+        let before = file.metadata()?;
+        ensure!(
+            before.is_file()
+                && before.nlink() == 1
+                && before.uid() == unsafe { libc::geteuid() }
+                && before.mode() & 0o077 == 0
+                && before.len() > 0
+                && before.len() <= 512 * 1024 * 1024,
+            "existing supervisor catalogue is unsafe"
+        );
+        ensure!(
+            expected.is_none_or(|namespace| namespace == (before.dev(), before.ino())),
+            "supervisor catalogue namespace changed"
+        );
+        for suffix in ["-wal", "-shm"] {
+            ensure!(
+                fs::symlink_metadata(root.join(format!("{FILE}{suffix}")))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+                "readonly catalogue requires a known rollback-journal namespace"
+            );
+        }
+        match fs::symlink_metadata(root.join(format!("{FILE}-journal"))) {
+            Ok(journal) => ensure!(
+                journal.is_file()
+                    && !journal.file_type().is_symlink()
+                    && journal.nlink() == 1
+                    && journal.uid() == unsafe { libc::geteuid() }
+                    && journal.mode() & 0o077 == 0,
+                "unsafe existing catalogue journal"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let access = if writable {
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+        } else {
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+        };
+        let db = Connection::open_with_flags(
+            &path,
+            access | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        db.busy_timeout(Duration::from_secs(2))?;
+        if writable {
+            db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA journal_size_limit=1048576")?;
+        } else {
+            db.execute_batch("PRAGMA query_only=ON")?;
+        }
+        let version: i64 =
+            db.query_row("SELECT version FROM schema_version WHERE id=1", [], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            CATALOGUE_WRITE_SCHEMAS.contains(&version),
+            "readonly transfer catalogue schema unavailable; no migration performed"
+        );
+        let present:i64=db.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('voyages','incarnations','lifecycle_commands','creation_receipts')",[],|r|r.get(0))?;
+        ensure!(
+            present == 4,
+            "readonly transfer catalogue namespace incomplete"
+        );
+        let catalogue = Self {
+            db,
+            file,
+            path,
+            before,
+        };
+        catalogue.check()?;
+        Ok(catalogue)
+    }
+    fn check(&self) -> Result<()> {
+        let after = self.file.metadata()?;
+        let leaf = fs::symlink_metadata(&self.path)?;
+        ensure!(
+            !leaf.file_type().is_symlink()
+                && (leaf.dev(), leaf.ino()) == (self.before.dev(), self.before.ino())
+                && (
+                    self.before.dev(),
+                    self.before.ino(),
+                    self.before.len(),
+                    self.before.uid(),
+                    self.before.mode(),
+                    self.before.nlink(),
+                    self.before.mtime(),
+                    self.before.mtime_nsec(),
+                    self.before.ctime(),
+                    self.before.ctime_nsec()
+                ) == (
+                    after.dev(),
+                    after.ino(),
+                    after.len(),
+                    after.uid(),
+                    after.mode(),
+                    after.nlink(),
+                    after.mtime(),
+                    after.mtime_nsec(),
+                    after.ctime(),
+                    after.ctime_nsec()
+                ),
+            "supervisor catalogue changed during readonly observation"
+        );
+        self.check_namespace()
+    }
+    fn check_namespace(&self) -> Result<()> {
+        let after = self.file.metadata()?;
+        let leaf = fs::symlink_metadata(&self.path)?;
+        ensure!(
+            !leaf.file_type().is_symlink()
+                && (leaf.dev(), leaf.ino()) == (self.before.dev(), self.before.ino())
+                && after.is_file()
+                && after.nlink() == 1
+                && after.uid() == self.before.uid()
+                && after.mode() == self.before.mode()
+                && (after.dev(), after.ino()) == (self.before.dev(), self.before.ino()),
+            "pinned catalogue inode/permissions changed"
+        );
+        let mut moved = 0i32;
+        let result = unsafe {
+            rusqlite::ffi::sqlite3_file_control(
+                self.db.handle(),
+                c"main".as_ptr(),
+                rusqlite::ffi::SQLITE_FCNTL_HAS_MOVED,
+                (&mut moved as *mut i32).cast(),
+            )
+        };
+        ensure!(
+            result == rusqlite::ffi::SQLITE_OK && moved == 0,
+            "SQLite catalogue descriptor no longer matches its namespace"
+        );
+        Ok(())
+    }
+}
+
+async fn existing_catalogue<T: Send + 'static>(
+    root: &Path,
+    expected: Option<(u64, u64)>,
+    operation: impl FnOnce(&mut Connection, (u64, u64)) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let expected = if let Ok(pinned) = TRANSFER_NAMESPACE.try_with(Clone::clone) {
+        ensure!(
+            pinned.root == root && expected.is_none_or(|expected| expected == pinned.namespace),
+            "pinned readonly catalogue context changed"
+        );
+        Some(pinned.namespace)
+    } else {
+        expected
+    };
+    let root = root.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let mut catalogue = ReadonlyCatalogue::open(&root, expected)?;
+        let namespace = (catalogue.before.dev(), catalogue.before.ino());
+        let result = operation(&mut catalogue.db, namespace)?;
+        catalogue.check()?;
+        Ok(result)
+    })
+    .await?
+}
+
+/// One consistent read of the actual ordinary start namespace. `admit` commits
+/// the command and registration before launch; absence is never manufactured by
+/// reserving an ID, and a malformed/retired/conflicting record refuses proof.
+pub(super) async fn transfer_admission_observation(
+    root: &Path,
+    transfer_id: Uuid,
+    session_id: Uuid,
+    activation: Option<(Uuid, Vec<u8>)>,
+    expected_namespace: Option<(u64, u64)>,
+) -> Result<TransferAdmissionObservation> {
+    existing_catalogue(root, expected_namespace, move |db,_| {
+        let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let mut exact_admission = false;
+        let mut completion = None;
+        if let Some((id, expected)) = &activation {
+            reject_retired_command(&tx, *id)?;
+            let records = tx.prepare("SELECT namespace,request FROM lifecycle_commands WHERE command_id=?1")?
+                .query_map([id.to_string()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (namespace, saved) in records {
+                ensure!(namespace == "commands" && saved == *expected,
+                    "transfer activation command identity conflict");
+                exact_admission = true;
+            }
+            let saved: Option<String> = tx.query_row(
+                "SELECT result FROM creation_receipts WHERE command_id=?1",
+                [id.to_string()], |r| r.get(0),
+            ).optional()?;
+            completion = saved.map(|record| serde_json::from_str(&record)).transpose()?;
+        }
+        let malformed: i64 = tx.query_row(
+            "SELECT count(*) FROM lifecycle_commands WHERE namespace='commands' AND NOT json_valid(CAST(request AS TEXT))",
+            [], |r| r.get(0),
+        )?;
+        ensure!(malformed == 0, "transfer activation namespace is unreadable");
+        let any_activation: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM lifecycle_commands WHERE namespace='commands' AND json_extract(CAST(request AS TEXT),'$.op')='activate_transfer' AND json_extract(CAST(request AS TEXT),'$.transfer_id')=?1)",
+            [transfer_id.to_string()], |r| r.get(0),
+        )?;
+        let registration: Option<String> = tx.query_row(
+            "SELECT registration FROM voyages WHERE session_id=?1",
+            [session_id.to_string()], |r| r.get(0),
+        ).optional()?;
+        let registration = registration.map(|record| serde_json::from_str(&record)).transpose()?;
+        let any_registration: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM voyages WHERE session_id=?1 UNION ALL SELECT 1 FROM incarnations WHERE session_id=?1)",
+            [session_id.to_string()], |r| r.get(0),
+        )?;
+        let completed_registration = if let Some(info) = &completion {
+            let info: &ProcessInfo = info;
+            let saved: Option<String> = tx.query_row(
+                "SELECT registration FROM incarnations WHERE incarnation=?1",
+                [info.incarnation.to_string()], |r| r.get(0),
+            ).optional()?;
+            saved.map(|record| serde_json::from_str(&record)).transpose()?
+        } else { None };
+        tx.commit()?;
+        Ok(TransferAdmissionObservation { exact_admission, any_activation, registration, any_registration, completion, completed_registration })
+    }).await
+}
 pub async fn settle_creation(root: &Path, id: Uuid, info: &ProcessInfo) -> Result<()> {
     let info = info.clone();
     blocking(root, move |db| {
@@ -1133,6 +1440,43 @@ impl Registrations {
             records,
             _serial: serial,
         })
+    }
+    /// Same serial fence, with an existing-only readonly map and pinned SQLite
+    /// namespace. This cannot manufacture an empty map after database loss.
+    pub(super) async fn observe_existing(&self) -> Result<RegistrationObservation<'_>> {
+        let serial = self.serial.lock().await;
+        let (records, namespace) = existing_catalogue(&self.root, None, |db, namespace| {
+            let mut query = db.prepare("SELECT registration FROM voyages")?;
+            let rows = query.query_map([], |r| r.get::<_, String>(0))?;
+            let mut records = HashMap::new();
+            for row in rows {
+                let registration: ProcessRegistration = serde_json::from_str(&row?)?;
+                ensure!(
+                    records.len() < 4096,
+                    "registration observation bound exceeded"
+                );
+                records.insert(registration.session_id, registration);
+            }
+            Ok((records, namespace))
+        })
+        .await?;
+        Ok(RegistrationObservation {
+            records,
+            namespace,
+            _serial: serial,
+        })
+    }
+}
+
+pub(super) struct RegistrationObservation<'a> {
+    records: HashMap<Uuid, ProcessRegistration>,
+    pub namespace: (u64, u64),
+    _serial: tokio::sync::MutexGuard<'a, ()>,
+}
+impl std::ops::Deref for RegistrationObservation<'_> {
+    type Target = HashMap<Uuid, ProcessRegistration>;
+    fn deref(&self) -> &Self::Target {
+        &self.records
     }
 }
 

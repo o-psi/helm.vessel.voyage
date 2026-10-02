@@ -10,6 +10,10 @@ use voyage_protocol::vessel::*;
 
 #[derive(Serialize, Deserialize)]
 struct Journal {
+    #[serde(default)]
+    version: u32,
+    #[serde(default)]
+    phase: Option<Phase>,
     args: MoveArgs,
     source: VesselIdentity,
     destination: VesselIdentity,
@@ -21,6 +25,13 @@ struct Journal {
     preparation: Option<SignedArtifact<TransferPreparation>>,
     manifest: Option<SignedArtifact<TransferManifest>>,
     result: Option<Value>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Phase {
+    Receiving,
+    ActivationPending,
 }
 
 pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
@@ -42,20 +53,33 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
     let _lock = lock(&args.journal)?;
     // Read before contacting either endpoint: a retired remote route must never
     // be reinterpreted as a local destination, even when paths happen to match.
-    let saved = if args.journal.exists() {
-        check_file(&args.journal)?;
-        let value: Value = read_json(&args.journal)?;
-        ensure!(
-            value
-                .get("args")
-                .and_then(|v| v.get("destination_ssh"))
-                .is_none_or(Value::is_null),
-            "SSH courier journals are no longer supported; original journal preserved"
-        );
-        Some(serde_json::from_value::<Journal>(value)?)
-    } else {
-        None
+    let saved = match std::fs::symlink_metadata(&args.journal) {
+        Ok(_) => {
+            check_file(&args.journal)?;
+            let value: Value = read_json(&args.journal)?;
+            ensure!(
+                value
+                    .get("args")
+                    .and_then(|v| v.get("destination_ssh"))
+                    .is_none_or(Value::is_null),
+                "SSH courier journals are no longer supported; original journal preserved"
+            );
+            Some(serde_json::from_value::<Journal>(value)?)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
     };
+    if let Some(saved) = &saved {
+        ensure!(
+            saved.version <= 1 && (saved.version == 0 || saved.phase.is_some()),
+            "unsupported courier journal version; original retained"
+        );
+        ensure!(
+            saved.phase != Some(Phase::ActivationPending) || saved.manifest.is_some(),
+            "pending activation has no retained manifest"
+        );
+    }
+    let recovering_manifest = saved.as_ref().is_some_and(|saved| saved.manifest.is_some());
     let destination = Client::local(args.destination_directory.clone());
     let source_id: VesselIdentity =
         serde_json::from_value(source.request(VesselCommand::Identity).await?)?;
@@ -79,6 +103,8 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
             .as_millis()
             .try_into()?;
         let saved = Journal {
+            version: 1,
+            phase: Some(Phase::Receiving),
             args: args.clone(),
             source: source_id,
             destination: destination_id,
@@ -137,6 +163,36 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
         .manifest
         .clone()
         .ok_or_else(|| anyhow::anyhow!("manifest missing"))?;
+    let mut artifact_ready = false;
+    if recovering_manifest || journal.phase == Some(Phase::ActivationPending) {
+        let status = status(&destination, &journal, &manifest).await?;
+        match status.state {
+            TransferStatusState::Pending => anyhow::bail!(
+                "Transfer activation remains pending; original IDs retained, no upload or activation replay"
+            ),
+            TransferStatusState::Complete => {
+                let completion = status
+                    .completion
+                    .ok_or_else(|| anyhow::anyhow!("transfer completion missing"))?;
+                let result = serde_json::json!({"transfer_id":journal.transfer_id,
+                    "activate_command_id":journal.activate_command,"status":"complete",
+                    "session_id":completion.session_id,"incarnation":completion.incarnation});
+                journal.result = Some(result.clone());
+                save(&args.journal, &journal)?;
+                return Ok(result);
+            }
+            TransferStatusState::Receiving => {
+                artifact_ready = status.received_bytes == Some(manifest.payload.artifact_bytes);
+                journal.version = 1;
+                journal.phase = Some(Phase::Receiving);
+                save(&args.journal, &journal)?;
+            }
+        }
+    } else {
+        journal.version = 1;
+        journal.phase = Some(Phase::Receiving);
+        save(&args.journal, &journal)?;
+    }
     destination
         .request(VesselCommand::AcceptTransfer {
             manifest: manifest.clone(),
@@ -146,13 +202,14 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
         command_id: journal.activate_command,
         transfer_id: journal.transfer_id,
     };
-    // A completed activation can precede the courier's final local checkpoint.
-    if let Ok(result) = destination.request(activate.clone()).await {
-        journal.result = Some(result.clone());
-        save(&args.journal, &journal)?;
-        return Ok(result);
-    }
-    let mut offset = 0u64;
+    // Never probe activation before uploading: even an artifact precondition
+    // error is conservatively unknown on older Vessels. Recovery above uses an
+    // exact readonly proof, not a mutative request or an absence guess.
+    let mut offset = if artifact_ready {
+        manifest.payload.artifact_bytes
+    } else {
+        0
+    };
     while offset < manifest.payload.artifact_bytes {
         let chunk = source
             .request(VesselCommand::TransferChunk {
@@ -178,19 +235,104 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("chunk data missing"))?
             .to_owned();
-        destination
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        ensure!(
+            data.len() <= 90000,
+            "courier chunk data exceeds encoded bound"
+        );
+        let decoded = STANDARD
+            .decode(&data)
+            .map_err(|_| anyhow::anyhow!("invalid courier chunk data"))?;
+        ensure!(
+            decoded.len() as u64 == next - offset && decoded.len() <= 65536,
+            "courier chunk data does not match its boundary"
+        );
+        let acknowledgement = destination
             .request(VesselCommand::UploadTransferChunk {
                 transfer_id: journal.transfer_id,
                 offset,
                 data,
             })
             .await?;
+        ensure!(
+            acknowledgement["transfer_id"] == journal.transfer_id.to_string()
+                && acknowledgement["next_offset"] == next
+                && acknowledgement["stored_bytes"]
+                    .as_u64()
+                    .is_some_and(|bytes| bytes >= next && bytes <= manifest.payload.artifact_bytes),
+            "courier upload acknowledgement changed; original operation retained"
+        );
         offset = next;
     }
+    journal.version = 1;
+    journal.phase = Some(Phase::ActivationPending);
+    save(&args.journal, &journal)?;
     let result = destination.request(activate).await?;
     journal.result = Some(result.clone());
     save(&args.journal, &journal)?;
     Ok(result)
+}
+
+async fn status(
+    destination: &Client,
+    journal: &Journal,
+    manifest: &SignedArtifact<TransferManifest>,
+) -> Result<TransferStatus> {
+    use sha2::{Digest, Sha256};
+    let capabilities = destination.request(VesselCommand::Capabilities).await?;
+    ensure!(
+        capabilities["features"]
+            .as_array()
+            .is_some_and(|features| features
+                .iter()
+                .any(|feature| feature == "signed_transfer_status_v1")),
+        "Destination upgrade required for readonly transfer recovery; original journal and uncertainty retained"
+    );
+    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(manifest)?));
+    let status: TransferStatus = serde_json::from_value(
+        destination
+            .request(VesselCommand::TransferStatus {
+                transfer_id: journal.transfer_id,
+                activate_command_id: journal.activate_command,
+                expected_manifest_digest: digest.clone(),
+                manifest: manifest.clone(),
+            })
+            .await?,
+    )?;
+    ensure!(
+        status.transfer_id == journal.transfer_id
+            && status.activate_command_id == journal.activate_command
+            && status.manifest_digest == digest
+            && status.source_vessel_id == journal.source.vessel_id
+            && status.destination_vessel_id == journal.destination.vessel_id
+            && status.session_id == journal.args.session
+            && status.artifact_sha256 == manifest.payload.artifact_sha256
+            && status.artifact_bytes == manifest.payload.artifact_bytes,
+        "transfer recovery binding changed"
+    );
+    match status.state {
+        TransferStatusState::Receiving => ensure!(
+            status.completion.is_none()
+                && status
+                    .received_bytes
+                    .is_some_and(|bytes| bytes <= status.artifact_bytes),
+            "invalid receiving transfer proof"
+        ),
+        TransferStatusState::Pending => ensure!(
+            status.completion.is_none() && status.received_bytes.is_none(),
+            "invalid pending transfer proof"
+        ),
+        TransferStatusState::Complete => ensure!(
+            status.received_bytes.is_none()
+                && status
+                    .completion
+                    .as_ref()
+                    .is_some_and(|receipt| receipt.session_id == journal.args.session
+                        && !receipt.incarnation.is_nil()),
+            "invalid transfer completion proof"
+        ),
+    }
+    Ok(status)
 }
 
 fn save(path: &Path, journal: &Journal) -> Result<()> {
@@ -248,3 +390,7 @@ fn check_file(_path: &Path) -> Result<()> {
 fn lock(_path: &Path) -> Result<std::fs::File> {
     anyhow::bail!("private courier lock unsupported on this platform")
 }
+
+#[cfg(all(test, unix))]
+#[path = "courier_journey_tests.rs"]
+mod journey_tests;

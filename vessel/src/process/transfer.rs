@@ -2,6 +2,7 @@
 mod destination;
 mod prepare;
 mod source;
+mod status;
 use super::{access::store, registry, service::Supervisor};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,13 @@ struct Prepared {
     config_path: Option<PathBuf>,
     manifest: Option<SignedArtifact<TransferManifest>>,
     activated: bool,
+    /// Persisted before entering startup. Presence is pending intent, never
+    /// completion evidence or permission to repeat a startup effect.
+    #[serde(default)]
+    activation_command: Option<Uuid>,
+    /// Captured before preparation effects, never reconstructed for old state.
+    #[serde(default)]
+    catalogue_namespace: Option<(u64, u64)>,
 }
 fn directory(root: &Path, id: Uuid) -> PathBuf {
     root.join("transfers").join(id.to_string())
@@ -27,6 +35,26 @@ fn save(root: &Path, id: Uuid, prepared: &Prepared) -> Result<()> {
 }
 impl Supervisor {
     pub(super) async fn transfer(&self, command: VesselCommand) -> Result<serde_json::Value> {
+        let destination_id = match &command {
+            VesselCommand::PrepareTransfer { transfer_id, .. }
+            | VesselCommand::UploadTransferChunk { transfer_id, .. }
+            | VesselCommand::ActivateTransfer { transfer_id, .. }
+            | VesselCommand::TransferStatus { transfer_id, .. } => Some(*transfer_id),
+            VesselCommand::AcceptTransfer { manifest } => Some(manifest.payload.transfer_id),
+            _ => None,
+        };
+        // Export already owns its source-side per-transfer lock. Destination
+        // operations serialize intent/status/uploads before registrations.
+        let lock = if let Some(id) = destination_id {
+            Some(self.assignment_lock(id).await?)
+        } else {
+            None
+        };
+        let _transfer = if let Some(lock) = &lock {
+            Some(lock.lock().await)
+        } else {
+            None
+        };
         match command {
             command @ VesselCommand::PrepareTransfer { .. } => self.prepare_transfer(command).await,
             command @ VesselCommand::ExportTransfer { .. } => self
@@ -48,6 +76,20 @@ impl Supervisor {
                 .activate_transfer(command)
                 .await
                 .map_err(|error| error.context(super::routing::OutcomeUnknown)),
+            VesselCommand::TransferStatus {
+                transfer_id,
+                activate_command_id,
+                expected_manifest_digest,
+                manifest,
+            } => self
+                .transfer_status(
+                    transfer_id,
+                    activate_command_id,
+                    expected_manifest_digest,
+                    manifest,
+                )
+                .await
+                .and_then(|status| serde_json::to_value(status).map_err(Into::into)),
             _ => anyhow::bail!("unsupported transfer operation"),
         }
     }
@@ -75,3 +117,6 @@ impl Supervisor {
 
 #[cfg(test)]
 mod transfer_final_tests;
+
+#[cfg(test)]
+mod transfer_status_tests;

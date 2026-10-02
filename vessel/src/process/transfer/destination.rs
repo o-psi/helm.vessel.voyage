@@ -1,7 +1,6 @@
 use super::*;
 use crate::process::identity;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Seek, Write},
     os::unix::fs::OpenOptionsExt,
@@ -11,9 +10,13 @@ impl Supervisor {
         &self,
         manifest: SignedArtifact<TransferManifest>,
     ) -> Result<serde_json::Value> {
-        let _serial = self.registrations.lock().await?;
+        let _serial = self.registrations.observe_existing().await?;
         let id = manifest.payload.transfer_id;
         let mut prepared = load(&self.directory, id)?;
+        ensure!(
+            prepared.catalogue_namespace == Some(_serial.namespace),
+            "transfer catalogue witness unavailable or changed; no acceptance permitted"
+        );
         identity::verify(
             &self.directory,
             manifest.payload.source_vessel_id,
@@ -56,12 +59,36 @@ impl Supervisor {
             !bytes.is_empty() && bytes.len() <= 65536,
             "invalid transfer chunk"
         );
-        let _serial = self.registrations.lock().await?;
+        let _serial = self.registrations.observe_existing().await?;
         let prepared = load(&self.directory, id)?;
+        ensure!(
+            prepared.catalogue_namespace == Some(_serial.namespace),
+            "transfer catalogue witness unavailable or changed; no upload permitted"
+        );
         ensure!(!prepared.activated, "transfer already activated");
         let manifest = prepared
             .manifest
             .ok_or_else(|| anyhow::anyhow!("transfer manifest not accepted"))?;
+        ensure!(
+            prepared.activation_command.is_none(),
+            "transfer activation is pending; uploads refused"
+        );
+        ensure!(
+            !_serial.contains_key(&manifest.payload.session_id),
+            "transfer target already admitted; uploads refused"
+        );
+        let admission = super::super::database::transfer_admission_observation(
+            &self.directory,
+            id,
+            manifest.payload.session_id,
+            None,
+            Some(_serial.namespace),
+        )
+        .await?;
+        ensure!(
+            !admission.any_activation && !admission.any_registration,
+            "transfer activation admission prevents further uploads"
+        );
         let end = offset
             .checked_add(bytes.len() as u64)
             .ok_or_else(|| anyhow::anyhow!("transfer offset overflow"))?;
@@ -106,24 +133,28 @@ impl Supervisor {
         else {
             anyhow::bail!("not activation")
         };
+        let registrations = self.registrations.observe_existing().await?;
         let mut prepared = load(&self.directory, *transfer_id)?;
+        ensure!(
+            prepared.catalogue_namespace == Some(registrations.namespace),
+            "transfer catalogue witness unavailable or changed; no activation permitted"
+        );
         let manifest = prepared
             .manifest
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("transfer manifest not accepted"))?;
         identity::verify(&self.directory, manifest.payload.source_vessel_id, manifest)?;
         let artifact_path = directory(&self.directory, *transfer_id).join("artifact.json");
-        let metadata = std::fs::symlink_metadata(&artifact_path)?;
         ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() == manifest.payload.artifact_bytes,
+            super::status::artifact_bytes(&self.directory, *transfer_id, &manifest.payload)?
+                == manifest.payload.artifact_bytes,
             "transfer artifact incomplete"
         );
-        let bytes = std::fs::read(&artifact_path)?;
         ensure!(
-            format!("{:x}", Sha256::digest(&bytes)) == manifest.payload.artifact_sha256,
-            "transfer artifact digest mismatch"
+            prepared
+                .activation_command
+                .is_none_or(|id| id == *command_id),
+            "transfer activation command changed"
         );
         let initialization = RuntimeInitialization::Transfer {
             transfer_id: *transfer_id,
@@ -133,16 +164,28 @@ impl Supervisor {
             generation: manifest.payload.generation,
         };
         let transfer_id = *transfer_id;
-        let result = self
-            .start_initialized(
+        // Pin intent after all complete-artifact checks and before startup.
+        // The per-transfer dispatcher lock prevents uploads/status racing this
+        // intent; do not hold registrations across start_initialized.
+        prepared.activation_command = Some(*command_id);
+        save(&self.directory, transfer_id, &prepared)?;
+        drop(registrations);
+        let namespace = prepared
+            .catalogue_namespace
+            .ok_or_else(|| anyhow::anyhow!("transfer catalogue witness missing"))?;
+        let result = super::super::database::in_transfer_namespace(
+            &self.directory,
+            namespace,
+            self.start_initialized(
                 *command_id,
                 manifest.payload.session_id,
                 prepared.preparation.payload.workspace.clone(),
                 prepared.config_path.clone(),
                 Some(initialization),
                 command,
-            )
-            .await?;
+            ),
+        )
+        .await?;
         prepared.activated = true;
         save(&self.directory, transfer_id, &prepared)?;
         Ok(result)

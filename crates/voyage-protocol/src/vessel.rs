@@ -522,6 +522,13 @@ pub enum VesselCommand {
         command_id: Uuid,
         transfer_id: Uuid,
     },
+    /// Owner-local readonly proof for the exact retained transfer activation.
+    TransferStatus {
+        transfer_id: Uuid,
+        activate_command_id: Uuid,
+        expected_manifest_digest: String,
+        manifest: crate::process::SignedArtifact<crate::process::TransferManifest>,
+    },
     Grant {
         command_id: Uuid,
         grant_id: Uuid,

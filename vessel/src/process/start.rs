@@ -207,6 +207,11 @@ impl Supervisor {
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registrations.insert(session_id, registration.clone());
         drop(registrations);
+        // No-op for normal starts; transfer admission retains its original
+        // catalogue context and refuses drift before launching a process.
+        super::database::check_transfer_namespace(&self.directory)
+            .await
+            .map_err(|error| error.context(routing::OutcomeUnknown))?;
         super::launch::launch(&self.binary, &directory, &registration)
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         let observed = tokio::time::timeout(Duration::from_secs(10), async {

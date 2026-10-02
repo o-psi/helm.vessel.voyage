@@ -254,7 +254,16 @@ provider continuation state, live resources and source configuration are exclude
 
 Repeat the **same command with the same journal** after connection loss. The journal
 retains exact command IDs, endpoint identities, preparation and manifest. Chunks and
-activation tolerate exact retries. Do not invent a new transfer ID to escape an
+activation retain their original identities. New journals save an activation-pending
+phase before sending activation; an unknown result stops further effects. Reopening
+an unresolved manifest uses the current ordinary backend's read-only signed
+transfer status. Receiving can resume exact chunks; Pending retains uncertainty;
+Complete reports the exact historical creation receipt without claiming current
+process liveness. A backend without status support requires an upgrade before
+ambiguous saved-state recovery. Older preparations missing their original private
+catalogue namespace witness cannot prove safe Receiving; they remain pending unless
+an exact historical completion is available. No missing witness is reconstructed.
+Do not invent a new transfer ID to escape an
 unknown outcome. The source stays relinquished and cannot restart after ownership
 moves. There is no automatic timeout takeover, reverse transfer, or expiry-based
 reclamation of an unresolved preparation. A preparation lasts at most thirty

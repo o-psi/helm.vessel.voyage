@@ -21,7 +21,7 @@ impl Supervisor {
             !command_id.is_nil() && !transfer_id.is_nil() && !session_id.is_nil(),
             "nil transfer identity"
         );
-        let registrations = self.registrations.lock().await?;
+        let registrations = self.registrations.observe_existing().await?;
         registry::private_directory(&self.directory.join("transfers"))?;
         let path = directory(&self.directory, *transfer_id);
         registry::private_directory(&path)?;
@@ -108,6 +108,8 @@ impl Supervisor {
                 config_path: config_path.clone(),
                 manifest: None,
                 activated: false,
+                activation_command: None,
+                catalogue_namespace: Some(registrations.namespace),
             },
         )?;
         Ok(serde_json::to_value(preparation)?)
