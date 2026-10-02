@@ -363,7 +363,7 @@ fn gateway_origin_validation_fails_before_database_or_listener() {
     let cli = Cli::new();
     let directory = cli.0.path().join("unopened-process-root");
     let database = cli.0.path().join("must-not-create.db");
-    // public_origin is the optional positional origin in the actual Cli parser.
+    // Use the public flag accepted by deployed gateway service definitions.
     cli.fails(
         &[
             "--database",
@@ -372,6 +372,7 @@ fn gateway_origin_validation_fails_before_database_or_listener() {
             directory.to_str().unwrap(),
             "--bind",
             "0.0.0.0:9480",
+            "--public-origin",
             "https://offline.invalid",
         ],
         "loopback behind",
@@ -384,6 +385,7 @@ fn gateway_origin_validation_fails_before_database_or_listener() {
             directory.to_str().unwrap(),
             "--bind",
             "localhost:9480",
+            "--public-origin",
             "https://offline.invalid",
         ],
         "literal loopback",
