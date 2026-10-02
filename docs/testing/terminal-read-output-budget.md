@@ -54,3 +54,38 @@ refusal and empty output; complete private notice bounds; and the exact lossy
 mapping of a fragment already dropped from capture. The usual standard test-file
 exclusion and complete workspace denominator remain unchanged. No check is
 reported passing before Root completes the coordinated gate.
+
+## Final integrated verification
+
+Clean measured source `6ae8774cfa1218ae010118a991de20bb4eed6fbf` passed the
+full workspace gate: **3092 passed, 0 failed, 8 ignored** across15 Cargo parent
+targets. All six new byte contracts and the unchanged256-byte actual Registry/PTY
+journey passed. Formatting and strict all-target/all-feature Clippy passed.
+
+The combined cohort adds120 semantic parents plus one inert child entry; nested
+child summaries are excluded. Failed source/pre-test/fullgate evidence is retained,
+including the c7ffb4c failure that exposed this production bug. No failing report
+is labelled passing.
+
+Audited18 current objects,570 own profiles,235 unchanged foreign profiles and all
+543 prior workspace mappings. Summary/detail/HTML and archived-object LCOV agree.
+Lines **109994/135808 =80.99228322337417%**, functions9932/12371,
+regions173517/225021. Compared with2802782, +1222 covered lines,+81 measured
+production lines,+0.852002 percentage points. Standard scope/exclusions unchanged;
+100% reachable coverage remains unfinished.
+
+All544files/12371groups/everyJSON-LCOVcounter reconcile:25814 aggregate gaps
+versus23756 unique zero addresses; difference2058=136maximum/union+1949overlap
+-27shadowing. This is accounting, not a complete reachability classification.
+
+Gate invocation6bc6201f4a16469aae3d095487c174d4 exited0,567s,10GiB peak;
+exportb18ce1cdda474a5cbdf161589aa2e4e0 exited0,27s,8317296640B peak;
+accountingaabc92ef77014cafa58eebc3365dfedc exited0,315928576B peak.
+All bounded units used zero swap and retained actual terminal evidence. Raw logs,
+profiles, reports and hash-archived objects stay ignored under
+`target/coverage-report/v103-ordinary-ui-helper-operator-budget-final/`; only the
+compact source-bound summary is published in `coverage/latest.json`.
+
+Normal main publication and hosted build/archive follow-through remain pending
+at record creation. #404 must not close on tests/push alone. This does not
+qualify native browser behavior, provider execution or a stable release.

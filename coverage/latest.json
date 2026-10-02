@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T15:44:01+00:00",
-  "source_commit": "2802782e6f9d438145c01328a57d16cc0f014d23",
+  "measured_at_utc": "2026-10-02T17:13:05+00:00",
+  "source_commit": "6ae8774cfa1218ae010118a991de20bb4eed6fbf",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2971,
+    "passed": 3092,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 135727,
-      "covered": 108772,
-      "percent": 80.14028159467166
+      "count": 135808,
+      "covered": 109994,
+      "percent": 80.99228322337417
     },
     "functions": {
-      "count": 12366,
-      "covered": 9827,
-      "percent": 79.4678958434417
+      "count": 12371,
+      "covered": 9932,
+      "percent": 80.28453641581117
     },
     "regions": {
-      "count": 224912,
-      "covered": 171596,
-      "notcovered": 53316,
-      "percent": 76.2947286049655
+      "count": 225021,
+      "covered": 173517,
+      "notcovered": 51504,
+      "percent": 77.11146959617102
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-public-delegation-sse-final/html -j1; inside bounded systemd user unit voyage-v103-public-delegation-sse-final after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-public-delegation-sse-final/summary-default.json -v; llvm-profdata merge -sparse with512 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-ordinary-ui-helper-operator-budget-final/html -j1; inside bounded systemd user unit voyage-v103-ordinary-ui-helper-operator-budget-final after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-ordinary-ui-helper-operator-budget-final/summary-default.json -v; llvm-profdata merge -sparse with570 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,12 +40,14 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean source2802782:2971 parent-workspace tests passed, zero failed, eight ignored across15 Cargo targets.35 new public-coordination/goal-delegation parents passed. Nested self-child summaries excluded. Formatting and workspace all-target/all-feature strict Clippy passed.",
-    "Exactly18 current objects:15 test targets and3 instrumented real entrypoints.512 own profiles merged;235 foreign profiles byte-identical. All543 prior workspace mappings retained plus one previously retained standard-library mapping. Summary/detail/HTML agree;18 hash-archived objects. Standard exclusions unchanged.",
-    "Compared with e106038:96 additional covered lines, unchanged135727 line denominator, +0.070730 percentage points.26955 aggregate gaps remain; full100% reachable-production objective remains unmet.",
-    "The prior clean100970f gate exited101 with2970passed/1failed/8ignored, only the existing64-SSE-body teardown fixture BrokenPipe. Evidence retained. Repair arms only deliberate body drops and validates identity, fault-free empty consumed Events reply and observed write-side BrokenPipe, bounded65. Every accepted IPC task is joined; exact child/listener retirement, restored capacity and readonly no-effects assertions retained/strengthened. No production behavior or deadlines changed.",
-    "Passing gate302s,7236538368B peak,zero swap,j1; exact invocation80257fa8e9364572bfda3276631ac438. Export25s,10648100864B peak, invocation40cf2402d76e462dbde1d1a750a6b1ee. Accounting310243328B peak, invocation43462702615a4c428899365adc56f245. All actual terminal statuses0 retained with RemainAfterExit; report is bound to clean measured source, not the later summary commit.",
-    "Line accounting reconstructs544files/12366function groups/everyJSON-LCOVcounter:26955aggregate gaps versus24846unique zero addresses; difference2109=126instantiation maxima/union+2010overlap-27shadowing. Counting reconciliation is not complete reachability classification.",
-    "New source/compact measurement publication and hosted artifact follow-through pending at summary creation. Native browser qualification on separately installed613 remains unfinished; current CT106 health/exact route hashes observed through authorized Home Proxmox pct route. Temporary route restoration owned/pending; no browser/job/site/provider effect replay. Stable1.0.3 and milestone remain open. Deferred1.1scope unchanged."
+    "Clean source6ae8774:3092 parent-workspace tests passed, zero failed, eight ignored across15 Cargo targets.120 new semantic parents (20shellPTY,39ordinaryhelper,22HelmUI,33GitHub/agent,6complete-response byte contracts) plus1 inert child entry; nested child summaries excluded. Formatting and strict all-target/all-feature Clippy passed; focused CUA selected-tab collector7/7 passed separately.",
+    "Exactly18 current objects:15 test targets and3 instrumented real entrypoints.570 own profiles merged;235 foreign profiles byte-identical. All543 prior workspace mappings retained plus one previously retained standard-library mapping. Summary/detail/HTML agree;18 hash-archived objects. Standard exclusions unchanged.",
+    "Compared with2802782:1222 additional covered lines,81 additional measured production lines, +0.852002 percentage points.25814 aggregate gaps remain; full100% reachable-production objective remains unmet, no denominator narrowing.",
+    "Pre-test compiler gate found typed terminal method shadowing and null-escape fixture source errors, corrected to exact public trait and raw shell string. d5379f4 fullgate12 fixture failures were corrected together:7durable UI wire-incarnation oracles,4policy-refused arithmetic fixture commands,1nil positive checkpoint. All assertions retained/strengthened and separate nil refusal added. c7ffb4c fullgate then exposed real production#404: oversized complete read report consumed unseen cursor output. Failed reports/logs/profiles remain retained; no failing measurement published as passing.",
+    "#404 complete status/body/remaining/privacy metadata and lossy UTF-8 expansion are budgeted before original-byte cursor commit. Unfit status/body/privacy budgets refuse without consumption. Existing real Registry/PTY case keeps256bytes and verifies tiny-budget failure, exact delivered-source mapping, typed gap/cursor and owned cleanup. Six contracts cover ASCII, all2/3/4byte valid widths, invalid bytes, privacy notices and known dropped fragments. Execution authority, external effects and deadlines unchanged.",
+    "Passing gate567s,10737418240B peak,zero swap,j1; invocation6bc6201f4a16469aae3d095487c174d4. Export27s,8317296640B peak, invocationb18ce1cdda474a5cbdf161589aa2e4e0. Accounting315928576B peak, invocationaabc92ef77014cafa58eebc3365dfedc. All actual terminal exits0 retained with RemainAfterExit, explicitly bound to clean measured source rather than later summary commit.",
+    "Line accounting reconstructs544files/12371function groups/everyJSON-LCOVcounter:25814aggregate gaps versus23756unique zero addresses; difference2058=136instantiation maxima/union+1949overlap-27shadowing. Counting reconciliation is not complete reachability classification.",
+    "First native browser attempt refused before bridge/driver admission and was observed retired with original Web settings restored. Fresh separate attempt01576a49 admitted original613driver, then failed its native fixture-title bootstrap predicate before any CUA request. Owned browser roots absent and native clients exited per launcher; exact helper/config retirement requested and source correction pending. Native/fullsite/privacy/cost/renewal/cleanup acceptance remains unqualified. Existing5385 equivalent route restoration remains owed. Stable1.0.3 and #333/#353/#375/#404 remain open at summary creation.",
+    "Latest earlier public source88735d4 hosted37029734692 was successful and its anonymous archive/checksum/4binaries/123assets/source/version verified. This new completed source and compact measurement require normal main publication and exact hosted build/archive follow-through. No native installation of that earlier artifact is inferred."
   ]
 }
