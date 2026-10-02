@@ -356,5 +356,5 @@ receipt, both Voyages, private account state and credential configuration. Actua
 managed identity, enabled services, canonical gateway origin, retained proof and
 strict public health matched the new archive. See the
 [native checkpoint](testing/ordinary-forward-recovery.md#qualified-native-checkpoint).
-Original-owner Web and broader legacy failure/context cases remain required; this
-successful path is not a general corruption repair or a stable release claim.
+Original-owner Web compatibility also passed without adding WorkspaceRead;
+broader legacy failure/context cases remain required. This successful path is not a general corruption repair or a stable release claim.

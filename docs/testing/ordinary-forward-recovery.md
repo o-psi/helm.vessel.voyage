@@ -88,12 +88,13 @@ missing proof or changed unit/account/canonical data remains unconfirmed/fenced.
 Such states need another specifically reviewed recovery mechanism; this entry
 must not be presented as universal corruption repair.
 
-Native CT106 forward prepare/apply has passed; original-owner Web and broader
-legacy failure/context qualification remain required before issue closure. Its
+Native CT106 forward prepare/apply has passed; original-owner Web compatibility also passed with its frozen twelve rights. Broader
+legacy failure/context qualification remains required before issue closure. Its
 original operation `2a84c5a0-bf77-4fa0-9fe5-89a8c5207463` stays unknown; retained
 schema2 and both completed Voyages survived with repaired managed identities and actual services matching the
 qualified archive. Its unchanged approved public origin has healthy strictTLS
-health; original authenticated Helm Web-owner behavior remains a separate gate. Do not
+health; the original authenticated Helm Web connection also passed the owner
+compatibility check below. Do not
 publish private local paths, tokens, receipt payloads or terminal input in evidence.
 
 ## Idle notification layout between review and quiescence
@@ -201,7 +202,20 @@ helper was found in the bounded owner scan. Postcomplete raw notification layout
 drift is explicit; it is not described as raw equality or omitted from evidence.
 
 See the [durable native checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5945526723)
-for exact archive, review, invocation and receipt identities. Original-owner Web,
-legacy forced rollback/death/context, complete browser cost/site/privacy and full
+for exact archive, review, invocation and receipt identities. Legacy forced rollback/death/context, complete browser cost/site/privacy and full
 reachable coverage remain separate gates. This record does not publish a stable
 release or establish native behavior on other machines/platforms.
+
+### Original authenticated Helm Web owner
+
+The original saved connection remained Connected in the normal selected operator's
+UI after recovery. A bounded UID33 worker using the deployed `PublicVesselHttp`
+and existing credential inside its own memory returned owner Capabilities at the
+new version with the exact frozen twelve rights and revision1. Native private
+principal/Vessel/token hash matched the unchanged saved connection; no
+`WorkspaceRead` was added. A bounded read-only workspace-file request returned
+`workspace permission denied`, `outcome_unknown:false`, before lookup or effects.
+Postrequest canonical/account/session/semantic state and raw grant pins matched
+retained review; no session or grant was created. The original uncertain receipt
+remained unchanged. No credential/session-cookie export or authority shim was used.
+See the [deployed owner checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/402#issuecomment-5945578875).
