@@ -61,7 +61,9 @@ impl Scope {
                 let latest: ProcessGrant = store::load(&store::grant_path(root, g.grant_id))?;
                 current_session_scope(root, &latest)?;
                 ensure!(
-                    latest.full_access == g.full_access
+                    store::process_authority_fingerprint(&latest)?
+                        == store::process_authority_fingerprint(g)?
+                        && latest.full_access == g.full_access
                         && latest.grant_id == g.grant_id
                         && latest.accounts == g.accounts
                         && latest.enrollment_connections == g.enrollment_connections

@@ -99,6 +99,7 @@ fn issue(f: &Fixture) -> VesselCommand {
 }
 fn scoped(grant: &ProcessGrant, command: VesselCommand) -> VesselCommand {
     VesselCommand::Granted {
+        expected_authority_fingerprint: None,
         expected_vessel_id: None,
         grant_id: grant.grant_id,
         token: TOKEN.into(),

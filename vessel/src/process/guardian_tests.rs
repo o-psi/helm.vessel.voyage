@@ -702,6 +702,7 @@ os.replace(temp,path); fd=os.open(p,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC); os
     )
     .unwrap();
     let owner_command = |command| VesselCommand::Granted {
+        expected_authority_fingerprint: None,
         expected_vessel_id: Some(owner.vessel_id),
         grant_id: owner.grant_id,
         token: owner_token.clone(),

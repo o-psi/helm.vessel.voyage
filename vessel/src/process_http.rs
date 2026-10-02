@@ -23,6 +23,7 @@ impl ProcessRoute {
                     &VesselRequest {
                         protocol: VESSEL_API_VERSION,
                         command: VesselCommand::Granted {
+                            expected_authority_fingerprint: auth.expected_authority_fingerprint,
                             expected_vessel_id: auth.expected_vessel_id,
                             grant_id: auth.grant_id,
                             token: auth.token,
@@ -199,72 +200,73 @@ pub(super) async fn events(
     };
     let mut subscriptions = request.subscriptions;
     let stream = async_stream::stream! {
-        let _permit = permit;
-        loop {
-          for subscription in &mut subscriptions {
-            let response = route.exchange(
-                vessel::process::gateway_ipc::GrantAuth {
-                    expected_vessel_id,
-                    grant_id,
-                    token: token.clone(),
-                },
-                VesselCommand::Voyage(VoyageRequest {
-                            session_id: subscription.session_id,
-                            incarnation: None,
-                            command: VoyageCommand::Events {
-                                after: subscription.after,
-                                limit: 128,
-                                // Re-enter the grant gateway between waits so expiry
-                                // and revocation stop publication at a bounded point.
-                                wait_ms: 0,
-                                projection: subscription.projection.clone(),
+            let _permit = permit;
+            loop {
+              for subscription in &mut subscriptions {
+                let response = route.exchange(
+                    vessel::process::gateway_ipc::GrantAuth {
+                        expected_authority_fingerprint: None,
+    expected_vessel_id,
+                        grant_id,
+                        token: token.clone(),
+                    },
+                    VesselCommand::Voyage(VoyageRequest {
+                                session_id: subscription.session_id,
+                                incarnation: None,
+                                command: VoyageCommand::Events {
+                                    after: subscription.after,
+                                    limit: 128,
+                                    // Re-enter the grant gateway between waits so expiry
+                                    // and revocation stop publication at a bounded point.
+                                    wait_ms: 0,
+                                    projection: subscription.projection.clone(),
+                                },
+                            }),
+                )
+                .await;
+                let (result, error, outcome_unknown) = match response {
+                    Ok(response) if response.error.is_none() => {
+                        match serde_json::from_value::<VoyageReply>(response.result) {
+                            Ok(reply) => {
+                                let mut result = reply.result;
+                                if reply.incarnation != subscription.incarnation {
+                                    result["owner_changed"] = serde_json::Value::Bool(true);
+                                    result["replay_gap"] = serde_json::Value::Bool(true);
+                                    result["recovery"] = serde_json::Value::String("snapshot".into());
+                                    subscription.incarnation = reply.incarnation;
+                                }
+                                (result, None, false)
                             },
-                        }),
-            )
-            .await;
-            let (result, error, outcome_unknown) = match response {
-                Ok(response) if response.error.is_none() => {
-                    match serde_json::from_value::<VoyageReply>(response.result) {
-                        Ok(reply) => {
-                            let mut result = reply.result;
-                            if reply.incarnation != subscription.incarnation {
-                                result["owner_changed"] = serde_json::Value::Bool(true);
-                                result["replay_gap"] = serde_json::Value::Bool(true);
-                                result["recovery"] = serde_json::Value::String("snapshot".into());
-                                subscription.incarnation = reply.incarnation;
-                            }
-                            (result, None, false)
-                        },
-                        Err(_) => (serde_json::Value::Null, Some("invalid Vessel event response".into()), true),
+                            Err(_) => (serde_json::Value::Null, Some("invalid Vessel event response".into()), true),
+                        }
                     }
-                }
-                Ok(response) => (response.result, response.error, response.outcome_unknown),
-                Err(_) => (serde_json::Value::Null, Some("Vessel routing unavailable; event stream ended".into()), true),
-            };
-            let terminal = error.is_some();
-            if let Some(cursor) = result.get("cursor").and_then(serde_json::Value::as_u64) {
-                subscription.after = cursor;
-            }
-            let changed = terminal
-                || result.get("replay_gap") == Some(&serde_json::Value::Bool(true))
-                || result.get("events").and_then(serde_json::Value::as_array).is_some_and(|events| !events.is_empty());
-            if changed {
-                let event = VesselEvent {
-                    protocol: VESSEL_API_VERSION,
-                    session_id: subscription.session_id,
-                    incarnation: subscription.incarnation,
-                    result,
-                    error,
-                    outcome_unknown,
+                    Ok(response) => (response.result, response.error, response.outcome_unknown),
+                    Err(_) => (serde_json::Value::Null, Some("Vessel routing unavailable; event stream ended".into()), true),
                 };
-                let Ok(data) = serde_json::to_string(&event) else { return; };
-                yield Ok::<Event, std::convert::Infallible>(Event::default().event("update").data(data));
+                let terminal = error.is_some();
+                if let Some(cursor) = result.get("cursor").and_then(serde_json::Value::as_u64) {
+                    subscription.after = cursor;
+                }
+                let changed = terminal
+                    || result.get("replay_gap") == Some(&serde_json::Value::Bool(true))
+                    || result.get("events").and_then(serde_json::Value::as_array).is_some_and(|events| !events.is_empty());
+                if changed {
+                    let event = VesselEvent {
+                        protocol: VESSEL_API_VERSION,
+                        session_id: subscription.session_id,
+                        incarnation: subscription.incarnation,
+                        result,
+                        error,
+                        outcome_unknown,
+                    };
+                    let Ok(data) = serde_json::to_string(&event) else { return; };
+                    yield Ok::<Event, std::convert::Infallible>(Event::default().event("update").data(data));
+                }
+                if terminal { return; }
+              }
+              tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-            if terminal { return; }
-          }
-          tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-    };
+        };
     Sse::new(stream)
         .keep_alive(
             KeepAlive::new()
@@ -313,6 +315,7 @@ pub(super) async fn command(
     let response = match route
         .exchange(
             vessel::process::gateway_ipc::GrantAuth {
+                expected_authority_fingerprint: None,
                 expected_vessel_id,
                 grant_id,
                 token: token.to_owned(),
@@ -401,6 +404,29 @@ impl SocketBackend {
     async fn exchange(&self, command: VesselCommand) -> VesselResponse {
         self.exchange_socket(command, None).await
     }
+    fn expected_authority(&self) -> Result<Option<String>, ()> {
+        if self.authority.is_null() {
+            return Ok(None);
+        }
+        let advertised = self
+            .authority
+            .get("features")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|features| {
+                features
+                    .iter()
+                    .any(|feature| feature == "saved_authority_pin")
+            });
+        match self.authority.get("authorization_fingerprint") {
+            Some(serde_json::Value::String(value))
+                if value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit()) =>
+            {
+                Ok(Some(value.clone()))
+            }
+            None if !advertised => Ok(None),
+            _ => Err(()),
+        }
+    }
     async fn exchange_socket(
         &self,
         command: VesselCommand,
@@ -414,7 +440,11 @@ impl SocketBackend {
                 outcome_unknown: false,
             };
         }
+        let Ok(expected_authority_fingerprint) = self.expected_authority() else {
+            return browser_refusal();
+        };
         let auth = vessel::process::gateway_ipc::GrantAuth {
+            expected_authority_fingerprint,
             expected_vessel_id: self.expected_vessel_id,
             grant_id: self.grant_id,
             token: self.token.clone(),
@@ -422,6 +452,7 @@ impl SocketBackend {
         let result = match &self.route {
             ProcessRoute::Local(directory) => {
                 let command = VesselCommand::Granted {
+                    expected_authority_fingerprint: auth.expected_authority_fingerprint,
                     expected_vessel_id: auth.expected_vessel_id,
                     grant_id: auth.grant_id,
                     token: auth.token,
@@ -763,3 +794,7 @@ fn browser_refusal() -> VesselResponse {
         outcome_unknown: false,
     }
 }
+
+#[cfg(test)]
+#[path = "process_http/owned_frontdoor_tests.rs"]
+mod owned_frontdoor_tests;

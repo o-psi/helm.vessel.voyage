@@ -701,6 +701,7 @@ async fn gateway_rejection_matrix_never_reaches_grant_or_browser_effect_dispatch
     let f = Fixture::new();
     let supervisor = Arc::new(f.supervisor().await);
     let auth = gateway_ipc::GrantAuth {
+        expected_authority_fingerprint: None,
         expected_vessel_id: None,
         grant_id: Uuid::new_v4(),
         token: TOKEN.into(),
@@ -739,6 +740,7 @@ async fn gateway_rejection_matrix_never_reaches_grant_or_browser_effect_dispatch
             socket,
         },
         VesselCommand::Granted {
+            expected_authority_fingerprint: None,
             expected_vessel_id: None,
             grant_id: Uuid::new_v4(),
             token: TOKEN.into(),

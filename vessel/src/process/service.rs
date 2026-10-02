@@ -374,6 +374,7 @@ async fn gateway_command(
             "browser socket boundary refused"
         );
         let command = VesselCommand::Granted {
+            expected_authority_fingerprint: auth.expected_authority_fingerprint,
             expected_vessel_id: auth.expected_vessel_id,
             grant_id: auth.grant_id,
             token: auth.token,
@@ -932,13 +933,20 @@ impl Supervisor {
             command @ VesselCommand::Grant { .. } => self.grant(command).await,
             command @ VesselCommand::RevokeGrant { .. } => self.revoke_grant(command).await,
             VesselCommand::Granted {
+                expected_authority_fingerprint,
                 expected_vessel_id,
                 grant_id,
                 token,
                 command,
             } => {
-                self.granted(grant_id, token, expected_vessel_id, *command)
-                    .await
+                self.granted_with_authority(
+                    grant_id,
+                    token,
+                    expected_vessel_id,
+                    expected_authority_fingerprint,
+                    *command,
+                )
+                .await
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             command @ (VesselCommand::UpdatePrepare { .. }

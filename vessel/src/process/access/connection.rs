@@ -72,7 +72,25 @@ impl Supervisor {
         token: &str,
         command: VesselCommand,
     ) -> Result<Value> {
+        self.connected_with_authority(id, token, None, command)
+            .await
+    }
+    pub(super) async fn connected_with_authority(
+        &self,
+        id: Uuid,
+        token: &str,
+        expected_authority: Option<&str>,
+        command: VesselCommand,
+    ) -> Result<Value> {
         let grant = store::authenticate_connection(&self.directory, id, token)?;
+        if let Some(expected) = expected_authority {
+            ensure!(
+                expected.len() == 64
+                    && expected.bytes().all(|b| b.is_ascii_hexdigit())
+                    && store::connection_authority_fingerprint(&grant)? == expected,
+                "saved connection authority changed"
+            );
+        }
         let has = |right| -> Result<()> {
             ensure!(grant.rights.contains(&right), "workspace permission denied");
             Ok(())
@@ -95,12 +113,13 @@ impl Supervisor {
                 "vessel_id": grant.vessel_id, "principal_id": grant.principal_id,
                 "scope": if grant.full_access { "owner" } else { "workspaces" }, "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
+                "authorization_fingerprint": store::connection_authority_fingerprint(&grant)?,
                 "workspaces": self.connection_workspaces(&grant).await?,
                 "running_release": crate::process::updates::running_release(),
                 "remote_updates": grant.full_access && crate::process::updates::supported(&self.directory)
                     && (!crate::process::runtime_storage::has_bound_layout(&self.directory)
                         || self.administrative_authority(&grant).await.is_ok()),
-                "features": ({let mut features=vec!["sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals","start_settings"];
+                "features": ({let mut features=vec!["saved_authority_pin","sqlite_catalogue","catalogue_changes","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals","start_settings"];
                     if crate::process::runtime_storage::has_bound_layout(&self.directory){features.push("execution_identity");}
                     if grant.full_access && crate::process::updates::verified_user_updates(&self.directory){features.push("verified_user_updates");}features})
             })),
@@ -671,3 +690,7 @@ fn ordinary(registration: &ProcessRegistration) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "scoped_frontdoor_tests.rs"]
+mod scoped_frontdoor_tests;

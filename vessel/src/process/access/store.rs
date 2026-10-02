@@ -184,6 +184,7 @@ pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result
             && latest.principal_id == grant.principal_id
             && latest.vessel_id == grant.vessel_id
             && latest.revision == grant.revision
+            && latest.token_hash == grant.token_hash
             && !latest.revoked
             && latest.expires_at_ms == grant.expires_at_ms
             && latest.rights == grant.rights
@@ -193,4 +194,22 @@ pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result
         "connection authority changed"
     );
     Ok(())
+}
+
+// Hash the complete typed saved authority, never raw credentials. A grant's
+// account/enrollment/parent/participant scopes matter even if its revision was
+// independently left unchanged. Derived owner discovery is not part of it.
+fn authority_fingerprint<T: Serialize>(kind: &[u8], grant: &T) -> Result<String> {
+    let mut hash = Sha256::new();
+    hash.update(b"voyage/saved-grant-authority/v1\0");
+    hash.update(kind);
+    hash.update([0]);
+    hash.update(serde_json::to_vec(grant)?);
+    Ok(format!("{:x}", hash.finalize()))
+}
+pub(super) fn connection_authority_fingerprint(grant: &ConnectionGrant) -> Result<String> {
+    authority_fingerprint(b"connection", grant)
+}
+pub(in crate::process) fn process_authority_fingerprint(grant: &ProcessGrant) -> Result<String> {
+    authority_fingerprint(b"session", grant)
 }

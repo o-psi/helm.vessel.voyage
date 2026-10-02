@@ -17,6 +17,8 @@ use voyage_protocol::vessel::{VesselCommand, VesselResponse};
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GrantAuth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_authority_fingerprint: Option<String>,
     pub expected_vessel_id: Option<Uuid>,
     pub grant_id: Uuid,
     pub token: String,

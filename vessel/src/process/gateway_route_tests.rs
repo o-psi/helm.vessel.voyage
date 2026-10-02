@@ -40,6 +40,7 @@ async fn system_pipe_constructs_only_granted_commands_and_keeps_pairing_separate
     grant.token_hash = store::hash(TOKEN);
     fixture.save_session(&grant);
     let auth = gateway_ipc::GrantAuth {
+        expected_authority_fingerprint: None,
         expected_vessel_id: None,
         grant_id: grant.grant_id,
         token: TOKEN.into(),
@@ -63,6 +64,7 @@ async fn system_pipe_constructs_only_granted_commands_and_keeps_pairing_separate
         gateway_ipc::GatewayRequest::Command {
             auth: auth.clone(),
             command: VesselCommand::Granted {
+                expected_authority_fingerprint: None,
                 expected_vessel_id: None,
                 grant_id: grant.grant_id,
                 token: TOKEN.into(),
@@ -114,6 +116,7 @@ async fn browser_pipe_requires_grant_and_records_exact_cleanup_before_dispatch()
     grant.token_hash = store::hash(TOKEN);
     fixture.save_session(&grant);
     let auth = gateway_ipc::GrantAuth {
+        expected_authority_fingerprint: None,
         expected_vessel_id: None,
         grant_id: grant.grant_id,
         token: TOKEN.into(),

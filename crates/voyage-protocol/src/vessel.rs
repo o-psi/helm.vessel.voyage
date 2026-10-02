@@ -553,6 +553,8 @@ pub enum VesselCommand {
     },
     Granted {
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_authority_fingerprint: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_vessel_id: Option<Uuid>,
         grant_id: Uuid,
         token: String,
@@ -829,5 +831,20 @@ mod compaction_identity_tests {
         let private: crate::process::RuntimeCommand =
             serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(private).unwrap(), value);
+    }
+}
+
+#[cfg(test)]
+mod saved_authority_wire_tests {
+    use super::*;
+    #[test]
+    fn private_expectation_is_optional_and_does_not_change_legacy_envelope_bytes() {
+        let value = serde_json::json!({"op":"granted","grant_id":Uuid::new_v4(),"token":"a".repeat(64),"command":{"op":"capabilities"}});
+        let decoded: VesselCommand = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+        let mut pinned = value;
+        pinned["expected_authority_fingerprint"] = serde_json::json!("f".repeat(64));
+        let decoded: VesselCommand = serde_json::from_value(pinned.clone()).unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(), pinned);
     }
 }

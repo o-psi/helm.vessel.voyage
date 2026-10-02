@@ -89,6 +89,7 @@ fn browser_allowlist_excludes_executor_and_native_management() {
     assert!(allowed(&VesselCommand::Capabilities));
     assert!(allowed(&VesselCommand::Catalogue));
     assert!(!allowed(&VesselCommand::Granted {
+        expected_authority_fingerprint: None,
         expected_vessel_id: None,
         grant_id: Uuid::new_v4(),
         token: "x".into(),
@@ -384,7 +385,7 @@ mod transport {
                             command => command,
                         };
                         let VesselCommand::Granted {
-                            expected_vessel_id, grant_id, token, command,
+                            expected_authority_fingerprint: _, expected_vessel_id, grant_id, token, command,
                         } = command else { panic!("exchange must wrap the public command") };
                         assert_eq!(expected_vessel_id, Some(vessel));
                         assert_eq!(grant_id, grant);

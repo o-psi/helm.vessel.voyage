@@ -131,6 +131,12 @@ pub(in crate::process) fn pin(root: &Path, grant: &ProcessGrant) -> Result<()> {
 }
 
 pub(in crate::process) fn check(root: &Path, grant: &ProcessGrant) -> Result<()> {
+    let latest: ProcessGrant = super::store::load(&super::store::grant_path(root, grant.grant_id))?;
+    ensure!(
+        super::store::process_authority_fingerprint(&latest)?
+            == super::store::process_authority_fingerprint(grant)?,
+        "saved session authority changed during admission"
+    );
     let Some(expected) = expected(root, grant)? else {
         return Ok(());
     };

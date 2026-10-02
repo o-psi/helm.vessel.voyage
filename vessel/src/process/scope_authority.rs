@@ -445,3 +445,7 @@ pub(super) fn start_guardian(
     );
     Ok(service)
 }
+
+#[cfg(test)]
+#[path = "scope_authority_ordinary_tests.rs"]
+mod ordinary_family_tests;

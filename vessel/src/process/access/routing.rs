@@ -13,6 +13,17 @@ impl Supervisor {
         expected_vessel_id: Option<Uuid>,
         command: VesselCommand,
     ) -> Result<Value> {
+        self.granted_with_authority(id, token, expected_vessel_id, None, command)
+            .await
+    }
+    pub(crate) async fn granted_with_authority(
+        &self,
+        id: Uuid,
+        token: String,
+        expected_vessel_id: Option<Uuid>,
+        expected_authority: Option<String>,
+        command: VesselCommand,
+    ) -> Result<Value> {
         let identity = crate::process::identity::public(&self.directory)?.vessel_id;
         if let Some(expected) = expected_vessel_id {
             ensure!(expected == identity, "Vessel identity changed");
@@ -22,7 +33,9 @@ impl Supervisor {
                 expected_vessel_id == Some(identity),
                 "workspace access requires pinned Vessel identity"
             );
-            return self.connected(id, &token, command).await;
+            return self
+                .connected_with_authority(id, &token, expected_authority.as_deref(), command)
+                .await;
         }
         if matches!(
             &command,
@@ -49,6 +62,14 @@ impl Supervisor {
             );
         }
         let grant = store::authenticate(&self.directory, id, &token)?;
+        if let Some(expected) = expected_authority.as_deref() {
+            ensure!(
+                expected.len() == 64
+                    && expected.bytes().all(|b| b.is_ascii_hexdigit())
+                    && store::process_authority_fingerprint(&grant)? == expected,
+                "saved session authority changed"
+            );
+        }
         if let Ok(registration) = self.registration(grant.session_id).await {
             ensure!(
                 registration.workspace == grant.workspace,
@@ -76,7 +97,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["sqlite_catalogue","catalogue_changes","notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"authorization_fingerprint":store::process_authority_fingerprint(&grant)?,"features":["saved_authority_pin","sqlite_catalogue","catalogue_changes","notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","execution_profiles","account_start","private_account_enrollment","execution_budget","workspace_changes","workspace_file","skills_catalog","workspace_file_catalog","goals"]}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
