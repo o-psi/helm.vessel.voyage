@@ -16,9 +16,10 @@ test('recorder bounds retained mutations and recovers with a full snapshot', asy
   record.takeFullSnapshot = () => emit({type:2,data:{node:{type:0,childNodes:[]}}});
   const scope = {rrweb:{record}};
   const source = (await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'mirror-source.mjs'), 'utf8')).replace('__VOYAGE_CAPTURE_KEY__','fixture-key');
-  runInNewContext(source, scope);scope.__voyageMirror.enable('fixture-key',1);
+  runInNewContext(source, scope);
+  assert.equal(scope.__voyageMirror.enable('fixture-key',1),true);
 
-  const first = scope.__voyageMirror.enable('fixture-key',1);scope.__voyageMirror.drain(0,2200000,'fixture-key',1);
+  const first = scope.__voyageMirror.drain(0,2200000,'fixture-key',1);
   assert.equal(first.reset, true);
   assert.equal(first.events.length, 2);
   for (let index = 0; index < 5000; index++) emit({type:3,data:{index}});
@@ -41,7 +42,9 @@ test('recorder stop acknowledges actual inactive state and clears queued capture
  assert.equal(Object.getOwnPropertyDescriptor(scope,'__voyageMirror').configurable,false);
  assert.throws(()=>Object.defineProperty(scope,'__voyageMirror',{value:{stop:()=>({recording:false})}}));
  runInNewContext(source,scope);assert.equal(scope.__voyageMirror,original);
- scope.__voyageMirror.drain(0,2200000,'fixture-key',1);
+ assert.equal(scope.__voyageMirror.enable('fixture-key',1),true);
+ const initial=scope.__voyageMirror.drain(0,2200000,'fixture-key',1);
+ assert.equal(initial.reset,true);assert.equal(initial.events.length,1);assert.equal(ended,0);
  const stopped=scope.__voyageMirror.stop('fixture-key',2);
  assert.equal(ended,1);assert.equal(stopped.recording,false);assert.equal(stopped.pending_events,0);assert.equal(stopped.pending_bytes,0);
  assert.equal(scope.__voyageMirror.enable('wrong',3),false);assert.equal(scope.__voyageMirror.enable('fixture-key',1),false);assert.equal(scope.__voyageMirror.drain(0).error,'recorder_disabled');
