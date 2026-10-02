@@ -103,7 +103,16 @@ impl OwnedVessel {
         let pids = owned_pids(
             &self.directory.join("sessions").join(session.to_string()),
             &self.voyage,
-        );
+        )
+        .into_iter()
+        .filter(|(pid, _)| {
+            let arguments = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap();
+            matches!(
+                arguments.split(|byte| *byte == 0).nth(1),
+                Some(b"serve" | b"serve-bound")
+            )
+        })
+        .collect::<Vec<_>>();
         assert_eq!(
             pids.len(),
             1,
