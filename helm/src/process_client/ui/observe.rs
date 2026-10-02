@@ -502,7 +502,12 @@ pub(super) async fn refresh(
                 owner == process.incarnation,
                 "Snapshot observation owner changed"
             );
-            Ok(serde_json::from_value::<Snapshot>(value)?)
+            let snapshot: Snapshot = serde_json::from_value(value)?;
+            anyhow::ensure!(
+                snapshot.session_id == target.session,
+                "Snapshot observation session changed"
+            );
+            Ok(snapshot)
         })
         .map_err(|error| error.to_string());
     let cursor = result

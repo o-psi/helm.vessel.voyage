@@ -1,6 +1,6 @@
 # Ordinary Helm observation cohort (#353)
 
-Source preparation only. Sixteen new parents are uncompiled and unrun. This
+Source preparation only. Eighteen new parents are uncompiled and unrun. This
 independent cohort starts from frozen `4b6b744`; it changes no parent target,
 profile, environment, credential or running release. The current gate and
 prepared transcript/completion/#401 work remain separate. The input b315144
@@ -19,6 +19,14 @@ payload or its cursor. The wire remains unpinned; there is no owner adoption,
 authority change, mutation or effect replay. Two older scripted snapshot
 fixtures now return their actual known owner instead of manufacturing nil from
 the unpinned request; their existing assertions remain.
+
+[Inner snapshot session fencing](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5949825932):
+an otherwise correct outer session/owner envelope could contain another
+snapshot's session and cursor. App refused its installation, but `refresh` had
+already returned that foreign cursor to seed a subscription. `refresh` now
+validates the inner session before returning either the payload or its cursor.
+The App installation guard remains. The existing retry delay, unpinned wire
+contract and exact original pending receipt remain unchanged.
 
 [Legacy stream starvation](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5949146043):
 the first 32 eligible legacy streams could remain healthy forever without
@@ -45,10 +53,15 @@ Capabilities, Catalogue, passive notification Attention, Snapshot and terminal
 Controls; every other command fails the fixture. No executing Vessel/Voyage,
 provider, browser, protected identity or human terminal is launched.
 
-The sixteen parents exercise:
+The eighteen parents exercise:
 
 - Held same-session/new-owner snapshot and terminal replies, without mistaken
   old-owner installation or cursor advancement.
+- A correct outer envelope containing a foreign inner snapshot returns no
+  cursor and leaves the entire cached snapshot, draft and frozen pending receipt
+  unchanged. The real observer emits no subscription for that foreign cursor;
+  a valid resnapshot recovers through the existing retry delay and subscribes
+  only after the correct session's observed cursor.
 - Two events ordered by actual App ACK; duplicate skipping is observed through
   a following new event and exact resumed subscription cursor.
 - False ACKs for invalid later name/model and every invalid total type, with

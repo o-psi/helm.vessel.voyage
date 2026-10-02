@@ -311,6 +311,246 @@ impl Journey {
 }
 
 #[tokio::test]
+async fn foreign_inner_snapshot_returns_no_cursor_and_preserves_app_before_valid_refresh() {
+    let mut peer = Peer::open().await;
+    let session = uuid::Uuid::new_v4();
+    let owner = uuid::Uuid::new_v4();
+    let foreign = uuid::Uuid::new_v4();
+    let command = uuid::Uuid::new_v4();
+    let process = process(session, owner);
+    let (_fixture, mut app, old) = super::super::coverage_support::app();
+    app.clients = Routes::new(vec![peer.client.clone()]);
+    let target = Target {
+        route: super::super::state::Route::of(&peer.client),
+        session,
+    };
+    let mut view = app.views.remove(&old).unwrap();
+    view.process = process.clone();
+    view.snapshot = Some(serde_json::from_value(snapshot(session, 10)).unwrap());
+    view.pending = Some(super::super::state::Pending {
+        account_host: None,
+        command_id: command,
+        incarnation: owner,
+        draft: "exact frozen pending text".into(),
+        preserve_draft: true,
+        original: None,
+        receipt_only: true,
+    });
+    let before = view.snapshot.clone().unwrap();
+    app.views.insert(target, view);
+    app.selected = Some(target);
+    for rejected in [true, false] {
+        let (sender, mut receiver) = mpsc::channel(8);
+        let client = peer.client.clone();
+        let info = process.clone();
+        let task =
+            tokio::spawn(async move { refresh(&client, target.route, &info, &sender).await });
+        let (id, request) = peer.command().await;
+        match request {
+            VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation,
+                command: VoyageCommand::Snapshot,
+            }) => {
+                assert_eq!(session_id, session);
+                assert!(incarnation.is_none());
+            }
+            _ => panic!("only the expected session-named snapshot read"),
+        }
+        peer.voyage_reply(
+            id,
+            session,
+            owner,
+            if rejected {
+                snapshot(foreign, 999)
+            } else {
+                snapshot(session, 21)
+            },
+        )
+        .await;
+        let (id, request) = peer.command().await;
+        match request {
+            VesselCommand::Voyage(VoyageRequest {
+                session_id,
+                incarnation,
+                command: VoyageCommand::Controls { run_id, section },
+            }) => {
+                assert_eq!(session_id, session);
+                assert!(incarnation.is_none() && run_id.is_none());
+                assert_eq!(section, "terminals");
+            }
+            _ => panic!("only the expected terminal inventory read"),
+        }
+        peer.voyage_reply(id, session, owner, json!({"run_id":null,"value":[]}))
+            .await;
+        assert_eq!(
+            tokio::time::timeout(WAIT, task).await.unwrap().unwrap(),
+            if rejected { None } else { Some(21) }
+        );
+        let update = receiver.recv().await.unwrap();
+        match &update {
+            Update::Snapshot { result, .. } if rejected => {
+                assert_eq!(
+                    result.as_ref().as_ref().err().unwrap(),
+                    "Snapshot observation session changed"
+                );
+            }
+            Update::Snapshot { result, .. } => assert!(result.is_ok()),
+            _ => panic!("snapshot precedes inventory"),
+        }
+        app.update(update);
+        if rejected {
+            assert!(app.views[&target].snapshot.as_ref() == Some(&before));
+            assert_eq!(
+                app.views[&target].error.as_deref(),
+                Some("Snapshot observation session changed")
+            );
+        } else {
+            assert!(
+                app.views[&target].snapshot.as_ref()
+                    == Some(&serde_json::from_value::<Snapshot>(snapshot(session, 21)).unwrap())
+            );
+            assert!(app.views[&target].error.is_none());
+        }
+        let update = receiver.recv().await.unwrap();
+        assert!(matches!(&update, Update::Terminals { result, .. } if result.is_ok()));
+        app.update(update);
+        assert_eq!(app.views[&target].draft.text, "preserved draft");
+        let pending = app.views[&target].pending.as_ref().unwrap();
+        assert_eq!(pending.command_id, command);
+        assert_eq!(pending.incarnation, owner);
+        assert_eq!(pending.draft, "exact frozen pending text");
+        assert!(
+            pending.account_host.is_none()
+                && pending.original.is_none()
+                && pending.preserve_draft
+                && pending.receipt_only
+        );
+        assert!(
+            app.command_checks.is_empty()
+                && app.first_send_checks.is_empty()
+                && app.route_tasks.is_empty()
+                && app.browsers.is_empty()
+        );
+    }
+    peer.client.disconnect();
+    tokio::time::timeout(WAIT, async {
+        while peer.client.connection_state().borrow().socket_id.is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn foreign_inner_snapshot_cannot_seed_subscription_and_valid_resnapshot_recovers() {
+    let mut j = Journey::new(1).await;
+    let observer = j.observer.take().unwrap();
+    observer.abort();
+    assert!(
+        tokio::time::timeout(WAIT, observer)
+            .await
+            .unwrap()
+            .unwrap_err()
+            .is_cancelled()
+    );
+    let p = j.wire.catalogue()[0].clone();
+    let command = uuid::Uuid::new_v4();
+    let before = j.app.views[&j.target].snapshot.clone().unwrap();
+    j.app.views.get_mut(&j.target).unwrap().pending = Some(super::super::state::Pending {
+        account_host: None,
+        command_id: command,
+        incarnation: p.incarnation,
+        draft: "exact frozen pending text".into(),
+        preserve_draft: true,
+        original: None,
+        receipt_only: true,
+    });
+    j.wire
+        .state
+        .lock()
+        .unwrap()
+        .snapshots
+        .insert(p.session_id, snapshot(uuid::Uuid::new_v4(), 999));
+    j.observer = Some(spawn(
+        j.wire.client.clone(),
+        j.target.route,
+        j.app.sender.clone(),
+        j.selected.subscribe(),
+    ));
+    j.until(|j| {
+        j.app.views[&j.target].error.as_deref() == Some("Snapshot observation session changed")
+    })
+    .await;
+    assert_eq!(j.wire.snapshot_reads(), 1);
+    assert!(j.wire.subscriptions().is_empty());
+    assert!(j.app.views[&j.target].snapshot.as_ref() == Some(&before));
+    assert_eq!(
+        j.app.views[&j.target].draft.text,
+        "retained observer draft Δ"
+    );
+    let pending = j.app.views[&j.target].pending.as_ref().unwrap();
+    assert_eq!(pending.command_id, command);
+    assert_eq!(pending.incarnation, p.incarnation);
+    assert_eq!(pending.draft, "exact frozen pending text");
+    assert!(pending.original.is_none() && pending.preserve_draft && pending.receipt_only);
+    // Supply a correct later reply. The production retry delay is unchanged;
+    // no selection change, injected cursor or mutative retry drives recovery.
+    j.wire
+        .state
+        .lock()
+        .unwrap()
+        .snapshots
+        .insert(p.session_id, snapshot(p.session_id, 21));
+    j.until(|j| {
+        !j.wire.subscriptions().is_empty()
+            && j.app.views[&j.target]
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .observation_cursor
+                == Some(21)
+    })
+    .await;
+    assert_eq!(j.wire.snapshot_reads(), 2);
+    let subscriptions = j.wire.subscriptions();
+    assert_eq!(subscriptions.len(), 1);
+    assert_eq!(subscriptions[0].1.subscriptions.len(), 1);
+    let subscription = &subscriptions[0].1.subscriptions[0];
+    assert_eq!(subscription.session_id, p.session_id);
+    assert_eq!(subscription.incarnation, p.incarnation);
+    assert_eq!(subscription.after, 21);
+    assert!(j.app.views[&j.target].error.is_none());
+    assert_eq!(
+        j.app.views[&j.target].draft.text,
+        "retained observer draft Δ"
+    );
+    let pending = j.app.views[&j.target].pending.as_ref().unwrap();
+    assert_eq!(pending.command_id, command);
+    assert_eq!(pending.incarnation, p.incarnation);
+    assert_eq!(pending.draft, "exact frozen pending text");
+    assert!(
+        pending.account_host.is_none()
+            && pending.original.is_none()
+            && pending.preserve_draft
+            && pending.receipt_only
+    );
+    assert_eq!(
+        j.app.views[&j.target].snapshot.as_ref().unwrap().messages[0].content,
+        "Canonical observer Ω"
+    );
+    assert!(
+        j.app.command_checks.is_empty()
+            && j.app.first_send_checks.is_empty()
+            && j.app.route_tasks.is_empty()
+            && j.app.browsers.is_empty()
+    );
+    assert!(super::super::account_test_support::browsers().is_empty());
+    j.shutdown().await;
+}
+
+#[tokio::test]
 async fn held_snapshot_and_terminal_reply_owner_changes_cannot_install_old_catalogue_context() {
     for changed_snapshot in [true, false] {
         let mut peer = Peer::open().await;
