@@ -51,9 +51,20 @@ Linux child with private HOME/XDG/account-wide resource ledger and fixed PATH.
 Only the actual LLVM profile destination is inherited. No human credential,
 private terminal input, service, provider, browser or privileged identity is read
 or changed. Child logs are private/bounded and retained on failure. The shared
-helper is compiled once and reused, with a thirty-second parent bound.
+helper is compiled once and reused, with a thirty-second parent bound. Each rig attempts production shutdown during
+unwinding. Actual leader/start/UID witnesses are recorded privately; before a
+parent deadline kills the test child, the parent uses the production stable
+identity/pidfd path to retire only matching witnessed sessions for at most four
+additional seconds. Failed-case cleanup observations are retained privately and
+never turn that failure into passing evidence. A missing/recycled leader or a
+child lost before a witness is available leaves an unresolved obligation; the
+helper never broadcasts a numeric process-group signal.
 
-Actual PTY child/session/start/UID witnesses are observed, not invented. Cleanup
+Actual PTY child/session/start/UID witnesses are observed, not invented. Shell
+leader PID markers are atomically published before reads. The descendant-pipe
+journey records the actual descendant start/session and checks its live identity
+is gone after shutdown; a host-reaper zombie is distinguished from a direct child
+reaped by Voyage. Cleanup
 uses the production SessionIdentity/pidfd/drain/wait path and must report an empty
 observed result before retirement; requested termination, dropped future or
 leader exit alone is insufficient. Test assertions do not publish canary input or

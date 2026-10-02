@@ -43,16 +43,19 @@ impl Rig {
                 .await
         })
     }
-    async fn finish(self) {
+    async fn finish(mut self) {
         let report = self.shell.shutdown(Duration::from_secs(4)).await;
         assert!(report.observation_complete && report.remaining.is_empty());
         assert!(!self.shell.has_owned_work());
-        drop(self.registry);
+        drop(std::mem::replace(
+            &mut self.registry,
+            Arc::new(ToolRegistry::default()),
+        ));
         owned::until(|| self.shell.can_retire()).await;
     }
     async fn witnessed(&self, name: &str) -> (u32, String) {
         let path = self.path(name);
-        owned::until(|| path.exists()).await;
+        owned::until(|| std::fs::metadata(&path).is_ok_and(|v| v.len() > 0)).await;
         let text = std::fs::read_to_string(path).unwrap();
         let pid: u32 = text.trim().parse().unwrap();
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
@@ -69,16 +72,39 @@ impl Rig {
             unsafe { libc::geteuid() }
         );
         assert!(crate::tools::process::SessionIdentity::capture(pid).is_ok());
+        owned::witness(pid, fields[19]);
         (pid, fields[19].into())
     }
     fn held(&self, name: &str) -> String {
         format!(
-            "printf '%s' $$ > '{}'; i=0; while [ ! -f '{}' ] && [ $i -lt 400 ]; do sleep .02; i=$((i+1)); done",
+            "printf '%s' $$ > '{}.next'; mv '{}.next' '{}'; i=0; while [ ! -f '{}' ] && [ $i -lt 400 ]; do sleep .02; i=$((i+1)); done",
+            self.path(name).display(),
+            self.path(name).display(),
             self.path(name).display(),
             self.path("release").display()
         )
     }
 }
+impl Drop for Rig {
+    fn drop(&mut self) {
+        if !self.shell.has_owned_work() {
+            return;
+        }
+        let shell = self.shell.clone();
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(shell.shutdown(Duration::from_secs(4)))
+                .observation_complete
+        });
+        if !worker.join().unwrap_or(false) {
+            eprintln!("owned shell failure cleanup unconfirmed; private evidence retained");
+        }
+    }
+}
+
 async fn complete(
     task: tokio::task::JoinHandle<Result<crate::tools::ToolReport, ToolError>>,
 ) -> Result<crate::tools::ToolReport, ToolError> {
@@ -206,7 +232,7 @@ case!(
     {
         let mut r = Rig::new();
         r.context.max_output_bytes = 256;
-        let task=r.launch(format!("printf '%s' $$ > '{}'; while :; do printf 'PUBLIC-OUTPUT'; printf 'PUBLIC-ERROR' >&2; done",r.path("pid").display()));
+        let task=r.launch(format!("printf '%s' $$ > '{}.next'; mv '{}.next' '{}'; while :; do printf 'PUBLIC-OUTPUT'; printf 'PUBLIC-ERROR' >&2; done",r.path("pid").display(),r.path("pid").display(),r.path("pid").display()));
         let (pid, _) = r.witnessed("pid").await;
         r.context.cancellation.cancel();
         assert!(complete(task).await.is_err());
@@ -219,20 +245,52 @@ case!(
     {
         let r = Rig::new();
         let command = format!(
-            "printf '%s' $$ > '{}'; sleep 2 & printf result-before-descendant; exit 0",
+            "sleep 20 & printf '%s' $! > '{}.next'; mv '{}.next' '{}'; printf '%s' $$ > '{}.next'; mv '{}.next' '{}'; printf result-before-descendant; exit 0",
+            r.path("descendant").display(),
+            r.path("descendant").display(),
+            r.path("descendant").display(),
+            r.path("pid").display(),
+            r.path("pid").display(),
             r.path("pid").display()
         );
         let task = r.launch(command);
         let (pid, _) = r.witnessed("pid").await;
+        let descendant: u32 = std::fs::read_to_string(r.path("descendant"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let stat = std::fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap();
+        let fields = stat
+            .rsplit_once(") ")
+            .unwrap()
+            .1
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        assert_eq!(fields[3].parse::<u32>().unwrap(), pid);
+        let descendant_start = fields[19].to_string();
         // The descendant retains stdout; capture completion waits for EOF rather
         // than turning a leader exit alone into a cleaned session.
         assert!(r.shell.has_owned_work());
         assert!(std::path::Path::new(&format!("/proc/{pid}")).exists());
         let shutdown = r.shell.shutdown(Duration::from_secs(4)).await;
         assert!(shutdown.observation_complete);
+        assert!(shutdown.remaining.is_empty());
         assert!(complete(task).await.is_err());
         r.finish().await;
         gone(pid);
+        // A grandchild may be a zombie owned by the host reaper. This is positive
+        // absence of the witnessed live session member, not a direct-child reap.
+        assert!(
+            std::fs::read_to_string(format!("/proc/{descendant}/stat")).map_or(true, |stat| {
+                let fields = stat
+                    .rsplit_once(") ")
+                    .unwrap()
+                    .1
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                fields[19] != descendant_start || matches!(fields[0], "Z" | "X")
+            })
+        );
     }
 );
 case!(

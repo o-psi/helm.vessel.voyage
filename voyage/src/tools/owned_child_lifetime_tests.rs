@@ -79,6 +79,7 @@ pub fn run(name: &str, body: impl FnOnce()) {
                 .iter()
                 .any(|p| fs::metadata(root.path().join(p)).unwrap().len() > 1024 * 1024)
         {
+            retire_witnesses(root.path());
             let _ = child.kill();
             let _ = child.wait();
             let _evidence = root.keep();
@@ -87,13 +88,16 @@ pub fn run(name: &str, body: impl FnOnce()) {
         std::thread::sleep(Duration::from_millis(10));
     };
     if !status.success() {
+        retire_witnesses(root.path());
         let _evidence = root.keep();
         panic!("owned lifetime source case failed; private evidence retained");
     }
     let summary = fs::read(root.path().join("stdout-private.log")).unwrap();
-    assert!(summary.len() <= 1024 * 1024);
     let summary = String::from_utf8_lossy(&summary);
-    if !summary.contains("running 1 test") || !summary.contains("1 passed; 0 failed") {
+    if summary.len() > 1024 * 1024
+        || !summary.contains("running 1 test")
+        || !summary.contains("1 passed; 0 failed")
+    {
         let _evidence = root.keep();
         panic!("owned exact test entry did not execute once; private evidence retained");
     }
@@ -117,4 +121,87 @@ pub async fn until(mut ready: impl FnMut() -> bool) {
     })
     .await
     .expect("bounded owned lifetime stage");
+}
+
+/// Record only a witnessed leader belonging to this fixture UID/session. The
+/// private file lets the parent retire exact owned sessions before killing a
+/// wedged test child; no numeric PID or process-group broadcast is trusted.
+pub fn witness(pid: u32, start: &str) {
+    use std::io::Write;
+    let path = std::path::PathBuf::from(std::env::var_os("HOME").unwrap())
+        .join(format!("owned-session-{pid}-{start}"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .unwrap();
+    writeln!(file, "{pid} {start}").unwrap();
+    file.sync_all().unwrap();
+}
+fn retire_witnesses(root: &std::path::Path) {
+    use std::os::unix::fs::MetadataExt;
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let mut observations = Vec::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(value) = name.strip_prefix("owned-session-") else {
+            continue;
+        };
+        let Some((pid, start)) = value.split_once('-') else {
+            continue;
+        };
+        let (Ok(pid), Ok(start)) = (pid.parse::<u32>(), start.parse::<u64>()) else {
+            continue;
+        };
+        let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+            continue;
+        };
+        let Some((_, tail)) = stat.rsplit_once(") ") else {
+            continue;
+        };
+        let fields = tail.split_whitespace().collect::<Vec<_>>();
+        if fields.get(19).and_then(|v| v.parse::<u64>().ok()) != Some(start)
+            || fs::metadata(format!("/proc/{pid}")).map(|v| v.uid()).ok()
+                != Some(unsafe { libc::geteuid() })
+        {
+            continue;
+        }
+        let Ok(identity) = crate::tools::process::SessionIdentity::capture(pid) else {
+            continue;
+        };
+        let mut observed = false;
+        let mut failure = None;
+        while Instant::now() < deadline {
+            match identity.kill_and_observe(deadline) {
+                Ok(true) => {
+                    observed = true;
+                    break;
+                }
+                Ok(false) => std::thread::sleep(Duration::from_millis(5)),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        observations.push(serde_json::json!({
+            "pid": pid, "start": start, "live_session_empty": observed,
+            "failure": failure, "leader_reaped": false
+        }));
+    }
+    // Parent cleanup is a failure remedy, never evidence that the case passed.
+    // A missing/recycled leader is not permission to signal its old session.
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(root.join("failure-cleanup-private.json"))
+        .unwrap();
+    file.write_all(serde_json::to_vec(&observations).unwrap().as_slice())
+        .unwrap();
+    file.sync_all().unwrap();
 }

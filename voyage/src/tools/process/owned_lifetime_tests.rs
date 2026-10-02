@@ -64,10 +64,11 @@ impl Rig {
             std::fs::metadata(format!("/proc/{pid}")).unwrap().uid(),
             unsafe { libc::geteuid() }
         );
+        owned::witness(pid, fields[19]);
         self.pids.push((pid, fields[19].into()));
         id
     }
-    async fn finish(self) {
+    async fn finish(mut self) {
         let report = self.tool.shutdown(Duration::from_secs(4)).await;
         assert!(
             report.observation_complete
@@ -78,8 +79,28 @@ impl Rig {
             assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
         }
         assert!(!self.tool.has_owned_work());
-        drop(self.registry);
+        drop(std::mem::take(&mut self.registry));
         owned::until(|| self.tool.can_retire()).await;
+    }
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        if !self.tool.has_owned_work() {
+            return;
+        }
+        let tool = self.tool.clone();
+        let worker = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(tool.shutdown(Duration::from_secs(4)))
+                .observation_complete
+        });
+        if !worker.join().unwrap_or(false) {
+            eprintln!("owned PTY failure cleanup unconfirmed; private evidence retained");
+        }
     }
 }
 
@@ -132,7 +153,7 @@ case!(
         let before = r.tool.metadata().unwrap();
         for command in [
             json!({"action":"start","name":"a","command":"true"}),
-            json!({"action":"start","command":"true","cwd":"/path-that-does-not-exist-353"}),
+            json!({"action":"start","command":"true","cwd":r.context.policy.workspace().join("missing-cwd-353")}),
             json!({"action":"start","command":"true","cols":0}),
             json!({"action":"rename","id":Uuid::new_v4(),"name":"x"}),
             json!({"action":"select","name":"absent"}),
@@ -199,6 +220,14 @@ case!(
                 .await
                 .is_err()
         );
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let fields = stat
+            .rsplit_once(") ")
+            .unwrap()
+            .1
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        owned::witness(pid, fields[19]);
         r.finish().await;
         assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
     }
