@@ -106,7 +106,9 @@ hash, action and exact state/accounts/stage tuple before signaling. Retained pid
 separately observe exit and positive PID/start retirement. `fault_target_retired`
 only describes that fault target; it does not establish rollback, all helper/lease
 cleanup or native install acceptance. The result retains separate updater/helper
-observations, including unknown/unreaped outcomes.
+observations, including unknown/unreaped outcomes. After delivery only the retained target is
+observed; normal terminal record cleanup cannot invalidate its exit/reaping
+witness. Admission record drift before signaling still refuses.
 A requested signal is **not** observed retirement: retain `/proc` PID/start-time
 and pidfd exit evidence, inspect every inherited ownership lease, verify no live
 helper remains, then use current `voyage-installer remote-update status OP`

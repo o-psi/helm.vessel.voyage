@@ -77,8 +77,9 @@ class AdmissionContracts(unittest.TestCase):
         self.assertTrue(f.boundary_seen(q,'committing',{'phase':'committing','legacy_proof':None}))
 
     def test_one_fresh_actual_role_signal_is_observed_and_uncertain_signal_is_never_retried(self):
-        for uncertain in [False,True]:
-            with self.subTest(uncertain=uncertain),tempfile.TemporaryDirectory() as directory:
+        for scenario in ['normal','uncertain','terminal-cleanup','terminal-removed','changed-before-signal']:
+            uncertain=scenario=='uncertain';changed_before=scenario=='changed-before-signal'
+            with self.subTest(scenario=scenario),tempfile.TemporaryDirectory() as directory:
                 home=Path(directory);work=home/'q401';work.mkdir();install=home/'install';(install/'updates').mkdir(parents=True)
                 state=home/'state';state.mkdir();accounts=home/'accounts';accounts.mkdir()
                 op='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';stage=home/'.cache/voyage/upgrades'/('prepare-local-'+op)
@@ -89,8 +90,13 @@ class AdmissionContracts(unittest.TestCase):
                 (work/'candidate-bin.json').write_text(json.dumps(str(image)))
                 record={'operation_id':op,'channel':'local-owner','created_at':int(f.time.time()),'current_release':'a'*64,'release_id':'b'*64,'legacy_mode':True,'staging_root':str(stage),'bin_dir':str(stage/'candidate/bin'),'legacy_accounts':str(accounts),'supervisor_activation':{'state':str(state),'active':True},'legacy_proof':{'state':str(state),'accounts':str(accounts),'stage':str(stage)}}
                 written={};signalled=[]
+                def retain(name,value):
+                    written[name]=value
+                    if changed_before and name.endswith('-pre-signal.json'):
+                        changed={**record,'staging_root':None}
+                        (install/'updates'/(op+'.json')).write_text(json.dumps(changed))
                 shim=SimpleNamespace(HOME=home,WORK=work,INSTALL=install,STATE=state,require=q.require,digest=q.digest,ProcessNotLive=q.ProcessNotLive,
-                    process_start=lambda _pid:123,write=lambda name,value:written.__setitem__(name,value),
+                    process_start=lambda _pid:123,write=retain,
                     exact_candidate=lambda *_args:('verified',{'descriptor':41,'pid':99,'start_ticks':123,'uid':1000,'image_pin':(1,2)}),
                     still_candidate=lambda *_args:True,pidfd_exited=lambda _fd:bool(signalled),retired=lambda _w:bool(signalled))
                 def fresh_record(_delay):
@@ -99,18 +105,40 @@ class AdmissionContracts(unittest.TestCase):
                 def one_signal(*_args):
                     signalled.append('one')
                     if uncertain:raise PermissionError(13,'synthetic uncertain signal')
+                    if scenario=='terminal-cleanup':
+                        cleaned={**record,'phase':'complete','bin_dir':None,'staging_root':None,'supervisor_activation':None}
+                        (install/'updates'/(op+'.json')).write_text(json.dumps(cleaned))
+                    if scenario=='terminal-removed':(install/'updates'/(op+'.json')).unlink()
                 expected=[os.fsencode(image),b'--bin-dir',os.fsencode(image.parent),b'upgrade',b'--no-start']
                 with patch.object(f.time,'sleep',side_effect=fresh_record),patch.object(f,'argv',return_value=expected),patch.object(f.signal,'pidfd_send_signal',side_effect=one_signal),patch.object(f.os,'close') as close:
                     if uncertain:
                         with self.assertRaisesRegex(RuntimeError,'signal unconfirmed'):f.run(shim,SimpleNamespace(boundary='snapshot',installer_pid=99))
+                    elif changed_before:
+                        with self.assertRaisesRegex(RuntimeError,'identity changed'):f.run(shim,SimpleNamespace(boundary='snapshot',installer_pid=99))
                     else:f.run(shim,SimpleNamespace(boundary='snapshot',installer_pid=99))
                     close.assert_called_once_with(41)
-                self.assertEqual(signalled,['one']);self.assertIn('fault-snapshot-pre-signal.json',written)
+                self.assertEqual(signalled,[] if changed_before else ['one']);self.assertIn('fault-snapshot-pre-signal.json',written)
                 result=written['fault-snapshot-result.json']
-                self.assertEqual(result['status'],'unqualified' if uncertain else 'fault_target_retired')
-                self.assertEqual(result['signal_delivered'],not uncertain);self.assertFalse(result['rollback_or_cleanup_acceptance'])
-                self.assertTrue(result['identities']['updater']['exit_and_reaping_observed'])
+                self.assertEqual(result['status'],'unqualified' if uncertain or changed_before else 'fault_target_retired')
+                self.assertEqual(result['signal_delivered'],not (uncertain or changed_before));self.assertFalse(result['rollback_or_cleanup_acceptance'])
+                self.assertEqual(result['identities']['updater']['exit_and_reaping_observed'],not changed_before)
+                self.assertEqual(written['fault-snapshot-owner.json']['record_pin']['staging_root'],str(stage))
                 self.assertFalse(result['independent_remote_worker'])
+
+    def test_multi_candidate_or_helper_scan_exception_closes_every_owned_pidfd(self):
+        for items in [[{'descriptor':41},{'descriptor':42}], [({'descriptor':41},[b'full argv']),({'descriptor':42},[b'other argv'])]]:
+            with self.subTest(items=items),patch.object(f.os,'close') as close,patch.object(f.signal,'pidfd_send_signal') as signal:
+                with self.assertRaises(PermissionError):
+                    with f.witness_scan() as accepted:
+                        accepted.extend(items)
+                        raise PermissionError(13,'synthetic later candidate/child denial')
+                self.assertEqual([call.args[0] for call in close.call_args_list],[41,42]);signal.assert_not_called()
+
+    def test_scan_attempts_all_closes_even_if_first_close_raises(self):
+        with patch.object(f.os,'close',side_effect=[OSError('synthetic close failure'),None]) as close:
+            with self.assertRaises(OSError):
+                with f.witness_scan() as accepted:accepted.extend([{'descriptor':41},{'descriptor':42}])
+            self.assertEqual([call.args[0] for call in close.call_args_list],[41,42])
 
     def test_actual_owned_child_full_argv_parent_pidfd_exit_and_reaping(self):
         self.assertEqual(os.getuid(),1000,'ordinary fixture UID required')

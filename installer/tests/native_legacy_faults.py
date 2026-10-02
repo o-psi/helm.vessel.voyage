@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import time
 import uuid
+from contextlib import contextmanager
 
 DEADLINE_SECONDS = 1230
 # Full reviewed embedded program identity, checked against source by local contracts.
@@ -131,6 +132,24 @@ def qualified_helper_argv(actual, action, state, accounts, stage):
                               os.fsencode(accounts), os.fsencode(stage)])
 
 
+@contextmanager
+def witness_scan():
+    """The scan owns all admitted pidfds until exactly one witness transfers."""
+    matches = []
+    try:
+        yield matches
+    finally:
+        failure = None
+        for item in matches:
+            witness = item[0] if isinstance(item, tuple) else item
+            try:
+                os.close(witness['descriptor'])
+            except OSError as error:
+                failure = failure or error
+        if failure is not None:
+            raise failure
+
+
 def run(q, args):
     """Arm before ONE upgrade; no pause, effect replay or generic process signal."""
     deadline = time.monotonic() + DEADLINE_SECONDS
@@ -154,6 +173,14 @@ def run(q, args):
         python_sha = q.digest(python)
         while time.monotonic() < deadline:
             try:
+                if delivered:
+                    # After delivery, only retained-target retirement is observed. Terminal
+                    # receipt cleanup may legitimately change/remove admission fields.
+                    if q.retired(target):
+                        completed = True
+                        return
+                    time.sleep(.01)
+                    continue
                 if image is None and (q.WORK / 'candidate-bin.json').is_file():
                     image = Path(json.loads(bounded(q.WORK / 'candidate-bin.json')))
                     q.require(image.is_relative_to(q.WORK / 'candidate') and image.resolve(strict=True) == image,
@@ -177,61 +204,50 @@ def run(q, args):
                 if owner is None:
                     pids = [args.installer_pid] if args.installer_pid else [int(p.name) for p in Path('/proc').iterdir() if p.name.isdecimal()]
                     q.require(len(pids) <= 65536, 'process inventory exceeds bound')
-                    matches = []
-                    for pid in pids:
-                        try:
-                            # Cheap exact argv filter before the qualified-image hash read.
-                            if argv(pid) != owner_args:
-                                continue
-                            category, witness = process_witness(q, pid, image, sha, owner_args)
-                            if witness is None:
-                                pending[category] += 1
-                            else:
-                                matches.append(witness)
-                        except PermissionError:
-                            pending['permission_pending'] += 1
-                        except (FileNotFoundError, ProcessLookupError):
-                            pending['missing_pending'] += 1
-                    if len(matches) != 1:
-                        for witness in matches:
-                            os.close(witness['descriptor'])
-                        q.require(not matches, 'ambiguous exact local-owner updater')
-                        time.sleep(.002)
-                        continue
-                    owner = matches[0]
+                    with witness_scan() as matches:
+                        for pid in pids:
+                            try:
+                                # Cheap exact argv filter before the qualified-image hash read.
+                                if argv(pid) != owner_args:
+                                    continue
+                                category, witness = process_witness(q, pid, image, sha, owner_args)
+                                if witness is None:
+                                    pending[category] += 1
+                                else:
+                                    matches.append(witness)
+                            except PermissionError:
+                                pending['permission_pending'] += 1
+                            except (FileNotFoundError, ProcessLookupError):
+                                pending['missing_pending'] += 1
+                        if len(matches) != 1:
+                            q.require(not matches, 'ambiguous exact local-owner updater')
+                            time.sleep(.002)
+                            continue
+                        owner = matches.pop()
                     q.require(owner['start_ticks'] >= armed_start, 'updater predates fresh fault monitor')
                     q.write(name + '-owner.json', {**public_witness(owner), 'operation_id': pin['operation_id'],
                             'role': 'local-owner-updater', 'independent_remote_worker': False,
                             'record_pin': pin})
-                if delivered:
-                    # Exit and positive retirement are independent observations, not signal claims.
-                    if q.retired(target):
-                        completed = True
-                        return
-                    time.sleep(.01)
-                    continue
                 q.require(not q.pidfd_exited(owner['descriptor']), 'updater exited before requested boundary')
                 if args.boundary.startswith('helper-'):
                     action = args.boundary.removeprefix('helper-')
                     children = bounded(Path('/proc') / str(owner['pid']) / 'task' / str(owner['pid']) / 'children', 8192).split()
-                    matches = []
-                    for child in children:
-                        actual = argv(int(child))
-                        if not qualified_helper_argv(actual, action, q.STATE,
-                                                     pin['legacy_accounts'], pin['staging_root']):
+                    with witness_scan() as matches:
+                        for child in children:
+                            actual = argv(int(child))
+                            if not qualified_helper_argv(actual, action, q.STATE,
+                                                         pin['legacy_accounts'], pin['staging_root']):
+                                continue
+                            category, witness = process_witness(q, int(child), python, python_sha, actual, owner)
+                            if witness is not None:
+                                matches.append((witness, actual))
+                            else:
+                                pending[category] += 1
+                        if len(matches) != 1:
+                            q.require(not matches, 'ambiguous owned helper')
+                            time.sleep(.002)
                             continue
-                        category, witness = process_witness(q, int(child), python, python_sha, actual, owner)
-                        if witness is not None:
-                            matches.append((witness, actual))
-                        else:
-                            pending[category] += 1
-                    if len(matches) != 1:
-                        for witness, _ in matches:
-                            os.close(witness['descriptor'])
-                        q.require(not matches, 'ambiguous owned helper')
-                        time.sleep(.002)
-                        continue
-                    helper, helper_args = matches[0]
+                        helper, helper_args = matches.pop()
                     target = helper
                     target_image, expected = python, helper_args
                 elif boundary_seen(q, args.boundary, record):
@@ -262,11 +278,11 @@ def run(q, args):
                     raise RuntimeError('fault signal unconfirmed; retain original operation') from None
             except PermissionError:
                 pending['permission_pending'] += 1
-                if target is not None:
+                if target is not None and not delivered:
                     raise RuntimeError('retained target permission unavailable; no replacement signal') from None
             except (FileNotFoundError, ProcessLookupError, q.ProcessNotLive):
                 pending['missing_pending'] += 1
-                if target is not None:
+                if target is not None and not delivered:
                     raise RuntimeError('retained target changed; no replacement signal') from None
             time.sleep(.002)
         raise RuntimeError('fault boundary/retirement not positively observed within 1230 seconds')

@@ -66,6 +66,15 @@ or install acceptance. Those existing native acceptance checks remain required.
 
 The parent accepted the local-owner role correction. The maintained fixture now
 provides bounded `--auto-local-owner` arming and separate retirement observations;
-this changes no production/Rust/Cargo/main/host behavior. Ten new offline contracts plus four existing monitor contracts passed under a bounded 1 GiB/no-swap user unit (186 ms, 20.3 MiB peak), including actual owned Python
+this changes no production/Rust/Cargo/main/host behavior. Twelve new offline contracts plus four existing monitor contracts passed under a bounded 1 GiB/no-swap user unit (202 ms, 22.2 MiB peak), including actual owned Python
 children with full argv/parent/pidfd/signal/exit/reaping. They establish fixture
 contracts, not native updater/helper death or rollback acceptance.
+
+After the one delivered signal, the monitor performs only retained-target
+retirement observation before touching mutable operation records. Normal terminal
+cleanup/removal cannot invalidate an already-pinned signal and positive reaping.
+Admission identity changes before signaling still refuse. Scan scopes retain and
+close every admitted candidate/helper pidfd on ambiguity or later exceptions;
+exactly one selected witness transfers into the monitor lifetime. The contracts
+cover terminal cleanup/removal, pre-signal drift, multi-candidate/helper exceptions
+and attempted closure of all descriptors even when an earlier close fails.
