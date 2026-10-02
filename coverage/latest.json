@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T05:51:29.047632+00:00",
-  "source_commit": "db3d358e2a51db488c850be978853e18a4063a14",
+  "measured_at_utc": "2026-10-02T07:45:55.808490+00:00",
+  "source_commit": "c14fdbfbeed25a9f6cb3da83eb0f7a2cdbe6de2f",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2677,
+    "passed": 2762,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 134636,
-      "covered": 105178,
-      "percent": 78.12026501084407
+      "count": 134806,
+      "covered": 106083,
+      "percent": 78.69308487752771
     },
     "functions": {
-      "count": 12261,
-      "covered": 9523,
-      "percent": 77.66903188973167
+      "count": 12285,
+      "covered": 9606,
+      "percent": 78.1929181929182
     },
     "regions": {
-      "count": 223055,
-      "covered": 165915,
-      "notcovered": 57140,
-      "percent": 74.38299970859205
+      "count": 223328,
+      "covered": 167453,
+      "notcovered": 55875,
+      "percent": 74.98074580885513
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-combined-rollback-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-combined-rollback-final/summary-default.json -v; llvm-profdata merge -sparse with 402 own profiles; audited explicit 17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-cold-authority-history-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-cold-authority-history-final/summary-default.json -v; llvm-profdata merge -sparse with 440 own profiles; audited explicit17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,15 +40,16 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean measured source db3d358: 2677 parent-workspace tests passed, zero failed, eight ignored. Nested owned child summaries remain separately evidenced and are not counted as Cargo targets.",
-    "All 541 prior and 542 current mapped workspace files retained, plus the known standard-library mapping. Exact 17 distinct current objects comprise 14 executed Cargo test targets and three current integration entrypoints. Only 402 own profiles merged; all 235 foreign raw profiles byte-identical. Standard dependency/test-source exclusions unchanged.",
-    "Compared with previous cb929ff measurement: +1179 covered lines, +451 measured lines, +0.616073 percentage points. 29458 aggregate line gaps remain; 100% reachable-production objective is unmet.",
-    "Focused Rust gates passed: 13 exact failed-candidate context/transition/image cases, 16 legacy cases including held-restored-pointer ownership, 21 account/inference App event cases, and 10 ordinary forward parent families spanning 24 private transactions and three ordinary Root refusals. Private service-manager/PID seams are explicitly synthetic; these are not native installation evidence.",
-    "The production legacy rollback repair pins the qualified candidate image, original activation/namespace/credential override/enablement and exact unit before a single stop; positive PID/start/image/argv/context witnesses and observed terminal PID0/no-job remain distinct from request admission. Restored-pointer verification keeps original ownership leases held; no original unknown effect is replayed.",
-    "Python fault monitor 16 contracts, Native-private reopen eight contracts and Node four contracts passed separately. Current instrumented runnable entrypoints refreshed; strict formatting and workspace all-target/all-feature Clippy -D warnings passed. No new dependency or lint suppression.",
-    "484 prior/focused owned profiles hash-archived before the independent measurement; compiled artifacts retained. Corrected summary/detailed JSON/HTML agree and all 17 objects are hash-archived. Mixed default report rejected. Measurement 4min2.386sec/2.9GiB peak under10GiB/no swap/j1; exact export 21.589sec under3GiB/no swap.",
-    "Fresh archived-object LCOV map: 27245 distinct zero addresses versus 29458 aggregate gaps; 2213 units need region/macro/generic reconciliation. Detected 222 inline test/helper, 1 standard-library, 84 proven unsupported-budget positives and 7 proven dormant per-field inference hit addresses remain measured. Remaining 26931 production candidates require entry/guard/assertion/native/external/fault review; this is not a claimed reachable count.",
-    "Concrete fixture repairs preserve complete Run equality, actual small-layout redraw/input fences, exact alias guard, session/revision/account wire scope, lexical lock lifetime, pre-existing cold owner lock inodes, valid cold PERSIST notification pairs and distinct guardian-before-effect versus execution-at-quiescence refusals. No production guard, ownership assertion, source scope or threshold was weakened.",
-    "Native CT124 remains separately unconfirmed; fresh CT128 qualification awaits this delivered build. Browser/TLS/native/macOS/Windows/external/platform and stable-release obligations are not established by coverage or offline fixtures. Root/system/adoption work parked for 1.1 remains explicitly separate without denominator removal."
+    "Clean source c14fdbf: 2762 parent-workspace tests passed, zero failed, eight ignored across14 Cargo targets. Nested child summaries retained separately and excluded from Cargo totals.",
+    "All 542 prior/current workspace source mappings retained plus the known standard-library mapping;17 distinct current objects include14 test targets and3 real instrumented entrypoints. Only440 own profiles merged;235 foreign profiles remain byte-identical. Original dependency/test-source exclusions unchanged.",
+    "Compared with db3d358: +905 covered lines,+170 measured lines,+0.572820 percentage points. 28723 aggregate line gaps remain;100% reachable-production objective remains unmet.",
+    "Final cohorts:24 actual Helm Handle/Axum/App lifecycle cases,2 actual Tokio server-retirement classifier parents,19 Unicode composer editing/history cases,21 owned cold browser/capacity cases,complete typed saved-authority pins and both late-success unknown-outcome boundaries. Native guardian/capacity records remain explicitly synthetic; no native Chromium or cross-platform claim.",
+    "Real production corrections validate guardian before retaining a profile, pass the actual session directory for sibling capacity recovery, freeze full saved grant authority before dispatch, retain token/session freshness and exact bound socket authentication, preserve unknown outcomes after successful dispatch, and observe viewer-server completion exactly once without masking I/O/join failures.",
+    "Source-final formatting and workspace all-target/all-feature Clippy -D warnings passed.46 separate Python fault/monitor/history/context contracts passed on byte-identical retained inputs; not counted as Rust coverage. No hosted tests, lint suppression, new dependency, scope narrowing or threshold change.",
+    "Full failed78ff measurement2733/27/8 and corrected4066 measurement2761/1/8 retained. Fixtures now provision their private data ancestor, required model/Terminal IDs and authoritative child grants. Only deliberately oversized-frame refusal permits early write closure; case18 idle observation never sends a late Pong. All normal writes,binding,receipt,no-replay and owned cleanup assertions remain strict.",
+    "Passing measurement4m17.788s/3.6GiB peak,zero swap,j1; exact export20.588s/7.5GiB peak,zero swap. Summary,detailed JSON andHTML agree;17 objects hash-archived. Default mixed historical-object report preserved and rejected. Prior owned raw profiles archived before clearing only this workspace prefix; compiled artifacts retained.",
+    "Native CT126 remains unconfirmed with retained quarantine/stopped service,original complete histories and released lease/process observations. CT128/127 old-reader and remaining context qualification still require native evidence. Actual CT128 installed candidate4/4 binaries and123/123 browser assets verified separately. Coverage does not establish public TLS/site/privacy/client cost/native installation or stable publication.",
+    "Root/system/adoption and native macOS/Windows obligations parked for1.1 remain distinct and measured without denominator removal. NativeLocal qualification is being prepared as an explicit supported route alongside deployed Web TLS; no local/public transport metric or authority is conflated.",
+    "Fresh c14fdbf archived-object LCOV map:26546 distinct zero addresses versus28723 aggregate gaps;2177 units remain unreconciled.222 detected inline test/helper,1 standard-library,84 proven unsupported-budget positive and7 proven dormant-renderer addresses stay measured.26232 remaining production candidates need exact entry/guard/assertion/native/external/fault review, not a claimed reachable count."
   ]
 }
