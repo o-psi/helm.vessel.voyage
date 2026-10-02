@@ -1,6 +1,18 @@
 use super::super::test_support::Fixture;
 use super::*;
 
+/// Keep device storage inside the owned fixture while retaining the real current
+/// enrollment callback. Construction initializes only this explicit Registry;
+/// no HOME/XDG changes or default-host account/credential observation occurs.
+pub(in crate::process) fn isolated_device_service(root: PathBuf) -> Result<DeviceService> {
+    let registry = Registry::new(root.join("accounts"));
+    registry.ensure_chatgpt_connection()?;
+    Ok(DeviceService::new(
+        registry,
+        Arc::new(move |actor, connection| enrollment_authorized(&root, actor, connection)),
+    ))
+}
+
 #[test]
 fn owner_and_malformed_enrollment_actors_are_strictly_separated() {
     let f = Fixture::new();

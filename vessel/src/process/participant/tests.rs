@@ -16,10 +16,15 @@ impl Fixture {
         super::super::database::initialize(&directory)
             .await
             .unwrap();
+        let devices = super::super::accounts::isolated_device_service(directory.clone()).unwrap();
+        let account_registry = voyage_runtime::accounts::Registry::new(directory.join("accounts"));
+        assert!(directory.join("accounts/registry.json").is_file());
+        assert_eq!(account_registry.connections().unwrap().len(), 1);
+        assert!(account_registry.list(|_| true).unwrap().1.is_empty());
         let supervisor = Supervisor {
             binary: directory.join("must-not-launch"),
             model_slots: Arc::new(Semaphore::new(1)),
-            devices: super::super::accounts::device_service(directory.clone()).unwrap(),
+            devices,
             enrollment_workers: Mutex::new(HashMap::new()),
             #[cfg(target_os = "linux")]
             identity_enrollment_starts: Mutex::new(HashMap::new()),

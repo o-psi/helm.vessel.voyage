@@ -959,3 +959,6 @@ impl Supervisor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) use tests::isolated_device_service;
