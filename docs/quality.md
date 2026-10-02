@@ -629,6 +629,9 @@ preparation, and `python3 voyage/tests/host_browser.py --binaries
 Voyage and the matching `o-psi/webhelm` checkout. The fixture defaults its existing
 WebSocket package to that checkout's `node_modules/ws`; use `--ws` for another
 already installed package. It never downloads dependencies during the journey.
+The fixture's gateway passes its exact literal-loopback endpoint with
+`--public-origin`; `--allow-insecure-loopback` is a separate boolean development
+option. This HTTP fixture does not qualify deployed production TLS.
 The process journey checks both Helm clients, DOM replay, ordinary first-action
 claim and private takeover,
 multiple voyages, external styles, cookie-gated images, open shadow DOM,

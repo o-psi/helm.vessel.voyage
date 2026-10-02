@@ -470,7 +470,8 @@ def main():
         endpoint = f'http://127.0.0.1:{port}'
         gateway = subprocess.Popen([str(binaries/'vessel'), '--bind', f'127.0.0.1:{port}',
             '--database', str(root/'gateway.db'), '--process-directory', str(directory),
-            '--allow-insecure-loopback', endpoint], env=env, cwd=workspace, stdout=log, stderr=log)
+            '--allow-insecure-loopback', '--public-origin', endpoint],
+            env=env, cwd=workspace, stdout=log, stderr=log)
         time.sleep(1)
         assert gateway.poll() is None, 'gateway exited'
         connection = json.loads(cli('auth', 'accounts', 'connect', '--label', 'synthetic', '--endpoint',
