@@ -26,36 +26,44 @@ staged source is present but is not supported production deployment in v1.0.3.
 Root metadata helpers do not execute agent loops or centralize credentials.
 
 Remaining v1.0.3 gates include deployed browser TLS/client acceptance, complete
-reachable-production coverage, the newly discovered upgrade/admission defects
-(#400/#401/#402) and stable artifact publication. Ordered live-event and UX
+reachable-production coverage, native legacy rollback/interruption qualification
+(#401) and stable artifact publication. Account route fencing (#400) and unchanged
+legacy owner admission (#402) are delivered and closed. Ordered live-event and UX
 acceptance are recorded in closed #366/#372 and #377, respectively.
 The authoritative full-scope measurement is [coverage/latest.json](../coverage/latest.json).
-The last delivered clean-source measurement passed 2,441 tests with zero failures
-and eight ignored at source `3138b823b40287e89a3974f5c1b50e14dcd3c251`; its full
-source/object audit is recorded there. Later source batches are awaiting their
-coordinated measurement; this record does not attribute old coverage to them. The fresh
+Use that record and #353's linked source/object audit for the current measured
+commit, counts, exclusions and remaining gaps. A source batch awaiting its
+coordinated measurement does not inherit an older result. The fresh
 80-turn journey also passed: 160 messages, 2,720 ordered events, retention-gap
 recovery and lossless 17-message paging without repeated inference, with observed
 cleanup. The unchanged reachable-production objective remains tracked by #353;
 passing tests do not imply that objective is met.
 
-Helm Web `5fc8502a4932ced7cf3fe5bcb0703aaf9f7e7205` is deployed through the
+Helm Web `4bb4ae03709d2a3eac5e299df729cab1f4d374a7` is deployed through the
 existing scoped updater in CT 106.
-Public health and all five manifest assets matched the verified local build;
+Public health, manifest and all six asset files matched the verified local build;
 authenticated reload and Changes panel keyboard focus restoration passed.
 The UX delivery is recorded in closed core #377 and Web #5. The current archive also passed the expanded actual native/Web-adapter browser
 journey with observed cleanup; see [browser qualification](testing/host-browser-v1.0.3.md).
 Complete deployed browser acceptance remains a separate gate.
 
-The CT 106 candidate update exposed a missing gateway `--public-origin` option
-and an unsafe rollback boundary: v1.0.2 cannot read the migrated catalogue.
-Both services were recovered on the verified candidate with the same HTTPS
-origin and a temporary equivalent command line, preserving the catalogue and
-original unconfirmed receipt. This is service recovery, not a completed managed
-update. The unchanged saved owner connection also requires admission compatibility
-for its complete v1.0.2 rights vector; newly introduced WorkspaceRead authority
-must not be inferred. These defects and the safe legacy migration/rollback
-obligation remain open until corrected source, tests and deployment qualify them.
+CT 106 completed one separately reviewed forward recovery on qualified source
+`79507feba866f99d8576351b75e4fbc50fa5a527`, restoring managed service paths and
+the unchanged approved HTTPS origin. The original uncertain update receipt remains
+byte-identical; the new recovery does not claim that old operation succeeded.
+Both retained voyages, canonical histories, accounts and credential configuration
+were verified unchanged. The original saved Web connection now authenticates with
+its exact twelve v1.0.2 owner rights; WorkspaceRead remains absent and its command
+was definitely refused before effects. See closed #402 and #401's delivery record.
+
+Ordinary native qualification passed normal upgrades and live-owner refusal with
+observed cleanup. A controlled candidate-death case exposed a rollback service
+transition refusal and remains unconfirmed with its snapshot/quarantine retained.
+The correction must also preserve the restore guard's continuously held ownership
+leases while selecting the old reader. Source tests alone do not establish native
+rollback: fresh qualification and the remaining interruption/context cases stay
+open in #401. Complete deployed browser acceptance stays open in #333; the
+qualification route is disabled until its explicit bounded job is provisioned.
 
 ## Planned assets and installation
 
