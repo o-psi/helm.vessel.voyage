@@ -1,6 +1,6 @@
 # Ordinary service/courier cohort for #353
 
-This is source preparation, not a passing native/test/coverage result. The last
+This cohort is verified on owned ordinary Linux fixtures, with explicit scope below. The last
 selected gap inventory had 344 / 814 line gaps in `process/service.rs` and
 213 / 852 in `process/notifications.rs`. Both include ordinary executable paths,
 staged privileged arms and defensive/metadata logic; neither entire module is
@@ -77,9 +77,14 @@ and external-provider outcomes retain their separate gates.
 
 ## Required coordinated gate
 
-Only source review, rustfmt and `git diff --check` are completed. **No Cargo build,
-test execution, coverage run or production host operation was performed in this
-preparation.** The current runnable Voyage entrypoint must be built and source/
+At clean cb929ff, the native parent/five context tests passed; current Voyage
+entrypoint source/version/depfile/inode/LLVM counter/hash witness passed. The four
+Python monitor and three first-send cases passed separately. Formatting, strict
+all-target/all-feature Clippy and full workspace measurement passed 2,631 / zero
+failures / eight ignored. Corrected 17-object/403-own-profile audit retains all
+541 prior/current files and unchanged 235 foreign profiles: 103,999 / 134,185
+lines (77.504192%). No production host operation occurred. For future measurements,
+the current runnable Voyage entrypoint must be built and source/
 hash/depfile/coverage-map verified under the next sole Cargo/instrumentation window;
 an existing filename or version is insufficient. The existing current entrypoint
 must be included in the exact final object/profile audit.

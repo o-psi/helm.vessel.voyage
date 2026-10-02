@@ -11,54 +11,56 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `2072f0552e788c03f3727d411abbc67c097eadb0`, recorded in
-`coverage/latest.json`, passed **2,622 tests, zero failures, eight ignored**.
-It covers **103,647 / 134,185 lines (77.241868%)**, 9,420 / 12,231 functions
-and 163,337 / 222,250 regions. **30,538 line gaps remain**, including one
-known standard-library line. #353's full reachable-production objective is unmet.
+Clean `cb929ff47383bb49f82e553a291f097268873eae`, recorded in
+`coverage/latest.json`, passed **2,631 tests, zero failures, eight ignored**.
+Coverage is **103,999 / 134,185 lines (77.504192%)**, 9,442 / 12,231 functions
+and 163,936 / 222,250 regions. **30,186 aggregate LLVM gap units remain**,
+including the known standard-library mapping. This is not a verified count of
+reachable production addresses; #353 remains open at its full objective.
 
-All **541 current workspace files and all 541 prior files** and the same known
-standard-library mapping are retained, using all 14 Cargo test targets plus three
-integration entry points as 17 distinct current objects. Only 381 own profiles
-were merged; 235 foreign profiles remained byte-identical. The mixed default
-export is rejected. Exact corrected summary/detailed JSON/HTML agree in totals and
-source inventory; 17 current objects are archived with hash identity. Evidence
-remains under ignored `target/coverage-report/v103-credential-forward-final`.
+All **541 current/prior workspace files**, the same standard-library mapping and
+all **17 distinct current objects** (14 Cargo targets plus three entrypoints) are
+retained. Only 403 own profiles are merged; all 235 foreign raw profiles remain
+byte-identical. Corrected summary/detailed JSON/HTML agree; objects are hash-archived.
+The mixed default report is rejected. Evidence is retained under ignored
+`target/coverage-report/v103-service-courier-final`.
 
-Compared with the prior 993f730 record: **59 more covered lines, 90 additional
-measured lines and -0.007843 percentage points**. New gateway credential context
-and refusal guards remain measured. The credential-only review reuses the maintained
-supervisor allowlist, pins private file identity/hash and effective/live/recovery
-namespace, and preserves every credential/drop-in/unit byte. Focused forward19
-and maintained parser5 tests, formatting and strict workspace all-target/all-feature
-Clippy passed. Initial parser lint was corrected and ctime read fencing added before
-this measurement. 381 previous own profiles and all prior evidence were preserved.
+Compared with 2072: **352 more covered lines, unchanged denominator and +0.262324
+percentage points**. Actual ordinary service/courier lifetimes, five metadata
+context/fault cases and three first-send cases passed, together with strict fmt/
+all-target/all-feature Clippy. Four Python monitor contracts are separate evidence.
+Prior/focused 446 own profiles and previous/current object evidence remain archived.
+No Root/system, human input, paid provider, browser/platform or 100% outcome is
+inferred; critical native/owner and stable-release obligations remain separate.
 
-Native CT106 fresh prepare/apply remains required after a qualified new archive.
-No native Windows/macOS API, paid provider, Root/system, browser or 100% result is
-inferred. Native CT119 normal legacy bootstrap and #403's archive remain separate;
-forced rollback/death/context, original-owner Web/browser TLS/full-site/media/client
-cost and full release readiness retain their unfinished obligations. See
-[reachability map](coverage353-reachability-map.md),
-[forward recovery](ordinary-forward-recovery.md),
-[clipboard cohort](coverage353-owned-clipboard-prep.md) and
-[paste/image cohort](coverage353-owned-paste-prep.md).
+## Exact address accounting and remaining reachability work
+
+The retained exact-object LCOV export identifies **27,948 unique zero-count
+file/line addresses**, with **2,238 aggregate gap units still unreconciled** to
+unique addresses. The map detects 222 inline test/helper addresses, one standard-
+library address and 84 specifically proved currently unsupported budget-command
+positive addresses. All stay in the measured denominator. The remaining **27,641
+production candidate addresses** retain guard/assertion/native/external/fault
+review obligations and are not a claimed reachable-production count.
+See [exact map and guard proofs](coverage353-production-address-map.md),
+[service/courier cohort](coverage353-owned-service-courier-prep.md),
+[first-send cohort](coverage353-helm-first-send.md) and the earlier
+[reachability map](coverage353-reachability-map.md). No difficulty-based blanket
+unreachable classification or source exclusion is made.
 
 ## Current largest areas
 
-Directory rows contain nested files; direct-file rows contain only files directly
-in that directory. These are measured gaps, not universal reachability or assertion
-classifications. Workspace source contributes **30,537 uncovered lines**; one
-retained standard-library gap remains. No production file was excluded.
+Rows are aggregate measured gaps, with nested directories or direct files as
+labeled. They are not universal reachability or assertion-quality classifications.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
-| `vessel/src/process/` | 8,536 | 19,111 |
-| `helm/src/process_client/` | 7,655 | 34,087 |
-| `voyage/src (direct files)` | 2,226 | 13,237 |
+| `vessel/src/process/` | 8,296 | 19,111 |
+| `helm/src/process_client/` | 7,563 | 34,087 |
+| `voyage/src (direct files)` | 2,205 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
 | `installer/src/remote/` | 1,400 | 2,766 |
-| `voyage/src/tools/` | 1,190 | 7,865 |
+| `voyage/src/tools/` | 1,191 | 7,865 |
 | `installer/src (direct files)` | 1,109 | 2,311 |
 | `voyage/src/attachment/` | 862 | 12,458 |
 | `voyage/src/server/` | 775 | 5,687 |
@@ -70,10 +72,11 @@ retained standard-library gap remains. No production file was excluded.
 | `voyage/src/subagent/` | 244 | 2,402 |
 | `crates/voyage-storage/src/` | 225 | 643 |
 
-The largest ordinary client and supervisor areas remain source targets. Native,
-privileged, provider and OS fault responsibilities retain explicit evidence
-accounting. A deferred journey is not a passing check or grounds for exclusion.
-The older maps below are historical checkpoints, not current gap addresses.
+Next substantial ordinary families include current connected/scoped access and
+transport, native viewer lifetime, extension registration and owned process/
+filesystem faults. Coordinate the active ordinary installer recovery/source
+transaction pass. Protected Root/system/adoption/platform and real external-service
+success need their exact environments/authority; deferred does not mean passing.
 
 ## Historical audited checkpoint and area map
 

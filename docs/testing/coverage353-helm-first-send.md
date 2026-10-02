@@ -1,8 +1,8 @@
 # Helm first-send and creation recovery assertions
 
 Scope: [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353).
-The additional source cohort is prepared; execution and integrated workspace
-coverage remain pending until the coordinated verification run.
+The additional cohort passed focused execution and the combined audited workspace
+gate; exact evidence and remaining scope are recorded below.
 
 `helm/src/process_client/ui/new_draft/plain_launch_tests.rs` uses the maintained
 per-test private storage fixture and a bounded loopback public duplex peer. It
@@ -36,3 +36,13 @@ Run it in the repository's existing bounded verification unit. Follow
 before publishing this Rust test delivery. Synthetic duplex replies establish
 client state and persistence behavior only; actual native processes, deployed
 TLS, installation, providers and cleanup need their separate evidence.
+
+## Verified combined delivery gate
+
+All three focused first-send/creation cases passed at clean cb929ff. The scripted
+peer handles actual Ping/Pong without consuming one of its three exact command
+steps. Full workspace tests passed 2,631 / zero failures / eight ignored, with
+formatting/strict all-target/all-feature Clippy and the corrected current 17-object/
+403-own-profile audit passing. All 541 prior/current source files remain; measured
+lines are 103,999 / 134,185 (77.504192%). This is local transport/private-journal
+contract evidence, not paid provider/native browser/Root or 100% qualification.

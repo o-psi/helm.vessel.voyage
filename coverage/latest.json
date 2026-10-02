@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T04:05:41.158462+00:00",
-  "source_commit": "2072f0552e788c03f3727d411abbc67c097eadb0",
+  "measured_at_utc": "2026-10-02T04:32:53.204834+00:00",
+  "source_commit": "cb929ff47383bb49f82e553a291f097268873eae",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2622,
+    "passed": 2631,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
       "count": 134185,
-      "covered": 103647,
-      "percent": 77.24186757089093
+      "covered": 103999,
+      "percent": 77.50419197376756
     },
     "functions": {
       "count": 12231,
-      "covered": 9420,
-      "percent": 77.01741476575914
+      "covered": 9442,
+      "percent": 77.19728558580655
     },
     "regions": {
       "count": 222250,
-      "covered": 163337,
-      "notcovered": 58913,
-      "percent": 73.49246344206975
+      "covered": 163936,
+      "notcovered": 58314,
+      "percent": 73.76197975253093
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-credential-forward-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-credential-forward-final/summary-default.json -v; llvm-profdata merge -sparse with 381 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-service-courier-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-service-courier-final/summary-default.json -v; llvm-profdata merge -sparse with 403 own profiles; audited explicit 17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,13 +40,14 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed source 2072f05: 2622 parent-workspace tests passed, zero failed, eight ignored. Nested private self-library children remain separate, not additional Cargo targets.",
-    "All 541 current workspace files and all 541 prior files retained with 17 distinct current objects (14 Cargo test targets plus three integration entrypoints). Only 381 own profiles merged; 235 foreign raw profiles byte-identical. Known standard-library mapping retained; no denominator exclusions changed.",
-    "Compared with previous 993f730 record: 59 more covered lines, 90 additional measured lines and -0.007843 percentage points. Added gateway context guards remain measured; 30538 line gaps remain and #353 full reachable-production objective is unmet.",
-    "Credential-only gateway review reuses the maintained supervisor allowlist and pins private owned regular file path/device/inode/owner/mode/hash and exact effective environment. Live gateway and recovery credential key paths must match; mixed/unknown/multiple/replaced/unowned/context-changed overrides refuse. Credential bytes are not read/copied by admission; existing configuration remains intact.",
-    "Focused forward19 and maintained parser5 tests passed; formatting and strict workspace all-target/all-feature Clippy -D warnings passed. Initial strict parser lint was corrected; owner review added ctime/ctime_nsec read consistency before this final measurement.",
-    "381 previous own profiles were archived before independent measurement; all preceding audited objects/export retained. Mixed default HTML/summary rejected. Corrected summary/detailed JSON/HTML totals and inventories agree, and 17 current objects archived with hash identity.",
-    "Separate 10GiB/no-swap/private-umask/j1 full measurement passed in2min35.250sec, peak1.1GiB. Bounded export/detail/archive passed under3GiB/no-swap. Evidence remains under ignored target/coverage-report/v103-credential-forward-final.",
-    "Actual CT106 fresh prepare51f287d7 refused the prior qualified archive because the existing gateway credential-only override was not yet admitted. No review hash/apply/effect occurred; original uncertain receipt/services unchanged. This source still requires new hosted artifact and fresh native prepare/apply; native legacy fault/context, original-owner Web/browser/full release gates remain open."
+    "Clean source cb929ff: 2631 parent-workspace tests passed, zero failed, eight ignored. Actual ordinary service/courier parent validates four journeys and distinct serve/supervise execution/guardian ownership; child results are not double-counted as Cargo targets.",
+    "All 541 current and all 541 prior workspace files retained with 17 distinct current objects (14 Cargo targets plus three integration entrypoints). Only 403 own profiles merged; 235 foreign profiles byte-identical; known standard-library mapping retained. No scope or exclusions changed.",
+    "Compared with previous 2072 record: +352 covered lines, unchanged 134185 measured lines, +0.262324 percentage points. 30186 aggregate gaps remain; 100% reachable-production objective is unmet.",
+    "Actual independent Vessel serve/courier and current real Voyage owner/guardian journeys passed: authenticated admission, ownership exclusion, exact creation/notification retries, quiet/revoke, graceful service shutdown preserving held runtime, restart/no inference replay and observed all-runtime cleanup.",
+    "Five metadata IPC context/fault cases and three plain first-send/frozen creation cases passed; changed authority/source/owner, partial page retention/deduplication, fingerprint collision, exact public receipts and private draft recovery remain distinct from actual native/external effects.",
+    "Focused Python monitor four contracts passed separately; strict fmt and workspace all-target/all-feature Clippy -D warnings passed. Witness/fixture corrections retained checkout-relative depfile evidence, existing Tokio watch primitive, immutable actor clones and duplex Ping/Pong without weakening assertions or adding dependencies.",
+    "446 prior/focused own profiles hash-archived before measurement. Exact corrected summary/detailed JSON/HTML agree and 17 objects are hash-archived; mixed default report rejected. Measurement 2min37.974sec/1GiB peak under10GiB/no swap/j1; exact export 20.892sec under3GiB/no swap.",
+    "Exact retained-object LCOV map: 27948 distinct zero addresses versus30186 aggregate gap units,2238 units still require region/macro/generic reconciliation. Detected222 inline test/helper,1standard-library and84 specifically proved current unsupported-budget-command positive addresses stay measured;27641 remaining production candidates require exact reachability/assertion/guard/native/external/fault review, not a claimed reachable count.",
+    "No human input, paid provider, Root/system, browser, other-platform or 100% claim is added. Critical795/CT106/owner evidence remains separately owned; stable release and remaining browser/platform/external/fault/source obligations are not inferred from this coverage cohort."
   ]
 }

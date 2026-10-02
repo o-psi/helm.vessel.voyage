@@ -7,17 +7,17 @@ reachable, unasserted production source addresses.
 
 ## Audited address inventory
 
-The independently audited `2072f0552e788c03f3727d411abbc67c097eadb0` measurement
-contains 30,538 LLVM line-gap units. Exporting LCOV from its **archived exact 17
-objects and own-only profdata** yields **28,282 distinct zero-count file/line
+The independently audited `cb929ff47383bb49f82e553a291f097268873eae` measurement
+contains 30,186 LLVM line-gap units. Exporting LCOV from its **archived exact 17
+objects and own-only profdata** yields **27,948 distinct zero-count file/line
 addresses** across 541 workspace files plus the retained standard-library source.
 No live Cargo object, raw profile or exclusion was changed by this read-only
 export. The original JSON/HTML/summary remain authoritative for aggregate totals.
 
-**2,256 gap units are not yet reconciled to distinct LCOV zero-count addresses.**
+**2,238 gap units are not yet reconciled to distinct LCOV zero-count addresses.**
 Macro/generic/instantiation and aggregate LLVM line accounting requires further
 region-level reconciliation; this difference is not dropped, called covered or
-subtracted from the 100% goal. The prior 993 inventory is preserved separately. Refresh this map after every
+subtracted from the 100% goal. The prior 993 and 2072 inventories are preserved separately. Refresh this map after every
 subsequent audited source delivery before reporting a current address or
 reachable-production count.
 
@@ -31,19 +31,19 @@ retained source/object/own-profile audit and LLVM LCOV export.
 
 | Address classification | Distinct zero addresses | Meaning |
 | --- | ---: | --- |
-| Ordinary executable candidates awaiting assertion/guard review | 16,687 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
+| Ordinary executable candidates awaiting assertion/guard review | 16,505 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
 | Native privileged/staged mixed source awaiting exact guard review | 8,246 | Root/system/identity families include ordinary validators plus protected positive effects; no blanket unreachable classification. |
-| Owned native/fault fixture candidates | 1,637 | Terminal/clipboard/process/filesystem/browser/extension boundaries need actual owned resources or controlled faults. |
+| Owned native/fault fixture candidates | 1,638 | Terminal/clipboard/process/filesystem/browser/extension boundaries need actual owned resources or controlled faults. |
 | Ordinary protocol fixture plus external success evidence | 753 | Provider/GitHub protocol/error logic is locally testable; authenticated external success needs separate authority/budget. |
-| Ordinary serve native fixture/guard review | 326 | Actual `serve(None)`, local authenticated HTTP/stream and graceful lifetime; Root/gateway arms separately guarded. |
+| Ordinary serve native fixture/guard review | 219 | Actual `serve(None)`, local authenticated HTTP/stream and graceful lifetime; Root/gateway arms separately guarded. |
 | Privileged UI staged positive with ordinary parser/refusal/storage | 214 | Ordinary owner transport refuses Execution; positive saved review requires protected Root identity. |
-| Ordinary notification contracts/courier | 112 | Public authenticated notification operations and bounded metadata courier; no decision/run admission. |
+| Ordinary notification contracts/courier | 66 | Public authenticated notification operations and bounded metadata courier; no decision/run admission. |
 | Proven current-protocol unreachable budget positive branch | 84 | Constant unknown typed command cannot construct a successful response; exact proof below. |
 | Detected inline test/helper addresses | 222 | Demangled `tests`/`*_tests`/test-support owners; retained in the measured denominator. |
 | Retained standard-library mapping | 1 | Existing known mapping; no production reachability claim. |
-| **All exact zero addresses** | **28,282** | **Full inventory retained.** |
+| **All exact zero addresses** | **27,948** | **Full inventory retained.** |
 
-The 27,975 remaining production **candidate** addresses after the detected inline
+The 27,641 remaining production **candidate** addresses after the detected inline
 test/standard-library/current-protocol categories are not a verified reachable
 production count. Every “candidate” or “mixed” row retains an explicit review
 obligation. A function-owner name is useful evidence for inline tests, but source
@@ -114,8 +114,8 @@ merely named `test` or a word ending with that substring. Mixed owners remain
 production candidates. Source-family labels are triage hypotheses pending exact
 entry/guard/assertion review, except the named independently checked guard proofs.
 
-The source ready cohort contains no Rust production change beyond cfg(test)
-declarations. This map export/analysis ran only against retained archives in
+The verified cohort changes no Rust production behavior beyond cfg(test)
+declarations; current scope and all remaining obligations stay measured. This map export/analysis ran only against retained archives in
 separate bounded user units; it did not compile, execute a provider/host operation,
 write live profiles, remove an object or alter the full denominator. The
 classification does not supply a verified total of reachable production lines.
