@@ -614,6 +614,44 @@ validated greeting's actual Vessel/socket IDs and private meter identity before
 F6. Discovery replacement or another physical Vessel refuses. Local metadata
 queries are restricted to the two owned `directory/sessions/UUID` roots.
 
+### Native bootstrap selection before F6
+
+The production launcher must select the exact fixture before waiting for its
+presentation. An unqualified `helm connect` initially selects the first live
+catalogue voyage, otherwise the first ordered entry. Other titles occupy a
+clipped single sidebar row. A complete fixture title is therefore not an initial
+readiness signal; this caused the real attempt02 launcher to stop before any
+browser or CUA request.
+
+The corrected launcher first pins its authenticated native meter's private inode,
+PID/start, physical Vessel and socket. It observes a selected view's empty
+composer and normal footer, then sends `/use EXACT_FIXTURE_UUID` once through the
+real TUI. Read-only `/settings` must show that exact selected UUID, the existing
+LegacyRoute connection identity and an authenticated snapshot revision. Fresh
+normal `connect inspect`/`list` observations must still agree on the fixture's
+name, workspace, current nonnil incarnation, empty history, no run/cleanup and
+that revision. Only after this proof and observed Esc dismissal does it send F6.
+The normal Helm viewer still enforces its incarnation and revision fences; no
+client request or socket destination is replaced.
+
+Private exclusive bootstrap intent precedes the first key; selected owner proof
+is retained before F6 and an observed/unknown result follows the single attempt.
+Every stage rechecks the same native process/socket/meter and local discovery
+identity. A wrong selected UUID/route/revision, reconnect, stale or replaced
+meter, failed dismissal or unknown launcher stops without keyboard replay.
+Selection and launcher preparation share a 40-second bound; the existing
+600-second execution and resource cleanup obligations remain. The initiating
+private reclaim path continues to use the original exact client/principal and
+fresh one-use launcher.
+
+`host_browser_native_local_tests.py` includes offline callback contracts for a
+clipped/unselected fixture title, actual selected identity, revision mismatch,
+socket/process/inode changes, panel input fencing and an unknown single F6.
+These contracts establish no native TUI, provider or deployed TLS behavior.
+Run them in the coordinator's focused source gate before publishing and staging
+a corrected source bundle. Keep original source613 bytes and attempt02 evidence;
+do not silently replace that historical bundle or reuse an expired job lifetime.
+
 The default-off `HELM_QUALIFICATION_LOCAL_OUTPUT`/`_LABEL` enables the same private
 bounded count-only native observer for actual local WS Text sends/receives.
 Public mode retains `HELM_QUALIFICATION_WSS_OUTPUT`/`_LABEL`. Supplying both output

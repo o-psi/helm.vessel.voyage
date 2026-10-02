@@ -7,6 +7,8 @@ import tempfile
 import unittest
 import uuid
 import sys
+import time
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 import host_browser_production as launcher
 import host_browser_production_probe as probe
@@ -94,6 +96,123 @@ class NativeLocalContracts(unittest.TestCase):
     def test_actor_proof_independently_refuses_wrong_physical_public_vessel_identity(self):
         request=self.authority();request['vessel_id']=str(uuid.uuid4())
         with self.assertRaises(AssertionError):probe.local_authority(request)
+
+
+class NativeBootstrapContracts(unittest.TestCase):
+    """Callbacks only: authentication/selection order and refusal before real F6."""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.root.chmod(0o700)
+        self.item={'id':str(uuid.uuid4()),'label':'a','title':'qualification-333-a-title-clipped-in-sidebar','workspace':'/fixture-a'}
+        self.vessel=str(uuid.uuid4());self.socket=str(uuid.uuid4())
+        self.config={'native_route':{'mode':'local','directory':'/private/vessel','expected_vessel_id':self.vessel},
+                     'native_helm_program':{'path':'/qualified/helm','sha256':'a'*64}}
+        self.metrics=self.root/'meter.json';self.capture=self.root/'capture'
+        self.value={'status':'observed','pid':901,'start_ticks':500,'label':'native-a','routes':1,'active':1,
+            'connections':1,'attempts':1,'disconnected':0,'handshake_failures':0,'transport_failures':0,
+            'socket_id':self.socket,'vessel_id':self.vessel,'transport':'local_ws','authority':'existing local account owner'}
+        self.write_meter()
+        self.actions=[];self.phase='initial';self.draft='';self.wrong=None;self.swallow=False;self.fresh=True
+        self.owner={'session_id':self.item['id'],'incarnation':str(uuid.uuid4()),'revision':7}
+        self.ident=(500,'/qualified/helm')
+        self.patch=patch.object(launcher,'process_identity',side_effect=lambda _:self.ident);self.patch.start();self.addCleanup(self.patch.stop)
+        class Process:
+            def poll(self):return None
+        self.client={'pid':901,'process':Process()}
+    def write_meter(self):
+        self.value['captured_at_ms']=int(time.time()*1000)
+        self.metrics.write_text(json.dumps(self.value));self.metrics.chmod(0o600)
+    def screen(self,_):
+        if self.phase=='settings':
+            session=str(uuid.uuid4()) if self.wrong=='session' else self.item['id']
+            route=str(uuid.uuid4()) if self.wrong=='route' else launcher.native_route_id(self.config)
+            return ('Effective settings · read-only observations\nVoyage '+session+' · Vessel connection '+route+
+                    '\nSource: last authenticated executing-host snapshot (not a new fetch).\nRevision 7 · access: approval')
+        if self.phase=='browser':return 'Host browser\nVoyage: '+self.item['id']
+        # No phase presents the complete fixture title. Initial selection is an
+        # unrelated voyage; the normal /use still must precede settings and F6.
+        return 'Other voyage (fixture title clipped)\nAsk anything, or describe what you want to do...\nEnter Submit new turn'
+    def paste(self,_,value):
+        self.assertTrue((self.root/'native-a-bootstrap-intent.json').exists())
+        self.actions.append(('paste',value));self.draft=value
+    def send(self,_,value):
+        self.actions.append(('send',value))
+        if value=='\r':
+            if self.draft=='/use '+self.item['id']:self.phase='selected'
+            elif self.draft=='/settings':self.phase='settings'
+            self.draft=''
+        if value=='\x1b' and not self.swallow:self.phase='selected'
+        if value=='\x1b[17~':
+            self.assertTrue((self.root/'native-a-bootstrap-selected.json').exists())
+            if self.fresh:self.capture.write_text('/private/open.html');self.capture.chmod(0o600)
+            self.phase='browser'
+    def wait(self,predicate,seconds):
+        self.assertLessEqual(seconds,40)
+        value=predicate();self.assertTrue(value,'bounded callback observation unavailable');return value
+    def run_bootstrap(self):
+        return launcher.bootstrap_native(self.client,self.item,self.config,self.metrics,self.capture,self.root,
+            lambda:dict(self.owner),lambda:None,self.screen,self.paste,self.send,self.wait)
+    def result(self):return json.loads((self.root/'native-a-bootstrap-result.json').read_text())
+    def test_clipped_unselected_title_selects_exact_sid_and_readonly_route_revision_before_f6(self):
+        value=self.run_bootstrap()
+        self.assertEqual(value,{'pid':901,'start_ticks':500,'label':'native-a','descendants':True})
+        self.assertEqual(self.actions,[('paste','/use '+self.item['id']),('send','\r'),('paste','/settings'),('send','\r'),('send','\x1b'),('send','\x1b[17~')])
+        self.assertEqual(self.result()['state'],'observed');self.assertEqual(self.result()['selected_owner'],self.owner)
+    def test_wrong_actual_selected_session_prevents_dismissal_and_f6(self):
+        self.wrong='session'
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertEqual(self.result()['state'],'unknown');self.assertFalse(self.result()['f6_dispatched'])
+        self.assertNotIn(('send','\x1b[17~'),self.actions)
+    def test_wrong_actual_route_refuses_before_f6(self):
+        self.wrong='route'
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertFalse(self.result()['f6_dispatched'])
+    def test_changed_canonical_revision_refuses_before_f6(self):
+        self.owner['revision']=8
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertFalse(self.result()['f6_dispatched'])
+    def test_changed_native_socket_refuses_before_next_key(self):
+        original=self.send
+        def changed(client,value):
+            original(client,value)
+            if value=='\r':self.value['socket_id']=str(uuid.uuid4());self.write_meter()
+        self.send=changed
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertEqual(self.actions,[('paste','/use '+self.item['id']),('send','\r')])
+        self.assertFalse(self.result()['f6_dispatched'])
+    def test_changed_native_process_start_refuses_before_next_key(self):
+        original=self.send
+        def changed(client,value):
+            original(client,value)
+            if value=='\r':self.ident=(501,'/qualified/helm')
+        self.send=changed
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertEqual(len(self.actions),2);self.assertFalse(self.result()['f6_dispatched'])
+    def test_settings_overlay_not_dismissed_prevents_f6(self):
+        self.swallow=True
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertFalse(self.result()['f6_dispatched']);self.assertNotIn(('send','\x1b[17~'),self.actions)
+    def test_missing_one_use_launcher_after_single_f6_retains_unknown(self):
+        self.fresh=False
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertTrue(self.result()['f6_dispatched']);self.assertEqual(self.actions.count(('send','\x1b[17~')),1)
+        self.assertEqual(self.result()['state'],'unknown')
+    def test_changed_meter_inode_refuses_even_when_scalar_identity_is_copied(self):
+        original=self.send
+        def changed(client,value):
+            original(client,value)
+            if value=='\r':
+                replacement=self.root/'replacement';replacement.write_text(json.dumps(self.value));replacement.chmod(0o600);replacement.replace(self.metrics)
+        self.send=changed
+        with self.assertRaises(AssertionError):self.run_bootstrap()
+        self.assertEqual(len(self.actions),2);self.assertFalse(self.result()['f6_dispatched'])
+    def test_fixture_observation_rejects_duplicate_or_changed_owner_metadata(self):
+        process={'session_id':self.item['id'],'incarnation':self.owner['incarnation'],'name':self.item['title'],'workspace':self.item['workspace']}
+        snapshot={'session_id':self.item['id'],'name':self.item['title'],'revision':7,'messages':[],'run':None,'pending_cleanup_run':None}
+        self.assertEqual(launcher.fixture_observation([process],snapshot,self.item),self.owner)
+        for catalogue,snap in [([process,process],snapshot),([{**process,'workspace':'/different'}],snapshot),
+                              ([{**process,'incarnation':str(uuid.UUID(int=0))}],snapshot),([process],{**snapshot,'run':{'state':'running'}})]:
+            with self.assertRaises(AssertionError):launcher.fixture_observation(catalogue,snap,self.item)
 
 
 if __name__=='__main__':unittest.main()
