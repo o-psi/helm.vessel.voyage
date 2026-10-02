@@ -207,6 +207,23 @@ impl Guard {
         )
         .map(|_| ())
     }
+    pub(crate) fn verify_restored_held(&self) -> Result<()> {
+        ensure!(
+            !self.forward && self.supervisor.is_some(),
+            "Restored legacy reader requires exact held ordinary ownership"
+        );
+        let mut leases = self._sessions.iter().collect::<Vec<_>>();
+        leases.push(self.supervisor.as_ref().unwrap());
+        inspect_leased(
+            "verify-restored",
+            &self.proof.state,
+            &self.proof.accounts,
+            &self.proof.stage,
+            Some(&self.proof.evidence),
+            &leases,
+        )?;
+        Ok(())
+    }
     pub fn restore(&mut self) -> Result<()> {
         ensure!(
             !self.forward,

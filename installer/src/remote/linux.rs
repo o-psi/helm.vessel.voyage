@@ -819,6 +819,22 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
         .legacy_accounts
         .clone()
         .context("Legacy account namespace was not pinned")?;
+    let approved_candidate = Manifest::inspect(
+        record
+            .bin_dir
+            .as_ref()
+            .context("Approved legacy candidate missing")?,
+    )?;
+    ensure!(
+        approved_candidate.id()? == record.release_id.as_deref().unwrap(),
+        "Approved legacy candidate identity changed"
+    );
+    let activation_context = service::capture_legacy_activation_context(
+        &previous.join("bin"),
+        &activation,
+        &accounts,
+        &approved_candidate,
+    )?;
     crate::legacy::fence(
         &activation.state,
         &record.operation_id,
@@ -892,13 +908,25 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
             published |= observed_pointer != record.current_release;
             if published {
                 stop_gateways(record)?;
-                let current_activation = service::review_activation(&candidate.join("bin"))?;
-                service::quiesce(&candidate.join("bin"), &current_activation)?;
+                service::quiesce_failed_legacy_candidate(
+                    &candidate.join("bin"),
+                    &activation,
+                    &activation_context,
+                )?;
                 guard
                     .as_mut()
                     .context("Legacy snapshot ownership unavailable")?
                     .restore()?;
-                install::rollback(false)?;
+                install::rollback_restored_legacy(
+                    guard
+                        .as_ref()
+                        .context("Held legacy restoration unavailable")?,
+                    record
+                        .release_id
+                        .as_deref()
+                        .context("Approved candidate identity missing")?,
+                    &record.current_release,
+                )?;
                 ensure!(
                     current()? == record.current_release,
                     "Previous legacy pointer not verified"
@@ -906,6 +934,7 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
             }
             // Release journal exclusion only after the original snapshot is back.
             drop(guard.take());
+            service::verify_legacy_activation_context(&activation, &activation_context)?;
             service::restore_activation(
                 &previous.join("bin"),
                 &candidate.join("bin"),
@@ -914,6 +943,7 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
             rollback_gateways(record, &previous)?;
             verified_service("voyage-vessel.service", &previous)?;
             verified_legacy_activation(record, &previous, true)?;
+            service::verify_legacy_activation_context(&activation, &activation_context)?;
             crate::legacy::clear(&activation.state, &record.operation_id)?;
             Ok(())
         })();

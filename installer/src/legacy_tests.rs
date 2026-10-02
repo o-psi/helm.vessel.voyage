@@ -440,3 +440,117 @@ fn forward_evidence_pins_actual_catalogue_journal_and_registration_protocol_form
     assert!(guard.verify().is_err());
     assert!(forward_evidence(&state, &accounts, &stage).is_err());
 }
+
+#[test]
+fn restored_legacy_pointer_uses_exact_typed_held_proof_without_opening_an_owner_lease_gap() {
+    let f = Fixture::new();
+    let (state, accounts, stage) = setup(&f);
+    let old = crate::fixture_tests::release(&f, "guard-old", "1.0.2");
+    let original = crate::install::run(crate::install::Options {
+        bin_dir: old,
+        replace_existing: false,
+        dry_run: false,
+    })
+    .unwrap()
+    .release;
+    let candidate = crate::fixture_tests::release(&f, "guard-candidate", "1.0.3");
+    let mut held = begin(&state, &accounts, &stage).unwrap();
+    let next = crate::install::run(crate::install::Options {
+        bin_dir: candidate,
+        replace_existing: false,
+        dry_run: false,
+    })
+    .unwrap()
+    .release;
+    held.permit_supervisor();
+    sql(
+        &state,
+        include_str!("../../vessel/src/process/database_v2_migration.sql"),
+    );
+    held.restore().unwrap();
+    held.verify_restored_held().unwrap();
+    // The ordinary observer deliberately cannot borrow the held guardian lock.
+    // It must keep refusing, rather than dropping locks to select an old reader.
+    assert!(crate::install::rollback(false).is_err());
+    let before = std::fs::read(f.root.join("install/transaction.json")).unwrap();
+    assert!(crate::install::rollback_restored_legacy(&held, &"f".repeat(64), &original).is_err());
+    assert!(crate::install::rollback_restored_legacy(&held, &next, &"e".repeat(64)).is_err());
+    assert_eq!(
+        std::fs::read(f.root.join("install/transaction.json")).unwrap(),
+        before
+    );
+    let changed = crate::install::rollback_restored_legacy(&held, &next, &original).unwrap();
+    assert_eq!(changed.release, original);
+    assert_eq!(
+        std::fs::read_link(f.root.join("install/current")).unwrap(),
+        f.root.join("install/releases").join(&original)
+    );
+    held.verify_restored_held().unwrap();
+    assert!(eligible(&state, &accounts, &stage).is_err());
+    assert!(
+        crate::install::rollback_restored_legacy(&held, &next, &original).is_err(),
+        "duplicate pointer selection cannot replay"
+    );
+    drop(held);
+    eligible(&state, &accounts, &stage).unwrap();
+    f.done();
+}
+#[test]
+fn held_restored_pointer_refuses_snapshot_mutation_foreign_namespace_and_forward_proof() {
+    for variant in 0..3 {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        let old = crate::fixture_tests::release(&f, "refuse-old", "1.0.2");
+        let previous = crate::install::run(crate::install::Options {
+            bin_dir: old,
+            replace_existing: false,
+            dry_run: false,
+        })
+        .unwrap()
+        .release;
+        let candidate = crate::fixture_tests::release(&f, "refuse-candidate", "1.0.3");
+        let current = crate::install::run(crate::install::Options {
+            bin_dir: candidate,
+            replace_existing: false,
+            dry_run: false,
+        })
+        .unwrap()
+        .release;
+        let mut held = if variant == 2 {
+            sql(
+                &state,
+                include_str!("../../vessel/src/process/database_v2_migration.sql"),
+            );
+            begin_forward(&state, &accounts, &stage).unwrap()
+        } else {
+            let mut h = begin(&state, &accounts, &stage).unwrap();
+            h.permit_supervisor();
+            sql(
+                &state,
+                include_str!("../../vessel/src/process/database_v2_migration.sql"),
+            );
+            h.restore().unwrap();
+            h
+        };
+        if variant == 0 {
+            let p = stage.join("legacy-catalogue.sqlite3");
+            let mut b = std::fs::read(&p).unwrap();
+            b.push(0);
+            std::fs::write(p, b).unwrap();
+        }
+        if variant == 1 {
+            held.proof.state = f.root.join("foreign-state");
+        }
+        let before = std::fs::read(f.root.join("install/transaction.json")).unwrap();
+        assert!(crate::install::rollback_restored_legacy(&held, &current, &previous).is_err());
+        assert_eq!(
+            std::fs::read(f.root.join("install/transaction.json")).unwrap(),
+            before
+        );
+        assert_eq!(
+            std::fs::read_link(f.root.join("install/current")).unwrap(),
+            f.root.join("install/releases").join(&current)
+        );
+        f.done();
+    }
+}

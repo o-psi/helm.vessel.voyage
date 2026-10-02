@@ -81,3 +81,12 @@ pub fn status() -> Result<Vec<String>> {
         anyhow::bail!("Installation inspection is currently supported on Linux")
     }
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn rollback_restored_legacy(
+    guard: &crate::legacy::Guard,
+    expected_current: &str,
+    expected_previous: &str,
+) -> Result<Report> {
+    transaction::rollback_restored_legacy(guard, expected_current, expected_previous)
+}

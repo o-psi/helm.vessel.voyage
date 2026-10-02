@@ -99,3 +99,30 @@ pub(crate) fn observe_activation(
 pub(crate) fn credential_key_path(content: &str) -> Option<&str> {
     unit::credential_key_path(content)
 }
+
+#[cfg(target_os = "linux")]
+mod failed_candidate;
+#[cfg(target_os = "linux")]
+pub(crate) fn capture_legacy_activation_context(
+    bin: &std::path::Path,
+    prior: &Activation,
+    accounts: &std::path::Path,
+    candidate: &crate::install::release::Manifest,
+) -> Result<failed_candidate::ContextPin> {
+    failed_candidate::capture(bin, prior, accounts, candidate)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn quiesce_failed_legacy_candidate(
+    bin: &std::path::Path,
+    prior: &Activation,
+    pin: &failed_candidate::ContextPin,
+) -> Result<()> {
+    failed_candidate::quiesce(bin, prior, pin)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn verify_legacy_activation_context(
+    prior: &Activation,
+    pin: &failed_candidate::ContextPin,
+) -> Result<()> {
+    failed_candidate::unchanged(prior, pin)
+}

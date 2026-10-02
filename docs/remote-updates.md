@@ -358,3 +358,13 @@ strict public health matched the new archive. See the
 [native checkpoint](testing/ordinary-forward-recovery.md#qualified-native-checkpoint).
 Original-owner Web compatibility also passed without adding WorkspaceRead;
 broader legacy failure/context cases remain required. This successful path is not a general corruption repair or a stable release claim.
+
+Ordinary legacy activation failure can quiesce only its exact approved published
+candidate during bounded auto-restart transitions. It pins the original manager,
+unit, credential-only override and account namespace, verifies actual candidate
+process/image identity, and requires observed PID0/no pending job before restoring
+the original snapshot. A typed held-guard pointer path verifies the restored
+schema1/marker/backup/leases before selecting the old reader; generic rollback
+refusal remains unchanged. See [transition qualification](testing/legacy-rollback-transition-qualification.md).
+This is prepared source awaiting coordinated local/build and fresh native
+qualification; the actual CT124 unconfirmed operation is retained, not replayed.

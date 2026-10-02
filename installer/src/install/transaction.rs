@@ -30,6 +30,19 @@ pub fn install(options: Options) -> Result<Report> {
     Ok(report)
 }
 pub fn rollback(dry_run: bool) -> Result<Report> {
+    rollback_inner(dry_run, None)
+}
+pub(super) fn rollback_restored_legacy(
+    guard: &crate::legacy::Guard,
+    expected_current: &str,
+    expected_previous: &str,
+) -> Result<Report> {
+    rollback_inner(false, Some((guard, expected_current, expected_previous)))
+}
+fn rollback_inner(
+    dry_run: bool,
+    restored: Option<(&crate::legacy::Guard, &str, &str)>,
+) -> Result<Report> {
     let l = Layout::get()?;
     if dry_run {
         let j = l.journal()?;
@@ -45,6 +58,12 @@ pub fn rollback(dry_run: bool) -> Result<Report> {
     files::private_directory(&l.root)?;
     let _lock = files::lock(&l.root.join("lock"))?;
     let mut j = l.journal()?;
+    if restored.is_some() {
+        ensure!(
+            j.pending.is_none() && l.pointer()? == j.current,
+            "Unresolved installation cannot borrow a restored legacy guard"
+        );
+    }
     recover(&l, &mut j)?;
     validate(&l, &j, false)?;
     let id = j
@@ -52,7 +71,19 @@ pub fn rollback(dry_run: bool) -> Result<Report> {
         .clone()
         .context("No previous release available")?;
     let manifest = l.verify(&id)?;
-    legacy_rollback_admission(&manifest, &l.root)?;
+    if let Some((guard, expected_current, expected_previous)) = restored {
+        ensure!(
+            id == expected_previous
+                && j.current.as_deref() == Some(expected_current)
+                && manifest.version.trim_start_matches('v') == "1.0.2"
+                && manifest.update_compatibility.is_none()
+                && guard.proof.state == crate::service::state_directory()?,
+            "Held legacy rollback release or namespace changed"
+        );
+        guard.verify_restored_held()?;
+    } else {
+        legacy_rollback_admission(&manifest, &l.root)?;
+    }
     let report = l.report(&id, &manifest.version, &j)?;
     j.pending = Some(id.clone());
     l.save(&j)?;
