@@ -636,14 +636,16 @@ def fail_startup():
                 from delivery_recovery import Fixture
                 reader = object.__new__(Fixture)
                 reader.directory = STATE
+                from native_legacy_history import verify_snapshot
+                public_reads = []
                 for session, saved in before['sessions'].items():
                     snapshot = reader.command(session, {'op':'snapshot'})
-                    require(snapshot['messages'] == saved['messages'], 'old helper cannot read canonical history')
+                    public_reads.append(verify_snapshot(snapshot, session, saved['messages']))
                 signals = [{k:v for k,v in w.items() if k not in ('descriptor','image_pin')} for w in witnesses]
                 require(signals and all(w['signal_delivered'] for w in signals), 'fault delivery unconfirmed')
                 write('forced-startup-rollback.json', {'candidate_pids_signalled':[w['pid'] for w in witnesses],
                       'signals':signals, 'all_signalled_candidates_exited_and_reaped':True,
-                      'pending_observations':pending, 'observed':after})
+                      'pending_observations':pending, 'old_public_history_reads':public_reads, 'observed':after})
                 passed = True
                 return
             time.sleep(.01)
@@ -677,6 +679,8 @@ def main():
         current.add_argument('--install-sh-sha256', required=True)
     commands.add_parser('observe')
     commands.add_parser('fail-startup')
+    readonly = commands.add_parser('qualify-restored-history')
+    readonly.add_argument('--case', choices=['startup', 'helper-snapshot'], required=True)
     fault = commands.add_parser('kill-at')
     selection = fault.add_mutually_exclusive_group(required=True)
     selection.add_argument('--installer-pid', type=int)
@@ -697,6 +701,9 @@ def main():
         run(sys.modules[__name__], args)
     elif args.action == 'change-at': kill_at(args)
     elif args.action == 'fail-startup': fail_startup()
+    elif args.action == 'qualify-restored-history':
+        from native_legacy_history import qualify_restored
+        qualify_restored(sys.modules[__name__], args)
     else: print('Native prerequisites observed; no release qualification claimed.')
 
 if __name__ == '__main__':

@@ -1537,3 +1537,20 @@ These checks use mocks and explicitly owned Python children. No service manager,
 provider, host upgrade or human clipboard/input is reachable. They must pass in
 a bounded ordinary user unit before publication. Preserve the full Rust
 measurement when combining this Python source with any Rust/test cohort.
+
+
+### Old public history fixture contract
+
+The [old Snapshot contract](testing/legacy-old-public-history-contract.md) binds
+`installer/tests/native_legacy_history.py` to actual v1.0.2 public-v1 projection.
+Its full payload comparison complements complete raw DB before/after equality;
+it does not replace canonical text/identity with counts or create new effects.
+Run the pure offline contracts in a bounded ordinary unit:
+
+```sh
+python3 -I -B installer/tests/native_legacy_history_tests.py
+```
+
+Native read-only qualification is a separately authorized observation after
+restoration, with new exclusive receipts preserving failed monitor evidence.
+It must not re-inject or replay the original upgrade, fault or helper action.
