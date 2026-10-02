@@ -7,23 +7,23 @@ reachable, unasserted production source addresses.
 
 ## Audited address inventory
 
-The independently audited `cb929ff47383bb49f82e553a291f097268873eae` measurement
-contains 30,186 LLVM line-gap units. Exporting LCOV from its **archived exact 17
-objects and own-only profdata** yields **27,948 distinct zero-count file/line
-addresses** across 541 workspace files plus the retained standard-library source.
+The independently audited `db3d358e2a51db488c850be978853e18a4063a14` measurement
+contains 29,458 LLVM line-gap units. Exporting LCOV from its **archived exact 17
+objects and own-only profdata** yields **27,245 distinct zero-count file/line
+addresses** across 542 mapped workspace files plus the retained standard-library source.
 No live Cargo object, raw profile or exclusion was changed by this read-only
 export. The original JSON/HTML/summary remain authoritative for aggregate totals.
 
-**2,238 gap units are not yet reconciled to distinct LCOV zero-count addresses.**
+**2,213 gap units are not yet reconciled to distinct LCOV zero-count addresses.**
 Macro/generic/instantiation and aggregate LLVM line accounting requires further
 region-level reconciliation; this difference is not dropped, called covered or
-subtracted from the 100% goal. The prior 993 and 2072 inventories are preserved separately. Refresh this map after every
+subtracted from the 100% goal. The prior 993, 2072 and cb929ff inventories are preserved separately. Refresh this map after every
 subsequent audited source delivery before reporting a current address or
 reachable-production count.
 
 The full address inventory, source text, demangled function owners and selected
 entry/guard proofs remain ignored under
-`target/coverage-report/coverage353-production-map`: `audited-production.lcov`,
+`target/coverage-report/coverage353-production-map-db3d358`: `audited-production.lcov`,
 `uncovered-addresses.json`, `classification-summary.json` and exact archived-object
 command. Detailed coverage/address exports are not published as the compact
 coverage history. They are independently reconstructible from the coordinator's
@@ -31,7 +31,7 @@ retained source/object/own-profile audit and LLVM LCOV export.
 
 | Address classification | Distinct zero addresses | Meaning |
 | --- | ---: | --- |
-| Ordinary executable candidates awaiting assertion/guard review | 16,505 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
+| Ordinary executable candidates awaiting assertion/guard review | 15,795 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
 | Native privileged/staged mixed source awaiting exact guard review | 8,246 | Root/system/identity families include ordinary validators plus protected positive effects; no blanket unreachable classification. |
 | Owned native/fault fixture candidates | 1,638 | Terminal/clipboard/process/filesystem/browser/extension boundaries need actual owned resources or controlled faults. |
 | Ordinary protocol fixture plus external success evidence | 753 | Provider/GitHub protocol/error logic is locally testable; authenticated external success needs separate authority/budget. |
@@ -39,12 +39,13 @@ retained source/object/own-profile audit and LLVM LCOV export.
 | Privileged UI staged positive with ordinary parser/refusal/storage | 214 | Ordinary owner transport refuses Execution; positive saved review requires protected Root identity. |
 | Ordinary notification contracts/courier | 66 | Public authenticated notification operations and bounded metadata courier; no decision/run admission. |
 | Proven current-protocol unreachable budget positive branch | 84 | Constant unknown typed command cannot construct a successful response; exact proof below. |
+| Proven dormant per-field inference hit addresses | 7 | Default-empty private vector has no producer; exact predicate/positive proof retained. |
 | Detected inline test/helper addresses | 222 | Demangled `tests`/`*_tests`/test-support owners; retained in the measured denominator. |
 | Retained standard-library mapping | 1 | Existing known mapping; no production reachability claim. |
-| **All exact zero addresses** | **27,948** | **Full inventory retained.** |
+| **All exact zero addresses** | **27,245** | **Full inventory retained.** |
 
-The 27,641 remaining production **candidate** addresses after the detected inline
-test/standard-library/current-protocol categories are not a verified reachable
+The 26,931 remaining production **candidate** addresses after the detected inline
+test/standard-library/current-protocol/dormant-renderer categories are not a verified reachable
 production count. Every “candidate” or “mixed” row retains an explicit review
 obligation. A function-owner name is useful evidence for inline tests, but source
 cfg/module review remains necessary for unnamed/generated helpers. Unknown/fault
@@ -76,12 +77,14 @@ requires real/effective UID0 and protected storage. Keep ordinary parser/refusal
 fixtures and the parked #344/#346/#380 positive-native/fence obligations distinct,
 without removing either from the denominator.
 
+See [the exact inference hit provenance](coverage353-inference-hit-provenance.md) for the seven current dormant addresses. Footer/chooser/cancel/account hits have actual renderer producers and remain ordinary-testable. No fabricated hit or exclusion is introduced.
+
 ## Largest substantive next families
 
 - **Ordinary Vessel service/courier and access:** actual private service startup/
   shutdown, authenticated routing, changed recipient/source after IPC, durable
-  cursor/receipt uncertainty and cleanup. Current prepared cohort covers service/
-  courier; connected/scoped access remains a separate next owner.
+  cursor/receipt uncertainty and cleanup. The delivered service/courier and failed-candidate cohorts now have focused and
+  full assertions; connected/scoped access remains a separate next owner.
 - **Helm viewer lifetime and UI glue:** full host-browser launcher/listener/
   detach lifecycle (205 distinct zero addresses in the sampled export), image/
   preview/completion/viewport job lifetime and current-target disclosure gates.
@@ -114,8 +117,21 @@ merely named `test` or a word ending with that substring. Mixed owners remain
 production candidates. Source-family labels are triage hypotheses pending exact
 entry/guard/assertion review, except the named independently checked guard proofs.
 
-The verified cohort changes no Rust production behavior beyond cfg(test)
-declarations; current scope and all remaining obligations stay measured. This map export/analysis ran only against retained archives in
+This cohort includes the reviewed concrete ordinary legacy rollback production
+repair plus meaningful fixture families. Current source scope and all remaining
+obligations stay measured. This map export/analysis ran only against retained archives in
 separate bounded user units; it did not compile, execute a provider/host operation,
 write live profiles, remove an object or alter the full denominator. The
 classification does not supply a verified total of reachable production lines.
+
+## Audited combined rollback/event/forward delivery
+
+Clean source `db3d358e2a51db488c850be978853e18a4063a14` passed 2,677 parent
+workspace tests / zero failed / eight ignored, strict gates, and all focused
+Rust/Python/Node contracts. Corrected 17-object own-only export retains 542 current
+and all 541 prior mapped workspace files, plus the existing standard-library
+mapping. The same standard dependency/test-source exclusions remain intact.
+Coverage is 105,178/134,636 lines (78.120265%), an increase of 1,179 covered lines
+and 451 denominator lines. Neither that percentage nor candidate classifications
+complete the unchanged 100% reachable-production target. Full details remain
+ignored; publish only the compact coverage record and this accounting.

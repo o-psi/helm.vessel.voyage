@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T04:32:53.204834+00:00",
-  "source_commit": "cb929ff47383bb49f82e553a291f097268873eae",
+  "measured_at_utc": "2026-10-02T05:51:29.047632+00:00",
+  "source_commit": "db3d358e2a51db488c850be978853e18a4063a14",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2631,
+    "passed": 2677,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 134185,
-      "covered": 103999,
-      "percent": 77.50419197376756
+      "count": 134636,
+      "covered": 105178,
+      "percent": 78.12026501084407
     },
     "functions": {
-      "count": 12231,
-      "covered": 9442,
-      "percent": 77.19728558580655
+      "count": 12261,
+      "covered": 9523,
+      "percent": 77.66903188973167
     },
     "regions": {
-      "count": 222250,
-      "covered": 163936,
-      "notcovered": 58314,
-      "percent": 73.76197975253093
+      "count": 223055,
+      "covered": 165915,
+      "notcovered": 57140,
+      "percent": 74.38299970859205
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-service-courier-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-service-courier-final/summary-default.json -v; llvm-profdata merge -sparse with 403 own profiles; audited explicit 17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-combined-rollback-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-combined-rollback-final/summary-default.json -v; llvm-profdata merge -sparse with 402 own profiles; audited explicit 17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,14 +40,15 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean source cb929ff: 2631 parent-workspace tests passed, zero failed, eight ignored. Actual ordinary service/courier parent validates four journeys and distinct serve/supervise execution/guardian ownership; child results are not double-counted as Cargo targets.",
-    "All 541 current and all 541 prior workspace files retained with 17 distinct current objects (14 Cargo targets plus three integration entrypoints). Only 403 own profiles merged; 235 foreign profiles byte-identical; known standard-library mapping retained. No scope or exclusions changed.",
-    "Compared with previous 2072 record: +352 covered lines, unchanged 134185 measured lines, +0.262324 percentage points. 30186 aggregate gaps remain; 100% reachable-production objective is unmet.",
-    "Actual independent Vessel serve/courier and current real Voyage owner/guardian journeys passed: authenticated admission, ownership exclusion, exact creation/notification retries, quiet/revoke, graceful service shutdown preserving held runtime, restart/no inference replay and observed all-runtime cleanup.",
-    "Five metadata IPC context/fault cases and three plain first-send/frozen creation cases passed; changed authority/source/owner, partial page retention/deduplication, fingerprint collision, exact public receipts and private draft recovery remain distinct from actual native/external effects.",
-    "Focused Python monitor four contracts passed separately; strict fmt and workspace all-target/all-feature Clippy -D warnings passed. Witness/fixture corrections retained checkout-relative depfile evidence, existing Tokio watch primitive, immutable actor clones and duplex Ping/Pong without weakening assertions or adding dependencies.",
-    "446 prior/focused own profiles hash-archived before measurement. Exact corrected summary/detailed JSON/HTML agree and 17 objects are hash-archived; mixed default report rejected. Measurement 2min37.974sec/1GiB peak under10GiB/no swap/j1; exact export 20.892sec under3GiB/no swap.",
-    "Exact retained-object LCOV map: 27948 distinct zero addresses versus30186 aggregate gap units,2238 units still require region/macro/generic reconciliation. Detected222 inline test/helper,1standard-library and84 specifically proved current unsupported-budget-command positive addresses stay measured;27641 remaining production candidates require exact reachability/assertion/guard/native/external/fault review, not a claimed reachable count.",
-    "No human input, paid provider, Root/system, browser, other-platform or 100% claim is added. Critical795/CT106/owner evidence remains separately owned; stable release and remaining browser/platform/external/fault/source obligations are not inferred from this coverage cohort."
+    "Clean measured source db3d358: 2677 parent-workspace tests passed, zero failed, eight ignored. Nested owned child summaries remain separately evidenced and are not counted as Cargo targets.",
+    "All 541 prior and 542 current mapped workspace files retained, plus the known standard-library mapping. Exact 17 distinct current objects comprise 14 executed Cargo test targets and three current integration entrypoints. Only 402 own profiles merged; all 235 foreign raw profiles byte-identical. Standard dependency/test-source exclusions unchanged.",
+    "Compared with previous cb929ff measurement: +1179 covered lines, +451 measured lines, +0.616073 percentage points. 29458 aggregate line gaps remain; 100% reachable-production objective is unmet.",
+    "Focused Rust gates passed: 13 exact failed-candidate context/transition/image cases, 16 legacy cases including held-restored-pointer ownership, 21 account/inference App event cases, and 10 ordinary forward parent families spanning 24 private transactions and three ordinary Root refusals. Private service-manager/PID seams are explicitly synthetic; these are not native installation evidence.",
+    "The production legacy rollback repair pins the qualified candidate image, original activation/namespace/credential override/enablement and exact unit before a single stop; positive PID/start/image/argv/context witnesses and observed terminal PID0/no-job remain distinct from request admission. Restored-pointer verification keeps original ownership leases held; no original unknown effect is replayed.",
+    "Python fault monitor 16 contracts, Native-private reopen eight contracts and Node four contracts passed separately. Current instrumented runnable entrypoints refreshed; strict formatting and workspace all-target/all-feature Clippy -D warnings passed. No new dependency or lint suppression.",
+    "484 prior/focused owned profiles hash-archived before the independent measurement; compiled artifacts retained. Corrected summary/detailed JSON/HTML agree and all 17 objects are hash-archived. Mixed default report rejected. Measurement 4min2.386sec/2.9GiB peak under10GiB/no swap/j1; exact export 21.589sec under3GiB/no swap.",
+    "Fresh archived-object LCOV map: 27245 distinct zero addresses versus 29458 aggregate gaps; 2213 units need region/macro/generic reconciliation. Detected 222 inline test/helper, 1 standard-library, 84 proven unsupported-budget positives and 7 proven dormant per-field inference hit addresses remain measured. Remaining 26931 production candidates require entry/guard/assertion/native/external/fault review; this is not a claimed reachable count.",
+    "Concrete fixture repairs preserve complete Run equality, actual small-layout redraw/input fences, exact alias guard, session/revision/account wire scope, lexical lock lifetime, pre-existing cold owner lock inodes, valid cold PERSIST notification pairs and distinct guardian-before-effect versus execution-at-quiescence refusals. No production guard, ownership assertion, source scope or threshold was weakened.",
+    "Native CT124 remains separately unconfirmed; fresh CT128 qualification awaits this delivered build. Browser/TLS/native/macOS/Windows/external/platform and stable-release obligations are not established by coverage or offline fixtures. Root/system/adoption work parked for 1.1 remains explicitly separate without denominator removal."
   ]
 }

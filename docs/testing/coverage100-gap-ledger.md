@@ -248,3 +248,29 @@ Focused verification for this increment: `cargo test -p voyage-installer --locke
 -j 8` with `umask 077` passed 100 tests, zero failures and two ignored tests. Strict
 all-target/all-feature installer Clippy and diff checks also passed. These counts
 are package verification, not a new workspace coverage measurement.
+
+
+## Combined ordinary rollback, UI events and forward transactions
+
+Latest clean measured source: `db3d358e2a51db488c850be978853e18a4063a14`.
+Full workspace 2,677 passed / zero failed / eight ignored; strict all-target/all-
+feature Clippy and formatting passed. Corrected current 17-object export reports
+105,178/134,636 lines (78.120265%): +1,179 covered, +451 denominator and
++0.616073 points versus cb929ff. All 541 prior and 542 current mapped workspace
+files plus the known std mapping are retained. Only 402 own profiles are merged;
+235 foreign profiles unchanged; prior/focused 484 owned profiles and exact 17
+objects archived. Detailed/HTML/summary totals and file inventories agree; mixed
+defaults are rejected. Standard exclusions unchanged.
+
+Fresh [exact map](coverage353-production-address-map.md): 27,245 unique zero
+addresses versus 29,458 aggregate gaps; 2,213 gap units still need region/macro/
+generic reconciliation. Inline/helper 222, std 1, unsupported-budget 84 and exact
+dormant-renderer 7 stay measured. The 26,931 remaining production candidates are
+not a proven reachable count. Full 100% acceptance remains open.
+
+New assertions cover the concrete failed-candidate transition/identity/context/
+image fence, held restored-pointer leases, actual App enrollment/model event
+transport and complete ordinary forward transactions. No native rollback or
+browser acceptance is inferred from scripted manager/PID or offline contracts.
+CT124 uncertainty is retained; fresh CT128/native and public browser/TLS/external/
+platform obligations remain separate pending evidence.
