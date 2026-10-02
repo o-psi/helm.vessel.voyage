@@ -6,6 +6,7 @@ use voyage_protocol::process::*;
 use voyage_protocol::vessel::{VESSEL_API_VERSION, VoyageCommand};
 
 impl Supervisor {
+    #[cfg(test)]
     pub(crate) async fn granted(
         &self,
         id: Uuid,

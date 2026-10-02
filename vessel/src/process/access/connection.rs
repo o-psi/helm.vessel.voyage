@@ -66,6 +66,7 @@ impl Supervisor {
         );
         Ok(())
     }
+    #[cfg(test)]
     pub(super) async fn connected(
         &self,
         id: Uuid,
