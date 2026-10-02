@@ -349,3 +349,12 @@ Forward recovery's gateway review preserves an existing credential-only drop-in
 using the maintained supervisor environment allowlist. It pins its owned private
 file identity/hash and exact effective/live/recovery credential namespace; unknown
 or changed overrides refuse. See the [qualification boundary](testing/ordinary-forward-recovery.md#existing-credential-only-gateway-override).
+
+The supported mixed ordinary CT106 installation has completed one fresh reviewed
+forward recovery using qualified source79507fe, preserving its original uncertain
+receipt, both Voyages, private account state and credential configuration. Actual
+managed identity, enabled services, canonical gateway origin, retained proof and
+strict public health matched the new archive. See the
+[native checkpoint](testing/ordinary-forward-recovery.md#qualified-native-checkpoint).
+Original-owner Web and broader legacy failure/context cases remain required; this
+successful path is not a general corruption repair or a stable release claim.

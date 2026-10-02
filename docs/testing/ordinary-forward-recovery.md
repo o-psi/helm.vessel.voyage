@@ -1,7 +1,8 @@
 # Owner-reviewed forward recovery of a proved mixed user installation
 
-Scope: [#401](https://github.com/o-psi/helm.vessel.voyage/issues/401). These are
-prepared source boundaries; full coverage/build/native qualification is pending.
+Scope: [#401](https://github.com/o-psi/helm.vessel.voyage/issues/401). The supported CT106 forward path has passed native prepare/apply and independent
+poststart verification with qualified source79507fe; the broader release gates
+remain open. Exact evidence is recorded in the qualification checkpoint below.
 This is ordinary Linux user installation only. System/Root scope is separate.
 
 ## Why this entry exists
@@ -87,11 +88,12 @@ missing proof or changed unit/account/canonical data remains unconfirmed/fenced.
 Such states need another specifically reviewed recovery mechanism; this entry
 must not be presented as universal corruption repair.
 
-Native CT106 forward qualification remains required before issue closure. Its
+Native CT106 forward prepare/apply has passed; original-owner Web and broader
+legacy failure/context qualification remain required before issue closure. Its
 original operation `2a84c5a0-bf77-4fa0-9fe5-89a8c5207463` stays unknown; retained
-schema2 and both completed Voyages must survive, repaired managed identities and
-actual services must match the new qualified archive, and the unchanged approved
-public origin must expose healthy authenticated Helm connection behavior. Do not
+schema2 and both completed Voyages survived with repaired managed identities and actual services matching the
+qualified archive. Its unchanged approved public origin has healthy strictTLS
+health; original authenticated Helm Web-owner behavior remains a separate gate. Do not
 publish private local paths, tokens, receipt payloads or terminal input in evidence.
 
 ## Idle notification layout between review and quiescence
@@ -99,7 +101,7 @@ publish private local paths, tokens, receipt payloads or terminal input in evide
 The live source courier opens its schema1 notification store even with no
 subscriptions. Its idempotent SQLite transaction can change the main-file header
 and cold PERSIST-journal bytes without changing any notification record. The
-prepared review retains the original raw `state_sha256` and adds an explicit
+review retains the original raw `state_sha256` and adds an explicit
 `review_state_sha256`; the approval hash and receipt are never rewritten.
 
 Before quiescence, only this known notification pair can use semantic equality.
@@ -120,7 +122,9 @@ notification header write after quiescence fails the held proof. This supports
 known live-source physical drift; it does not relax the pending activation proof
 or silently discard notification state. Old reviews lacking full semantic evidence
 refuse and need a separate fresh reviewed operation, never an altered approval or
-replayed unknown mutation. Native qualification of this boundary remains pending.
+replayed unknown mutation. The real native forward apply passed held raw proof; the independent postcomplete
+audit retained complete semantic equality while observing physical notification
+layout drift. Other native adverse cases remain separately required.
 
 ## Approved running source without an older format declaration
 
@@ -150,10 +154,12 @@ rollback to the undeclared source. Future explicit runtime work remains subject 
 its own normal format/authority checks. Declared sources retain the existing
 rollback-format guard without this exception.
 
-This is prepared source, not a successful native recovery. The refusal from operation
+The later qualified native recovery succeeded using a fresh reviewed operation.
+The earlier refusal from operation
 `6183c0a9-97d9-48c7-baa6-e538029ccda7` cannot be turned into an approved review by
-editing its files. After focused/strict/full source qualification and an actual new
-hosted artifact, use a new distinct owner review from current facts, preserving the
+editing its files. The successful operation followed focused/strict/full source qualification and an
+actual hosted artifact; any subsequent recovery still needs a new distinct owner
+review from current facts, preserving the
 original uncertain operation and all prior private evidence.
 
 ## Existing credential-only gateway override
@@ -162,7 +168,7 @@ Actual fresh prepare `51f287d7-01c7-439d-a45e-02f1d6c951af` refused the existing
 credential drop-in before returning a review hash; no apply occurred. Do not
 remove or rewrite that private credential configuration to make recovery pass.
 
-The prepared fix accepts zero overrides or one private owned regular credential
+The qualified fix accepts zero overrides or one private owned regular credential
 file in the exact gateway unit's drop-in directory. It reuses the maintained
 supervisor allowlist: a single `[Service]` section and a single literal
 `VOYAGE_CREDENTIAL_KEY_FILE` environment assignment with a normalized absolute path.
@@ -175,5 +181,27 @@ Replacing a file with identical bytes changes its inode and refuses the review.
 The credential bytes are never read, copied or published by this admission.
 Existing unit, drop-in, permissions and credentials are preserved through repair.
 
-This source still requires focused/strict/full measurement, a new hosted archive
-and a new distinct native prepare/apply. The failed operation remains preserved.
+The fixed source passed focused/strict/full measurement, a new hosted archive and
+a new distinct native prepare/apply. The failed operation remains preserved.
+
+## Qualified native checkpoint
+
+On CT106, qualified source `79507feba866f99d8576351b75e4fbc50fa5a527`
+([build36963032765](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36963032765))
+passed a fresh prepare/review and one apply for operation
+`2182e657-f447-4abd-95e3-dfd7a41d9363`. Separate recovery is complete; original
+uncertain operation remains byte-identical. The managed target and actual UID1000
+supervisor/gateway match the verified archive; both units remain enabled, the
+gateway uses the persistent managed path and canonical unchanged public origin,
+and old service PIDs are retired. Authenticated Helm CLI retains both Voyages at
+catalogue2/journal12/protocol1. Independent canonical/account/session/semantic-state
+comparison, retained snapshot hash, exact credential override pins, absent
+quarantine and strict public/loopback health passed. No remaining recovery/Voyage
+helper was found in the bounded owner scan. Postcomplete raw notification layout
+drift is explicit; it is not described as raw equality or omitted from evidence.
+
+See the [durable native checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5945526723)
+for exact archive, review, invocation and receipt identities. Original-owner Web,
+legacy forced rollback/death/context, complete browser cost/site/privacy and full
+reachable coverage remain separate gates. This record does not publish a stable
+release or establish native behavior on other machines/platforms.
