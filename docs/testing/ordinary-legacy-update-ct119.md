@@ -157,17 +157,18 @@ and quarantine, then releases that original response and observes completion.
 No cancel command is sent. This additional owner's history is private evidence,
 not substituted into the two-idle upgrade comparison.
 
-The independent context controls are executable via `change-at --installer-pid
-EXACT_PID --context account-namespace|unit|enablement`. They wait for a durable
-snapshot, stop the pinned updater, change only the dedicated account's real
-manager environment, reviewed unit comment or enablement, record original values
-privately, and resume that exact updater. They do not restore those external
-changes or replay the update. Native outcome still requires parent observation
-of quarantine, receipt, actual service PID/namespace and unchanged operator state.
-For enablement, seed must actually be enabled: changing disabled to disabled would
-not create independent-change evidence. Snapshot windows can be missed and must
-remain unqualified. No source test, simulation or signal request supplies that
-missing native observation.
+The independent context controls use `change-at --auto-local-owner --context
+account-namespace|unit|enablement`, armed before one bootstrap upgrade. Explicit
+`--installer-pid EXACT_PID` retains the same qualified fresh local-owner admission.
+The [exact owned context monitor](legacy-owned-context-monitor.md) pins the
+prepublication durable schema1 snapshot, real account/manager namespace,
+reviewed unit and persistent enablement, observes one same-owner pidfd pause,
+refuses live helper children, performs one actual change and positively observes
+that exact owner's continuation. Original values are private evidence; no
+implicit restoration or update replay occurs. Its delivery result is not updater
+refusal, rollback or cleanup acceptance. Native outcome still requires independent
+quarantine/receipt/service/namespace/unchanged-operator-state observations.
+Missed, advancing, inaccessible or changed windows remain unqualified.
 
 A killed local updater can leave `applying`/`committing` until the implemented
 1,230-second receipt deadline. Status must honor that bound: do not edit receipt

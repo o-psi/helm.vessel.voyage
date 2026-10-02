@@ -381,79 +381,6 @@ def live_owner(args):
         manager('unset-environment','RECOVERY_FIXTURE_KEY')
 
 
-def kill_at(args):
-    """Arm in another terminal before ONE explicit upgrade. Missed windows never pass."""
-    proc = Path('/proc')/str(args.installer_pid)
-    require(proc.stat().st_uid == 1000, 'fault target UID mismatch')
-    executable = (proc/'exe').resolve(strict=True)
-    require(executable == Path(json.loads((WORK/'candidate-bin.json').read_text())), 'fault target executable not pinned')
-    descriptor = os.pidfd_open(args.installer_pid)
-    try:
-        deadline = time.monotonic()+120
-        while time.monotonic() < deadline:
-            records = list((INSTALL/'updates').glob('*.json'))
-            for path in records:
-                record = json.loads(path.read_text())
-                if not record.get('legacy_mode'):
-                    continue
-                proof = record.get('legacy_proof')
-                seen = (args.boundary == 'snapshot' and proof is not None or
-                        args.boundary == 'committing' and record.get('phase') == 'committing' or
-                        args.boundary == 'restored' and proof and
-                        (Path(proof['stage'])/'legacy-restored.json').exists())
-                if args.boundary.startswith('helper-'):
-                    seen = False
-                    children = (proc/'task'/str(args.installer_pid)/'children').read_text().split()
-                    for child in children:
-                        child_proc = Path('/proc')/child
-                        try:
-                            argv = (child_proc/'cmdline').read_bytes().split(b'\0')
-                            if (child_proc.stat().st_uid == 1000 and len(argv) > 5 and
-                                    argv[1:3] == [b'-I', b'-c'] and
-                                    argv[3].startswith(b'\"\"\"Quiescent ordinary schema-1 snapshot/proof.') and
-                                    argv[4].decode() == args.boundary.removeprefix('helper-')):
-                                helper = os.pidfd_open(int(child))
-                                try: signal.pidfd_send_signal(helper, signal.SIGKILL)
-                                finally: os.close(helper)
-                                write('death-'+args.boundary+'.json', {'operation_id': record['operation_id'],
-                                      'boundary': args.boundary, 'helper_signal_requested': True})
-                                return
-                        except (FileNotFoundError, ProcessLookupError):
-                            pass
-                if seen:
-                    if getattr(args, 'context', None):
-                        signal.pidfd_send_signal(descriptor, signal.SIGSTOP)
-                        try:
-                            require((STATE/'update-quarantine.json').exists(), 'reviewed fault window missed')
-                            if args.context == 'account-namespace':
-                                changed = WORK/'independent-data'
-                                changed.mkdir(mode=0o700)
-                                manager('set-environment', 'XDG_DATA_HOME='+str(changed))
-                                original = {'XDG_DATA_HOME': str(HOME/'.local/share')}
-                            elif args.context == 'unit':
-                                original = {'unit_sha256': digest(UNIT)}
-                                (WORK/'independent-original.service').write_bytes(UNIT.read_bytes())
-                                with UNIT.open('ab') as unit: unit.write(b'\n# Independent qualification operator edit\n')
-                                manager('daemon-reload')
-                            else:
-                                original = {'unit_file_state': manager('show',NAME,'--property=UnitFileState','--value')}
-                                manager('disable', NAME)
-                            write('changed-'+args.context+'.json', {'operation_id':record['operation_id'],
-                                  'original':original, 'independent_change_applied':True})
-                        finally:
-                            signal.pidfd_send_signal(descriptor, signal.SIGCONT)
-                        return
-                    signal.pidfd_send_signal(descriptor, signal.SIGKILL)
-                    write('death-'+args.boundary+'.json', {'operation_id': record['operation_id'],
-                          'boundary': args.boundary, 'signal_requested': True})
-                    return
-            time.sleep(.002)
-        raise RuntimeError('boundary not reached; death case remains unqualified')
-    finally:
-        os.close(descriptor)
-
-
-
 class ProcessNotLive(RuntimeError):
     pass
 
@@ -687,7 +614,9 @@ def main():
     selection.add_argument('--auto-local-owner', action='store_true')
     fault.add_argument('--boundary', choices=['snapshot','restored','committing','helper-snapshot','helper-restore','helper-verify'], required=True)
     context = commands.add_parser('change-at')
-    context.add_argument('--installer-pid',type=int,required=True)
+    context_owner = context.add_mutually_exclusive_group(required=True)
+    context_owner.add_argument('--installer-pid',type=int)
+    context_owner.add_argument('--auto-local-owner',action='store_true')
     context.add_argument('--context',choices=['account-namespace','unit','enablement'],required=True)
     context.set_defaults(boundary='snapshot')
     args = parser.parse_args()
@@ -699,7 +628,9 @@ def main():
     elif args.action == 'kill-at':
         from native_legacy_faults import run
         run(sys.modules[__name__], args)
-    elif args.action == 'change-at': kill_at(args)
+    elif args.action == 'change-at':
+        from native_legacy_contexts import run
+        run(sys.modules[__name__], args)
     elif args.action == 'fail-startup': fail_startup()
     elif args.action == 'qualify-restored-history':
         from native_legacy_history import qualify_restored
