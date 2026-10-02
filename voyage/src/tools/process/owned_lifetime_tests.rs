@@ -385,7 +385,7 @@ case!(
     {
         let mut r = Rig::new(1, 4096);
         let id = r
-            .start("a", "printf '\033[31mREADY\033[0m'; /bin/cat")
+            .start("a", r"printf '\033[31mREADY\033[0m'; /bin/cat")
             .await;
         owned::until(|| {
             r.tool.processes.lock().unwrap()[&id]
@@ -399,13 +399,19 @@ case!(
         })
         .await;
         let before = r.tool.attach(TerminalId(id)).await.unwrap();
-        r.tool.resize(TerminalId(id), 90, 30).await.unwrap();
+        crate::terminal::InteractiveTerminals::resize(&r.tool, TerminalId(id), 90, 30)
+            .await
+            .unwrap();
         let after = r.tool.snapshot(TerminalId(id)).await.unwrap();
         assert_eq!(after.id, TerminalId(id));
         assert!(after.revision > before.revision);
         assert_eq!(after.cells.len(), 30);
         assert_eq!(after.cells[0].len(), 90);
-        assert!(r.tool.resize(TerminalId(id), 0, 30).await.is_err());
+        assert!(
+            crate::terminal::InteractiveTerminals::resize(&r.tool, TerminalId(id), 0, 30)
+                .await
+                .is_err()
+        );
         assert!(
             r.call(json!({"action":"write","id":id,"data":"blocked"}))
                 .await
