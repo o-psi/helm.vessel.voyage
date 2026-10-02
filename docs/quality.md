@@ -47,6 +47,13 @@ measured workspace's profile prefix. Reject foreign maps rather than renaming
 them or changing exclusions. The wrapper's actual source-switch qualification
 belongs in #251; this documentation does not establish that a measurement passed.
 
+After auditing matching detailed JSON and archived-object LCOV, use
+[`packaging/reconcile_coverage_lines.py`](../packaging/reconcile_coverage_lines.py)
+to check every file summary and exact source-address counter. See the
+[counting contract and CLI](testing/coverage353-line-accounting.md). This guard
+explains overlapping groups and instantiations; it changes no measurement,
+exclusion or reachability target. Preserve all inputs and reject partial matches.
+
 Verify the extracted release with
 `packaging/verify_linux_install.py`; see the
 [release guide](releases-v1.0.2.md#maintainer-install-check).

@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T07:45:55.808490+00:00",
-  "source_commit": "c14fdbfbeed25a9f6cb3da83eb0f7a2cdbe6de2f",
+  "measured_at_utc": "2026-10-02T08:25:50.814855+00:00",
+  "source_commit": "b31514485e7a0a3edd1f9847d6e1506737d0a89a",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2762,
+    "passed": 2764,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 134806,
-      "covered": 106083,
-      "percent": 78.69308487752771
+      "count": 134879,
+      "covered": 106157,
+      "percent": 78.70535813581061
     },
     "functions": {
-      "count": 12285,
-      "covered": 9606,
-      "percent": 78.1929181929182
+      "count": 12290,
+      "covered": 9611,
+      "percent": 78.20179007323027
     },
     "regions": {
-      "count": 223328,
-      "covered": 167453,
-      "notcovered": 55875,
-      "percent": 74.98074580885513
+      "count": 223515,
+      "covered": 167631,
+      "notcovered": 55884,
+      "percent": 74.99765116435138
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-cold-authority-history-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-cold-authority-history-final/summary-default.json -v; llvm-profdata merge -sparse with 440 own profiles; audited explicit17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-native-local-final/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-native-local-final/summary-default.json -v; llvm-profdata merge -sparse with 440 own profiles; audited explicit17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,16 +40,16 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean source c14fdbf: 2762 parent-workspace tests passed, zero failed, eight ignored across14 Cargo targets. Nested child summaries retained separately and excluded from Cargo totals.",
-    "All 542 prior/current workspace source mappings retained plus the known standard-library mapping;17 distinct current objects include14 test targets and3 real instrumented entrypoints. Only440 own profiles merged;235 foreign profiles remain byte-identical. Original dependency/test-source exclusions unchanged.",
-    "Compared with db3d358: +905 covered lines,+170 measured lines,+0.572820 percentage points. 28723 aggregate line gaps remain;100% reachable-production objective remains unmet.",
-    "Final cohorts:24 actual Helm Handle/Axum/App lifecycle cases,2 actual Tokio server-retirement classifier parents,19 Unicode composer editing/history cases,21 owned cold browser/capacity cases,complete typed saved-authority pins and both late-success unknown-outcome boundaries. Native guardian/capacity records remain explicitly synthetic; no native Chromium or cross-platform claim.",
-    "Real production corrections validate guardian before retaining a profile, pass the actual session directory for sibling capacity recovery, freeze full saved grant authority before dispatch, retain token/session freshness and exact bound socket authentication, preserve unknown outcomes after successful dispatch, and observe viewer-server completion exactly once without masking I/O/join failures.",
-    "Source-final formatting and workspace all-target/all-feature Clippy -D warnings passed.46 separate Python fault/monitor/history/context contracts passed on byte-identical retained inputs; not counted as Rust coverage. No hosted tests, lint suppression, new dependency, scope narrowing or threshold change.",
-    "Full failed78ff measurement2733/27/8 and corrected4066 measurement2761/1/8 retained. Fixtures now provision their private data ancestor, required model/Terminal IDs and authoritative child grants. Only deliberately oversized-frame refusal permits early write closure; case18 idle observation never sends a late Pong. All normal writes,binding,receipt,no-replay and owned cleanup assertions remain strict.",
-    "Passing measurement4m17.788s/3.6GiB peak,zero swap,j1; exact export20.588s/7.5GiB peak,zero swap. Summary,detailed JSON andHTML agree;17 objects hash-archived. Default mixed historical-object report preserved and rejected. Prior owned raw profiles archived before clearing only this workspace prefix; compiled artifacts retained.",
-    "Native CT126 remains unconfirmed with retained quarantine/stopped service,original complete histories and released lease/process observations. CT128/127 old-reader and remaining context qualification still require native evidence. Actual CT128 installed candidate4/4 binaries and123/123 browser assets verified separately. Coverage does not establish public TLS/site/privacy/client cost/native installation or stable publication.",
-    "Root/system/adoption and native macOS/Windows obligations parked for1.1 remain distinct and measured without denominator removal. NativeLocal qualification is being prepared as an explicit supported route alongside deployed Web TLS; no local/public transport metric or authority is conflated.",
-    "Fresh c14fdbf archived-object LCOV map:26546 distinct zero addresses versus28723 aggregate gaps;2177 units remain unreconciled.222 detected inline test/helper,1 standard-library,84 proven unsupported-budget positive and7 proven dormant-renderer addresses stay measured.26232 remaining production candidates need exact entry/guard/assertion/native/external/fault review, not a claimed reachable count."
+    "Clean b315144 source: 2764 parent-workspace tests passed, zero failed, eight ignored across 14 Cargo targets; nested child summaries separately retained and excluded from totals.",
+    "All 542 prior/current workspace mappings and the retained standard-library mapping preserved. Exactly 17 distinct current objects comprise 14 test targets plus 3 instrumented real entrypoints. 440 own profiles merged; all 235 foreign profiles byte-identical; dependency/test-source exclusions unchanged.",
+    "Compared with c14fdbf: +74 covered lines, +73 measured lines, +0.012273 percentage points. 28722 aggregate gaps remain; 100% reachable-production objective is unmet.",
+    "Formatting and workspace all-target/all-feature strict Clippy passed. 15 Python and 15 Node source contracts passed separately; neither contributes to Rust coverage or establishes native/TLS execution.",
+    "Explicit Native local qualification uses existing private discovery and no-start, with validated physical Vessel/socket/process identity, exact completed actor-bound receipts, truthful same-private-owner reattachment and new fences/launcher. Existing public mode and Web TLS remain distinct; no credential copy, permission expansion or fabricated public metric.",
+    "Passive observers count successful native socket Text payload and selected native viewer application request/response bodies. Scope, missing/failed/inflight/cross-window data and actual interval alignment are explicit. No contents retained; unsupported/incomplete evidence cannot pass. These are qualified source contracts, not an actual browser measurement.",
+    "Passing full measurement 5m45.472s, 7.7GiB peak, zero swap, j1. Exact export 20.761s, 7GiB peak, zero swap; summary/detail/HTML agree and all 17 objects hash-archived. Default mixed-object report retained and rejected; prior owned raw profiles archived without deleting foreign profiles/caches.",
+    "Fresh archived map has 26551 unique zero addresses and 28722 aggregate gaps. Guard reconstructs all 543 files/12290 groups and every JSON/LCOV counter: difference2171 =95 instantiation maxima/union +2103 overlapping groups -27 file shadowing. No denominator/exclusion/reachability change. 26237 remaining production candidates still need exact behavioral/guard review.",
+    "Actual CT128/127 old-reader checks on the separately qualified936 fault cases passed full canonical/public history and each new observer exit/reaping. Original unconfirmed receipts/failed monitors unchanged. Actual fa66 archive and installed context fixtures verify4 binaries/123 browser assets; these claims are separate from coverage.",
+    "Native CT129/130/131 operator-change injections preserve their changes and full histories, original receipts unconfirmed/quarantine retained. CT129 transitioning service/live namespace readiness is unresolved; no successful rollback/readiness or never-ran claim. Actual deployed browser/TLS/sites/privacy/cost/cleanup and stable release remain pending.",
+    "Root/system/adoption, native macOS/Windows and Tax-Axis scopes parked for1.1 remain separate without denominator removal. Stable1.0.3 remains unpublished; target is unchanged until actual release acceptance."
   ]
 }

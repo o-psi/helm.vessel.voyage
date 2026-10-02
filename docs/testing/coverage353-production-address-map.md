@@ -7,23 +7,25 @@ reachable, unasserted production source addresses.
 
 ## Audited address inventory
 
-The independently audited `c14fdbfbeed25a9f6cb3da83eb0f7a2cdbe6de2f` measurement
-contains 28,723 LLVM line-gap units. Exporting LCOV from its **archived exact 17
-objects and 440 own-only profiles** yields **26,546 distinct zero-count file/line
+The independently audited `b31514485e7a0a3edd1f9847d6e1506737d0a89a` measurement
+contains 28,722 LLVM line-gap units. Exporting LCOV from its **archived exact 17
+objects and 440 own-only profiles** yields **26,551 distinct zero-count file/line
 addresses** across 542 mapped workspace files plus the retained standard-library source.
 No live Cargo object, raw profile or exclusion was changed by this read-only
 export. The original JSON/HTML/summary remain authoritative for aggregate totals.
 
-**2,177 gap units are not yet reconciled to distinct LCOV zero-count addresses.**
-Macro/generic/instantiation and aggregate LLVM line accounting requires further
-region-level reconciliation; this difference is not dropped, called covered or
-subtracted from the 100% goal. The prior 993, 2072, cb929ff and db3d358 inventories are preserved separately. Refresh this map after every
-subsequent audited source delivery before reporting a current address or
-reachable-production count.
+**The 2,171 summary-to-address units are fully reconciled**, not excluded:
+95 instantiation-group maximum/union units + 2,103 overlapping function-group
+gaps − 27 file-counter shadowing units. The guard matches all 543 file summaries,
+12,290 groups and every JSON-segment/LCOV counter exactly. See
+[line accounting](coverage353-line-accounting.md). Neither inventory replaces
+the unchanged measured denominator or the 100% reachable-production target.
+Prior inventories remain preserved; refresh both address and group accounting
+after every subsequent measured source delivery.
 
 The full address inventory, source text, demangled function owners and selected
 entry/guard proofs remain ignored under
-`target/coverage-report/coverage353-production-map-c14fdbf`: `audited-production.lcov`,
+`target/coverage-report/coverage353-production-map-b315144`: `audited-production.lcov`,
 `uncovered-addresses.json`, `classification-summary.json` and exact archived-object
 command. Detailed coverage/address exports are not published as the compact
 coverage history. They are independently reconstructible from the coordinator's
@@ -31,9 +33,9 @@ retained source/object/own-profile audit and LLVM LCOV export.
 
 | Address classification | Distinct zero addresses | Meaning |
 | --- | ---: | --- |
-| Ordinary executable candidates awaiting assertion/guard review | 15,275 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
+| Ordinary executable candidates awaiting assertion/guard review | 15,276 | Module/entry surfaces support ordinary fixtures; not a proof that every line is reachable. |
 | Native privileged/staged mixed source awaiting exact guard review | 8,246 | Root/system/identity families include ordinary validators plus protected positive effects; no blanket unreachable classification. |
-| Owned native/fault fixture candidates | 1,468 | Terminal/clipboard/process/filesystem/browser/extension boundaries need actual owned resources or controlled faults. |
+| Owned native/fault fixture candidates | 1,472 | Terminal/clipboard/process/filesystem/browser/extension boundaries need actual owned resources or controlled faults. |
 | Ordinary protocol fixture plus external success evidence | 753 | Provider/GitHub protocol/error logic is locally testable; authenticated external success needs separate authority/budget. |
 | Ordinary serve native fixture/guard review | 219 | Actual `serve(None)`, local authenticated HTTP/stream and graceful lifetime; Root/gateway arms separately guarded. |
 | Privileged UI staged positive with ordinary parser/refusal/storage | 214 | Ordinary owner transport refuses Execution; positive saved review requires protected Root identity. |
@@ -42,9 +44,9 @@ retained source/object/own-profile audit and LLVM LCOV export.
 | Proven dormant per-field inference hit addresses | 7 | Default-empty private vector has no producer; exact predicate/positive proof retained. |
 | Detected inline test/helper addresses | 222 | Demangled `tests`/`*_tests`/test-support owners; retained in the measured denominator. |
 | Retained standard-library mapping | 1 | Existing known mapping; no production reachability claim. |
-| **All exact zero addresses** | **26,546** | **Full inventory retained.** |
+| **All exact zero addresses** | **26,551** | **Full inventory retained.** |
 
-The 26,232 remaining production **candidate** addresses after the detected inline
+The 26,237 remaining production **candidate** addresses after the detected inline
 test/standard-library/current-protocol/dormant-renderer categories are not a verified reachable
 production count. Every “candidate” or “mixed” row retains an explicit review
 obligation. A function-owner name is useful evidence for inline tests, but source
@@ -151,3 +153,14 @@ unknown outcomes, cold guardian allocation/sibling recovery and exact-once local
 viewer server retirement are source corrections; native qualification
 and deployed site/cost evidence remain separate. Classification still does not
 prove that all 26,232 remaining production candidates are reachable.
+
+## Native local qualification source measurement
+
+Clean b315144 passed 2,764 Cargo-parent tests, 0 failed and 8 ignored, plus
+15 Python and 15 Node contracts outside Rust coverage. All 542 previous source
+mappings remain. Covered lines are 106,157/134,879 (78.705358%): 74 additional
+covered lines and 73 additional measured lines compared with c14fdbf. The new
+aggregate-to-address difference is fully explained above, with no new coverage
+or reachability inferred from accounting. Native local and public Web TLS
+qualification still requires actual client/site/privacy/measurement/cleanup
+evidence; this source gate does not supply it.

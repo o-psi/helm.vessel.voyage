@@ -125,3 +125,12 @@ cleanup assertions. This note implements no runtime test and claims no new
 passing behavior. Consult the [reachability map](coverage353-reachability-map.md),
 [address map](coverage353-production-address-map.md) and current #353 owner record
 before assigning overlapping source.
+
+## Subsequent native local source
+
+The same guard also passed the clean b315144 detailed export and matching LCOV:
+543 files, 12,290 groups, 28,722 aggregate gaps and 26,551 zero addresses.
+The entire 2,171 difference is **95 + 2,103 − 27**. All exact file summaries
+and every file-segment/address counter agree; no scope changed. The retained
+read-only run exited 0 in 5.469 seconds with 279.9 MiB peak and zero swap.
+This refresh is accounting, not additional executed or reachable lines.

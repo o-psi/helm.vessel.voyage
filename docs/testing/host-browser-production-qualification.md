@@ -15,9 +15,10 @@ to collect production evidence, or call these remaining gates passed.
 | Actual Web transport | Origin-bound 120-second credential, `voyage.vessel.v1`, `/v1/vessel/browser-socket` | Real configured Web Origin and normal certificate trust; renewal must remain observable. |
 | Native transport | Public mode: pinned HTTPS `/v1/vessel/socket`. Local mode: maintained private directory discovery and loopback `/v1/vessel/socket`. Both use the private localhost viewer bootstrap | Original authenticated socket/owner fences. Local is existing executing-account authority, never a copied Web grant or public TLS claim. Keep the launcher private and one-use. |
 
-The present owner-related connection refusal is a real admission blocker. Require
-an authenticated capabilities/snapshot observation for the selected fixture
-Voyages through the deployed route before browser effects. Public `/up` and live
+The original saved owner connection was admitted with its unchanged twelve rights
+in closed #402. Require a fresh authenticated capabilities/snapshot observation
+for these selected fixture Voyages through the deployed route before browser
+effects; earlier admission evidence does not qualify a new fixture. Public `/up` and live
 service PIDs do not substitute. Do not fix refusal by broadening authority,
 changing tenant identity, disabling Origin checks or copying secrets into logs.
 Native and Web retain their independently authorized grants/principals. The
