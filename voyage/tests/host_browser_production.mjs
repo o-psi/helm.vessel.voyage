@@ -9,7 +9,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import {browserCost,inputVisibleLatency} from './host_browser_client_cost.mjs';
-import {requestNativeReopen} from './host_browser_native_reopen.mjs';
+import {requestNativeReopen,nativePageOwner} from './host_browser_native_reopen.mjs';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
@@ -311,9 +311,9 @@ async function closeBrowser(page){await ready(page);
 
 // Reattach through the initiating Native principal, regardless of Web's grant.
 // The old one-use launcher is never reused. This emits one fixed parent request.
-async function reclaimNative(context,cfg,old){
+async function reclaimNative(context,cfg,old,openPage=()=>context.newPage()){
  const binding={...old.state.status.binding},launcher=await requestNativeReopen(cfg);
- const page=await context.newPage(),state=observation(page,cfg.sessions[0].id,cfg.web_socket,{native:true});
+ const page=await openPage(),state=observation(page,cfg.sessions[0].id,cfg.web_socket,{native:true});
  const fresh={page,state,native:true,sessionId:cfg.sessions[0].id};
  try{
   await page.goto(pathToFileURL(launcher).href);await viewer(page).waitFor();
@@ -460,7 +460,7 @@ export async function runCuaProductionQualification(context,cfg){
   matrix:[],native_windows:[],sites:[],latencies:[],cleanup:{},limitations:['CUA Web renderer metrics must be supplied from actual per-tab observation; unavailable metrics do not pass.',
    'Native HTTP bridge bytes are not native public WSS application bytes.',
    'Host reports are produced through the separately authorized host conduit; this process performs no service changes.']};
- const native=[],nativeStates=[],attempted=new Set();let resources=null;
+ const native=[],nativeStates=[],attempted=new Set(),ownedNative=nativePageOwner(context);let resources=null;
  const web=async(operation,fields={})=>mailbox(cfg.cua_mailbox,'cua_web',{operation,...fields});
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
   label:s.label,session_id:s.id,browser_id:native[i].state.status.binding.browser_id,root:s.host_browser_root}))});
@@ -517,7 +517,7 @@ export async function runCuaProductionQualification(context,cfg){
   stage('pin_read_only_host_helpers');await pinHostHelpers(cfg);
   // Both TUI clients opened their exact fixture browser. Load only A's one-use
   // launcher first; B is excluded from the first two host-ledger conditions.
-  const first=await context.newPage(),firstState=observation(first,cfg.sessions[0].id,cfg.web_socket,{native:true});native.push({page:first,state:firstState});nativeStates.push(firstState);
+  const first=await ownedNative.open(),firstState=observation(first,cfg.sessions[0].id,cfg.web_socket,{native:true});native.push({page:first,state:firstState});nativeStates.push(firstState);
   await first.goto(pathToFileURL(cfg.sessions[0].native_launcher).href);await viewer(first).waitFor();await until(()=>firstState.status?.running);await ready(first);
   await navigate(native[0].page,cfg.fixture.url,cfg.fixture.ready_selector);await count(native[0].page,cfg.fixture.counter_selector,0);
   await measure('a_one_viewer',[native[0]],[],cfg.host_observer.ledger_a);
@@ -526,7 +526,7 @@ export async function runCuaProductionQualification(context,cfg){
    title:cfg.sessions[0].title,fixture_selector:cfg.fixture.ready_selector,counter_selector:cfg.fixture.counter_selector,counter:0},
    ['authenticated_existing_session','exact_selected_voyage','browser_dock_open','fixture_visible','counter_matches']);
   await measure('a_two_viewers',[native[0]],[cfg.sessions[0].label],cfg.host_observer.ledger_a);
-  const page=await context.newPage(),state=observation(page,cfg.sessions[1].id,cfg.web_socket,{native:true});native.push({page,state});nativeStates.push(state);
+  const page=await ownedNative.open(),state=observation(page,cfg.sessions[1].id,cfg.web_socket,{native:true});native.push({page,state});nativeStates.push(state);
   await page.goto(pathToFileURL(cfg.sessions[1].native_launcher).href);await viewer(page).waitFor();await until(()=>state.status?.running);await ready(page);
   await navigate(page,cfg.fixture.url,cfg.fixture.ready_selector);await count(page,cfg.fixture.counter_selector,0);
   assert.notEqual(state.status.binding.browser_id,native[0].state.status.binding.browser_id);
@@ -575,7 +575,7 @@ export async function runCuaProductionQualification(context,cfg){
   await native[0].page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
   stage('initiating_native_private_reclaim');
-  const freshA=await reclaimNative(context,cfg,native[0]);nativeStates.push(freshA.state);native[0]=freshA;
+  const freshA=await reclaimNative(context,cfg,native[0],ownedNative.open);nativeStates.push(freshA.state);native[0]=freshA;
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
   await navigate(freshA.page,cfg.fixture.url,cfg.fixture.ready_selector);
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
@@ -598,7 +598,8 @@ export async function runCuaProductionQualification(context,cfg){
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
  }finally{
   report.cleanup.close_attempted=[...attempted];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;
-  for(const item of native)await item.page.close({runBeforeUnload:false}).catch(()=>{});
+  report.cleanup.native_pages=await ownedNative.close();
+  if(report.cleanup.native_pages.unresolved_pages!==0)report.status='failed_or_incomplete';
   await save(path.join(cfg.output,'production-report.json'),report);
  }
  return report;

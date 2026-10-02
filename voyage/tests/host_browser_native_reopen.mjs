@@ -8,6 +8,26 @@ import {createHash,randomUUID} from 'node:crypto';
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const keys=['schema','id','digest','status','outcome_unknown','launcher','client'];
+// Exactly two original Native pages and one reopened A. Claim each page as
+// soon as this context creates it; replacing the active A never drops ownership.
+// No ambient CUA tab, existing context page or caller-supplied handle is admitted.
+export function nativePageOwner(context){
+ const pages=new Set();let retired=false;
+ return {
+  async open(){
+   assert.equal(retired,false);assert.ok(pages.size<3,'fixed Native page bound reached');
+   const page=await context.newPage();pages.add(page);return page;
+  },
+  async close(){
+   retired=true;let closed=0;
+   for(const page of pages){
+    if(!page.isClosed())await page.close({runBeforeUnload:false}).catch(()=>{});
+    if(page.isClosed())closed++;
+   }
+   return {owned_pages:pages.size,closed_pages:closed,unresolved_pages:pages.size-closed};
+  }
+ };
+}
 export function validateNativeReopenReply(reply,request){
  assert.ok(reply&&typeof reply==='object');assert.deepEqual(Object.keys(reply).sort(),keys.toSorted());
  assert.equal(reply.schema,1);assert.equal(reply.id,request.id);assert.equal(reply.digest,request.digest);

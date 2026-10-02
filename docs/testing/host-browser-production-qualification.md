@@ -562,6 +562,11 @@ same title and Voyage ID. Every phase shares the original request's maximum
 45-second expiry, fenced by both wall and monotonic clocks. Old launchers are one-use and are
 never reloaded/reused. Any unknown key/cleanup outcome retains pending/unknown
 response and fences another attempt; the action is not automatically retried.
+The CUA path retains every Native page it creates separately from the current
+fixture-A/B selection, including the original A after reopen and a fresh page
+whose setup fails. Its final cleanup closes only those at most three pages and
+records observed closure or an unresolved obligation; it never enumerates or
+closes the human's CUA Web tabs. An unresolved Native page cannot pass.
 
 Both direct and CUA routes load that fresh Native viewer and explicitly choose
 Browse privately under the initiating Native process/credential. They require
