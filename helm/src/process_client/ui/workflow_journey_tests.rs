@@ -42,7 +42,17 @@ async fn sent(server: &mut Server) -> VoyageCommand {
         panic!("only selected-voyage workflow requests")
     };
     assert_eq!(request.session_id, server.target.session);
-    assert_eq!(request.incarnation, Some(server.incarnation));
+    // These are durable session operations. The transport intentionally routes
+    // them to the current owner; the UI separately fences its captured context.
+    assert!(matches!(
+        request.command,
+        VoyageCommand::Controls { .. }
+            | VoyageCommand::WorkflowPreview { .. }
+            | VoyageCommand::WorkflowInputs { .. }
+            | VoyageCommand::WorkflowSubmit { .. }
+            | VoyageCommand::Resolve { .. }
+    ));
+    assert_eq!(request.incarnation, None);
     request.command
 }
 async fn observed(app: &mut App) {
@@ -202,6 +212,7 @@ async fn complete_public_and_private_workflow_journeys_submit_one_frozen_envelop
         key(&mut app, KeyCode::Char('y'));
         assert!(!app.workflows_open());
         let pending = app.views[&target].pending.as_ref().unwrap().clone();
+        assert_eq!(pending.incarnation, server.incarnation);
         assert!(pending.preserve_draft);
         assert!(pending.draft.is_empty());
         let inputs_id = if private {
@@ -255,6 +266,7 @@ async fn complete_public_and_private_workflow_journeys_submit_one_frozen_envelop
             app.views[&target].draft.text,
             "new unsent workflow composer"
         );
+        assert_eq!(app.views[&target].process.incarnation, server.incarnation);
         assert!(server.requests.try_recv().is_err());
         assert_private_files(fixture.0.path());
         assert!(
@@ -307,6 +319,7 @@ async fn refused_private_handoff_or_submit_preserves_public_identity_and_recover
         read_to_end(&mut app);
         key(&mut app, KeyCode::Char('y'));
         let pending = app.views[&target].pending.as_ref().unwrap().clone();
+        assert_eq!(pending.incarnation, server.incarnation);
         assert!(matches!(
             sent(&mut server).await,
             VoyageCommand::WorkflowInputs { .. }

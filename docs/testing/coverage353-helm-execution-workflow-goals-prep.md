@@ -23,7 +23,7 @@ in-memory `TestBackend`.
 | Execution preparation | A human prepare command freezes three nonnil identities and the selected workspace before one wire request. Restoring the private file observes the same review without another prepare. Transition requires explicit `stop-source` and captures the current session/incarnation. |
 | Execution uncertainty and controls | Approval carries the saved review/command/digest and fences another approval on an unavailable outcome. An exact check observes that same review. Cancel retires retained IDs; revoke retains its separately observable authorization state. Only unresolved transition metadata permits explicit reconciliation, with a new command and the frozen digest. |
 | Execution refusal and persistence | Observation commands preserve the composer. Malformed syntax, expired or nonpending approvals, disconnected routes and unsafe/malformed private records refuse. Symlink, hardlink, nil and oversized records retain the original evidence. Receipt retention failure cannot replace the earlier IDs or authorize approval. |
-| Workflow full journey | Public host inventory is followed by actual rendered/scrollable definition trust, typed default inputs, masked private entry, executing-host preview, actual preview review and exactly one submit. Private handoff precedes submit only when selected. The durable public envelope contains the selected digest, owner/revision, public values and private bundle identity; it never contains private values. |
+| Workflow full journey | Public host inventory is followed by actual rendered/scrollable definition trust, typed default inputs, masked private entry, executing-host preview, actual preview review and exactly one submit. Private handoff precedes submit only when selected. The retained pending identity freezes the UI owner; its durable public envelope contains the selected digest, revision, public values and private bundle identity, and never private values. |
 | Workflow refusal and recovery | A refused private handoff or submit retains the original public identity. Recovery sends only Resolve with that same envelope, never repeats private handoff or submit, and settles only the exact command receipt. Host diagnostics containing a synthetic private sentinel do not enter the update, notice, composer or private receipt files. |
 | Workflow review fences | Changed digest/scope/workflow ID, unsupported inventory, mismatched or missing private references, missing/oversized preview, stale voyage revision, active run, recovery, pending cleanup, oversized private bundle and unavailable receipt storage cannot submit. Selection/owner/disconnect/expiry changes discard private state and require acknowledgement before composer input resumes. |
 | Goal public dispatch | Fresh owner observation precedes human confirmation for Set, Edit, limits, Pause, Resume and Clear. Wire payloads are checked against independent literal intent, the exact goal identity and voyage revision. Repeat confirmation cannot dispatch another mutation; a later unsent draft survives the exact receipt. |
@@ -50,3 +50,28 @@ operation. The existing loopback peer uses synthetic replies and its ordinary
 Drop cancellation is not new observed native cleanup evidence. Durable scope
 remains [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353), with release
 follow-through tracked in [#375](https://github.com/o-psi/helm.vessel.voyage/issues/375).
+
+## Source-final gate fixture correction
+
+The coordinator's full gate on clean
+`d5379f4c8e879f4ca03c9372bc3c19a4f77787dc` exited 101. Helm's library result
+was 875 passed and seven failed: the all-action Goal journey and all six workflow
+parents. The other fifteen parents in this cohort passed. Full source/run evidence
+is retained under ignored
+`target/coverage-report/v103-ordinary-ui-helper-operator-source-final/`; a failed
+gate is not a passing coverage measurement.
+
+All seven observed failures were an incorrect fixture assertion that these
+commands carry `Some(incarnation)` on the public wire. Current
+`Client::voyage_observed` deliberately sends `None` for stable session operations.
+`VoyageCommand::requires_incarnation` pins live browser/tool/terminal/cancel/steer/
+respond operations; GoalUpdate and workflow inventory/preview/inputs/submit/
+Resolve follow the durable session contract. No production change is required.
+
+The corrected fixtures explicitly assert `None` for GoalUpdate and the enumerated
+workflow command family, with exact session identity. They also assert the
+captured incarnation in the durable UI pending identity and preserve the current
+view owner after settlement. Existing independent action, revision, digest,
+private-input identity, single dispatch, privacy and exact Resolve assertions
+remain intact. The correction has only standalone rustfmt and diff/source checks;
+the coordinator's reviewed, corrected full gate remains pending.

@@ -132,11 +132,14 @@ async fn every_reviewed_goal_action_dispatches_once_with_frozen_revision_and_pre
         );
         app.goal_input(&key(KeyCode::Enter));
         let pending = app.views[&target].pending.as_ref().unwrap().clone();
+        assert_eq!(pending.incarnation, server.incarnation);
         let VesselCommand::Voyage(request) = sent(&mut server).await else {
             panic!("voyage")
         };
         assert_eq!(request.session_id, target.session);
-        assert_eq!(request.incarnation, Some(server.incarnation));
+        // GoalUpdate is session-stable on the wire; owner freshness is fenced
+        // by the reviewed UI context and retained pending identity.
+        assert_eq!(request.incarnation, None);
         let VoyageCommand::GoalUpdate {
             command_id,
             expected_revision,
@@ -211,6 +214,7 @@ async fn every_reviewed_goal_action_dispatches_once_with_frozen_revision_and_pre
         app.update(next(&mut receiver).await);
         assert!(app.views[&target].pending.is_none());
         assert_eq!(app.views[&target].draft.text, "new unsent input");
+        assert_eq!(app.views[&target].process.incarnation, server.incarnation);
         assert_eq!(
             app.views[&target].snapshot.as_ref().unwrap().goal,
             Some(original_goal)
