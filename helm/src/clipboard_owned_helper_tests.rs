@@ -276,10 +276,9 @@ fn owned_clipboard_child() {
                     cancel.cancel();
                 }
             };
-            let (result, ()) = tokio::join!(
-                reader.run(root.join("bin/wl-paste").to_str().unwrap(), &[], TEXT),
-                cancelling
-            );
+            let helper = root.join("bin/wl-paste");
+            let (result, ()) =
+                tokio::join!(reader.run(helper.to_str().unwrap(), &[], TEXT), cancelling);
             let error = result.unwrap_err().to_string();
             assert_eq!(
                 error,
