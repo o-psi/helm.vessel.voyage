@@ -914,13 +914,19 @@ async fn sixty_four_live_sse_bodies_keep_command_lane_available_and_released_cap
     let mut streams = Vec::new();
     for _ in 0..64 {
         let mut stream = Stream::new(f.sse(vec![f.subscription(0, 10)]).await);
-        assert!(stream.next().await.error.is_none());
+        let event = stream.next().await;
+        assert!(event.error.is_none() && !event.outcome_unknown);
+        assert_eq!(event.session_id, f.peers[0].registration.session_id);
+        assert_eq!(event.incarnation, f.peers[0].registration.incarnation);
+        assert_eq!(event.result["events"][0]["cursor"], 11);
         streams.push(stream);
     }
     let response = f.sse(vec![f.subscription(0, 10)]).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let command = f.response(VesselCommand::Capabilities).await;
     assert!(command.error.is_none() && !command.outcome_unknown);
+    let retirement = f.peers[0].state.clone();
+    f.peers[0].expect_sse_body_drops(11, 65);
     drop(streams.pop());
     let response = tokio::time::timeout(WAIT, async {
         loop {
@@ -935,10 +941,18 @@ async fn sixty_four_live_sse_bodies_keep_command_lane_available_and_released_cap
     .await
     .unwrap();
     let mut recovered = Stream::new(response);
-    assert!(recovered.next().await.error.is_none());
+    let event = recovered.next().await;
+    assert!(event.error.is_none() && !event.outcome_unknown);
+    assert_eq!(event.session_id, f.peers[0].registration.session_id);
+    assert_eq!(event.incarnation, f.peers[0].registration.incarnation);
+    assert_eq!(event.result["events"][0]["cursor"], 11);
     drop(recovered);
     drop(streams);
     f.finish().await;
+    retirement
+        .lock()
+        .unwrap()
+        .assert_sse_body_drop_retirement(11, 65);
 }
 
 #[tokio::test]

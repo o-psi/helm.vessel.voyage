@@ -382,6 +382,24 @@ pub struct RuntimeState {
     pub calls: Vec<Value>,
     pub cursor: u64,
     pub fault: Fault,
+    accepted_requests: usize,
+    joined_requests: usize,
+    listener_retired: bool,
+    sse_body_drop_phase: Option<(u64, usize)>,
+    disconnected_event_replies: Vec<(u64, std::io::ErrorKind)>,
+}
+impl RuntimeState {
+    pub fn assert_sse_body_drop_retirement(&self, after: u64, bodies: usize) {
+        assert_eq!(self.sse_body_drop_phase, Some((after, bodies)));
+        assert_eq!(self.accepted_requests, self.joined_requests);
+        assert!(self.listener_retired);
+        assert!(self.disconnected_event_replies.len() <= bodies);
+        for &(cursor, kind) in &self.disconnected_event_replies {
+            assert_eq!(cursor, after);
+            assert_eq!(kind, std::io::ErrorKind::BrokenPipe);
+        }
+        // A successful reply can win the disconnect race; no error is required.
+    }
 }
 pub struct RuntimePeer {
     pub registration: ProcessRegistration,
@@ -420,6 +438,11 @@ impl RuntimePeer {
             calls: Vec::new(),
             cursor: 11,
             fault: Fault::None,
+            accepted_requests: 0,
+            joined_requests: 0,
+            listener_retired: false,
+            sse_body_drop_phase: None,
+            disconnected_event_replies: Vec::new(),
         }));
         let captured = state.clone();
         let info = registration.clone();
@@ -429,11 +452,15 @@ impl RuntimePeer {
             loop {
                 tokio::select! {
                     _=&mut retired=>break,
-                    Some(result)=children.join_next(),if !children.is_empty()=>result.unwrap(),
+                    Some(result)=children.join_next(),if !children.is_empty()=>{
+                        result.unwrap();
+                        captured.lock().unwrap().joined_requests+=1;
+                    },
                     accept=listener.accept()=>{
                         let (mut stream,_)=accept.unwrap();
                         let info=info.clone();let state=captured.clone();
                         assert!(children.len()<128,"bounded owned IPC requests");
+                        state.lock().unwrap().accepted_requests+=1;
                         children.spawn(async move {
                             let request:RuntimeRequest=tokio::time::timeout(WAIT,read_frame(&mut stream)).await.unwrap().unwrap();
                             assert_eq!(request.protocol,PROCESS_PROTOCOL);
@@ -474,7 +501,19 @@ impl RuntimePeer {
                                 error:(fault==Fault::Refused).then(||"synthetic readonly refusal".into()),
                                 outcome_unknown:fault==Fault::Unknown,
                             };
-                            tokio::time::timeout(WAIT,write_frame(&mut stream,&response)).await.unwrap().unwrap();
+                            if let Err(error)=tokio::time::timeout(WAIT,write_frame(&mut stream,&response)).await.unwrap(){
+                                // Only the capacity case arms this phase before deliberately
+                                // dropping consumed SSE bodies. Their cancelled readonly reads
+                                // can close IPC before this empty reply is written.
+                                let mut state=state.lock().unwrap();
+                                let (after,bodies)=state.sse_body_drop_phase.expect("unexpected runtime reply disconnection");
+                                assert!(fault==Fault::None,"fault replies remain strict");
+                                assert!(matches!(request.command,RuntimeCommand::Events{after:cursor,..} if cursor==after),"only consumed SSE Events reads may disconnect");
+                                assert!(response.result["events"].as_array().unwrap().is_empty(),"published event replies remain strict");
+                                assert_eq!(error.kind(),std::io::ErrorKind::BrokenPipe,"only the observed write-side disconnect is expected");
+                                assert!(state.disconnected_event_replies.len()<bodies,"one pending readonly reply per dropped body");
+                                state.disconnected_event_replies.push((after,error.kind()));
+                            }
                         });
                     }
                 }
@@ -482,7 +521,10 @@ impl RuntimePeer {
             drop(listener);
             while let Some(result) = children.join_next().await {
                 result.unwrap();
+                captured.lock().unwrap().joined_requests += 1;
             }
+            let state = captured.lock().unwrap();
+            assert_eq!(state.accepted_requests, state.joined_requests);
         });
         Self {
             registration,
@@ -502,6 +544,14 @@ impl RuntimePeer {
             .cloned()
             .collect()
     }
+    pub fn expect_sse_body_drops(&self, after: u64, bodies: usize) {
+        let mut state = self.state.lock().unwrap();
+        assert!(state.sse_body_drop_phase.is_none());
+        assert!(state.disconnected_event_replies.is_empty());
+        assert!(bodies > 0 && bodies <= 65);
+        assert_eq!(after, state.cursor);
+        state.sse_body_drop_phase = Some((after, bodies));
+    }
     pub async fn finish(&mut self) {
         let _ = self.stop.take().unwrap().send(());
         tokio::time::timeout(WAIT, self.job.take().unwrap())
@@ -511,6 +561,7 @@ impl RuntimePeer {
         fs::remove_file(&self.path).unwrap();
         assert!(!self.path.exists());
         assert!(tokio::net::UnixStream::connect(&self.path).await.is_err());
+        self.state.lock().unwrap().listener_retired = true;
     }
 }
 impl Drop for RuntimePeer {
@@ -851,6 +902,7 @@ impl Fixture {
         for peer in &mut self.peers {
             peer.finish().await;
         }
+        self.assert_no_effects();
         self.env.assert_logs_private(&[&self.local.token]);
         self.env.complete();
     }

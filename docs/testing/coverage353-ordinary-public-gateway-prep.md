@@ -157,3 +157,44 @@ No native installation or upgrade of this artifact was performed or inferred.
 Existing native evidence remains bound to its separately recorded source.
 This is a development prerelease, not a stable release; #333, #353 and #375
 remain open, and the full 100% reachable-production goal remains unchanged.
+
+## SSE capacity teardown correction preparation
+
+The later full workspace gate on clean `100970f573f4c31127cb609101aa783066ceea5f`
+failed the existing
+`sixty_four_live_sse_bodies_keep_command_lane_available_and_released_capacity_is_observed`
+case. Its runtime peer panicked on `BrokenPipe` while writing a readonly reply;
+the peer listener and fixture then correctly propagated that child panic through
+their joins. The coordinator retains the full source/run evidence under ignored
+`target/coverage-report/v103-public-delegation-final/`; this failure does not
+invalidate or replace the earlier source-specific evidence above.
+
+Dropping a consumed public SSE body drops its production observation future and
+can close the corresponding ordinary runtime socket before its empty Events
+reply is written. The capacity fixture now explicitly arms that deliberate drop
+phase after all 64 initial bodies have published and capacity/command admission
+has been asserted. Only an identity-validated, nonfaulted Events reply after the
+consumed cursor, with an empty event page and the observed write-side
+`BrokenPipe` class, can be recorded as an expected disconnect. The phase retains
+the cursor, body-drop bound and each observed I/O class/count. It permits at most
+one pending reply per dropped body (64 initial bodies and one recovered body).
+Successful replies may win the race, so no disconnect is required. Frame reads,
+other commands, fault replies, timeouts, other write failures and task panics
+remain strict; production code and deadlines are unchanged.
+
+The recovered body must publish the exact registered session/incarnation and
+cursor with no error or unknown outcome. Every accepted peer request must be
+successfully joined, the Unix listener must be removed and refuse reconnect, and
+the case checks the retained phase record after positive fixture retirement.
+Existing exact-child PID/start/UID/executable checks, reaping and TCP listener
+retirement still apply. Readonly no-execution and no-lifecycle-intent assertions
+run both before teardown and after peer tasks have joined. These observations
+retain the actual permit-recovery oracle and do not treat cancellation alone as
+cleanup.
+
+This correction is source preparation for [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353)
+and release [#375](https://github.com/o-psi/helm.vessel.voyage/issues/375). Only
+standalone rustfmt and diff checks are performed by the source agent. The
+coordinator must independently review/integrate the change and run the single
+source-final full workspace coverage/release gate; no passing test, coverage,
+publication or hosted build result is claimed for this correction yet.
