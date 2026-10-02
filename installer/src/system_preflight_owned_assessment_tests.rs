@@ -34,12 +34,9 @@ fn ordinary_name() -> String {
     assert!(valid_name(&name) && name != "root");
     name
 }
-fn inventory(path: &Path) -> BTreeMap<PathBuf, (u32, u32, u32, u64, u64, Vec<u8>)> {
-    fn walk(
-        root: &Path,
-        path: &Path,
-        out: &mut BTreeMap<PathBuf, (u32, u32, u32, u64, u64, Vec<u8>)>,
-    ) {
+type Inventory = BTreeMap<PathBuf, (u32, u32, u32, u64, u64, Vec<u8>)>;
+fn inventory(path: &Path) -> Inventory {
+    fn walk(root: &Path, path: &Path, out: &mut Inventory) {
         let m = fs::symlink_metadata(path).unwrap();
         let contents = if m.file_type().is_symlink() {
             fs::read_link(path)
