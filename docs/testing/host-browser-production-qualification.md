@@ -634,6 +634,13 @@ that revision. Only after this proof and observed Esc dismissal does it send F6.
 The normal Helm viewer still enforces its incarnation and revision fences; no
 client request or socket destination is replaced.
 
+The launcher uses a 120×36 PTY. Settings uses the full-area discovery-help
+renderer with a two-cell horizontal inset and only a bottom border; its
+100-character UUID/connection line fits the 116-cell body. This is distinct from
+the boxed right-side action panel. Offline contracts reconstruct the padded
+terminal cells through the maintained `screen()` parser and check exact selected
+identity and stale refusal; fixed LegacyRoute vectors cover both native routes.
+
 Private exclusive bootstrap intent precedes the first key; selected owner proof
 is retained before F6 and an observed/unknown result follows the single attempt.
 Every stage rechecks the same native process/socket/meter and local discovery

@@ -214,5 +214,47 @@ class NativeBootstrapContracts(unittest.TestCase):
                               ([{**process,'incarnation':str(uuid.UUID(int=0))}],snapshot),([process],{**snapshot,'run':{'state':'running'}})]:
             with self.assertRaises(AssertionError):launcher.fixture_observation(catalogue,snap,self.item)
 
+    def settings_terminal(self, session=None, route=None, stale=False):
+        # render.rs::draw calls draw_discovery_help with the full 120x36 area.
+        # That renderer insets x2/y1, wraps at116 display cells and adds ONLY a
+        # bottom border. It does not use the boxed right-panel renderer.
+        body=['Effective settings · read-only observations','',
+              'Voyage '+(session or self.item['id'])+' · Vessel connection '+(route or launcher.native_route_id(self.config)),
+              'STALE: executing Vessel disconnected; these are last observed values.' if stale else
+              'Source: last authenticated executing-host snapshot (not a new fetch).',
+              'Revision 7 · access: approval']
+        rows=[' '*120 for _ in range(36)]
+        for row,line in enumerate(body,1):
+            self.assertLessEqual(len(line),116)
+            rows[row]='  '+line.ljust(116)+'  '
+        rows[34]='  '+('─'*116)+'  '
+        raw=bytearray(b'\x1b[2J')
+        for row,line in enumerate(rows,1):raw.extend(('\x1b['+str(row)+';1H'+line).encode())
+        return launcher.screen({'rows':36,'columns':120,'output':raw})
+
+    def test_actual_full_area_settings_geometry_and_terminal_cells_preserve_exact_identity(self):
+        frame=self.settings_terminal()
+        self.assertEqual(len(frame.splitlines()),36)
+        self.assertTrue(all(len(line)==120 for line in frame.splitlines()))
+        self.assertEqual(launcher.settings_selection(frame,self.item['id'],launcher.native_route_id(self.config)),7)
+        # The 100-character identity line fits the actual116-cell body. Border
+        # glyphs are retained by screen(), but occur on the bottom line only.
+        self.assertEqual(len(frame.splitlines()[3].strip()),100)
+        self.assertEqual(frame.splitlines()[34].strip(),'─'*116)
+
+    def test_padded_renderer_cells_do_not_accept_foreign_session_route_or_stale_settings(self):
+        for kwargs in ({'session':str(uuid.uuid4())},{'route':str(uuid.uuid4())},{'stale':True}):
+            with self.subTest(kwargs=kwargs),self.assertRaises(AssertionError):
+                launcher.settings_selection(self.settings_terminal(**kwargs),self.item['id'],launcher.native_route_id(self.config))
+
+    def test_legacy_route_hash_vectors_match_existing_local_and_public_client_construction(self):
+        # Independent fixed vectors from connections.rs::LegacyRoute::id:
+        # domain, little-endian directory length+bytes, optional-access marker
+        # and bytes, first16 SHA256 bytes, RFC variant and UUID version8.
+        local={'native_route':{'mode':'local','directory':'/home/vessel/.local/state/voyage/vessel'}}
+        public={'native_route':{'mode':'public'},'access_file':'/private/owner-access.json'}
+        self.assertEqual(launcher.native_route_id(local),'cf5ae4cd-6b80-8d6c-8e45-325b21a9fb4c')
+        self.assertEqual(launcher.native_route_id(public),'32904b20-3c5b-8793-961a-6ff11e5d16e6')
+
 
 if __name__=='__main__':unittest.main()
