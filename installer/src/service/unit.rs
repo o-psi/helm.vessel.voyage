@@ -206,16 +206,12 @@ pub(super) fn credential_key_path(content: &str) -> Option<&str> {
             section = true;
             continue;
         }
-        let Some(value) = line.strip_prefix("Environment=") else {
-            return None;
-        };
+        let value = line.strip_prefix("Environment=")?;
         let value = value
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
             .unwrap_or(value);
-        let Some(path) = value.strip_prefix("VOYAGE_CREDENTIAL_KEY_FILE=") else {
-            return None;
-        };
+        let path = value.strip_prefix("VOYAGE_CREDENTIAL_KEY_FILE=")?;
         if !section
             || environment.is_some()
             || !path.starts_with('/')

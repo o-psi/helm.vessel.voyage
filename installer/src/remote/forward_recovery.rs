@@ -436,7 +436,9 @@ fn credential_drop_in_for_owner(
             && before.nlink() == after.nlink()
             && before.len() == after.len()
             && before.mtime() == after.mtime()
-            && before.mtime_nsec() == after.mtime_nsec(),
+            && before.mtime_nsec() == after.mtime_nsec()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec(),
         "Gateway credential override changed while reading"
     );
     Ok(CredentialDropIn {
