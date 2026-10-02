@@ -139,7 +139,10 @@ UID 0** and a protected Root directory. The transition observation fallback uses
 the same protected identity family. Ordinary shipped user-scope hosts cannot
 legitimately return a positive saved administrator review through this path.
 
-The parked #344/#346/#380 v1.1 work must add the precise UI review/receipt/target
+The parked [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344),
+[#346](https://github.com/o-psi/helm.vessel.voyage/issues/346) and
+[#380](https://github.com/o-psi/helm.vessel.voyage/issues/380) v1.1 work must add
+the precise UI review/receipt/target
 fence before supported positive privileged review claims, together with negative
 client tests and native Root evidence. Deterministic parser/storage refusal
 tests are still feasible; the whole module is not structurally unreachable and
