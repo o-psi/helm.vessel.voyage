@@ -1468,3 +1468,47 @@ echo flags, alternate-screen retirement, successful child reaping and bounded
 reader-thread retirement. Parent environment and the user's terminal are untouched.
 Only LLVM's profile destination is inherited. This is prepared source awaiting the
 coordinator's final run; it makes no macOS/Windows, live-provider or browser claim.
+
+### Ordinary native startup-fault witness
+
+`installer/tests/native_legacy_qualification.py fail-startup` retains its actual
+UID1000 disposable-user boundary and one explicit upgrade. A transient
+`PermissionError`/missing process while observing the candidate is pending,
+never a passing witness or permission to signal. The CT123 attempt that failed
+reading `/proc/661/exe` remains unqualified for rollback: the normal migration
+and unchanged histories do not prove that a fault happened. A later ordinary
+read of that exact candidate succeeded; the precise cause of the earlier denial
+is unknown. Do not retry/reset that completed namespace. Use the separately
+reviewed fresh legacy baseline for the corrected adverse attempt.
+
+The monitor opens a pidfd, checks current manager PID, all four UID fields1000,
+exact candidate path/image inode and qualified staged binary SHA, stable process
+start, schema2 and unchanged quarantine identity immediately before each bounded
+SIGKILL. Denied, gone, changed or foreign observations receive no signal. The
+five-signal limit applies to verified candidate instances; after exhaustion the
+monitor waits only for positive rollback within the existing120-second bound.
+It retains pidfds until exit plus process reaping/reuse is positively observed,
+then requires the original service image/schema/canonical histories and the old
+saved-reader Snapshot. No proc, ptrace, capabilities, UID, permission, mount,
+service-policy or grant change is made to obtain a witness; Root instrumentation
+is unnecessary for the observed transient case.
+
+Exclusive `fail-startup-attempt.json` and `fail-startup-monitor-result.json`
+retain monitor PID/start/UID, pending observation categories, exact signal
+witnesses and their retirement state even when the case remains unqualified.
+Only the final `forced-startup-rollback.json` records positively observed
+rollback; an attempt or a pending denial cannot substitute.
+
+Focused local regression entrypoint:
+
+```sh
+python3 -I -B installer/tests/native_legacy_monitor_tests.py
+```
+
+The source-ready bounded local run passed4/0 with no skips: missing/denied/foreign
+and changed-start predicates, exit without reaping, and an actual owned UID1000
+child verified by image/SHA and pidfd, signalled once, waited/reaped and observed
+retired. The systemd unit used256MiB/no swap/20seconds and terminated0 in113ms,
+18.9MiB peak/no swap. This proves the witness primitive and failure handling;
+it is not the fresh CT native installer rollback result. Cargo, providers and
+production services were not involved in that focused run.

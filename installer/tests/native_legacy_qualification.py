@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import signal
+import select
+import stat
 import sqlite3
 import subprocess
 import sys
@@ -451,52 +453,213 @@ def kill_at(args):
         os.close(descriptor)
 
 
+
+class ProcessNotLive(RuntimeError):
+    pass
+
+
+def process_start(pid, allow_exited=False):
+    raw = (Path('/proc')/str(pid)/'stat').read_text()
+    require(len(raw) <= 8192 and ')' in raw, 'bounded process identity unavailable')
+    fields = raw.rsplit(')', 1)[1].split()
+    require(len(fields) >= 20, 'bounded process identity unavailable')
+    if not allow_exited and fields[0] in ('Z', 'X', 'x'):
+        raise ProcessNotLive('process is not live')
+    return int(fields[19])
+
+
+def pidfd_exited(descriptor):
+    poll = select.poll()
+    poll.register(descriptor, select.POLLIN)
+    return any(events & select.POLLIN for _, events in poll.poll(0))
+
+
+def exact_candidate(pid, candidate, expected_sha):
+    """Read-only ordinary witness; startup denial/missing remains pending."""
+    descriptor = None
+    try:
+        descriptor = os.pidfd_open(pid)
+        if pidfd_exited(descriptor):
+            return 'missing_pending', None
+        proc = Path('/proc')/str(pid)
+        if proc.stat().st_uid != 1000:
+            return 'not_candidate', None
+        status = (proc/'status').read_text()
+        require(len(status) <= 65536, 'process status exceeds bound')
+        uids = next((line.split()[1:] for line in status.splitlines() if line.startswith('Uid:')), [])
+        if uids != ['1000'] * 4:
+            return 'not_candidate', None
+        started = process_start(pid)
+        if os.readlink(proc/'exe') != str(candidate):
+            return 'not_candidate', None
+        image = os.open(proc/'exe', os.O_RDONLY | os.O_CLOEXEC)
+        with os.fdopen(image, 'rb') as source:
+            meta = os.fstat(source.fileno())
+            require(stat.S_ISREG(meta.st_mode) and 0 < meta.st_size <= 128*1024*1024,
+                    'candidate image bound refused')
+            named = candidate.stat()
+            pin = (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
+            require(pin == (named.st_dev, named.st_ino, named.st_size, named.st_mtime_ns, named.st_ctime_ns),
+                    'candidate named image changed')
+            digest_value = hashlib.sha256()
+            total = 0
+            while chunk := source.read(1024*1024):
+                total += len(chunk)
+                require(total <= meta.st_size, 'candidate image grew during observation')
+                digest_value.update(chunk)
+            after = os.fstat(source.fileno())
+            require(total == meta.st_size and pin == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns),
+                    'candidate image changed during observation')
+            require(digest_value.hexdigest() == expected_sha, 'candidate qualified image hash mismatch')
+        if pidfd_exited(descriptor) or process_start(pid) != started:
+            return 'missing_pending', None
+        # Retain only nonsecret identity. The open pidfd binds the actual process.
+        result = {'descriptor':descriptor, 'pid':pid, 'start_ticks':started, 'uid':1000,
+                  'executable_sha256':expected_sha, 'image_pin':pin}
+        descriptor = None
+        return 'verified', result
+    except PermissionError:
+        return 'permission_pending', None
+    except (FileNotFoundError, ProcessLookupError, ProcessNotLive):
+        return 'missing_pending', None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def still_candidate(witness, candidate):
+    """Last identity gate immediately before the one pidfd signal."""
+    if pidfd_exited(witness['descriptor']):
+        return False
+    proc = Path('/proc')/str(witness['pid'])
+    if proc.stat().st_uid != 1000 or process_start(witness['pid']) != witness['start_ticks']:
+        return False
+    status = (proc/'status').read_text()
+    require(len(status) <= 65536, 'process status exceeds bound')
+    if next((line.split()[1:] for line in status.splitlines() if line.startswith('Uid:')), []) != ['1000']*4:
+        return False
+    if os.readlink(proc/'exe') != str(candidate):
+        return False
+    meta = (proc/'exe').stat()
+    return witness['image_pin'] == (meta.st_dev,meta.st_ino,meta.st_size,meta.st_mtime_ns,meta.st_ctime_ns)
+
+
+def retired(witness):
+    if not pidfd_exited(witness['descriptor']):
+        return False
+    try:
+        return process_start(witness['pid'], allow_exited=True) != witness['start_ticks']
+    except (FileNotFoundError, ProcessLookupError):
+        return True
+    except RuntimeError:
+        # A zombie is exited but has not been positively reaped yet.
+        return False
+
+
 def fail_startup():
-    """A bounded real-process fault; only an actually migrated quarantined candidate."""
+    """Only positive ordinary candidate witnesses receive the bounded fault."""
+    write('fail-startup-attempt.json', {'monitor_pid':os.getpid(), 'monitor_uid':os.getuid(),
+          'monitor_start_ticks':process_start(os.getpid()), 'status':'armed', 'maximum_signals':5})
     deadline = time.monotonic()+120
-    signalled = []
-    while time.monotonic() < deadline:
-        if (STATE/'update-quarantine.json').exists():
-            fence = json.loads((STATE/'update-quarantine.json').read_text())
-            candidate = INSTALL/'releases'/fence['candidate_release']/'bin/vessel'
-            pid = int(manager('show', NAME, '--property=MainPID', '--value'))
-            if pid > 0:
-                proc = Path('/proc')/str(pid)
+    witnesses, pending = [], {'permission_pending':0,'missing_pending':0,'not_candidate':0}
+    target_fence = None
+    expected_sha = None
+    passed = False
+    try:
+        while time.monotonic() < deadline:
+            if (STATE/'update-quarantine.json').exists():
+                fence = json.loads((STATE/'update-quarantine.json').read_text())
+                require(set(fence) == {'schema_version','operation_id','previous_release','candidate_release'}
+                        and type(fence['schema_version']) is int and fence['schema_version'] == 1,
+                        'unknown quarantine identity refused')
+                release = fence['candidate_release']
+                require(isinstance(release,str) and 0 < len(release) <= 256 and Path(release).name == release
+                        and release not in ('.','..'), 'candidate release outside fixed installation')
+                candidate = INSTALL/'releases'/release/'bin/vessel'
+                if target_fence is None:
+                    target_fence = fence
+                    staged_installer = Path(json.loads((WORK/'candidate-bin.json').read_text()))
+                    require(staged_installer.is_relative_to(WORK/'candidate'), 'candidate staging outside owned fixture')
+                    expected_sha = digest(staged_installer.with_name('vessel'))
+                require(fence == target_fence, 'fault operation/fence changed; no further signals')
+                # Exhausted injection budget waits for observed rollback; it does
+                # not declare success or signal a sixth/replacement process.
+                if len(witnesses) < 5:
+                    pid = int(manager('show', NAME, '--property=MainPID', '--value'))
+                    if pid > 0 and not any(w['pid'] == pid and not pidfd_exited(w['descriptor']) for w in witnesses):
+                        category, witness = exact_candidate(pid, candidate, expected_sha)
+                        if witness is None:
+                            pending[category] += 1
+                        else:
+                            try:
+                                if (sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT version FROM schema_version WHERE id=1') == [(2,)]
+                                    and json.loads((STATE/'update-quarantine.json').read_text()) == target_fence
+                                    and int(manager('show', NAME, '--property=MainPID', '--value')) == witness['pid']
+                                    and still_candidate(witness, candidate)):
+                                    signal.pidfd_send_signal(witness['descriptor'], signal.SIGKILL)
+                                    witness['signal_delivered'] = True
+                                    witnesses.append(witness)
+                                    witness = None
+                            except PermissionError:
+                                pending['permission_pending'] += 1
+                            except (FileNotFoundError, ProcessLookupError, ProcessNotLive):
+                                pending['missing_pending'] += 1
+                            finally:
+                                if witness is not None:
+                                    os.close(witness['descriptor'])
+            elif witnesses:
                 try:
-                    if (proc/'exe').resolve(strict=True) == candidate and sqlite_observe(
-                            STATE/'catalogue.sqlite3', 'SELECT version FROM schema_version WHERE id=1') == [(2,)]:
-                        descriptor = os.pidfd_open(pid)
-                        try:
-                            require(proc.stat().st_uid == 1000 and (proc/'exe').resolve() == candidate,
-                                    'candidate PID changed before fault')
-                            require((STATE/'update-quarantine.json').exists(), 'commit window missed')
-                            signal.pidfd_send_signal(descriptor, signal.SIGKILL)
-                            signalled.append(pid)
-                        finally:
-                            os.close(descriptor)
+                    after = observation()
+                except PermissionError:
+                    pending['permission_pending'] += 1
+                    time.sleep(.01)
+                    continue
                 except (FileNotFoundError, ProcessLookupError):
-                    pass
-        elif signalled:
-            after = observation()
-            before = json.loads((WORK/'before.json').read_text())
-            require(after['catalogue_schema'] == 1 and after['sessions'] == before['sessions'],
-                    'old schema/history rollback unconfirmed; retain all state')
-            require(after['service']['executable_sha256'] == before['service']['executable_sha256'],
-                    'previous supervisor was not actually reactivated')
-            # Public Snapshot uses the actual old Voyage saved reader, not only SQLite inspection.
-            sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'voyage/tests'))
-            from delivery_recovery import Fixture
-            reader = object.__new__(Fixture)
-            reader.directory = STATE
-            for session, saved in before['sessions'].items():
-                snapshot = reader.command(session, {'op':'snapshot'})
-                require(snapshot['messages'] == saved['messages'], 'old helper cannot read canonical history')
-            write('forced-startup-rollback.json', {'candidate_pids_signalled': signalled, 'observed': after})
-            return
-        if len(signalled) >= 5:
-            raise RuntimeError('bounded candidate fault exhausted; retain unconfirmed state')
-        time.sleep(.01)
-    raise RuntimeError('migrated startup fault window not reached; case remains unqualified')
+                    pending['missing_pending'] += 1
+                    time.sleep(.01)
+                    continue
+                before = json.loads((WORK/'before.json').read_text())
+                require(after['catalogue_schema'] == 1 and after['sessions'] == before['sessions'],
+                        'old schema/history rollback unconfirmed; retain all state')
+                require(after['service']['executable_sha256'] == before['service']['executable_sha256'],
+                        'previous supervisor was not actually reactivated')
+                try:
+                    all_retired = all(retired(w) for w in witnesses)
+                except PermissionError:
+                    pending['permission_pending'] += 1
+                    all_retired = False
+                if not all_retired:
+                    time.sleep(.01)
+                    continue
+                # Use the actual old saved reader only after positive rollback.
+                sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'voyage/tests'))
+                from delivery_recovery import Fixture
+                reader = object.__new__(Fixture)
+                reader.directory = STATE
+                for session, saved in before['sessions'].items():
+                    snapshot = reader.command(session, {'op':'snapshot'})
+                    require(snapshot['messages'] == saved['messages'], 'old helper cannot read canonical history')
+                signals = [{k:v for k,v in w.items() if k not in ('descriptor','image_pin')} for w in witnesses]
+                require(signals and all(w['signal_delivered'] for w in signals), 'fault delivery unconfirmed')
+                write('forced-startup-rollback.json', {'candidate_pids_signalled':[w['pid'] for w in witnesses],
+                      'signals':signals, 'all_signalled_candidates_exited_and_reaped':True,
+                      'pending_observations':pending, 'observed':after})
+                passed = True
+                return
+            time.sleep(.01)
+        raise RuntimeError('migrated startup fault/rollback window not positively observed; case remains unqualified')
+    finally:
+        records = []
+        for witness in witnesses:
+            try:
+                retirement = retired(witness)
+            except (OSError, RuntimeError, ValueError):
+                retirement = None
+            records.append({**{k:v for k,v in witness.items() if k not in ('descriptor','image_pin')},
+                            'exit_and_reaping_observed':retirement})
+            os.close(witness['descriptor'])
+        write('fail-startup-monitor-result.json', {'status':'passed' if passed else 'unqualified',
+              'pending_observations':pending, 'signals':records, 'maximum_signals':5})
 
 
 def main():
