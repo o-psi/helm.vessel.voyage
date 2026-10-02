@@ -45,8 +45,8 @@ impl Fixture {
             .initialize_command_bindings(&guard, request.principal_id)
             .unwrap();
         let run = journal.admit_turn(&guard, &request, 1000).unwrap().run;
-        journal.mark_running(&guard, run.id).unwrap();
         journal.register_local_cleanup(&guard, run.id).unwrap();
+        journal.mark_running(&guard, run.id).unwrap();
         Self {
             _root: root,
             journal,
