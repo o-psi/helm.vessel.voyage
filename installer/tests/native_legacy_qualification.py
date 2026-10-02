@@ -60,8 +60,17 @@ def preflight():
 def write(name, value):
     path = WORK / name
     require(not path.exists(), 'evidence already exists; no implicit rerun')
-    path.write_text(json.dumps(value, indent=2))
+    # Exclusive creation is the one-attempt fence even if two operators race.
+    with path.open('x') as stream:
+        json.dump(value, stream, indent=2)
+        stream.flush()
+        os.fsync(stream.fileno())
     path.chmod(0o600)
+    directory = os.open(WORK, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def digest(path):

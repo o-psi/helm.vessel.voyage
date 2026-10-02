@@ -187,3 +187,7 @@ The sole allowed legacy-import row is the published v1.0.2 initializer's exact
 `complete-v1` sentinel with an all-zero 32-byte digest. It is emitted even for an
 empty catalogue; any actual imported registration or command refuses continuation.
 See the [published initializer](https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.2/vessel/src/process/database.rs#L297).
+
+Attempt/evidence files use exclusive creation, file synchronization and the owning
+directory synchronization before subsequent effects. A competing invocation or a
+partially retained marker refuses; it never overwrites earlier attempt evidence.
