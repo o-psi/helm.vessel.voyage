@@ -38,7 +38,7 @@ it is not classified wholly unreachable.
 
 This proof concerns only the per-field `Controls.hits` vector. It does not apply
 to the profile footer `options_hit` (renderer 42–44), model `chooser_hits`, picker
-row `choices` (renderer 216), picker `cancel_hit` (renderer 241), profile-panel hits
+row `choices` (renderer 215), picker `cancel_hit` (renderer 241), profile-panel hits
 or account hits. These have maintained renderer producers. The prepared cohort
 uses actual rendered account connection, inference footer and cancel rectangles,
 plus keyboard/model callback paths; it does not fabricate per-field rectangles.
