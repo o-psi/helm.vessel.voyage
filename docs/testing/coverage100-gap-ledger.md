@@ -11,58 +11,60 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `3138b823b40287e89a3974f5c1b50e14dcd3c251`, recorded in
-`coverage/latest.json`, passed **2,441 tests, zero failures, eight ignored**.
-It covers **99,667 / 131,748 lines (75.649725%)**, 9,008 / 12,040 functions
-and 157,197 / 217,922 regions. **32,081 line gaps remain**, including one
+Clean source `e585a352654b66c54d4bd0de5b2ac9e1bc883047`, recorded in
+`coverage/latest.json`, passed **2,568 tests, zero failures, eight ignored**.
+It covers **101,849 / 132,834 lines (76.673894%)**, 9,249 / 12,113 functions
+and 160,471 / 219,765 regions. **30,985 line gaps remain**, including one
 known standard-library line. #353's reachable-production objective remains unmet.
 
-All **537 current and prior workspace files** and the same known standard-library
-mapping are retained, using all14 Cargo test targets plus three integration entry
-points as17 distinct current objects. Only292 own profiles were merged;235foreign
-profiles remained byte-identical. Child libtest summaries are retained separately,
-with all outcomes passing, instead of being counted as extra Cargo targets.
-The mixed default export is rejected. Detailed reports and source/object/profile
-manifests remain under ignored `target/coverage-report/v103-final-corrected`.
+All **539 current workspace files and all 537 prior files** and the same known
+standard-library mapping are retained, using all 14 Cargo test targets plus three
+integration entry points as 17 distinct current objects. Only 297 own profiles
+were merged; 235 foreign profiles remained byte-identical. Child libtest summaries
+are retained separately, with all outcomes passing, instead of being counted as
+extra Cargo targets. The mixed default export is rejected. Detailed reports and
+source/object/profile manifests remain under ignored
+`target/coverage-report/v103-final-window`.
 
-Compared with the previous published record:2,034more covered lines,30more measured
-lines and +1.526978percentage points. The67-case ordinary server/Vessel/installer/
-Helm cohort preserves authority, exact receipts, uncertainty and cleanup assertions.
-No exclusions were added or prior production files removed. The new test-only
-helper uses the existing standard test-source filename pattern before measurement.
+Compared with the previous published record: 2,182 more covered lines, 1,086 more
+measured lines and +1.024168 percentage points. Ordinary participant/subagent,
+Helm route/PTY, frozen owner grant, origin and quiescent legacy updater cases retain
+authority, exact receipts, uncertainty and cleanup assertions. No exclusions were
+added or prior production files removed. Failed/focused profiles and current
+binaries were preserved before this independent measurement.
 
 Native Root, live-provider, browser JavaScript and other-platform evidence are
 separate. The default Rust measurement does not establish those capabilities or
-full release readiness. Current line addresses require these current objects. The current largest-area
-map follows; the September maps are retained separately for comparison.
+full release readiness. Native legacy bootstrap/rollback/death windows, corrected
+production deployment and browser TLS/full-site/media/client cost remain unfinished.
 
 ## Current largest areas
 
-This map uses the same retained current-object summary as the published baseline;
-no rebuild or new export was performed. Directory rows contain nested files;
-“direct files” rows contain only files directly in that source directory. These
-are measured line gaps, not a classification of reachability or assertion quality.
-The full workspace contributes **32,080 uncovered lines**; the remaining one
-reported gap is the retained standard-library mapping. No files were excluded.
+This map uses the same retained current-object summary as the published baseline.
+Directory rows contain nested files; “direct files” rows contain only files directly
+in that source directory. These are measured line gaps, not a classification of
+reachability or assertion quality. The full workspace contributes **30,984 uncovered
+lines**; the remaining one reported gap is the retained standard-library mapping.
+No files were excluded.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
-| `vessel/src/process/` | 8,509 | 18,996 |
-| `helm/src/process_client/` | 8,303 | 33,750 |
-| `voyage/src (direct files)` | 2,571 | 13,228 |
+| `vessel/src/process/` | 8,536 | 19,109 |
+| `helm/src/process_client/` | 7,933 | 33,756 |
+| `voyage/src (direct files)` | 2,278 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
-| `voyage/src/attachment/` | 1,377 | 12,458 |
-| `voyage/src/tools/` | 1,196 | 7,865 |
-| `installer/src (direct files)` | 1,024 | 2,015 |
-| `helm/src (direct files)` | 917 | 3,096 |
+| `voyage/src/tools/` | 1,191 | 7,865 |
+| `installer/src (direct files)` | 1,104 | 2,239 |
+| `helm/src (direct files)` | 908 | 3,096 |
+| `installer/src/remote/` | 881 | 1,821 |
+| `voyage/src/attachment/` | 865 | 12,458 |
 | `voyage/src/server/` | 860 | 5,687 |
 | `voyage/src/github/` | 661 | 3,177 |
 | `vessel/src (direct files)` | 654 | 1,556 |
-| `installer/src/remote/` | 514 | 1,289 |
-| `voyage/src/subagent/` | 435 | 2,402 |
-| `voyage/src/provider/` | 412 | 5,747 |
+| `voyage/src/provider/` | 404 | 5,747 |
 | `voyage/src/extensions/` | 384 | 1,995 |
 | `crates/voyage-storage/src/` | 248 | 643 |
+| `voyage/src/subagent/` | 244 | 2,402 |
 
 The largest ordinary client and supervisor areas remain the next source targets.
 Privileged, other-platform, provider and OS fault responsibilities still require

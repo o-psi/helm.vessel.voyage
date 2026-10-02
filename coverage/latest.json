@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-01T21:02:35.900814+00:00",
-  "source_commit": "3138b823b40287e89a3974f5c1b50e14dcd3c251",
+  "measured_at_utc": "2026-10-02T00:46:21.949807+00:00",
+  "source_commit": "e585a352654b66c54d4bd0de5b2ac9e1bc883047",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2441,
+    "passed": 2568,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 131748,
-      "covered": 99667,
-      "percent": 75.64972523302062
+      "count": 132834,
+      "covered": 101849,
+      "percent": 76.67389373202644
     },
     "functions": {
-      "count": 12040,
-      "covered": 9008,
-      "percent": 74.8172757475083
+      "count": 12113,
+      "covered": 9249,
+      "percent": 76.35598117724759
     },
     "regions": {
-      "count": 217922,
-      "covered": 157197,
-      "notcovered": 60725,
-      "percent": 72.13452519708886
+      "count": 219765,
+      "covered": 160471,
+      "notcovered": 59294,
+      "percent": 73.01936159079017
     }
   },
-  "command": "systemd-run --user --wait --pipe --collect -p UMask=0077 -p MemoryMax=6G -p MemorySwapMax=0 -p RuntimeMaxSec=1200s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-final-corrected/html -j 2",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-final-corrected/summary-default.json -v; llvm-profdata merge -sparse with292 own profiles; audited explicit17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=8G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-final-window/html -j 1",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-final-window/summary-default.json -v; llvm-profdata merge -sparse with 297 own profiles; audited explicit 17-object llvm-cov export, original standard exclusions retained; exact arguments under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,13 +40,11 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean committed source3138b82:2441 parent-workspace tests passed,zero failed,eight ignored. Owned child libtest summaries are retained separately and not double-counted as Cargo targets.",
-    "All537 current/prior workspace files and17 current objects retained. Only292 own rawprofiles merged;235 foreign profiles unchanged. All nested child outcomes passed; no new exclusions or lost production mappings.",
-    "Prior published record:2034 more covered lines,30 more measured lines,+1.526978 percentage points.32081 line gaps remain including known standard-library mapping; #353 full objective is still unmet.",
-    "The67-case cohort exercises ordinary server lifetimes/imports/commands/receipts/cleanup, Vessel accounts/service/catalogue, installer identity/staging/acquisition, and Helm lifecycle identity/focus/export. #399 exact branch and restore validation is included.",
-    "Prior failed evidence retained. Corrected child registry namespace and lifecycle assumptions, held-model timeout instead of a zero-deadline ready future, required sandbox resource/unknown-receipt proof, and actual canonical restore addressing. Meaningful authority/uncertainty/cleanup assertions remain.",
-    "Coverage includes every current test/entry object. New shared test-only helper naming follows unchanged standard test-source exclusions; no production source was hidden. Detailed own/foreign manifests, nested child results and rejected mixed export remain ignored.",
-    "Independent service6GiB/zero swap/private0077/1200sec; whole measurement3min2sec,peak6GiB. Export3GiB/zero swap. Heavy processes are outside desktop application cgroup.",
-    "Browser synthetic full breadth/adversity/cleanup and Web61shared+141React/type/build/historical-Chromium replay passed separately. Deployed matching new Vessel/native embedded viewer/TLS/site/resource acceptance and stable publication remain unfinished."
+    "Clean committed source e585a35: 2568 parent-workspace tests passed, zero failed, eight ignored. Owned child libtest summaries are retained separately and not double-counted as Cargo targets.",
+    "All 539 current workspace files and all 537 prior files retained with 17 current objects (14 Cargo targets plus three integration entrypoints). Only 297 own raw profiles merged; 235 foreign profiles unchanged. The known standard-library mapping remains; no denominator exclusions changed.",
+    "Compared with prior published record: 2182 more covered lines, 1086 more measured lines, +1.024168 percentage points. 30985 line gaps remain; #353 full reachable-production objective is unmet.",
+    "Final ordinary account-route, frozen legacy owner grant, origin parsing, quiescent updater proof/namespace, participant/subagent and production owned PTY fixtures passed. Actual native legacy bootstrap/rollback/death windows, corrected production deployment and browser TLS/full-site/media/client cost acceptance remain separate unfinished gates.",
+    "Failed/focused own profiles and 17 premeasurement binaries retained before this independent measurement. Mixed default object export rejected; corrected inventory/profile/source audit passed with no lost production mappings.",
+    "Independent service 8 GiB cap, zero swap, private umask 0077, 2400-second bound; measurement 2min11.350sec, peak1GiB. Audited export 3GiB cap/zero swap,15.626sec. Heavy processes remain outside desktop application cgroup."
   ]
 }

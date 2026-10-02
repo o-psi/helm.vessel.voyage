@@ -392,10 +392,10 @@ async fn child_dispatch_is_pinned_before_effect_and_changed_payload_or_unknown_c
     observer.dispatch(dispatch.clone()).await.unwrap();
     observer.dispatch(dispatch.clone()).await.unwrap();
     let mut changed = dispatch;
-    if let crate::provider::goal_meter::AllocationDispatch::Voyage { command } = &mut changed {
-        if let VoyageCommand::Submit { prompt, .. } = command.as_mut() {
-            *prompt = "changed".into();
-        }
+    if let crate::provider::goal_meter::AllocationDispatch::Voyage { command } = &mut changed
+        && let VoyageCommand::Submit { prompt, .. } = command.as_mut()
+    {
+        *prompt = "changed".into();
     }
     assert!(observer.dispatch(changed).await.is_err());
     run.finish_operator(Ok("parent terminal".into()), false)

@@ -80,7 +80,7 @@ pub(crate) fn accounts_for_process(pid: u32) -> Result<PathBuf> {
     #[cfg(test)]
     {
         let _ = pid;
-        return accounts();
+        accounts()
     }
     #[cfg(not(test))]
     {
