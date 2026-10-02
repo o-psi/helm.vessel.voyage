@@ -172,6 +172,17 @@ fn retire_witnesses(root: &std::path::Path) {
         let Ok(identity) = crate::tools::process::SessionIdentity::capture(pid) else {
             continue;
         };
+        // Capture can race the old leader disappearing after the first stat.
+        // Recheck the original witness after capture; the production identity
+        // then rejects any later replacement before its stable-handle signals.
+        let still_matches = fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| stat.rsplit_once(") ").map(|(_, tail)| tail.to_owned()))
+            .and_then(|tail| tail.split_whitespace().nth(19)?.parse::<u64>().ok())
+            == Some(start);
+        if !still_matches {
+            continue;
+        }
         let mut observed = false;
         let mut failure = None;
         while Instant::now() < deadline {
