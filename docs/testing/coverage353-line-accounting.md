@@ -27,7 +27,9 @@ Merging instantiation addresses within each group gives **28,622** zero line
 units. Union across groups gives **26,519** zero addresses. The file view adds
 27 narrower zero addresses, giving **26,546**. The guard reconstructs **all
 12,285 function groups and all 543 file summaries exactly**, checking each
-file's equation. No residual accounting difference remains. Reconciliation
+file's equation. It also matches every JSON file-segment counter to every LCOV
+`DA` counter exactly, not just covered/zero status. No residual accounting
+difference remains. Reconciliation
 does not fulfill behavioral coverage.
 
 ### Exact witnesses
@@ -76,7 +78,7 @@ Use [the accounting guard](../../packaging/reconcile_coverage_lines.py) only on
 previously audited, matching detailed JSON/LCOV. It invokes neither LLVM nor
 Cargo and changes no source, profile or filter. It supports the observed
 single-file, nonempty, code-region-only Rust mapping, refusing other kinds or
-expansions. Each file must match LLVM summary and LCOV address inventory. Never
+expansions. Each file must match LLVM summary and exact LCOV counters/inventory. Never
 discard a file or accept partial reconstruction to make the equation work.
 
 ```sh
@@ -88,7 +90,7 @@ python3 -I -B packaging/reconcile_coverage_lines.py \
 ```
 
 Existing evidence is never overwritten. Actual accounting run in an independent
-user unit: **exit 0, 5.637 seconds, 277.7 MiB peak, zero swap**; limits 1 GiB,
+user unit: **exit 0, 5.624 seconds, 280.5 MiB peak, zero swap**; limits 1 GiB,
 no swap, 60 seconds. Only exports were read; shared target/live objects were
 untouched. Input SHA256:
 

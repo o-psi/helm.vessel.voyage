@@ -58,6 +58,26 @@ def read_lcov(path):
     return files
 
 
+def file_lines(segments):
+    """LLVM LineCoverageStats applied to the already-exported file segments."""
+    by_line = collections.defaultdict(list)
+    for segment in segments:
+        by_line[segment[0]].append(segment)
+    counts, wrapped = {}, None
+    for line in range(1, max(by_line, default=0)+1):
+        current = by_line[line]
+        starts = [s for s in current if s[3] and s[4] and not s[5]]
+        skipped = bool(current and not current[0][3] and current[0][4])
+        mapped = ((not skipped and (bool(wrapped and wrapped[3]) or bool(starts)))
+                  or any(s[3] and s[4] for s in current))
+        if mapped:
+            counts[line] = max([wrapped[2] if wrapped else 0]+
+                               [s[2] for s in starts])
+        if current:
+            wrapped = current[-1]
+    return counts
+
+
 def reconcile(detail, lcov, source_root):
     require(len(detail['data']) == 1, 'requires one audited export dataset')
     data = detail['data'][0]
@@ -78,6 +98,8 @@ def reconcile(detail, lcov, source_root):
     reports, group_witnesses, address_witnesses = [], [], []
     for source, metadata in files.items():
         display = source.removeprefix(str(source_root).rstrip('/')+'/')
+        require(file_lines(metadata['segments']) == lcov[source],
+                'JSON/LCOV exact file counters differ: '+display)
         mapped = covered = 0
         union = {}
         owners = collections.defaultdict(list)
