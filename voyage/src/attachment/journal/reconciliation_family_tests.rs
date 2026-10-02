@@ -15,12 +15,19 @@ impl Fixture {
         let mut journal = Journal::open(root.path().join("journal")).unwrap();
         let session = Session::new(root.path().into(), "fixture".into());
         journal.create_session(&session).unwrap();
-        let guard = journal.acquire_execution(session.id).unwrap();
+        let mut guard = journal.acquire_execution(session.id).unwrap();
+        journal
+            .bind_notification_incarnation(&mut guard, Uuid::new_v4())
+            .unwrap();
+        // Match ManagedSessionOwner::initialize_process_commands completely:
+        // observation triggers require every producer table to exist first.
         journal.initialize_process_commands(&guard).unwrap();
-        journal.initialize_observations(&guard).unwrap();
+        journal.initialize_decisions(&guard).unwrap();
         journal.initialize_lifecycle(&guard).unwrap();
-        journal.initialize_session_resources(&guard).unwrap();
+        journal.initialize_assignments(&guard).unwrap();
+        journal.initialize_observations(&guard).unwrap();
         journal.initialize_cleanup_progress(&guard).unwrap();
+        journal.initialize_session_resources(&guard).unwrap();
         let request = TurnAdmission {
             budget: None,
             coordination: None,
@@ -34,6 +41,9 @@ impl Fixture {
             prompt: "Owned interrupted tool fixture".into(),
             parts: vec![],
         };
+        journal
+            .initialize_command_bindings(&guard, request.principal_id)
+            .unwrap();
         let run = journal.admit_turn(&guard, &request, 1000).unwrap().run;
         journal.mark_running(&guard, run.id).unwrap();
         journal.register_local_cleanup(&guard, run.id).unwrap();
