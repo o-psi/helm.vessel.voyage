@@ -27,6 +27,13 @@ impl OpenAiProvider {
                 .into(),
         }
     }
+    pub(super) fn with_credential(
+        mut self,
+        credential: super::api_credential::ApiCredential,
+    ) -> Self {
+        self.api_key = credential;
+        self
+    }
     pub(super) fn with_account(
         mut self,
         config: &crate::Config,

@@ -146,7 +146,7 @@ pub(crate) enum AccountCommand {
         label: String,
         #[arg(long)]
         endpoint: String,
-        /// Comma separated: openai-responses,openai-chat,chatgpt-oauth,anthropic.
+        /// Comma separated: openai-responses,openai-chat,chatgpt-oauth,xai-oauth,anthropic.
         #[arg(long, value_delimiter = ',')]
         transports: Vec<String>,
     },
@@ -265,6 +265,7 @@ async fn accounts(command: &AccountCommand) -> Result<()> {
                     "openai-responses" => Ok(Transport::OpenaiResponses),
                     "openai-chat" => Ok(Transport::OpenaiChat),
                     "chatgpt-oauth" => Ok(Transport::ChatgptOauth),
+                    "xai-oauth" => Ok(Transport::XaiOauth),
                     "anthropic" => Ok(Transport::Anthropic),
                     _ => anyhow::bail!("unsupported transport"),
                 })

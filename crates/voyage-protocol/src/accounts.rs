@@ -8,6 +8,7 @@ pub enum Transport {
     OpenaiResponses,
     OpenaiChat,
     ChatgptOauth,
+    XaiOauth,
     Anthropic,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -170,4 +171,17 @@ pub enum AccountUsageRefreshStatus {
     RateLimited,
     Unavailable,
     InvalidResponse,
+}
+
+impl Transport {
+    pub fn is_subscription(self) -> bool {
+        matches!(self, Self::ChatgptOauth | Self::XaiOauth)
+    }
+}
+impl ConnectionDescriptor {
+    pub fn supports_device_sign_in(&self) -> bool {
+        (self.transports == [Transport::ChatgptOauth]
+            && self.endpoint == "https://chatgpt.com/backend-api/codex")
+            || (self.transports == [Transport::XaiOauth] && self.endpoint == "https://api.x.ai/v1")
+    }
 }

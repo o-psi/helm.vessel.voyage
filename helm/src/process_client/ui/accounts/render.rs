@@ -161,10 +161,7 @@ impl App {
                     .catalogue
                     .connections
                     .iter()
-                    .filter(|c| {
-                        c.transports.contains(&Transport::ChatgptOauth)
-                            && c.endpoint == "https://chatgpt.com/backend-api/codex"
-                    })
+                    .filter(|c| c.supports_device_sign_in())
                     .collect();
                 let offset = p
                     .selected
@@ -174,7 +171,7 @@ impl App {
                 {
                     frame.render_widget(
                         Paragraph::new(format!(
-                            "{} {} · ChatGPT subscription",
+                            "{} {} · subscription",
                             if p.selected == index { ">" } else { " " },
                             safe(&c.label)
                         )),
@@ -187,7 +184,7 @@ impl App {
                 }
             }
             Mode::Alias(_) => {
-                frame.render_widget(Paragraph::new(format!("ChatGPT subscription sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
+                frame.render_widget(Paragraph::new(format!("Subscription sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
             }
             Mode::Enrollment => {
                 let private = p.private.as_ref().filter(|v| {
@@ -202,7 +199,7 @@ impl App {
                         text::{Line, Span, Text},
                     };
                     let text = Text::from(vec![
-                        Line::from("Sign in with ChatGPT"),
+                        Line::from("Subscription sign-in"),
                         Line::from(""),
                         Line::from(vec![
                             Span::raw("Device code: "),
@@ -214,7 +211,10 @@ impl App {
                             ),
                         ]),
                         Line::from(""),
-                        Line::from("O opens https://auth.openai.com/codex/device"),
+                        Line::from(format!(
+                            "O opens {}",
+                            v.verification_uri.as_deref().unwrap_or("")
+                        )),
                         Line::from("Enter this code in that browser page."),
                         Line::from(format!(
                             "Code expires in {} seconds. Waiting for approval…",
@@ -247,7 +247,7 @@ R refreshes its status"
                         }
                     };
                     let text = format!(
-                        "Sign in with ChatGPT\n\n{action}\n\n{}\n\nC cancels the attempt · Esc closes this view",
+                        "Subscription sign-in\n\n{action}\n\n{}\n\nC cancels the attempt · Esc closes this view",
                         safe(&p.notice)
                     );
                     // Use the otherwise unused notice rows so recovery details remain visible.

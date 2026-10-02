@@ -160,6 +160,7 @@ fn selectable(a: &AccountDescriptor) -> bool {
 fn provider(t: Transport) -> &'static str {
     match t {
         Transport::ChatgptOauth => "chatgpt-oauth",
+        Transport::XaiOauth => "xai-oauth",
         Transport::OpenaiResponses => "openai-responses",
         Transport::OpenaiChat => "openai-chat",
         Transport::Anthropic => "anthropic",
@@ -176,7 +177,10 @@ fn active_material(p: &PrivateEnrollmentStatus) -> bool {
         p.status.state,
         EnrollmentState::Pending | EnrollmentState::Exchanging
     ) && p.status.expires_at > now()
-        && p.verification_uri.as_deref() == Some("https://auth.openai.com/codex/device")
+        && matches!(
+            p.verification_uri.as_deref(),
+            Some("https://auth.openai.com/codex/device" | "https://accounts.x.ai/oauth2/device")
+        )
         && p.user_code.as_ref().is_some_and(|c| {
             !c.is_empty()
                 && c.len() <= 64
@@ -185,17 +189,24 @@ fn active_material(p: &PrivateEnrollmentStatus) -> bool {
 }
 // Only the explicit O action calls this fixed provider URL. Test substitution is
 // at the OS effect boundary; no network/provider or real browser is used by fixtures.
-fn open_browser(pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
+fn open_browser(url: &str, pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
     use std::sync::atomic::Ordering;
     ensure!(
         !pending.swap(true, Ordering::AcqRel),
         "Browser launcher is still finishing; use the displayed URL manually"
     );
-    const URL: &str = "https://auth.openai.com/codex/device";
+    ensure!(
+        matches!(
+            url,
+            "https://auth.openai.com/codex/device" | "https://accounts.x.ai/oauth2/device"
+        ),
+        "Unsupported provider verification URL"
+    );
+    let url = url.to_owned();
     #[cfg(test)]
     {
         pending.store(false, Ordering::Release);
-        super::account_test_support::browser(URL)
+        super::account_test_support::browser(&url)
     }
     #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
     {
@@ -205,7 +216,7 @@ fn open_browser(pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Resu
         let mut cmd = tokio::process::Command::new("open");
         let mut child = cmd
             .kill_on_drop(true)
-            .arg(URL)
+            .arg(&url)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -311,18 +322,22 @@ impl Picker {
                                 ""
                             }
                         ),
-                        selectable(a).then_some(AccountBinding {
-                            account_id: a.id,
-                            connection_id: c.id,
-                            identity_generation: a.identity_generation,
-                            connection_revision: c.revision,
-                            transport: t,
-                        }),
+                        (selectable(a)
+                            || (t == Transport::XaiOauth
+                                && a.state == AccountState::Ready
+                                && a.availability == CredentialAvailability::Expired))
+                            .then_some(AccountBinding {
+                                account_id: a.id,
+                                connection_id: c.id,
+                                identity_generation: a.identity_generation,
+                                connection_revision: c.revision,
+                                transport: t,
+                            }),
                     ));
                 }
             }
         }
-        items.push(("+ ChatGPT — sign in with your subscription".into(), None));
+        items.push(("+ Subscription account — ChatGPT or SuperGrok".into(), None));
         items.push(("+ OpenAI / Anthropic — use an API key…".into(), None));
         items
     }
@@ -1100,7 +1115,7 @@ impl App {
         p.outcome = Some(EnrollmentState::Starting);
         p.retry = Some((connection, p.query.clone()));
         p.restart = false;
-        p.notice = "Requesting a sign-in code from ChatGPT…".into();
+        p.notice = "Requesting a subscription sign-in code…".into();
         self.status.clear();
         p.mode = Mode::Enrollment;
         p.query.clear();
@@ -1354,10 +1369,7 @@ impl App {
                 .catalogue
                 .connections
                 .iter()
-                .filter(|c| {
-                    c.transports.contains(&Transport::ChatgptOauth)
-                        && c.endpoint == "https://chatgpt.com/backend-api/codex"
-                })
+                .filter(|c| c.supports_device_sign_in())
                 .nth(index)
             {
                 p.mode = Mode::Alias(c.id);
@@ -1373,10 +1385,7 @@ impl App {
                         .catalogue
                         .connections
                         .iter()
-                        .filter(|c| {
-                            c.transports.contains(&Transport::ChatgptOauth)
-                                && c.endpoint == "https://chatgpt.com/backend-api/codex"
-                        })
+                        .filter(|c| c.supports_device_sign_in())
                         .collect();
                     match k.code {
                         KeyCode::Up => p.selected = p.selected.saturating_sub(1),
@@ -1387,7 +1396,7 @@ impl App {
                             if let Some(c) = connections.get(p.selected) {
                                 p.mode = Mode::Alias(c.id);
                                 p.query.clear();
-                                p.notice = "Review host and ChatGPT subscription provider. Type a new safe alias; Enter explicitly starts device sign-in. No browser opens automatically.".into();
+                                p.notice = "Review host and subscription provider. Type a new safe alias; Enter explicitly starts device sign-in. No browser opens automatically.".into();
                             }
                         }
                         _ => (),
@@ -1411,7 +1420,13 @@ impl App {
                             self.cancel_enrollment()?;
                         }
                         KeyCode::Char('o') if p.private.as_ref().is_some_and(active_material) => {
-                            open_browser(&self.accounts.browser_pending)?;
+                            open_browser(
+                                p.private
+                                    .as_ref()
+                                    .and_then(|v| v.verification_uri.as_deref())
+                                    .ok_or_else(|| anyhow::anyhow!("No active sign-in URL"))?,
+                                &self.accounts.browser_pending,
+                            )?;
                         }
                         _ => (),
                     }
@@ -1506,18 +1521,14 @@ impl App {
                     p.catalogue
                         .connections
                         .iter()
-                        .any(|c| c.transports.contains(&Transport::ChatgptOauth)
-                            && c.endpoint == "https://chatgpt.com/backend-api/codex"),
+                        .any(|c| c.supports_device_sign_in()),
                     "No authorized native device connection. Use the private execution-host terminal alternative"
                 );
                 let connections: Vec<_> = p
                     .catalogue
                     .connections
                     .iter()
-                    .filter(|c| {
-                        c.transports.contains(&Transport::ChatgptOauth)
-                            && c.endpoint == "https://chatgpt.com/backend-api/codex"
-                    })
+                    .filter(|c| c.supports_device_sign_in())
                     .collect();
                 p.mode = if connections.len() == 1 {
                     Mode::Alias(connections[0].id)
@@ -1526,7 +1537,7 @@ impl App {
                 };
                 p.selected = 0;
                 p.query.clear();
-                p.notice = "Name this ChatGPT account, then Enter starts private sign-in on the displayed host. Subscription limits/entitlement depend on your account. Esc back.".into();
+                p.notice = "Name this subscription account, then Enter starts private sign-in on the displayed host. Subscription limits/entitlement depend on your account. Esc back.".into();
             } else if index == choices.len().saturating_sub(1) {
                 p.mode = Mode::ApiSetup;
                 p.notice = "Enter refreshes accounts after private setup · Esc back".into();

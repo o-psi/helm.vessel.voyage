@@ -54,6 +54,7 @@ fn settings(profile: &ExecutionProfile) -> Settings {
         account: Some(profile.account.clone()),
         provider: match profile.account.transport {
             voyage_protocol::accounts::Transport::ChatgptOauth => "chatgpt-oauth",
+            voyage_protocol::accounts::Transport::XaiOauth => "xai-oauth",
             voyage_protocol::accounts::Transport::OpenaiResponses => "openai-responses",
             voyage_protocol::accounts::Transport::OpenaiChat => "openai-chat",
             voyage_protocol::accounts::Transport::Anthropic => "anthropic",

@@ -16,6 +16,8 @@ pub use inference::{
 pub(crate) mod chatgpt_oauth;
 pub(crate) mod discovery;
 mod openai;
+pub(crate) mod xai_oauth;
+pub use xai_oauth::XaiOauthProvider;
 mod openai_responses;
 mod redaction;
 mod rejection;
@@ -582,6 +584,17 @@ fn native_from_config(
                 ChatGptOauthProvider::from_store(store, endpoints).with_redactor(redactor),
             ))
         }
+        ProviderKind::XaiOauth => {
+            let binding = config.account.as_ref().ok_or_else(|| {
+                ProviderError::Authentication("Select a named SuperGrok account".into())
+            })?;
+            crate::accounts::Registry::default_host()
+                .and_then(|registry| registry.xai_provider(binding))
+                .map(|provider| {
+                    Box::new(provider.with_context(config, redactor)) as Box<dyn Provider>
+                })
+                .map_err(|_| ProviderError::Authentication("SuperGrok account unavailable".into()))
+        }
         ProviderKind::Anthropic => Ok(Box::new(
             AnthropicProvider::new(
                 config
@@ -598,9 +611,10 @@ fn native_from_config(
 /// public provider constructors do not require a validated Config.
 pub(crate) fn validate_config_endpoints(config: &Config) -> Result<(), ProviderError> {
     let endpoint = match config.provider {
-        ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses | ProviderKind::Anthropic => {
-            config.base_url.as_deref()
-        }
+        ProviderKind::OpenaiChat
+        | ProviderKind::OpenaiResponses
+        | ProviderKind::Anthropic
+        | ProviderKind::XaiOauth => config.base_url.as_deref(),
         ProviderKind::ChatGptOauth => config.chatgpt_base_url.as_deref(),
     };
     if let Some(endpoint) = endpoint {

@@ -308,6 +308,7 @@ pub(super) fn device_service(root: PathBuf) -> Result<DeviceService> {
         Registry::default_host()?
     };
     registry.ensure_chatgpt_connection()?;
+    registry.ensure_xai_connection()?;
     Ok(DeviceService::new(
         registry,
         Arc::new(move |actor, connection| enrollment_authorized(&root, actor, connection)),
@@ -460,6 +461,42 @@ impl Supervisor {
                 scope.use_account(&self.directory, &workspace, &account)?;
                 let registry = Registry::default_host()?;
                 let mut observation = registry.usage_cached(&account)?;
+                if refresh && account.transport == Transport::XaiOauth {
+                    let authority = Arc::new(UsageAuthority {
+                        scope: scope.clone(),
+                        root: self.directory.clone(),
+                        workspace: workspace.clone(),
+                        account: account.clone(),
+                        capability_revision: observation.capability_revision,
+                    });
+                    let mut config = voyage_runtime::Config::load(None)?;
+                    config.select_account(account.clone())?;
+                    let resolved = voyage_runtime::runtime_policy::RuntimePolicy::resolve(
+                        &config, &workspace,
+                    )?;
+                    resolved.policy().check_current()?;
+                    let provider = registry
+                        .xai_provider(&account)?
+                        .with_authority(Some(authority.clone()));
+                    observation.attempted_at = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs() as i64,
+                    );
+                    observation.refresh_status = match tokio::time::timeout(
+                        std::time::Duration::from_secs(30),
+                        provider.refresh_sign_in(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => AccountUsageRefreshStatus::Unsupported,
+                        Ok(Err(error)) if error.category() == "authentication" => {
+                            AccountUsageRefreshStatus::SignInRequired
+                        }
+                        _ => AccountUsageRefreshStatus::Unavailable,
+                    };
+                    registry.publish_usage(observation.clone())?;
+                }
                 if refresh && account.transport == Transport::ChatgptOauth {
                     // One bounded refresh across the host; opening a picker never queues polls.
                     static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

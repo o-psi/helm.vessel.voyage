@@ -8,6 +8,7 @@ pub(crate) fn print_config(config: &Config) -> Result<()> {
     let access = match profile.access {
         helm::config::ProviderAccess::NativePublicApi => "native_public_api",
         helm::config::ProviderAccess::NativeChatgptOauth => "native_chatgpt_oauth",
+        helm::config::ProviderAccess::NativeXaiOauth => "native_xai_oauth",
     };
     println!("# provider_access = {access}");
     println!("# credential_requirement = {}", profile.credential);
@@ -51,9 +52,22 @@ pub(crate) async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Resul
     } else {
         None
     };
+    let xai_present = config.provider == helm::ProviderKind::XaiOauth
+        && config.account.as_ref().is_some_and(|binding| {
+            voyage_runtime::accounts::Registry::default_host()
+                .and_then(|r| r.validate_binding(binding))
+                .is_ok_and(|a| {
+                    a.state == voyage_protocol::accounts::AccountState::Ready
+                        && matches!(
+                            a.availability,
+                            voyage_protocol::accounts::CredentialAvailability::Available
+                                | voyage_protocol::accounts::CredentialAvailability::Expired
+                        )
+                })
+        });
     let provider_ready = match &oauth_status {
         Some(status) => status.authenticated && status.refreshable,
-        None => !config.api_key_required || config.api_key().is_ok(),
+        None => xai_present || !config.api_key_required || config.api_key().is_ok(),
     };
     let profile = config.provider_profile();
     let sandbox = helm::sandbox::diagnostics(config, &workspace);
@@ -67,7 +81,7 @@ pub(crate) async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Resul
         "provider": profile,
         "endpoint_diagnostics": helm::local_provider::diagnostics(config),
         "native_chatgpt_oauth": oauth_status.as_ref().map(token_status_json),
-        "provider_credential_present": if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else if !config.api_key_required { serde_json::Value::Null } else { serde_json::Value::Bool(config.api_key().is_ok()) },
+        "provider_credential_present": if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else if config.provider == helm::ProviderKind::XaiOauth { serde_json::Value::Bool(xai_present) } else if !config.api_key_required { serde_json::Value::Null } else { serde_json::Value::Bool(config.api_key().is_ok()) },
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "access": config.access_mode(),
         "sandbox": sandbox,

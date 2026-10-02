@@ -737,3 +737,11 @@ preserves unrelated work and changes no measured Cargo workspace source or tests
 
 These are synthetic local Linux workflows, not paid-provider semantic acceptance
 or native macOS/Windows certification. No human testing gate was used.
+
+### SuperGrok subscription provider
+
+`xai-oauth` requires a named `xai_oauth` account created through private device
+sign-in. Select it through Account/profiles rather than entering a token in TOML.
+The executing-host account binds `https://api.x.ai/v1`; overriding the endpoint
+cannot redirect subscription credentials. API-key accounts remain separate.
+See [SuperGrok access](provider-accounts.md#supergrok-subscription-access).

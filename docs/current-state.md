@@ -1238,3 +1238,12 @@ error counts. Fresh references expire after document/control/DOM/property change
 or sixty seconds; private input remains fenced. See [host-browser](host-browser.md#agent-inspection-and-interaction-379)
 for limits and [quality](quality.md) for offline verification commands. Arbitrary
 site fidelity and native macOS/Windows operation remain separate qualification.
+
+## Native SuperGrok accounts
+
+Helm TUI and production Helm Web expose xAI device-code enrollment alongside
+ChatGPT. Vessel retains enrollment authority and private receipts; Voyage resolves
+named `xai_oauth` credentials for each native HTTP dispatch and owns inference,
+tools and conversation. The direct xAI API uses subscription OAuth with fenced
+refresh, exact endpoint binding and no API billing fallback. Provider denial, quota
+and unknown model availability remain explicit. See [named accounts](provider-accounts.md#supergrok-subscription-access).

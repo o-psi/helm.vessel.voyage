@@ -16,6 +16,8 @@ pub struct DeviceService {
     authorize: Authorize,
     #[cfg(test)]
     test_endpoints: Option<OAuthEndpoints>,
+    #[cfg(test)]
+    xai_fixture: Option<crate::provider::xai_oauth::OAuth>,
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Record {
@@ -42,6 +44,8 @@ impl DeviceService {
             authorize,
             #[cfg(test)]
             test_endpoints: None,
+            #[cfg(test)]
+            xai_fixture: None,
         }
     }
     fn authorized(&self, actor: &EnrollmentActor, connection: Uuid) -> Result<()> {
@@ -64,6 +68,13 @@ impl DeviceService {
             ChatGptTokenStore::new(PathBuf::new()),
             OAuthEndpoints::default(),
         )
+    }
+    fn xai(&self) -> crate::provider::xai_oauth::OAuth {
+        #[cfg(test)]
+        if let Some(oauth) = &self.xai_fixture {
+            return oauth.clone();
+        }
+        crate::provider::xai_oauth::OAuth::default()
     }
     /// Exact observation/negative-admission fence. A late start under this
     /// envelope sees the retained terminal record and cannot contact the provider.
@@ -96,9 +107,9 @@ impl DeviceService {
                 "retained enrollment capacity reached; owner recovery required"
             );
             ensure!(
-                db.connections.iter().any(|c| c.id == request.connection_id
-                    && c.transports == [Transport::ChatgptOauth]
-                    && c.endpoint == "https://chatgpt.com/backend-api/codex"),
+                db.connections
+                    .iter()
+                    .any(|c| c.id == request.connection_id && c.supports_device_sign_in()),
                 "unsupported enrollment connection"
             );
             let status = EnrollmentStatus {
@@ -160,9 +171,8 @@ impl DeviceService {
                 .find(|c| c.id == request.connection_id)
                 .ok_or_else(|| anyhow::anyhow!("unknown connection"))?;
             ensure!(
-                c.transports == [Transport::ChatgptOauth]
-                    && c.endpoint == "https://chatgpt.com/backend-api/codex",
-                "device sign-in supports only the native ChatGPT connection"
+                c.supports_device_sign_in(),
+                "device sign-in requires a native subscription connection"
             );
             ensure!(
                 db.enrollments.len() < 64,
@@ -228,8 +238,16 @@ impl DeviceService {
             });
         }
         // Starting is durable before the first network effect. Lost responses are never replayed.
-        let result =
-            tokio::time::timeout(Duration::from_secs(30), self.provider().begin_device()).await;
+        let xai =
+            self.registry.connection(request.connection_id)?.transports == [Transport::XaiOauth];
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            if xai {
+                self.xai().begin_device().await
+            } else {
+                self.provider().begin_device().await
+            }
+        })
+        .await;
         self.registry.transaction(|db| {
             let r = record(db, request.enrollment_id, &request.actor)?;
             if r.status.state != EnrollmentState::Starting {
@@ -239,7 +257,12 @@ impl DeviceService {
                 r.status.state = EnrollmentState::Cancelled;
             } else if let Ok(Ok(device)) = &result {
                 // The provider website, not arbitrary remote content, is the only allowed URL.
-                if device.verification_uri != "https://auth.openai.com/codex/device"
+                if device.verification_uri
+                    != if xai {
+                        crate::provider::xai_oauth::VERIFICATION_URI
+                    } else {
+                        "https://auth.openai.com/codex/device"
+                    }
                     || device.user_code.len() > 64
                     || device.user_code.is_empty()
                     || !device
@@ -389,8 +412,15 @@ impl DeviceService {
         let Some(device) = device else {
             return Ok(status);
         };
+        let connection_id = self
+            .registry
+            .transaction(|db| Ok(record(db, id, actor)?.request.connection_id))?;
+        let xai = self.registry.connection(connection_id)?.transports == [Transport::XaiOauth];
         let mut phase = EnrollmentPhase::Poll;
         let result = tokio::time::timeout(Duration::from_secs(45), async {
+            if xai {
+                return self.xai().poll(&device).await.map(Credential::XaiOAuth);
+            }
             let provider = self.provider();
             let grant = provider.poll_device_grant(&device).await?;
             // Poll and exchange are separate external effects. A late poll result must
@@ -423,7 +453,10 @@ impl DeviceService {
                 ));
             }
             phase = EnrollmentPhase::Exchange;
-            provider.exchange_device_grant(grant).await
+            provider
+                .exchange_device_grant(grant)
+                .await
+                .map(Credential::OAuth)
         })
         .await;
         self.registry.transaction(|db| {
@@ -452,7 +485,7 @@ impl DeviceService {
                         request.connection_id,
                         request.alias,
                         request.label,
-                        Credential::OAuth(tokens),
+                        tokens,
                         Some(id),
                     );
                     let r = record(db, id, actor)?;
@@ -614,7 +647,7 @@ impl DeviceService {
     }
 
     // Advance only retained scheduling metadata: actual HTTP parsing/exchange/publication runs.
-    pub(super) fn fixture_due(&self, id: Uuid, expire_now: bool) -> Result<u64> {
+    pub(crate) fn fixture_due(&self, id: Uuid, expire_now: bool) -> Result<u64> {
         self.registry.transaction(|db| {
             let r = db
                 .enrollments
@@ -627,5 +660,13 @@ impl DeviceService {
             }
             Ok(r.device.as_ref().map(|d| d.interval).unwrap_or(0))
         })
+    }
+}
+
+#[cfg(test)]
+impl DeviceService {
+    pub(crate) fn xai_loopback_fixture(mut self, address: std::net::SocketAddr) -> Self {
+        self.xai_fixture = Some(crate::provider::xai_oauth::OAuth::loopback(address));
+        self
     }
 }

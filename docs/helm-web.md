@@ -37,7 +37,7 @@ For a screen-by-screen control map, see the
 
 New voyage settings choose Vessel, workspace and profile; **Create voyage** creates
 an independent voyage without inference. Sending a message starts a run. Profile
-management, account enrollment, reasoning/service choices, attachments, typed
+management, ChatGPT/SuperGrok device enrollment, reasoning/service choices, attachments, typed
 approval/question dialogs, advanced voyage actions and the shared browser remain
 available. The composer previews PNG/JPEG/WebP pictures and can resize large
 phone photos to JPEG before upload. HEIC/HEIF works only in browsers able to decode
@@ -94,7 +94,7 @@ uncertain change offers a read-only Check status recovery action. Header/back na
 current screen scrolls. Unsaved profile edits survive picker navigation and Vessel connection renewal.
 A changed catalogue revision requires review before saving; reasoning
 and service tier have their own step. Profile deletion requires confirmation.
-Expired ChatGPT accounts offer an explicit exact-binding sign-in refresh followed
+Expired ChatGPT and SuperGrok accounts offer an explicit exact-binding sign-in refresh followed
 by catalogue reload; an uncertain refresh is not replayed, and a mismatched reply
 requires explicit reload before use. Account usage is loaded only on request.
 

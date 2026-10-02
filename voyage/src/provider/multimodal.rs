@@ -140,7 +140,10 @@ fn parts(message: &Message) -> Result<std::borrow::Cow<'_, [ContentPart]>, Provi
 }
 fn builtin_images(provider: &ProviderKind, model: &str) -> bool {
     match provider {
-        ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses | ProviderKind::ChatGptOauth => {
+        ProviderKind::OpenaiChat
+        | ProviderKind::OpenaiResponses
+        | ProviderKind::ChatGptOauth
+        | ProviderKind::XaiOauth => {
             matches!(
                 model,
                 "gpt-5"

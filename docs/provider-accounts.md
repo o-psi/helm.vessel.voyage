@@ -37,6 +37,7 @@ reference, including alternative providers and existing installations.
 
 | Goal | Use | Check before the first task |
 | --- | --- | --- |
+| New SuperGrok subscription account | [Helm private sign-in](#device-sign-in-in-helm) | xAI device grant, named account, explicit host default; model access depends on the plan |
 | New ChatGPT subscription/device-flow account | [Helm private sign-in](#device-sign-in-in-helm) | Named account, explicit host default, model availability; experimental transport, not API credit |
 | OpenAI or Anthropic API key | [Executing-host private API enrollment](#execution-host-api-enrollment) | Endpoint/transport, API billing and explicit default; a chat subscription is not API credit |
 | Existing legacy native OAuth cache | [Legacy migration](#legacy-migration) | Stop old credential writers, migrate explicitly, select a named account and set a default |
@@ -51,7 +52,7 @@ human terminal on the executing host.
 Helm's **Account** composer control and `/account` select an executing-host account.
 Use different aliases, such as `personal` and `work`, for two accounts with the same
 provider. Aliases are display names, not provider identity verification. OpenAI API
-billing, ChatGPT subscription access, and Anthropic API billing remain distinct.
+billing, ChatGPT and SuperGrok subscription access, and Anthropic API billing remain distinct.
 There is no quota-driven rotation and no external Codex bridge.
 
 ## Select and switch
@@ -129,8 +130,9 @@ the read-only upstream endpoint is not a live compatibility guarantee.
 
 ## Device sign-in in Helm
 
-In Account choose **+ ChatGPT — sign in with your subscription**. Select the
-native ChatGPT connection if more than one is available, then enter a new safe alias.
+In Account choose **+ Subscription account — ChatGPT or SuperGrok**. Select the
+native provider connection, then enter a new safe alias. Helm Web offers
+**Add subscription account** and a provider selector.
 Adding an existing alias fails; it does not overwrite a working account.
 **+ OpenAI / Anthropic — use an API key…** opens private host CLI instructions,
 not a callback relay or API-key form in chat. Both choices remain visible with no
@@ -183,6 +185,36 @@ is unavailable, or reloads the account view when the route is available again.
 then reopen Accounts to inspect any retained enrollment. These actions clear private
 view material and never repeat the sign-in mutation. Account action errors appear
 inside the picker rather than behind it in the main status line.
+
+## SuperGrok subscription access
+
+Sign-in uses xAI's public Grok CLI client and RFC 8628 device grant, following the
+[xAI-endorsed OpenCode integration](https://x.ai/news/grok-opencode).
+The private view displays `https://accounts.x.ai/oauth2/device`; approve the code
+in a browser on any machine. A remote Vessel needs no callback listener or SSH
+port forwarding. Access and refresh tokens remain in that Vessel's private
+registry. Enrollment does not select an account or change the host default.
+
+The native `xai-oauth` provider sends bearer-authenticated Chat Completions and
+model discovery to the fixed `https://api.x.ai/v1` endpoint. Tokens cannot be
+redirected to a custom gateway. Available models come from the authenticated
+catalog; a successful login or catalog entry does not prove inference entitlement.
+Voyage owns the agent, tools and conversation; no Grok CLI executor is started.
+xAI rejects unsigned 64-bit numeric maxima in model tool schemas. The adapter
+keeps those exact limits as descriptions in its wire copy; the original tool
+contracts and runtime validation remain unchanged.
+Generic service-tier overrides are unsupported. Reasoning effort uses xAI's
+`none`, `low`, `medium`, `high`, or `xhigh` wire values, with model support unknown
+unless advertised. Image input remains gated by authenticated model metadata.
+
+Refresh rotation is fenced across processes and retains the original provider
+identity. Interrupted/uncertain refresh is not replayed. Explicit Web sign-in
+refresh (or TUI F5 followed by R to reload accounts) can renew expired credentials;
+usage percentages remain unsupported rather than being shown as zero. An account
+that needs a fresh login can be signed in under a new alias and explicitly selected;
+logout/removal retires the old binding. ChatGPT's token-file reauthentication command
+is specific to ChatGPT. Subscription denial or quota exhaustion never selects
+an API-key account automatically. xAI still controls plan access and limits.
 
 ## Execution-host API enrollment
 
