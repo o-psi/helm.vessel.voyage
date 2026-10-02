@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T11:01:31.540336+00:00",
-  "source_commit": "1d49636e47bd42a7aef3dc4c54741209f5790335",
+  "measured_at_utc": "2026-10-02T13:22:11.795614+00:00",
+  "source_commit": "e10603830e17d3428f8154140ff0b983f20fd337",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2860,
+    "passed": 2936,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 134975,
-      "covered": 107223,
-      "percent": 79.43915539914799
+      "count": 135727,
+      "covered": 108676,
+      "percent": 80.06955137887081
     },
     "functions": {
-      "count": 12300,
-      "covered": 9710,
-      "percent": 78.9430894308943
+      "count": 12366,
+      "covered": 9821,
+      "percent": 79.41937570758532
     },
     "regions": {
-      "count": 223661,
-      "covered": 169252,
-      "notcovered": 54409,
-      "percent": 75.67345223351411
+      "count": 224912,
+      "covered": 171409,
+      "notcovered": 53503,
+      "percent": 76.21158497545707
     }
   },
-  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-observation-saved-gateway-ready/html -j1; executed once inside bounded systemd user unit voyage-v103-observation-saved-gateway-ready after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-observation-saved-gateway-ready/summary-default.json -v; llvm-profdata merge -sparse with499 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports with original exclusions; exact arguments retained in ignored corrected-command.json",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-courier-extension-production/html -j1; inside bounded systemd user unit voyage-v103-courier-extension-production after formatting, strict Clippy and instrumented entrypoint builds; MemoryMax10G,MemorySwapMax0,UMask0077,RuntimeMax2400,RemainAfterExit",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-courier-extension-production/summary-default.json -v; llvm-profdata merge -sparse with511 own profiles; audited explicit18-object summary/detail/HTML/LCOV exports using unchanged standard exclusions; exact arguments retained in ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,17 +40,17 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean1d49636 source:2860 parent-workspace tests passed, zero failed, eight ignored across15 Cargo targets, including56 new parents:18 observation,10 saved-owner,8 steering and20 ordinary public gateway integration. Nested child summaries separately retained and excluded. Formatting and workspace all-target/all-feature strict Clippy passed.",
-    "Exactly18 distinct current objects:15 executed test targets plus3 instrumented real entrypoints. New automatic integration target is retained, not excluded.499 own profiles merged; all235 foreign profiles byte-identical;542 prior/current workspace source mappings plus one retained standard-library mapping. Summary/detail/HTML agree and18 objects hash-archived; mixed default report retained and rejected.",
-    "Compared with beb0e01:+606 covered lines,+24 measured lines,+0.434924 percentage points.27752 aggregate gaps remain;100% reachable-production objective is unmet. Full denominator/exclusions unchanged.",
-    "Observation production repairs validate actual returned owner and inner Snapshot SID before cursor retention, fairly rotate only filtered fallback groups larger than32, and validate all known session fields/exact delta offset before mutation. Real Peer/App cases assert successful-ACK cursor retention, false-ACK recovery, all33-ID fairness/no healthy-small or modern churn, canonical/draft/frozen-receipt preservation and owned fixture stream/task/socket retirement.",
-    "Saved-owner cases use whole production observation against actual private SQLite/actor/registration/config and startup/execution leases, preserving canonical rows/private state while redacting public output. stopped.json is synthetic protocol evidence, not process-death proof. Steering failures compare the complete private table/typed-column graph including goals/events/observations/receipts/sqlite_sequence/BLOBs; FIFO/image/expiry/capacity/collision/reopen use actual journal transactions. No executor/provider/native launch from these families.",
-    "Ordinary public gateway cases execute current instrumented Vessel CLI/main router/local supervisor and scripted readonly Runtime IPC. Pair exact retry/conflict/revoke, HTTP correlation/body/auth/rights, SSE owner/cursor/gap/revocation/expiry/current-right loss/32-session/64-body bounds and positive owned process/socket/permit retirement pass. No production grants, real Voyage ownership, browser/TLS or provider claims.",
-    "Env-cleared owned CLI children preserve only controlled parent LLVM_PROFILE_FILE plus fixed private fixture environment, so actual current entrypoint profiles are measured without human/provider credentials. Failure Drop first reaps owned exited children; live signals retain exact PID/start/UID/executable/inode checks. Panic cleanup is best effort, not successful cleanup evidence.",
-    "Initial bd4f7e7 gate failed Clippy before tests on two collapsible guards;95b6159 syntax-only fix preserves atomic validation without suppression. Actual95 measurement2859/1/8 failed one generic observer wait; original stage unrecorded. Source proved recovery fixture revision17 contradicted accepted revision18. Corrected fixture uses current revision18/same name with unchanged deadlines, exact Pending/draft/history/cursor/no-effect assertions and named waits. Allfailed evidence retained.",
-    "Passing measurement324.614136s,5597863936B peak,zero swap,j1. Export23.054773s,9831923712B peak; accounting6.177494s,307675136B peak,zero swap. Actual terminal result/exit0 retained with RemainAfterExit. Prior own raw profiles archived without deleting caches or foreign profiles.",
-    "Full line accounting reconstructs543files/12300function groups and every JSON/LCOV counter:27752aggregate gaps versus25629unique zero addresses; difference2123=116instantiation maxima/union+2034overlapping groups-27file shadowing. This is counting evidence, not a complete reachability classification.",
-    "Historical BEB reachability audit samples145 function witnesses across19priority files with exact guards/callers/authority; it corrects broad ordinary/root labels without treating deferred or untested as unreachable. PositiveRoot/system/adoption/native macOS/Windows/TaxAxis scopes remain deferred1.1, not implemented or removed from coverage here.",
-    "Previous qualified4c hosted artifact/#401 closure and CT106613 installation/browser fixtures remain separate source/version evidence. Actual paired browser/sites/privacy/renewal/cost/cleanup is pending legitimate Cloudflare management access; shared dashboard signed out. Outer native preparation exit after autoGC unavailable; actual child receipts/source completion/browser-root retirement/final cgroup observation remain limited. Stable1.0.3 and milestone remain unpublished/open until all criteria are met."
+    "Clean e106038 source:2936 parent-workspace tests passed, zero failed, eight ignored across15 Cargo targets.73 new semantic parents comprise18 Helm courier,21 Supervisor status/context,18 extension/UserFile and16 ordinary assessment cases;3 new inert child entries also count in default libtest totals. Nested self-child summaries are separately retained and excluded from parent totals. Formatting and workspace all-target/all-feature strict Clippy passed.",
+    "Exactly18 distinct current objects comprise15 test targets plus3 instrumented real entrypoints.511 own profiles merged;235 foreign profiles byte-identical. All542 prior workspace mappings retained plus new production transfer/status.rs =543 workspace files, with one retained standard-library mapping. Summary/detail/HTML agree and18 objects hash-archived.",
+    "Compared with1d49636: +1453 covered lines,+752 measured production lines,+0.630396 percentage points.27051 aggregate gaps remain.100% reachable-production objective remains unmet; no production source removed and standard exclusions unchanged.",
+    "Initial pre-test gates found an equivalent error-propagation Clippy issue, an unavailable tempfile test dependency and an inventory type-complexity lint. Narrow corrections use question-mark propagation, the existing installer private fixture and a type alias; no new dependency, production behavior or oracle relaxation.",
+    "Full43901f9 tests2936/0/8 passed, but its report was rejected because two new test-only filenames lacked the standard _tests.rs suffix and added930 mapped test lines/920 covered. e106038 renames only those test sources and their path references; the complete required measurement was repeated, with no manual subtraction or custom exclusions. Rejected report/profiles/objects remain retained.",
+    "Courier tests verify journal-before-effect identities, safe leaf admission, bounded decoded chunks and acknowledgements, Receiving/ActivationPending, no speculative activation probe or effects after uncertainty, owner-local capability-gated readonly status and exact historical completion. Legacy cached unavailable results require status proof. Opaque client signatures are transport fixtures; backend cases use actual signatures and private SQLite metadata.",
+    "Receiving requires a retained catalogue namespace captured before preparation and consistent absence of admission/receipt/registration/intent. Existing-only identity/catalogue reads cannot mint or migrate state; missing/replaced/corrupt namespace refuses. Pinned startup captures context before blocking calls, preserves protected-root ancestry and512MiB ceiling, and checks namespace before launch. Unanchored historical preparation remains Pending unless exact historical receipt proves Complete; no fabricated absence proof or live-owner claim.",
+    "Backend21 include five context/namespace helper-boundary cases and exact whole private graph no-write assertions. Historical receipt seeds and fixed missing executable are explicit fixtures; no live process race/native ownership proof is inferred. Extension/UserFile18 use actual registration/policy/filesystem behavior without launching structural ELF, provider or privileged Broker. Ordinary assessment16 exercise NSS/proc/statvfs/bounded SHOW-only diagnostics; ready_to_install staysfalse and no Root installation/adoption is qualified.",
+    "Passing gate536.881231s,10737418240B peak,zero swap,j1. Export39.210859s,9209348096B peak; accounting13.849697s,336936960B peak,zero swap. All terminal exits0 retained with RemainAfterExit. Prior own profiles and caches preserved.",
+    "Line accounting reconstructs544files/12366function groups and every JSON/LCOV counter:27051aggregate gaps versus24938unique zero addresses; difference2113=125instantiation maxima/union+2015overlap-27shadowing. These are counting results, not complete reachability classification.",
+    "Latest previously verified publication is C3 with hosted36999095928. New source, compact measurement and outcome docs still require normal publication and hosted artifact qualification. Agent reported application network permission revoked; publication is pending access clarification, no bypass attempted.",
+    "Actual CT106613 browser fixtures/media remain prepared but paired browser/sites/privacy/TLS/renewal/cost/cleanup pending legitimate Cloudflare management access. Native partial observations are not relabelled. Deferred1.1Root/system/adoption/MacWindows/TaxAxis scope and fullcoverage denominator remain intact. Stable1.0.3 and milestone remain unpublished/open."
   ]
 }

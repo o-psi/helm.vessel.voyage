@@ -1,7 +1,37 @@
 # Ordinary signed courier failure and recovery cohort (#353)
 
-Source checkpoint only: the 18 Helm whole-loop and 21 actual Supervisor parents
-are uncompiled/unrun. This independent work starts from
+## Verified local result
+
+Clean measured source `e10603830e17d3428f8154140ff0b983f20fd337` passed
+formatting, strict workspace Clippy and the full workspace run: **2936 passed,
+0 failed, 8 ignored** across 15 Cargo targets. The combined cohort has 73 new
+semantic parents (18 Helm courier, 21 Supervisor status/context, 18 extension/
+UserFile, 16 ordinary assessment), plus three inert default child entries.
+Nested child summaries are retained separately and are not added to parent totals.
+
+The audited 18 current objects retain all prior production mappings. Corrected
+production coverage is **108676/135727 lines (80.069551%)**, +1453 covered lines
+and +752 measured lines versus `1d49636`. All 235 foreign profiles are unchanged;
+511 current profiles, summary/detail/HTML and full JSON/LCOV accounting agree.
+The full reachable-production target remains unmet.
+
+The earlier `43901f9` run also passed 2936/0/8, but its report counted two new
+test-only files whose names lacked the standard `_tests.rs` suffix. That report
+is preserved and rejected. The filenames and path declarations were corrected,
+and the complete measurement repeated using unchanged standard exclusions.
+No production source was excluded and no totals were manually subtracted.
+
+Pre-test failures and their logs are retained: error-propagation syntax, an
+unavailable `tempfile` reference replaced by the maintained installer fixture,
+and an inventory type alias required by Clippy. Assertions and production
+refusal behavior were preserved.
+
+This is locally verified source. Normal Main publication and an actual hosted
+build/archive remain pending application network access. It establishes none of
+the separate browser, native platform, Root installation or stable release gates.
+
+At the original source checkpoint, the 18 Helm whole-loop and 21 actual Supervisor
+parents were uncompiled/unrun; the verified local result above supersedes that status. This independent work starts from
 qualified published `c3f997f`; it changes no Main, target, profile, running host,
 provider or real credential. Scope and production findings precede implementation:
 [courier admission](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5951104943),
@@ -107,10 +137,8 @@ graphs and waits have explicit bounds. Cancellation is not called observed
 cleanup. No executing Voyage, provider, human private input, real grant/credential,
 host service or native Root/other-platform operation is created by preparation.
 
-## Pending gate
+## Delivery obligations
 
-Rustfmt/diff checks are source checks. Independent production/test review,
-pinned-context cases and all combined source edits must finish before the root
-coordinator's one applicable workspace gate/coverage/current-object audit. Exact
-new parent counts, outcomes, compact coverage, normal Main publication and hosted
-build follow-through remain pending. No skipped test or local branch is delivery.
+Independent source review, the pinned-context cases and the complete local gate
+are finished as recorded above. Normal Main publication and actual hosted archive
+follow-through remain pending; no local branch is represented as delivered.
