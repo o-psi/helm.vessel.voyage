@@ -52,7 +52,9 @@ the final saved-connection check runs after dispatch has succeeded. A late grant
 rotation/revocation previously produced a generic error and a false definite
 `outcome_unknown=false` reply despite an already accepted effect. The factored
 production reply boundary now marks that postdispatch failure with the existing
-`OutcomeUnknown` type. All preflight authentication/fingerprint/rights refusals
+`OutcomeUnknown` type. The session boundary reauthenticates the same held grant and compares the complete
+typed saved fingerprint, including nested bindings, accounts, enrollment, token
+hash and expiry. All preflight authentication/fingerprint/rights refusals
 remain definite; no grant fence is relaxed and no operation is replayed.
 
 Vessel commands have no exhaustive effect classifier, so the failed late check is
@@ -61,12 +63,13 @@ is withheld after authority loss. Successful reads retain normal definite replie
 and the existing history redaction. This is an observation of the original exact
 operation, never permission to automatically retry or disclose a revoked reply.
 
-Two additional source-prepared parents cover four actual private SQLite acceptance
-settlements followed by token/rights/revision/revocation drift, exact command and
+Four additional source-prepared parents cover connection and session private SQLite acceptance
+settlements followed by token/rights/revision/revocation drift and complete session account/
+enrollment/parent/participant authority changes, exact command and
 accepted destination state retention, normal read/history redaction, and frozen
-pin refusal before a Start intent/session is created. The accepted-effect test
-invokes the actual notification branch, then the same factored production late
-checker; it is a **boundary-level** deterministic test, not an end-to-end scheduler
+pin refusal before a Start intent/session is created. The accepted-effect tests
+invoke the actual notification branch, then the same factored production late
+checkers; it is a **boundary-level** deterministic test, not an end-to-end scheduler
 race, native owner or provider claim. Tests remain unexecuted pending the parent gate.
 
 ## Prepared assertion families
@@ -105,6 +108,7 @@ Do not compile/run during preparation. Root owns the combined window. Include
 these focused filters with the workspace instrumentation and private bounded unit:
 
 - `scoped_frontdoor_tests`
+- `session_late_authority_tests`
 - `scope_authority::ordinary_family_tests`
 - `process_http::owned_frontdoor_tests`
 - `saved_authority_wire_tests`

@@ -83,7 +83,7 @@ impl Supervisor {
             principal_id: grant.principal_id,
         };
         let has = |right| ensure_right(&grant, right);
-        let mut response = match command {
+        let response = match command {
             VesselCommand::Notifications { operation } => {
                 self.notifications(operation, Some(binding)).await
             }
@@ -244,15 +244,28 @@ impl Supervisor {
             }
             _ => anyhow::bail!("operation requires local account-owner authority"),
         }?;
-        let latest = store::authenticate(&self.directory, id, &token)?;
-        ensure!(
-            latest.revision == grant.revision
-                && latest.rights == grant.rights
-                && latest.principal_id == grant.principal_id
-                && latest.workspace == grant.workspace
-                && latest.session_id == grant.session_id,
-            "session authority changed"
-        );
+        self.finish_granted_reply(&grant, &token, response)
+    }
+
+    fn finish_granted_reply(
+        &self,
+        grant: &ProcessGrant,
+        token: &str,
+        mut response: Value,
+    ) -> Result<Value> {
+        // Only a successfully dispatched response reaches this boundary. Its
+        // current authority can withhold disclosure, but cannot promise that an
+        // already accepted effect never happened. Retain the exact receipt.
+        let current = (|| -> Result<()> {
+            let latest = store::authenticate(&self.directory, grant.grant_id, token)?;
+            ensure!(
+                store::process_authority_fingerprint(&latest)?
+                    == store::process_authority_fingerprint(grant)?,
+                "session authority changed"
+            );
+            Ok(())
+        })();
+        current.map_err(|error| error.context(super::super::routing::OutcomeUnknown))?;
         if !grant.rights.contains(&ProcessRight::History) {
             super::redact_catalogue_reply(&mut response);
         }
@@ -266,3 +279,7 @@ fn ensure_right(grant: &ProcessGrant, right: ProcessRight) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "session_late_authority_tests.rs"]
+mod session_late_authority_tests;
