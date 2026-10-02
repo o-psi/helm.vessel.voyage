@@ -20,9 +20,10 @@ an authenticated capabilities/snapshot observation for the selected fixture
 Voyages through the deployed route before browser effects. Public `/up` and live
 service PIDs do not substitute. Do not fix refusal by broadening authority,
 changing tenant identity, disabling Origin checks or copying secrets into logs.
-Native and Web should have independently authorized grants for the same human
-principal when qualifying private disconnect/reclaim. Distinct grant and
-participant surfaces retain their existing meanings.
+Native and Web retain their independently authorized grants/principals. The
+initiating Native principal performs private disconnect/reclaim in a fresh Native
+viewer; Web never borrows that private authority. Distinct grant and participant
+surfaces retain their existing meanings.
 
 Record exact executable hashes/proc start identities on the executing host,
 deployed Web source/manifest, public origin and actual Web/native socket paths.
@@ -208,7 +209,7 @@ CUA requests are explicit UI/observation operations:
 | `observe_counter`, `observe_public_site`, `observe_site_classes` | Read replay only, no input. Verify exact counter/marker or CSS/shadow/authenticated image/cross+nested frames. Public screenshots may be retained here. |
 | `nested_child_once_return` | Observe the native dynamic/child result, click the nested child's benign button exactly once in Web, observe its replay change, explicitly Continue agent. Preserve refusal/unknown and never retry. |
 | `observe_private_exclusion` | No replay iframe, empty address and private/watching presentation in the other Web client. No screenshot or private content export. |
-| `private_reclaim_return` | Click Browse privately once using the same human principal; confirm private control. Navigate to the supplied ordinary fixture while still private, then explicitly Continue agent, perform the new counter click once, verify one, and retain exact outcomes. |
+| Private reclaim | The owning Python/Native path issues one fixed TUI reopen, then the initiating Native principal explicitly reclaims, clears the private fixture and returns. CUA Web only observes `observe_private_exclusion` then `observe_counter`; it never receives a Web reclaim request. |
 | `observe_real_renewal` | Actual replacement ticket/socket acknowledgement for both selected Web connections, retained browser identity and no effect replay/rewrite. Do not claim renewal from an elapsed timer or an unchanged screenshot. |
 | `close_browser_once`, `close_fixture_panels` | Explicitly close only the owned browser once, confirm stopped/known receipt, then dispose only the two fixture tabs/panels. Host probe supplies independent resource proof. No replay of an uncertain close or unrelated cleanup. |
 
@@ -495,9 +496,9 @@ its maintained sibling fixture directory after isolated Python startup.
 
 ### Existing native credential input dependency
 
-An existing legitimate UID1000 private native credential must already authorize
-the same human principal as the saved Web connection over the approved public
-HTTPS endpoint. Helm's workspace credential parser accepts exactly seven fields:
+An existing legitimate UID1000 private native credential must authorize the two
+owned fixtures over the approved public HTTPS endpoint. It need not share the
+Web principal: private reclaim remains with the initiating Native principal. Helm's workspace credential parser accepts exactly seven fields:
 `schema_version` (1), `kind` (`workspace`), `endpoint`, `grant_id`, `principal_id`,
 `vessel_id`, `token`. This is distinct from the qualification config's `schema:1`.
 The production driver validates only its private file shape and delegates
@@ -510,7 +511,7 @@ locally to the launcher, never its contents. Do not copy PHP33's encrypted Web
 database credential into UID1000, extract a key through Root, export cookies,
 mint a replacement grant, or rewrite a local discovery credential's endpoint.
 `helm connect` has no endpoint override. Web Connections imports credentials;
-it has no credential export control. If an existing same-principal native public
+it has no credential export control. If an existing authorized native public
 file/key is unavailable, retain this as an actual input/authorization dependency
 and ask only for its location. The disabled coordination form cannot create it.
 
@@ -539,3 +540,39 @@ host resource measurement or native cleanup qualification was performed by this
 gate. Rust source/Cargo inputs are unchanged; the previous truthful Rust coverage
 measurement remains recorded. Live use still requires the qualified program pins,
 exact same-host bootstrap/ownership proof and the production matrix above.
+
+
+### Initiating Native private recovery
+
+The Python parent already owns two actual TUI/PTY clients on their original
+public access-file routes. `host_browser_native_reopen.py/.mjs` provides exactly
+one source-owned fixture-A reopen, using a new private, inode-pinned mailbox.
+The child can supply only issued UUID/digest, fixed action, fixture A label/
+session, exact original TUI PID/start bootstrap and bounded expiry. It cannot
+supply a command, endpoint, path, credentials, cookies or grants. The parent
+verifies the original live process/executable/hash and writes an exclusive
+pending receipt **before** typing `/browser detach` then Enter. It observes the
+actual Handle.finish status `Viewer detached; host browser remains owned by
+Voyage`, then sends actual F6 once and waits for a different private `open.html`
+launcher produced by the normal TUI opener. Old launchers are one-use and are
+never reloaded/reused. Any unknown key/cleanup outcome retains pending/unknown
+response and fences another attempt; the action is not automatically retried.
+
+Both direct and CUA routes load that fresh Native viewer and explicitly choose
+Browse privately under the initiating Native process/credential. They require
+the same browser/incarnation, a fresh attachment and advanced controller epoch.
+Web stays excluded before and after the private page is cleared. Native then
+explicitly Continues agent, sends one new benign counter click, and Web observes
+that public result. Native also performs its own final browser close; a different
+Web principal is never asked to reclaim or close a private controller. All old
+and fresh native observation counters remain checked; the two original TUI
+process identities, public WSS byte windows and host cleanup proofs are unchanged.
+This fixes a qualification dependency, not runtime authority. It creates no new
+authority, wrapper, pairing or transport rewrite. The legitimate existing native
+public file/key input remains necessary.
+
+Prepared focused source contracts are `host_browser_native_reopen_tests.py`
+(`python3 -I -B`) and `host_browser_native_reopen.test.mjs` (`node --test`). They
+simulate typed callbacks/private files and test exact identity, one attempt,
+pre-key receipt, unknown result and refusal of arbitrary fields; they establish
+no native/deployed browser behavior.

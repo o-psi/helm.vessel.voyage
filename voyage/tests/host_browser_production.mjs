@@ -9,6 +9,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import {browserCost,inputVisibleLatency} from './host_browser_client_cost.mjs';
+import {requestNativeReopen} from './host_browser_native_reopen.mjs';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
@@ -98,6 +99,7 @@ function validate(cfg,{launchers=true}={}){
  for(const site of cfg.sites){assert.ok(label(site.label)&&['static','dynamic','frame-media'].includes(site.kind));https(site.url);assert.ok(typeof site.ready_selector==='string'&&site.ready_selector.length<=256);}
  assert.equal(new Set(cfg.sites.map(s=>s.kind)).size,3);
  assert.equal(new Set(cfg.sites.map(s=>s.label)).size,cfg.sites.length);
+ assert.ok(path.isAbsolute(cfg.native_reopen_mailbox),'owning native TUI reopen mailbox required');
  assert.ok(path.isAbsolute(cfg.output)&&path.isAbsolute(cfg.chromium)&&path.isAbsolute(cfg.playwright_module));
  assert.ok(cfg.host_observer&&cfg.client_ledger&&cfg.native_wire_evidence,'private measurement dependencies required before effects');
  assert.ok(['playwright','cua'].includes(cfg.web_mode));
@@ -307,6 +309,22 @@ async function closeBrowser(page){await ready(page);
  await page.getByLabel('More browser options',{exact:true}).click();
  await page.getByRole('button',{name:'Close browser',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.host-browser-viewer')?.dataset.state==='stopped');}
 
+// Reattach through the initiating Native principal, regardless of Web's grant.
+// The old one-use launcher is never reused. This emits one fixed parent request.
+async function reclaimNative(context,cfg,old){
+ const binding={...old.state.status.binding},launcher=await requestNativeReopen(cfg);
+ const page=await context.newPage(),state=observation(page,cfg.sessions[0].id,cfg.web_socket,{native:true});
+ const fresh={page,state,native:true,sessionId:cfg.sessions[0].id};
+ try{
+  await page.goto(pathToFileURL(launcher).href);await viewer(page).waitFor();
+  await until(()=>state.status?.running&&state.status.mode==='private');
+  await mode(page,'Browse privately','private');await ready(page);
+  assert.equal(state.status.binding.browser_id,binding.browser_id);assert.equal(state.status.binding.incarnation,binding.incarnation);
+  assert.notEqual(state.status.binding.attachment_id,binding.attachment_id);assert.ok(state.status.binding.controller_epoch>binding.controller_epoch);
+  return fresh;
+ }catch(error){await page.close({runBeforeUnload:false}).catch(()=>{});throw error;}
+}
+
 export async function runProductionQualification(context,cfg){
  validate(cfg);context.setDefaultTimeout(30000);
  const report={schema:1,status:'pending',source:'actual production routes; no adapter/mock socket',
@@ -400,18 +418,20 @@ export async function runProductionQualification(context,cfg){
   await until(async()=>await mirror(nativeA.page).getByLabel(cfg.fixture.private.input_label,{exact:true}).inputValue()==='SYNTHETIC_PRODUCTION_PRIVATE_333');
   await excluded(webA.page);await nativeA.page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await excluded(webA.page);assert.equal(webA.state.status.mode,'private');
-  await mode(webA.page,'Browse privately','private');await ready(webA.page);
-  assert.equal(webA.state.status.binding.browser_id,old.browser_id);assert.notEqual(webA.state.status.binding.attachment_id,old.attachment_id);
-  assert.ok(webA.state.status.binding.controller_epoch>old.controller_epoch);
-  // Clear the synthetic private page under private control before publishing.
-  await navigate(webA.page,cfg.fixture.url,cfg.fixture.ready_selector);await mode(webA.page,'Continue agent','agent');
-  await ready(webA.page);await mirror(webA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();await count(webA.page,cfg.fixture.counter_selector,1);
-  report.private={other_client_excluded:true,disconnect_retained_private:true,same_principal_reclaim:true,fresh_attachment:true,explicit_return:true};
+  stage('initiating_native_private_reclaim');
+  const freshA=await reclaimNative(context,cfg,nativeA);pages.push(freshA.page);states.push(freshA.state);
+  await excluded(webA.page);
+  // Clear under Native private control. Web must remain excluded until return.
+  await navigate(freshA.page,cfg.fixture.url,cfg.fixture.ready_selector);await excluded(webA.page);
+  await mode(freshA.page,'Continue agent','agent');await ready(freshA.page);
+  await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();
+  await Promise.all([count(freshA.page,cfg.fixture.counter_selector,1),count(webA.page,cfg.fixture.counter_selector,1)]);
+  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
   stage('actual_ticket_renewal');await until(()=>webA.state.hellos>=2&&webB.state.hellos>=2,140000);
   await count(webA.page,cfg.fixture.counter_selector,1);assert.equal(webA.state.status.binding.browser_id,old.browser_id);
   assert.equal(webB.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
   report.renewal={both_actual_react_connections_renewed:true,no_replayed_intents:states.every(s=>!s.duplicate_effect)};
-  stage('explicit_owned_browser_cleanup');closeAttempts.add(0);await closeBrowser(webA.page);closeAttempts.add(1);await closeBrowser(nativeB.page);
+  stage('explicit_owned_browser_cleanup');closeAttempts.add(0);await closeBrowser(freshA.page);closeAttempts.add(1);await closeBrowser(nativeB.page);
   const request=hostRequest();request.proofs=resources.proofs;
   const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
@@ -440,7 +460,7 @@ export async function runCuaProductionQualification(context,cfg){
   matrix:[],native_windows:[],sites:[],latencies:[],cleanup:{},limitations:['CUA Web renderer metrics must be supplied from actual per-tab observation; unavailable metrics do not pass.',
    'Native HTTP bridge bytes are not native public WSS application bytes.',
    'Host reports are produced through the separately authorized host conduit; this process performs no service changes.']};
- const native=[],attempted=new Set();let resources=null;
+ const native=[],nativeStates=[],attempted=new Set();let resources=null;
  const web=async(operation,fields={})=>mailbox(cfg.cua_mailbox,'cua_web',{operation,...fields});
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
   label:s.label,session_id:s.id,browser_id:native[i].state.status.binding.browser_id,root:s.host_browser_root}))});
@@ -497,7 +517,7 @@ export async function runCuaProductionQualification(context,cfg){
   stage('pin_read_only_host_helpers');await pinHostHelpers(cfg);
   // Both TUI clients opened their exact fixture browser. Load only A's one-use
   // launcher first; B is excluded from the first two host-ledger conditions.
-  const first=await context.newPage(),firstState=observation(first,cfg.sessions[0].id,cfg.web_socket,{native:true});native.push({page:first,state:firstState});
+  const first=await context.newPage(),firstState=observation(first,cfg.sessions[0].id,cfg.web_socket,{native:true});native.push({page:first,state:firstState});nativeStates.push(firstState);
   await first.goto(pathToFileURL(cfg.sessions[0].native_launcher).href);await viewer(first).waitFor();await until(()=>firstState.status?.running);await ready(first);
   await navigate(native[0].page,cfg.fixture.url,cfg.fixture.ready_selector);await count(native[0].page,cfg.fixture.counter_selector,0);
   await measure('a_one_viewer',[native[0]],[],cfg.host_observer.ledger_a);
@@ -506,7 +526,7 @@ export async function runCuaProductionQualification(context,cfg){
    title:cfg.sessions[0].title,fixture_selector:cfg.fixture.ready_selector,counter_selector:cfg.fixture.counter_selector,counter:0},
    ['authenticated_existing_session','exact_selected_voyage','browser_dock_open','fixture_visible','counter_matches']);
   await measure('a_two_viewers',[native[0]],[cfg.sessions[0].label],cfg.host_observer.ledger_a);
-  const page=await context.newPage(),state=observation(page,cfg.sessions[1].id,cfg.web_socket,{native:true});native.push({page,state});
+  const page=await context.newPage(),state=observation(page,cfg.sessions[1].id,cfg.web_socket,{native:true});native.push({page,state});nativeStates.push(state);
   await page.goto(pathToFileURL(cfg.sessions[1].native_launcher).href);await viewer(page).waitFor();await until(()=>state.status?.running);await ready(page);
   await navigate(page,cfg.fixture.url,cfg.fixture.ready_selector);await count(page,cfg.fixture.counter_selector,0);
   assert.notEqual(state.status.binding.browser_id,native[0].state.status.binding.browser_id);
@@ -554,21 +574,25 @@ export async function runCuaProductionQualification(context,cfg){
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
   await native[0].page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
-  stage('explicit_cua_private_reclaim');await proof('private_reclaim_return',{label:cfg.sessions[0].label,
-   return_url:cfg.fixture.url,return_selector:cfg.fixture.ready_selector,click_name:cfg.fixture.click_name,counter_selector:cfg.fixture.counter_selector},
-   ['browse_privately_confirmed','private_retained_until_explicit_return','synthetic_private_page_cleared_before_return',
-    'continue_agent_explicit','new_benign_click_once','counter_one_visible','no_unknown_effect_retried']);
-  report.private={other_client_excluded:true,disconnect_retained_private:true,explicit_same_principal_reclaim:true,explicit_return:true};
+  stage('initiating_native_private_reclaim');
+  const freshA=await reclaimNative(context,cfg,native[0]);nativeStates.push(freshA.state);native[0]=freshA;
+  await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
+  await navigate(freshA.page,cfg.fixture.url,cfg.fixture.ready_selector);
+  await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
+  await mode(freshA.page,'Continue agent','agent');await ready(freshA.page);
+  await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();await count(freshA.page,cfg.fixture.counter_selector,1);
+  await proof('observe_counter',{label:cfg.sessions[0].label,selector:cfg.fixture.counter_selector,value:1},['counter_matches','no_input_sent']);
+  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
   stage('actual_cua_renewal');await proof('observe_real_renewal',{labels:cfg.sessions.map(s=>s.label)},
    ['both_actual_connections_renewed','browser_identity_retained','no_effect_replay','no_transport_rewrite']);
-  stage('explicit_cua_browser_close');attempted.add(0);await proof('close_browser_once',{label:cfg.sessions[0].label},['close_dispatched_once','browser_stopped','outcome_confirmed']);
+  stage('explicit_owned_browser_close');attempted.add(0);await closeBrowser(native[0].page);
   attempted.add(1);await closeBrowser(native[1].page);
   const request=hostRequest();request.proofs=resources.proofs;
   const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
   await proof('close_fixture_panels',{labels:cfg.sessions.map(s=>s.label)},['only_owned_fixture_tabs_closed','unrelated_tabs_retained']);
   report.native_wire=await saveNativeWire(cfg,report.native_windows);
-  for(const item of native){assert.equal(item.state.unknown,0);assert.equal(item.state.refused,0);assert.equal(item.state.duplicate_effect,false);assert.equal(item.state.overflow,false);}
+  for(const state of nativeStates){assert.equal(state.unknown,0);assert.equal(state.refused,0);assert.equal(state.duplicate_effect,false);assert.equal(state.overflow,false);}
   const measurementsComplete=report.matrix.every(w=>w.host_window_aligned&&w.cua_web.every(v=>v.status!=='unavailable'&&v.window_aligned));
   report.status=measurementsComplete?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';

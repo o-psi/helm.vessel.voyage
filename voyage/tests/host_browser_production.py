@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from ui_journeys import launch, paste, screen, send, pty_helpers
 from host_browser import wait
+from host_browser_native_reopen import Reopen
 
 
 def private_json(path, limit=1024*1024):
@@ -80,8 +81,11 @@ def main():
     report={'schema':1,'status':'pending','cleanup':{},'helm_sha256':hashlib.sha256(helm.read_bytes()).hexdigest(),
             'source_sha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
                              ('host_browser_production.py','host_browser_production.mjs','host_browser_cost.py',
-                              'host_browser_client_cost.mjs','host_browser_cua_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py')}}
+                              'host_browser_client_cost.mjs','host_browser_cua_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py','host_browser_native_reopen.py','host_browser_native_reopen.mjs')}}
     clients=[]
+    reopen=None
+    config['native_reopen_mailbox']=str(root/'native-reopen')
+    Path(config['native_reopen_mailbox']).mkdir(mode=0o700)
     config['native_metrics_files']=[]
     driver=Path(__file__).with_name('host_browser_production.mjs')
     def cli(*parts):
@@ -121,6 +125,9 @@ def main():
             fields=Path(f'/proc/{client["pid"]}/stat').read_text().rsplit(')',1)[1].split()
             config['client_roots'].append({'label':'native-'+item['label'],'pid':client['pid'],
                                            'start_ticks':int(fields[19]),'descendants':True})
+        first=config['sessions'][0]
+        reopen=Reopen(config['native_reopen_mailbox'],first['id'],first['label'],config['client_roots'][0],config['native_helm_program'],
+                      clients[0],root/(first['label']+'-launcher'),root,screen,paste,send,wait)
         prepared=root/'private-driver.json';prepared.write_text(json.dumps(config));prepared.chmod(0o600)
         with (output/'driver-private.log').open('xb') as log:
             child=subprocess.Popen([str(node),str(driver),str(prepared)],stdout=log,stderr=log)
@@ -130,6 +137,7 @@ def main():
                     assert time.monotonic()<deadline, 'production driver deadline exceeded'
                     assert all(len(client['output'])<=32*1024*1024 for client in clients), 'owned PTY output exceeds bound'
                     assert log.tell()<=4*1024*1024, 'private driver diagnostic bound exceeded'
+                    reopen.poll()
                     time.sleep(.2)
             finally:
                 if child.poll() is None:
@@ -146,6 +154,9 @@ def main():
         report['status']='failed_or_incomplete'
         raise
     finally:
+        if reopen is not None:
+            report['cleanup']['native_reopen_attempted']=reopen.attempted
+            reopen.close()
         for client in clients:
             try:
                 if client['process'].poll() is None:
