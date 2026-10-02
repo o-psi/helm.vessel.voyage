@@ -171,7 +171,7 @@ impl App {
                 section,
                 context,
                 value,
-            } => self.completion_update(request_id, target, incarnation, section, context, value),
+            } => self.completion_update(request_id, target, incarnation, section, *context, value),
             Update::Terminals {
                 target,
                 incarnation,

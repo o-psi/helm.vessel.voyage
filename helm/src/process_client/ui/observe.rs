@@ -73,7 +73,7 @@ pub enum Update {
         target: Target,
         incarnation: uuid::Uuid,
         section: &'static str,
-        context: super::completion::LookupContext,
+        context: Box<super::completion::LookupContext>,
         value: Option<serde_json::Value>,
     },
     Terminals {

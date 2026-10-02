@@ -153,7 +153,7 @@ impl App {
                     target,
                     incarnation,
                     section,
-                    context,
+                    context: Box::new(context),
                     value,
                 })
                 .await;

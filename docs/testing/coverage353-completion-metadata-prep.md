@@ -79,6 +79,13 @@ claim. No additional binary, paid provider or human clipboard is introduced.
 
 ## Coordinated pending gate
 
+The first combined `1f6d73f` gate stopped at strict Clippy before tests/profile
+mutation: inline LookupContext made Update 1,336 bytes. The event now boxes that
+context and the consumer moves its unchanged value into the same acceptance
+checks. No lint suppression, weakened fence or passing test claim is introduced.
+The original failed diagnostic remains retained; corrected compilation and
+execution are still pending.
+
 After parent review and integration with the disjoint transcript cohort, use the
 sole bounded shared-target Cargo window. Focus all existing and new completion
 parents with `process_client::ui::completion::`; the new namespace alone is
