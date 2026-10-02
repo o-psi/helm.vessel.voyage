@@ -185,6 +185,19 @@ class ContextContracts(unittest.TestCase):
             with patch.object(c,'bounded',return_value=raw):
                 with self.assertRaises(RuntimeError):c.owner_namespace(q,owner)
 
+    def test_continuation_requires_live_state_and_post_state_exact_identity(self):
+        q = self.fixture();owner = {'pid':321,'start_ticks':42};environment = {'HOME':str(q.HOME)}
+        for state in ('T','t','Z','X','x','unknown'):
+            with self.subTest(state=state),patch.object(c,'owner_state',return_value=state),patch.object(c,'exact_again') as exact:
+                self.assertFalse(c.continued_now(q,owner,Path('/fixture'),[],environment));exact.assert_not_called()
+        for state in ('R','S','D','I'):
+            with self.subTest(state=state),patch.object(c,'owner_state',return_value=state),patch.object(c,'exact_again',return_value=True),patch.object(c,'owner_namespace',return_value=environment):
+                self.assertTrue(c.continued_now(q,owner,Path('/fixture'),[],environment))
+        with patch.object(c,'owner_state',return_value='R'),patch.object(c,'exact_again',return_value=False):
+            with self.assertRaises(RuntimeError):c.continued_now(q,owner,Path('/fixture'),[],environment)
+        with patch.object(c,'owner_state',return_value='R'),patch.object(c,'exact_again',return_value=True),patch.object(c,'owner_namespace',return_value={'HOME':'/changed'}):
+            with self.assertRaises(RuntimeError):c.continued_now(q,owner,Path('/fixture'),[],environment)
+
     def orchestration(self, conflict=False):
         q = self.fixture();q.INSTALL = q.HOME/'install';updates = q.INSTALL/'updates';updates.mkdir(parents=True)
         release = q.WORK/'candidate'/'release';(release/'bin').mkdir(parents=True)
@@ -211,7 +224,8 @@ class ContextContracts(unittest.TestCase):
             stack.enter_context(patch.object(c,'no_children'))
             stack.enter_context(patch.object(c,'owner_namespace',return_value={'HOME':str(q.HOME)}))
             stack.enter_context(patch.object(c,'snapshot_pin',side_effect=[{'pin':1},{'pin':2 if conflict else 1}]))
-            stack.enter_context(patch.object(c,'stopped',side_effect=[True,True,False] if conflict else [True,True,True,False]))
+            stack.enter_context(patch.object(c,'stopped',side_effect=[True,True] if conflict else [True,True,True]))
+            stack.enter_context(patch.object(c,'continued_now',return_value=True))
             close = stack.enter_context(patch.object(c.os,'close'))
             signals = stack.enter_context(patch.object(c.signal,'pidfd_send_signal'))
             mutation = stack.enter_context(patch.object(c,'change',return_value={'observed':'disabled'}))

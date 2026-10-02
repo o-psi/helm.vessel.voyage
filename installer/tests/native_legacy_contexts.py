@@ -72,11 +72,25 @@ def owner_namespace(q, owner):
     return result
 
 
-def stopped(q, owner):
+def owner_state(q, owner):
     raw = bounded(Path('/proc')/str(owner['pid'])/'stat', 8192).decode()
     fields = raw.rsplit(')', 1)[1].split()
     q.require(len(fields) >= 20 and int(fields[19]) == owner['start_ticks'], 'paused owner identity changed')
-    return fields[0] in ('T', 't')
+    return fields[0]
+
+
+def stopped(q, owner):
+    return owner_state(q, owner) in ('T', 't')
+
+
+def continued_now(q, owner, image, expected_argv, environment):
+    # Nonstopped is insufficient: zombies and unknown states are not continuation.
+    if owner_state(q, owner) not in ('R', 'S', 'D', 'I'):
+        return False
+    q.require(exact_again(q, owner, image, expected_argv)
+              and owner_namespace(q, owner) == environment,
+              'continued owner changed after live-state observation')
+    return True
 
 
 def no_children(q, owner):
@@ -288,7 +302,7 @@ def run(q, args):
                 until = time.monotonic()+5
                 while time.monotonic() < until:
                     q.require(exact_again(q,owner,image,owner_args), 'continued owner identity unavailable')
-                    if not stopped(q,owner):continued = True;break
+                    if continued_now(q,owner,image,owner_args,owner_environment):continued = True;break
                     time.sleep(.002)
                 q.require(continued, 'same-owner continuation not positively observed')
             except (OSError,RuntimeError,ValueError):resume_error = 'continue_unconfirmed'

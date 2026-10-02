@@ -47,7 +47,9 @@ The monitor performs one of these actual context changes:
 
 It retains the true prior values and observed changed values. Finally it sends at
 most one pidfd SIGCONT to that same verified owner and positively observes it
-leave the stopped state. Missing, replaced or inaccessible owner identity is an
+reach a known live nonstopped state and rechecks exact PID/start/executable/argv/UID
+and namespace after reading that state. Zombies, exited and unknown states never
+supply positive continuation. Missing, replaced or inaccessible owner identity is an
 explicit continuation obligation; no replacement, repeated signal or forced
 service action is attempted. An unconfirmed context command remains unconfirmed.
 No context restoration, upgrade replay, reconciliation, service start or recovery
@@ -70,7 +72,7 @@ supported status/recovery outcomes retain the gates in
 
 ## Coordinated source gate
 
-Fifteen private Python contract parents cover real stored namespace presence, strict
+Sixteen private Python contract parents cover real stored namespace presence, strict
 namespace refusals, actual owned directory/unit changes, no-op enablement refusal,
 private-file and exact-start boundaries, and exclusive admission/result behavior.
 They use a fake manager/UID projection and no native updater or actual signal.
