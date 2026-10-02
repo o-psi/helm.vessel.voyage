@@ -146,13 +146,85 @@ def observation():
             'quarantine': (STATE/'update-quarantine.json').exists()}
 
 
-def seed(old_archive):
-    require(not UNIT.exists() and not INSTALL.exists() and not STATE.exists(),
-            'qualification namespace must be fresh; no cleanup of existing state')
-    old = archive(old_archive, OLD_SHA, 'old')
-    result = command([str(old/'bin/voyage-installer'), 'install', '--bin-dir', str(old/'bin'), '--start'], 120)
-    (WORK/'old-install.log').write_bytes(result.stdout+result.stderr)
-    service_identity()
+def ready_catalogue(fixture):
+    """Only authenticated reads are repeated; no session effect is retried."""
+    from delivery_recovery import wait_for
+    def ready():
+        try:
+            before = service_identity()
+            catalogue = fixture.request({'op': 'catalogue'})
+            after = service_identity()
+            return catalogue is not None and before == after
+        except (OSError, ValueError, RuntimeError):
+            return False
+    wait_for(ready, timeout=20)
+
+
+def empty_old_seed(old_archive):
+    """One explicit continuation of an installed old, never-admitted seed."""
+    require(digest(old_archive.resolve(strict=True)) == OLD_SHA, 'old archive checksum mismatch')
+    require((WORK/'old-install.log').is_file(), 'retained original install evidence required')
+    for name in ('seed.json', 'before.json', 'candidate', 'candidate-bin.json',
+                 'seed-existing-attempt.json', 'upgrade-result.json'):
+        require(not (WORK/name).exists(), 'seed continuation already attempted or admitted')
+    require(not (STATE/'update-quarantine.json').exists(), 'quarantined state is outside seed continuation')
+    for name in ('updates', 'recoveries'):
+        directory = INSTALL/name
+        require(not directory.exists() or not any(directory.iterdir()), 'update/recovery evidence retained; seed refused')
+    require(sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT version FROM schema_version WHERE id=1') == [(1,)],
+            'requires actual old schema1')
+    require(sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT COUNT(*) FROM voyages') == [(0,)],
+            'any accepted voyage makes seed continuation unsafe')
+    sessions = STATE/'sessions'
+    require(not sessions.exists() or not any(sessions.iterdir()), 'retained session evidence refuses continuation')
+    expected = {
+        'helm': 'bf33bbea0fddcd23b6aca233b7c881aef6f8795633f1a2d240460fab0b02b592',
+        'vessel': '9f19b52a97e38576089f9df3a1f70ec56ddcf66b97fd301fdd83fa2c91a262e4',
+        'voyage': '4cc2e01776d269a5430645846d67fc37483975671c35de2be7f7b53c96aefd61',
+        'voyage-installer': 'cd6f56cf195bf45196b9539103ff7fb56495dbe0ebb34b715a1d9ea1d50dfed3'}
+    for name, value in expected.items():
+        require(digest(installed_bin()/name) == value, 'installed binary differs from published old artifact')
+    service = service_identity()
+    workspace = WORK/'workspace'
+    require(workspace.is_dir() and not any(workspace.iterdir()), 'nonempty original workspace refused')
+    drafts = {}
+    import uuid
+    for path in WORK.glob('*.json'):
+        if path.name == 'seed-attempt.json':
+            continue
+        try:
+            uuid.UUID(path.stem)
+        except ValueError:
+            raise RuntimeError('unrecognized retained seed evidence refuses continuation') from None
+        value = json.loads(path.read_text())
+        require(value.get('version') == 1 and value.get('workspace') == str(workspace)
+                and value.get('selection') is None and value.get('confirmation') is None,
+                'partial configuration is not the retained synthetic draft')
+        config = value.get('config', {})
+        require(config.get('provider') == 'openai-responses' and config.get('model') == 'fixture-model'
+                and config.get('api_key_required') is False and config.get('access') == 'read-only'
+                and config.get('base_url', '').startswith('http://127.0.0.1:'),
+                'partial configuration is outside synthetic seed scope')
+        drafts[path.name] = digest(path)
+    require(drafts, 'requires retained pre-admission synthetic configuration evidence')
+    return {'old_sha256': OLD_SHA, 'service': service, 'partial_configuration_sha256': drafts,
+            'catalogue_schema': 1, 'voyages': 0,
+            'action': 'continue once with distinct new identities; preserve completed private account effects'}
+
+
+def seed(old_archive, existing=False):
+    if existing:
+        retained = empty_old_seed(old_archive)
+        write('seed-existing-attempt.json', retained)
+    else:
+        require(not UNIT.exists() and not INSTALL.exists() and not STATE.exists(),
+                'qualification namespace must be fresh; no cleanup of existing state')
+        require(digest(old_archive.resolve(strict=True)) == OLD_SHA, 'old archive checksum mismatch')
+        write('seed-attempt.json', {'old_sha256': OLD_SHA, 'action': 'one fresh old install and seed'})
+        old = archive(old_archive, OLD_SHA, 'old')
+        result = command([str(old/'bin/voyage-installer'), 'install', '--bin-dir', str(old/'bin'), '--start'], 120)
+        (WORK/'old-install.log').write_bytes(result.stdout+result.stderr)
+        service_identity()
     # Reuse maintained public command/provider helpers, without their unmanaged launcher or cleanup.
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]/'voyage/tests'))
     from delivery_recovery import Fixture, Provider
@@ -161,7 +233,7 @@ def seed(old_archive):
     fixture.root = WORK
     fixture.directory = STATE
     fixture.workspace = WORK/'workspace'
-    fixture.workspace.mkdir(mode=0o700)
+    fixture.workspace.mkdir(mode=0o700, exist_ok=existing)
     fixture.env = dict(os.environ, RECOVERY_FIXTURE_KEY='synthetic-fixture-key')
     fixture.sessions = []
     fixture.provider = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
@@ -170,8 +242,9 @@ def seed(old_archive):
     thread.start()
     manager('set-environment', 'RECOVERY_FIXTURE_KEY=synthetic-fixture-key')
     # The already-running supervisor must inherit the declared synthetic binding.
-    manager('restart', NAME)
     try:
+        manager('restart', NAME)
+        ready_catalogue(fixture)
         for index in range(2):
             session = fixture.session()
             exact = fixture.submit(session, 'ordinary legacy qualification '+str(index))
@@ -249,8 +322,9 @@ def live_owner(args):
     fixture.provider.requests = 0
     threading.Thread(target=fixture.provider.serve_forever, daemon=True).start()
     manager('set-environment', 'RECOVERY_FIXTURE_KEY=synthetic-fixture-key')
-    manager('restart', NAME)
     try:
+        manager('restart', NAME)
+        ready_catalogue(fixture)
         session = fixture.session()
         exact = fixture.submit(session, 'held ordinary legacy owner qualification')
         fixture.command(session, exact)
@@ -410,7 +484,8 @@ def main():
     parser.add_argument('--ack-disposable-ct119', action='store_true', required=True)
     commands = parser.add_subparsers(dest='action', required=True)
     commands.add_parser('preflight')
-    initial = commands.add_parser('seed'); initial.add_argument('--old-archive', type=Path, required=True)
+    for name in ('seed', 'seed-existing'):
+        initial = commands.add_parser(name); initial.add_argument('--old-archive', type=Path, required=True)
     for name in ('upgrade', 'live-owner'):
         current = commands.add_parser(name)
         current.add_argument('--candidate-archive', type=Path, required=True)
@@ -428,7 +503,7 @@ def main():
     context.set_defaults(boundary='snapshot')
     args = parser.parse_args()
     preflight()
-    if args.action == 'seed': seed(args.old_archive)
+    if args.action in ('seed', 'seed-existing'): seed(args.old_archive, existing=args.action == 'seed-existing')
     elif args.action == 'upgrade': upgrade(args)
     elif args.action == 'live-owner': live_owner(args)
     elif args.action == 'observe': print(json.dumps(observation(), indent=2))
