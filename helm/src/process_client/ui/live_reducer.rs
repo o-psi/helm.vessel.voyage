@@ -190,15 +190,16 @@ pub(super) fn apply(view: &mut View, event: &Value) -> bool {
             } else {
                 None
             };
-            if let Some(name) = object.get("name") {
-                if !name.is_null() && !name.is_string() {
-                    return false;
-                }
+            if let Some(name) = object.get("name")
+                && !name.is_null()
+                && !name.is_string()
+            {
+                return false;
             }
-            if let Some(model) = object.get("model") {
-                if !model.is_string() {
-                    return false;
-                }
+            if let Some(model) = object.get("model")
+                && !model.is_string()
+            {
+                return false;
             }
             // A false application ACK must leave every earlier field untouched.
             // Validate the complete supplied projection before assigning any.
