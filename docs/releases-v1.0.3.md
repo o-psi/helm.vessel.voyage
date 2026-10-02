@@ -61,7 +61,7 @@ The earlier UX delivery and Changes focus restoration are recorded in closed
 core #377 and Web #5. Earlier archive qualification passed the expanded native/
 Web-adapter browser journey with observed cleanup; see
 [browser qualification](testing/host-browser-v1.0.3.md). Those historical results
-do not establish the pending new core gate or complete deployed browser acceptance.
+do not establish complete deployed browser acceptance.
 
 CT 106 completed one separately reviewed forward recovery on qualified source
 `79507feba866f99d8576351b75e4fbc50fa5a527`, restoring managed service paths and
@@ -103,8 +103,12 @@ No browser qualification job is active, and Web qualification is disabled in the
 restored dotenv baseline. The original temporary route operation
 `5385acaf-b6eb-4b49-80e7-6855c108f73c` remains applied; its guarded exact-baseline
 restoration is still owed. Full qualification and required restoration must
-finish before stable publication. The new core source gate remains pending;
-no stable release or new passing core result is claimed here.
+finish before stable publication. The corrected core source gate passed 3,092
+Rust tests (zero failures, eight ignored), strict Clippy/formatting and 26 focused
+browser source checks. The exact clean measured source and full-scope totals
+are in [coverage/latest.json](../coverage/latest.json). Hosted build/artifact
+follow-through and final optimized release verification remain pending; no stable
+release is published.
 
 ## Planned assets and installation
 
