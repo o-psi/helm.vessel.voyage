@@ -561,3 +561,7 @@ impl App {
 #[cfg(test)]
 #[path = "paste_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(test)]
+#[path = "paste_family_tests.rs"]
+mod family_tests;
