@@ -1,0 +1,95 @@
+# Owner-reviewed forward recovery of a proved mixed user installation
+
+Scope: [#401](https://github.com/o-psi/helm.vessel.voyage/issues/401). These are
+prepared source boundaries; full coverage/build/native qualification is pending.
+This is ordinary Linux user installation only. System/Root scope is separate.
+
+## Why this entry exists
+
+An old updater may leave managed metadata pointing at v1.0.2 while an approved
+nightly supervisor/gateway run and catalogue has already migrated to schema2.
+Without an original schema1 snapshot, ordinary legacy rollback cannot recover
+that database. Never edit the schema version, fabricate a backup, discard Voyages
+or replay the uncertain old apply. The new `recover-user` entry independently
+reviews and repairs forward identities, retaining the original receipt byte for
+byte. It does not convert that uncertain receipt into a claimed successful update.
+
+## Supported source boundary
+
+Prepare requires one original `unconfirmed` receipt whose original metadata is the
+actual managed v1.0.2 identity and whose reviewed candidate is the exact running
+release. Both complete installed archives are verified. The current supervisor
+must expose an authenticated ready endpoint, exact owned unit, directory, actual
+kernel executable and account namespace. The one explicit ordinary gateway must
+be the same running release, exact owned fragment with no drop-ins, unchanged
+enablement, canonical approved HTTPS origin and literal loopback bind. Recovery
+supports only the temporary immutable gateway command (quoted or plain executable,
+optional systemd `:` prefix), with either the known positional origin at the end
+or the canonical `--public-origin` flag. Other escaping/unknown command forms
+refuse rather than guess. Curl is needed for bounded local gateway health reads.
+
+Every retained ordinary owner must have observed cleanup, idle ownership locks,
+no active run, matching complete registration projection and journal≤20. Catalogue
+must already be schema2; execution identity/binding/admin authority tables must be
+empty. Private account and canonical data are pinned. Active owners, peer scope,
+unknown cleanup and independently changed context refuse without cancellation.
+The target is a separately qualified full archive with pinned manifest/declaration
+and formats readable by the actual running source. Nothing trusts a latest label.
+
+## Exact local owner review
+
+Invoke the **qualified current** standalone installer, not the old installed
+updater, against the same ordinary HOME/XDG namespace as its live services:
+
+```sh
+/path/to/qualified/bin/voyage-installer recover-user prepare NEW_RECOVERY_UUID --original-operation ORIGINAL_UUID --running-release EXACT_RUNNING_RELEASE_SHA256 --bin-dir /path/to/qualified/bin --gateway-unit EXACT_GATEWAY.service --public-origin https://approved-origin.example
+/path/to/qualified/bin/voyage-installer recover-user apply NEW_RECOVERY_UUID --review EXACT_PREPARE_REVIEW_SHA256
+/path/to/qualified/bin/voyage-installer recover-user status NEW_RECOVERY_UUID
+```
+
+Prepare stages/verifies the target privately and returns the operation, original
+receipt, original metadata, actual running source, target and gateway identities
+plus a review hash. Inspect the private `recoveries/NEW_RECOVERY_UUID.json` for the
+complete reviewed units, origin, source/account/directory/evidence before apply.
+Apply requires that exact hash and permits only the `reviewed` phase. The new UUID
+must differ from the original. Repeated apply never performs an effect, even with
+the same hash. No new provider credential, authority right or budget is inferred.
+
+Apply holds ordinary installation/coordinator/worker locks, persists a separate
+operation and quarantine, stops only reviewed services, holds every session's
+startup/guardian/execution leases and pins an existing-schema2 snapshot/proof.
+This snapshot is evidence only: forward code cannot restore it. It first aligns
+managed metadata with the **already approved actual running source**, then
+publishes the separately approved target; legacy binaries never become rollback
+readers. It starts the quarantined target and atomically changes only the reviewed
+gateway executable to the managed persistent `current/bin/vessel` path, restoring
+`--public-origin` with the exact original HTTPS value. All other unit bytes and
+credentials are retained. Enablement is observed/preserved, not changed.
+
+Completion requires actual target pointer/archive, authenticated supervisor,
+exact target unit/namespace/account, exact repaired gateway/argv/enablement,
+loopback gateway health/source version and unchanged canonical/private proof.
+All session leases remain held through final observations and quarantine removal.
+The original receipt is hash checked again. Only then is the new recovery complete.
+A completed recovery with pinned original identities, retained snapshot and target
+allows a future independent update without changing/replaying the old receipt.
+Missing or tampered recovery proof cannot bypass the old pending-operation gate.
+
+## Interruption and limits
+
+Failure retains both releases, snapshot, quarantine and separate unconfirmed
+recovery. It does not attempt an automatic rollback or restore the already
+unreadable old metadata. `status` performs bounded observation only. A drained
+worker and reacquired exact session leases may complete observation of an already
+published/ready approved target; it never installs, starts, restores or replays.
+A live helper retaining leases prevents reconciliation. A previous/source pointer,
+missing proof or changed unit/account/canonical data remains unconfirmed/fenced.
+Such states need another specifically reviewed recovery mechanism; this entry
+must not be presented as universal corruption repair.
+
+Native CT106 forward qualification remains required before issue closure. Its
+original operation `2a84c5a0-bf77-4fa0-9fe5-89a8c5207463` stays unknown; retained
+schema2 and both completed Voyages must survive, repaired managed identities and
+actual services must match the new qualified archive, and the unchanged approved
+public origin must expose healthy authenticated Helm connection behavior. Do not
+publish private local paths, tokens, receipt payloads or terminal input in evidence.

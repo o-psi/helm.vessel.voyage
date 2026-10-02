@@ -139,6 +139,9 @@ No action: interactive Linux review/apply/cancel wizard.
   voyage-installer upgrade [--dev | --bin-dir DIRECTORY] [--replace-existing] [--start | --no-start] [--dry-run]
   voyage-installer rollback [--start | --no-start] [--dry-run]
   voyage-installer status
+  voyage-installer recover-user prepare RECOVERY_UUID --original-operation UUID --running-release SHA256 --bin-dir ABS --gateway-unit NAME.service --public-origin HTTPS_ORIGIN
+  voyage-installer recover-user apply RECOVERY_UUID --review REVIEW_SHA256
+  voyage-installer recover-user status RECOVERY_UUID
   voyage-installer system-assess --execution-user USER --gateway-user USER
   voyage-installer install --scope system --bin-dir ABS --execution-user USER --gateway-user USER --gateway-origin HTTPS_ORIGIN --credential-key /run/PATH --credential-unit NAME.service [--start | --no-start] [--dry-run]
   voyage-installer status --scope system
@@ -162,6 +165,12 @@ service stopped; an already active service restarts for upgrades.
 Configuration, credentials, sessions and prior releases are preserved.
 Close and relaunch Helm after upgrading; existing voyages remain independent.
 No provider login is performed. Missing releases never trigger a source build.
+
+recover-user is a local-owner forward repair for one proved mixed v1.0.2 metadata /
+active declared candidate installation. It requires already quiescent ordinary
+schema2 state, exact source/target/service/account review and a fresh durable
+operation. The original unknown update receipt is preserved; no old apply replay,
+DB restore, authority expansion or active-owner cancellation is performed.
 
 Service commands: install-user-service --bin-dir ABS [--start] [--dry-run],
 service-status, service-stop, service-uninstall

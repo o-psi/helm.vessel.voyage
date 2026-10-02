@@ -321,3 +321,11 @@ without automatically applying or discarding it. An old server needs the support
 current-installer maintenance/bootstrap entry; clients must not turn presentation
 into an arbitrary host executor or infer new grants to manufacture a handoff.
 The feature is not advertised for the staged system/root update surface.
+
+### Already migrated ordinary forward recovery
+
+For an already migrated ordinary installation whose verified live candidate and
+managed legacy pointer differ, see [owner-reviewed forward recovery](testing/ordinary-forward-recovery.md).
+The standalone current `recover-user` entry uses a fresh operation and exact review
+hash; original uncertainty stays recorded. It never replays the old updater,
+restores schema1 or changes authority. Native qualification is a separate gate.

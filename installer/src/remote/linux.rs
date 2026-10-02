@@ -1,3 +1,9 @@
+#[path = "forward_recovery.rs"]
+mod forward_recovery;
+
+pub(super) fn recover_user(args: &[String]) -> Result<()> {
+    forward_recovery::run(args)
+}
 use crate::{
     cli, flow,
     install::{self, files, release::Manifest},
@@ -701,14 +707,15 @@ pub(super) fn local_legacy_bootstrap(
         {
             let pending: Record = serde_json::from_slice(&files::read(&path, 65536)?)?;
             ensure!(
-                ![
-                    "preparing",
-                    "ready",
-                    "applying",
-                    "committing",
-                    "unconfirmed"
-                ]
-                .contains(&pending.phase.as_str()),
+                (forward_recovery::supersedes(&pending)?
+                    || ![
+                        "preparing",
+                        "ready",
+                        "applying",
+                        "committing",
+                        "unconfirmed"
+                    ]
+                    .contains(&pending.phase.as_str())),
                 "An existing update operation requires observation/recovery before local bootstrap"
             );
         }
@@ -1273,14 +1280,15 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 if p.extension().is_some_and(|v| v == "json") {
                     let other: Record = serde_json::from_slice(&files::read(&p, 65536)?)?;
                     ensure!(
-                        ![
-                            "preparing",
-                            "applying",
-                            "committing",
-                            "ready",
-                            "unconfirmed"
-                        ]
-                        .contains(&other.phase.as_str()),
+                        (forward_recovery::supersedes(&other)?
+                            || ![
+                                "preparing",
+                                "applying",
+                                "committing",
+                                "ready",
+                                "unconfirmed"
+                            ]
+                            .contains(&other.phase.as_str())),
                         "An update is already pending; resolve or discard it first"
                     );
                 }

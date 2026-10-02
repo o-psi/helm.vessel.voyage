@@ -1,0 +1,257 @@
+use super::*;
+use crate::fixture_tests::Fixture;
+fn review(f: &Fixture) -> Review {
+    Review {
+        schema_version: 1,
+        operation_id: "11111111-1111-4111-8111-111111111111".into(),
+        original_operation: "22222222-2222-4222-8222-222222222222".into(),
+        original_sha256: "a".repeat(64),
+        old_release: "b".repeat(64),
+        metadata_sha256: "c".repeat(64),
+        running_release: "d".repeat(64),
+        running_manifest_sha256: "e".repeat(64),
+        target_release: "f".repeat(64),
+        target_manifest_sha256: "0".repeat(64),
+        staged_bin: f.root.join("stage/bin"),
+        activation: service::Activation {
+            active: true,
+            enabled: false,
+            unit_file_state: "disabled".into(),
+            definition: Some("reviewed unit".into()),
+            state: f.root.join("state"),
+        },
+        accounts: f.root.join("accounts"),
+        source_evidence: serde_json::json!({"canonical_sha256":"pin","sessions":[]}),
+        gateway_unit: "gateway.service".into(),
+        gateway_path: f.root.join("units/gateway.service"),
+        gateway_original: "old".into(),
+        gateway_repaired: "new".into(),
+        gateway_effective: "effective".into(),
+        gateway_enablement: "disabled".into(),
+        public_origin: "https://helm.invalid".into(),
+    }
+}
+#[test]
+fn positional_gateway_recovery_restores_flag_and_persistent_path_preserving_all_other_configuration()
+ {
+    let content = "[Service]\nEnvironmentFile=/private/gateway.env\nExecStart=/home/user/releases/approved/bin/vessel --bind 127.0.0.1:9480 --process-directory /home/user/state https://helm.invalid\nRestart=on-failure\n";
+    let fixed = gateway_repair(
+        content,
+        Path::new("/home/user/releases/approved/bin/vessel"),
+        Path::new("/home/user/install/current/bin/vessel"),
+        "https://helm.invalid",
+    )
+    .unwrap();
+    assert_eq!(
+        fixed,
+        "[Service]\nEnvironmentFile=/private/gateway.env\nExecStart=/home/user/install/current/bin/vessel --bind 127.0.0.1:9480 --process-directory /home/user/state --public-origin https://helm.invalid\nRestart=on-failure\n"
+    );
+}
+#[test]
+fn flagged_gateway_recovery_retains_origin_and_quoted_executable_semantics() {
+    let content = "[Service]\nExecStart=:\"/home/user/releases/approved/bin/vessel\" --public-origin https://helm.invalid --process-directory /home/user/state --bind 127.0.0.1:9480\n";
+    assert_eq!(
+        gateway_repair(
+            content,
+            Path::new("/home/user/releases/approved/bin/vessel"),
+            Path::new("/home/user/install/current/bin/vessel"),
+            "https://helm.invalid"
+        )
+        .unwrap(),
+        "[Service]\nExecStart=:/home/user/install/current/bin/vessel --public-origin https://helm.invalid --process-directory /home/user/state --bind 127.0.0.1:9480\n"
+    );
+}
+#[test]
+fn gateway_recovery_refuses_noncanonical_or_credential_origins_and_unmatched_commands() {
+    let executable = Path::new("/home/user/approved/vessel");
+    let next = Path::new("/home/user/current/vessel");
+    for origin in [
+        "http://helm.invalid",
+        "https://user:secret@helm.invalid",
+        "https://helm.invalid/path",
+        "https://helm.invalid/?secret=1",
+        "https://helm.invalid/#fragment",
+    ] {
+        assert!(
+            gateway_repair(
+                &format!(
+                    "ExecStart={} --bind 127.0.0.1:9480 {origin}\n",
+                    executable.display()
+                ),
+                executable,
+                next,
+                origin
+            )
+            .is_err()
+        );
+    }
+    for content in [
+        "ExecStart=/other/vessel --bind 127.0.0.1:9480 https://helm.invalid\n",
+        "ExecStart=/home/user/approved/vessel https://helm.invalid --database unknown\n",
+        "ExecStart=/home/user/approved/vessel https://helm.invalid\nExecStart=/other/vessel https://helm.invalid\n",
+        "ExecStart=/home/user/approved/vessel --public-origin https://helm.invalid https://helm.invalid\n",
+    ] {
+        assert!(gateway_repair(content, executable, next, "https://helm.invalid").is_err());
+    }
+}
+#[test]
+fn actual_gateway_argument_fences_refuse_other_state_duplicate_origin_and_system_scope() {
+    let state = Path::new("/home/user/state");
+    for args in [
+        "vessel\0--process-directory\0/home/user/other\0https://helm.invalid\0",
+        "vessel\0--process-directory\0/home/user/state\0--public-origin\0https://helm.invalid\0https://helm.invalid\0",
+        "vessel\0--process-directory\0/home/user/state\0--system-gateway-socket\0unknown\0https://helm.invalid\0",
+        "vessel\0--process-directory\0/home/user/state\0--allow-insecure-loopback\0https://helm.invalid\0",
+    ] {
+        assert!(gateway_arguments(args.as_bytes(), state, "https://helm.invalid").is_err());
+    }
+    gateway_arguments(
+        b"vessel\0--process-directory\0/home/user/state\0https://helm.invalid\0",
+        state,
+        "https://helm.invalid",
+    )
+    .unwrap();
+}
+#[test]
+fn review_hash_pins_all_authority_context_and_mutation_target_before_any_manager_effect() {
+    let f = Fixture::new();
+    let baseline = review(&f);
+    let approved = review_hash(&baseline).unwrap();
+    for variant in 0..8 {
+        let mut changed = review(&f);
+        match variant {
+            0 => changed.original_sha256 = "9".repeat(64),
+            1 => changed.metadata_sha256 = "8".repeat(64),
+            2 => changed.target_release = "7".repeat(64),
+            3 => changed.accounts = f.root.join("other"),
+            4 => changed.activation.state = f.root.join("other"),
+            5 => changed.gateway_repaired = "unreviewed".into(),
+            6 => changed.gateway_enablement = "enabled".into(),
+            _ => changed.source_evidence = serde_json::json!({"canonical_sha256":"changed"}),
+        };
+        let mut record = Recovery {
+            review: changed,
+            phase: "reviewed".into(),
+            proof: None,
+        };
+        assert!(apply(&mut record, &approved).is_err());
+        assert_eq!(record.phase, "reviewed");
+    }
+    f.done();
+}
+#[test]
+fn original_receipt_mutation_is_refused_and_not_rewritten_or_replayed() {
+    let f = Fixture::new();
+    let mut reviewed = review(&f);
+    let original_path = path(&reviewed.original_operation).unwrap();
+    fs::write(&original_path, b"original uncertain receipt").unwrap();
+    reviewed.original_sha256 = files::hash(&original_path).unwrap();
+    original_unchanged(&reviewed).unwrap();
+    fs::write(&original_path, b"independent mutation").unwrap();
+    assert!(original_unchanged(&reviewed).is_err());
+    assert_eq!(fs::read(original_path).unwrap(), b"independent mutation");
+    f.done();
+}
+#[test]
+fn uncertain_recovery_phase_never_replays_effects_even_with_original_review_hash() {
+    let f = Fixture::new();
+    for phase in [
+        "applying",
+        "quiescent",
+        "source-reconciled",
+        "committing",
+        "unconfirmed",
+        "complete",
+    ] {
+        let reviewed = review(&f);
+        let approved = review_hash(&reviewed).unwrap();
+        let mut record = Recovery {
+            review: reviewed,
+            phase: phase.into(),
+            proof: None,
+        };
+        assert!(apply(&mut record, &approved).is_err());
+        assert_eq!(record.phase, phase);
+    }
+    f.done();
+}
+#[test]
+fn live_supervisor_namespace_requires_one_exact_directory_argument() {
+    let state = Path::new("/reviewed/state");
+    for args in [
+        "vessel\0local-serve\0--directory\0/other/state\0",
+        "vessel\0local-serve\0--directory\0/reviewed/state\0--directory\0/other/state\0",
+        "vessel\0local-serve\0",
+    ] {
+        assert!(!legacy_namespace_matches_fields(
+            state,
+            Path::new("/accounts"),
+            args.as_bytes()
+        ));
+    }
+    assert!(legacy_namespace_matches_fields(
+        state,
+        Path::new("/accounts"),
+        b"vessel\0local-serve\0--directory\0/reviewed/state\0"
+    ));
+}
+
+#[test]
+fn gateway_health_observation_accepts_only_one_literal_loopback_nonzero_bind() {
+    for args in [
+        "vessel\0--bind\x000.0.0.0:9480\0",
+        "vessel\0--bind\0localhost:9480\0",
+        "vessel\0--bind\x00127.0.0.1:0\0",
+        "vessel\0--bind\x00127.0.0.1:9480\0--bind\x00127.0.0.1:9481\0",
+        "vessel\0",
+    ] {
+        assert!(gateway_address(args.as_bytes()).is_err());
+    }
+    assert_eq!(
+        gateway_address(b"vessel\0--bind\x00127.0.0.1:9480\0").unwrap(),
+        "127.0.0.1:9480".parse::<std::net::SocketAddr>().unwrap()
+    );
+}
+
+#[test]
+fn complete_label_without_pinned_forward_proof_cannot_supersede_original_uncertainty() {
+    let f = Fixture::new();
+    let mut reviewed = review(&f);
+    let original_path = path(&reviewed.original_operation).unwrap();
+    let original = Record {
+        operation_id: reviewed.original_operation.clone(),
+        channel: "nightly".into(),
+        phase: "unconfirmed".into(),
+        message: "unknown".into(),
+        created_at: 1,
+        updated_at: 1,
+        current_release: reviewed.old_release.clone(),
+        release_id: Some(reviewed.running_release.clone()),
+        version: None,
+        description: None,
+        bin_dir: None,
+        staging_root: None,
+        gateways: vec![],
+        contracts_sha256: None,
+        supervisor_activation: None,
+        legacy_mode: false,
+        legacy_proof: None,
+        legacy_accounts: None,
+    };
+    files::atomic_json(&original_path, &original).unwrap();
+    reviewed.original_sha256 = files::hash(&original_path).unwrap();
+    let mut record = Recovery {
+        review: reviewed,
+        phase: "reviewed".into(),
+        proof: None,
+    };
+    save_recovery(&mut record, "unconfirmed").unwrap();
+    assert!(!supersedes(&original).unwrap());
+    save_recovery(&mut record, "complete").unwrap();
+    assert!(supersedes(&original).is_err());
+    assert_eq!(
+        files::hash(&original_path).unwrap(),
+        record.review.original_sha256
+    );
+    f.done();
+}

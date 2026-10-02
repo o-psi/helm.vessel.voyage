@@ -38,3 +38,15 @@ pub(crate) fn local_legacy_bootstrap(
 ) -> anyhow::Result<bool> {
     linux::local_legacy_bootstrap(options, report)
 }
+
+pub(crate) fn recover_user(args: &[String]) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::recover_user(args)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = args;
+        anyhow::bail!("User recovery requires Linux")
+    }
+}

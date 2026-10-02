@@ -16,6 +16,7 @@ pub(crate) struct Guard {
     pub proof: Proof,
     _sessions: Vec<File>,
     supervisor: Option<File>,
+    forward: bool,
 }
 fn inspect(
     action: &str,
@@ -105,8 +106,31 @@ pub(crate) fn eligible(state: &Path, accounts: &Path, stage: &Path) -> Result<()
     inspect("inspect", state, accounts, stage, None).map(|_| ())
 }
 pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard> {
+    begin_mode(state, accounts, stage, false)
+}
+pub(crate) fn forward_evidence(
+    state: &Path,
+    accounts: &Path,
+    stage: &Path,
+) -> Result<serde_json::Value> {
+    inspect("forward-inspect", state, accounts, stage, None)
+}
+pub(crate) fn begin_forward(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard> {
+    begin_mode(state, accounts, stage, true)
+}
+fn begin_mode(state: &Path, accounts: &Path, stage: &Path, forward: bool) -> Result<Guard> {
     let supervisor = files::lock(&state.join("supervisor.lock"))?;
-    let first = inspect("inspect", state, accounts, stage, None)?;
+    let first = inspect(
+        if forward {
+            "forward-inspect"
+        } else {
+            "inspect"
+        },
+        state,
+        accounts,
+        stage,
+        None,
+    )?;
     let mut sessions = Vec::new();
     for session in first["sessions"]
         .as_array()
@@ -128,7 +152,18 @@ pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard
     }
     let mut leases = sessions.iter().collect::<Vec<_>>();
     leases.push(&supervisor);
-    let mut evidence = inspect_leased("snapshot", state, accounts, stage, None, &leases)?;
+    let mut evidence = inspect_leased(
+        if forward {
+            "forward-snapshot"
+        } else {
+            "snapshot"
+        },
+        state,
+        accounts,
+        stage,
+        None,
+        &leases,
+    )?;
     ensure!(
         first["sessions"] == evidence["sessions"],
         "Legacy ownership inventory changed"
@@ -146,6 +181,7 @@ pub(crate) fn begin(state: &Path, accounts: &Path, stage: &Path) -> Result<Guard
         },
         _sessions: sessions,
         supervisor: Some(supervisor),
+        forward,
     })
 }
 impl Guard {
@@ -158,7 +194,11 @@ impl Guard {
             leases.push(supervisor);
         }
         inspect_leased(
-            "verify",
+            if self.forward {
+                "forward-verify"
+            } else {
+                "verify"
+            },
             &self.proof.state,
             &self.proof.accounts,
             &self.proof.stage,
@@ -168,6 +208,10 @@ impl Guard {
         .map(|_| ())
     }
     pub fn restore(&mut self) -> Result<()> {
+        ensure!(
+            !self.forward,
+            "Forward recovery never restores a catalogue backup"
+        );
         if self.supervisor.is_none() {
             self.supervisor = Some(files::lock(&self.proof.state.join("supervisor.lock"))?);
         }
@@ -239,4 +283,37 @@ pub(crate) fn restored(proof: &Proof) -> Result<()> {
         Some(&proof.evidence),
     )
     .map(|_| ())
+}
+
+/// Reacquire only session ownership for read-only forward reconciliation.
+/// The live quarantined supervisor keeps its own supervisor.lock; no snapshot or
+/// restoration is performed. Reverification under held leases closes inventory races.
+pub(crate) fn hold_forward(proof: &Proof) -> Result<Guard> {
+    let inventory = forward_evidence(&proof.state, &proof.accounts, &proof.stage)?;
+    let mut sessions = Vec::new();
+    for value in inventory["sessions"]
+        .as_array()
+        .context("Forward inventory missing")?
+    {
+        let session: uuid::Uuid = value.as_str().context("Forward session missing")?.parse()?;
+        ensure!(!session.is_nil(), "Nil forward session");
+        let directory = proof.state.join("sessions").join(session.to_string());
+        for path in [
+            directory.join("startup.lock"),
+            directory.join("guardian.lock"),
+            directory
+                .join("journal")
+                .join(format!("{session}.execution.lock")),
+        ] {
+            sessions.push(files::lock(&path)?);
+        }
+    }
+    let guard = Guard {
+        proof: proof.clone(),
+        _sessions: sessions,
+        supervisor: None,
+        forward: true,
+    };
+    guard.verify()?;
+    Ok(guard)
 }

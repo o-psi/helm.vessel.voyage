@@ -20,6 +20,10 @@ fn run() -> Result<bool> {
     let mut args = fixture_tests::arguments();
     #[cfg(not(all(test, target_os = "linux")))]
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s| s == "recover-user") {
+        remote::recover_user(&args[1..])?;
+        return Ok(false);
+    }
     if args.first().is_some_and(|s| s == "remote-update") {
         remote::run(&args[1..])?;
         return Ok(false);

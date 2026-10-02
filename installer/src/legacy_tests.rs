@@ -233,3 +233,69 @@ fn positively_empty_failed_startup_is_eligible_but_unknown_empty_journal_is_refu
         assert_eq!(eligible(&state, &accounts, &stage).is_ok(), proved);
     }
 }
+
+#[test]
+fn forward_recovery_proves_existing_schema2_but_never_restores_or_downgrades_it() {
+    let f = Fixture::new();
+    let (state, accounts, stage) = setup(&f);
+    assert!(forward_evidence(&state, &accounts, &stage).is_err());
+    sql(
+        &state,
+        include_str!("../../vessel/src/process/database_v2_migration.sql"),
+    );
+    let before = files::hash(&state.join("catalogue.sqlite3")).unwrap();
+    let mut guard = begin_forward(&state, &accounts, &stage).unwrap();
+    guard.verify().unwrap();
+    let mut leases = guard._sessions.iter().collect::<Vec<_>>();
+    leases.push(guard.supervisor.as_ref().unwrap());
+    assert!(
+        inspect_leased(
+            "restore",
+            &state,
+            &accounts,
+            &stage,
+            Some(&guard.proof.evidence),
+            &leases
+        )
+        .is_err()
+    );
+    assert!(guard.restore().is_err());
+    assert_eq!(
+        files::hash(&state.join("catalogue.sqlite3")).unwrap(),
+        before
+    );
+    let proof = guard.proof.clone();
+    drop(guard);
+    hold_forward(&proof).unwrap().verify().unwrap();
+    std::fs::write(accounts.join("accounts.json"), b"changed account").unwrap();
+    assert!(hold_forward(&proof).is_err());
+    assert_eq!(
+        files::hash(&state.join("catalogue.sqlite3")).unwrap(),
+        before
+    );
+}
+#[test]
+fn forward_recovery_refuses_new_authority_and_unobserved_owner_cleanup() {
+    for variant in 0..2 {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        sql(
+            &state,
+            include_str!("../../vessel/src/process/database_v2_migration.sql"),
+        );
+        if variant == 0 {
+            sql(
+                &state,
+                "INSERT INTO execution_identities VALUES('new-owner',1,'{}');",
+            );
+        } else {
+            std::fs::write(
+                state.join("sessions/11111111-1111-4111-8111-111111111111/stopped.json"),
+                b"{\"cleanup_observed\":false}",
+            )
+            .unwrap();
+        }
+        assert!(begin_forward(&state, &accounts, &stage).is_err());
+        assert!(!stage.join("legacy-catalogue.sqlite3").exists());
+    }
+}

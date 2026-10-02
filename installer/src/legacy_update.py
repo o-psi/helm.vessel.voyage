@@ -67,7 +67,7 @@ def guardian_idle(directory):
     try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     finally:os.close(fd)
 
-def inventory(state, db):
+def inventory(state, db, journal_ceiling=12):
     rows = db.execute('SELECT session_id,registration FROM voyages ORDER BY session_id').fetchall()
     if len(rows) > 4096: raise ValueError('ordinary voyage bound exceeded')
     sessions = []
@@ -97,7 +97,7 @@ def inventory(state, db):
             empty=journal.execute('SELECT count(*) FROM sessions').fetchone()[0]==0 and all(journal.execute('SELECT count(*) FROM '+table).fetchone()[0]==0 for table in ('runs','commands','events'))
             if not empty or stopped.get('startup_failed') is not True:
                 raise ValueError('legacy journal session identity missing')
-        if not 2 <= version <= 12 or journal.execute('SELECT count(*) FROM runs WHERE active=1').fetchone()[0]:
+        if not 2 <= version <= journal_ceiling or journal.execute('SELECT count(*) FROM runs WHERE active=1').fetchone()[0]:
             raise ValueError('legacy journal or active run prevents update')
         journal.close()
         sessions.append(session)
@@ -131,8 +131,8 @@ def projection_matches(state, db):
         if normalized(saved) != normalized(projected):
             raise ValueError('ordinary registration projection changed')
 
-def evidence(state, accounts, db):
-    sessions=inventory(state,db)
+def evidence(state, accounts, db, journal_ceiling=12):
+    sessions=inventory(state,db,journal_ceiling)
     return dict(canonical_sha256=canonical(db), state_sha256=tree_digest(state,True),
                 accounts_sha256=tree_digest(accounts), sessions=sessions, session_count=len(sessions))
 
@@ -143,14 +143,17 @@ def run(action,state,accounts,stage):
     db=database(state/'catalogue.sqlite3')
     version=db.execute('SELECT version FROM schema_version WHERE id=1').fetchone()[0]
     if version not in (1,2): raise ValueError('unsupported legacy catalogue source')
-    current=evidence(state,accounts,db)
+    forward=action.startswith('forward-')
+    if forward and version!=2:raise ValueError('forward recovery requires existing schema 2')
+    current=evidence(state,accounts,db,20 if forward else 12)
+    if forward:current['recovery_mode']='forward-existing-schema2'
     projection_matches(state,db)
-    if action=='inspect':
-        if version != 1: raise ValueError('legacy preparation requires unchanged schema 1')
+    if action in ('inspect','forward-inspect'):
+        if not forward and version != 1: raise ValueError('legacy preparation requires unchanged schema 1')
         return current
     proof_path=stage/'legacy-proof.json';backup=stage/'legacy-catalogue.sqlite3'
-    if action=='snapshot':
-        if version != 1: raise ValueError('legacy snapshot must precede migration')
+    if action in ('snapshot','forward-snapshot'):
+        if not forward and version != 1: raise ValueError('legacy snapshot must precede migration')
         if backup.exists() or proof_path.exists(): raise ValueError('snapshot identity already exists')
         fd=os.open(backup,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);os.close(fd)
         target=sqlite3.connect(backup);db.backup(target);target.close()
@@ -163,6 +166,7 @@ def run(action,state,accounts,stage):
     supplied=sys.stdin.buffer.read(65537)
     if not supplied or len(supplied)>65536:raise ValueError('pinned legacy proof unavailable')
     expected=json.loads(supplied)
+    if not forward and 'recovery_mode' in expected:raise ValueError('forward evidence cannot authorize legacy restore')
     saved=json.loads(checked(proof_path,512*1024))
     if not isinstance(expected,dict) or set(expected)!=(set(saved)-{'sessions'}):
         raise ValueError('pinned legacy proof shape changed')
@@ -178,7 +182,7 @@ def run(action,state,accounts,stage):
         restored=json.loads(checked(stage/'legacy-restored.json',65536))
         if restored!=expected:raise ValueError('previous snapshot restoration marker not pinned')
         return current
-    if action=='verify':return current
+    if action in ('verify','forward-verify'):return current
     if action!='restore':raise ValueError('unsupported legacy proof operation')
     if not leased(state/'supervisor.lock') or any(not leased(state/'sessions'/session/'startup.lock') or not leased(state/'sessions'/session/'guardian.lock') or not leased(state/'sessions'/session/'journal'/(session+'.execution.lock')) for session in current['sessions']):
         raise ValueError('helper-held restoration ownership unavailable')
