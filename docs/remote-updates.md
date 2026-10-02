@@ -329,3 +329,10 @@ managed legacy pointer differ, see [owner-reviewed forward recovery](testing/ord
 The standalone current `recover-user` entry uses a fresh operation and exact review
 hash; original uncertainty stays recorded. It never replays the old updater,
 restores schema1 or changes authority. Native qualification is a separate gate.
+
+Forward recovery explicitly retains raw source hashes while comparing the complete
+supported notification SQLite schema/typed rows/clock during the live-source
+review interval. Only cold notification physical layout can drift before source
+quiescence; every file is still accounted for. The subsequently held snapshot and
+pending activation proof remain strictly raw-byte fenced. See the forward recovery
+runbook for refusal cases and native qualification limits.

@@ -572,6 +572,58 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
     );
     Ok(())
 }
+/// Idle notification SQLite headers/unused cold journal bytes can drift while
+/// the reviewed source is still live. Full semantic notification evidence and
+/// every other file/context claim remain pinned; held proof thereafter is raw.
+fn ensure_reviewed_source(
+    approved: &serde_json::Value,
+    observed: &serde_json::Value,
+    snapshot: bool,
+) -> Result<()> {
+    let approved = approved
+        .as_object()
+        .context("Reviewed source evidence missing")?;
+    let observed = observed
+        .as_object()
+        .context("Observed source evidence missing")?;
+    for name in ["state_sha256", "review_state_sha256"] {
+        for object in [approved, observed] {
+            ensure!(
+                object
+                    .get(name)
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|hash| hash.len() == 64
+                        && hash.bytes().all(|byte| byte.is_ascii_hexdigit())),
+                "Full raw and semantic notification review evidence required; use a fresh reviewed operation"
+            );
+        }
+    }
+    let mut expected = approved
+        .keys()
+        .filter(|key| !snapshot || key.as_str() != "sessions")
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if snapshot {
+        expected.insert("backup_sha256".into());
+    }
+    ensure!(
+        expected
+            == observed
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+        "Reviewed source evidence shape changed"
+    );
+    for (claim, value) in approved {
+        if claim != "state_sha256" && (!snapshot || claim != "sessions") {
+            ensure!(
+                observed.get(claim) == Some(value),
+                "Canonical/private/notification logical state changed since owner review"
+            );
+        }
+    }
+    Ok(())
+}
 fn install_release(bin: &Path, expected: &str) -> Result<()> {
     let result = install::run(install::Options {
         bin_dir: bin.into(),
@@ -638,14 +690,15 @@ fn apply(record: &mut Recovery, approved: &str) -> Result<()> {
         crate::legacy::accounts_for_process(pid)? == review.accounts,
         "Account namespace changed since owner review"
     );
-    ensure!(
-        crate::legacy::forward_evidence(
+    ensure_reviewed_source(
+        &review.source_evidence,
+        &crate::legacy::forward_evidence(
             &review.activation.state,
             &review.accounts,
-            &installation_root()?
-        )? == review.source_evidence,
-        "Canonical/private state changed since review"
-    );
+            &installation_root()?,
+        )?,
+        false,
+    )?;
     for entry in fs::read_dir(root()?)? {
         let path = entry?.path();
         if path.extension().is_some_and(|ext| ext == "json") {
@@ -682,19 +735,11 @@ fn apply(record: &mut Recovery, approved: &str) -> Result<()> {
             &directory()?.join(&review.operation_id),
         )?);
         record.proof = guard.as_ref().map(|held| held.proof.clone());
-        for (claim, approved) in record
-            .review
-            .source_evidence
-            .as_object()
-            .context("Reviewed source evidence missing")?
-        {
-            if claim != "sessions" {
-                ensure!(
-                    record.proof.as_ref().unwrap().evidence[claim] == *approved,
-                    "Source state changed between owner review and held snapshot"
-                );
-            }
-        }
+        ensure_reviewed_source(
+            &record.review.source_evidence,
+            &record.proof.as_ref().unwrap().evidence,
+            true,
+        )?;
         save_recovery(record, "quiescent")?;
         // Repair metadata to the *already approved actual source* first. It is
         // the supported previous reader; legacy v1.0.2 is never rollback target.

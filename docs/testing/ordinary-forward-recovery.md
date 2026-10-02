@@ -93,3 +93,31 @@ schema2 and both completed Voyages must survive, repaired managed identities and
 actual services must match the new qualified archive, and the unchanged approved
 public origin must expose healthy authenticated Helm connection behavior. Do not
 publish private local paths, tokens, receipt payloads or terminal input in evidence.
+
+## Idle notification layout between review and quiescence
+
+The live source courier opens its schema1 notification store even with no
+subscriptions. Its idempotent SQLite transaction can change the main-file header
+and cold PERSIST-journal bytes without changing any notification record. The
+prepared review retains the original raw `state_sha256` and adds an explicit
+`review_state_sha256`; the approval hash and receipt are never rewritten.
+
+Before quiescence, only this known notification pair can use semantic equality.
+The read-only projection validates both private owned regular files, the supported
+schema1 metadata and full SQL table/index/trigger definitions, full column metadata,
+every typed row/row identity, the exact clock row and SQLite sequence. Unknown
+schema objects, changed logical data or clock, WAL/SHM, hot/nonzero journal header,
+missing pair, symlinks/hardlinks/unowned/nonprivate files and bound overflow refuse.
+Every other file still contributes its raw bytes; both notification files still
+contribute their names, existence and privacy/size accounting. An inactive PERSIST
+journal tail has no replay authority; its raw bytes remain in the original review.
+
+After the source stops and ownership locks are held, the installer requires the
+same complete semantic review and every other source/account/registration claim,
+then pins a new **raw** snapshot. Target activation, final proof and reconciliation
+require every raw byte of that held snapshot to remain unchanged. Even an idle
+notification header write after quiescence fails the held proof. This supports
+known live-source physical drift; it does not relax the pending activation proof
+or silently discard notification state. Old reviews lacking full semantic evidence
+refuse and need a separate fresh reviewed operation, never an altered approval or
+replayed unknown mutation. Native qualification of this boundary remains pending.

@@ -103,7 +103,121 @@ def inventory(state, db, journal_ceiling=12):
         sessions.append(session)
     return sessions
 
-def tree_digest(root, state=False):
+# Exact schema-1 initialization from Vessel notifications/store.rs::Store::open.
+# Comparing the complete engine schema and column metadata rejects extra objects,
+# triggers, virtual tables and silently changed definitions before reading rows.
+NOTIFICATION_SCHEMA = """
+CREATE TABLE clock (id INTEGER PRIMARY KEY CHECK(id=1), now INTEGER NOT NULL);
+INSERT INTO clock VALUES(1,0);
+CREATE TABLE destinations (
+ id TEXT PRIMARY KEY, grant_id TEXT NOT NULL, source_id TEXT NOT NULL,
+ payload TEXT NOT NULL CHECK(length(payload)<=1024), expires INTEGER NOT NULL,
+ revoked INTEGER, accepted INTEGER, cursor INTEGER NOT NULL DEFAULT 0, producer_error TEXT);
+CREATE TABLE commands (
+ id TEXT PRIMARY KEY, destination_id TEXT NOT NULL REFERENCES destinations(id),
+ operation INTEGER NOT NULL CHECK(operation BETWEEN 0 AND 3), argument TEXT);
+CREATE UNIQUE INDEX lifecycle_commands ON commands(destination_id,operation) WHERE operation<3;
+CREATE TABLE events (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+ destination_id TEXT NOT NULL REFERENCES destinations(id), event_id TEXT NOT NULL,
+ source_event_id TEXT NOT NULL, fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
+ payload TEXT CHECK(length(payload)<=1024), expires INTEGER NOT NULL,
+ state INTEGER NOT NULL DEFAULT 0 CHECK(state BETWEEN 0 AND 2),
+ UNIQUE(destination_id,event_id), UNIQUE(destination_id,source_event_id));
+CREATE INDEX inbox ON events(destination_id,sequence);
+PRAGMA user_version=1;
+"""
+NOTIFICATION_FILES = ('notifications/notifications.sqlite3',
+                      'notifications/notifications.sqlite3-journal')
+
+def notification_schema(db):
+    return [(kind,name,table,' '.join(sql.split()) if sql is not None else None)
+            for kind,name,table,sql in db.execute(
+                'SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name')]
+
+def cold_notification_journal(path):
+    data=checked(path,1024*1024)
+    if data and (len(data)<28 or data[:28]!=bytes(28)):
+        raise ValueError('notification journal is hot or unsupported')
+    return data
+
+def notification_projection(state):
+    directory=state/'notifications'
+    info=directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=os.geteuid() or info.st_mode&0o077:
+        raise ValueError('private notification directory unavailable')
+    path=directory/'notifications.sqlite3'
+    checked(path,64*1024*1024)
+    cold_notification_journal(directory/'notifications.sqlite3-journal')
+    identity=path.lstat()
+    db=database(path)
+    try:
+        if db.execute('PRAGMA user_version').fetchone()!=(1,):
+            raise ValueError('unsupported notification review schema')
+        expected=sqlite3.connect(':memory:')
+        try:
+            expected.executescript(NOTIFICATION_SCHEMA)
+            metadata={name:db.execute('PRAGMA '+name).fetchone()[0] for name in
+                      ('user_version','application_id','encoding','page_size','auto_vacuum','schema_version')}
+            expected_metadata={name:expected.execute('PRAGMA '+name).fetchone()[0] for name in metadata}
+            if metadata!=expected_metadata or db.execute('PRAGMA page_count').fetchone()[0]>16384:
+                raise ValueError('notification database metadata unsupported')
+            schema=notification_schema(db)
+            if schema!=notification_schema(expected):
+                raise ValueError('notification schema objects changed')
+            sha=hashlib.sha256(json.dumps([metadata,schema],sort_keys=True,separators=(',',':')).encode())
+            total=count=0
+            for table in ('clock','commands','destinations','events','sqlite_sequence'):
+                columns=db.execute('PRAGMA table_xinfo('+table+')').fetchall()
+                if columns!=expected.execute('PRAGMA table_xinfo('+table+')').fetchall():
+                    raise ValueError('notification columns changed')
+                sha.update(json.dumps([table,columns],separators=(',',':')).encode())
+                for row in db.execute('SELECT rowid,* FROM '+table+' ORDER BY rowid'):
+                    for column,value in zip(columns,row[1:]):
+                        _,name,kind,nonnull,_,primary,_=column
+                        if table=='sqlite_sequence':kind={'name':'TEXT','seq':'INTEGER'}[name]
+                        if value is None:
+                            if nonnull or primary:raise ValueError('unsupported null notification field')
+                        elif (kind=='INTEGER' and not isinstance(value,int) or
+                              kind=='TEXT' and not isinstance(value,str) or
+                              kind=='BLOB' and not isinstance(value,bytes)):
+                            raise ValueError('unsupported typed notification field')
+                    typed=[]
+                    for value in row:
+                        if value is None:typed.append(['null',None])
+                        elif isinstance(value,int):typed.append(['integer',value])
+                        elif isinstance(value,float):typed.append(['real',value.hex()])
+                        elif isinstance(value,str):typed.append(['text',value])
+                        elif isinstance(value,bytes):typed.append(['blob',value.hex()])
+                        else:raise ValueError('unsupported notification value')
+                    encoded=json.dumps(typed,ensure_ascii=False,separators=(',',':')).encode()
+                    total+=len(encoded);count+=1
+                    if total>LIMIT or count>65536:raise ValueError('notification review bound exceeded')
+                    sha.update(encoded)
+            clock=db.execute('SELECT id,now FROM clock').fetchall()
+            if len(clock)!=1 or clock[0][0]!=1 or not isinstance(clock[0][1],int) or clock[0][1]<0:
+                raise ValueError('notification clock record unsupported')
+            cold_notification_journal(directory/'notifications.sqlite3-journal')
+            current=path.lstat()
+            if (current.st_dev,current.st_ino)!=(identity.st_dev,identity.st_ino):
+                raise ValueError('notification database namespace changed')
+            return db,sha.hexdigest(),(identity.st_dev,identity.st_ino)
+        finally:expected.close()
+    except BaseException:
+        db.close()
+        raise
+
+def notification_review_tree(state):
+    db,projection,identity=notification_projection(state)
+    try:
+        result=tree_digest(state,True,projection)
+        cold_notification_journal(state/NOTIFICATION_FILES[1])
+        current=(state/NOTIFICATION_FILES[0]).lstat()
+        if (current.st_dev,current.st_ino)!=identity:raise ValueError('notification database namespace changed')
+        return result
+    finally:db.close()
+
+def tree_digest(root, state=False, notification_projection=None):
     sha, total, count = hashlib.sha256(), 0, 0
     if not root.exists(): raise ValueError('private source namespace missing')
     for path in sorted(root.rglob('*')):
@@ -118,7 +232,14 @@ def tree_digest(root, state=False):
         data = checked(path)
         total += len(data); count += 1
         if total > LIMIT or count > 16384: raise ValueError('private snapshot evidence bound exceeded')
-        sha.update(relative.encode());sha.update(hashlib.sha256(data).digest())
+        sha.update(relative.encode())
+        if notification_projection is not None and relative in NOTIFICATION_FILES:
+            # Every file still contributes name, existence, privacy and size bounds.
+            # Only the cold pair's physical layout is normalized for owner review.
+            normalized = ('notification-schema1:'+notification_projection if relative==NOTIFICATION_FILES[0]
+                          else 'notification-cold-persist-journal')
+            sha.update(hashlib.sha256(normalized.encode()).digest())
+        else:sha.update(hashlib.sha256(data).digest())
     return sha.hexdigest()
 
 def projection_matches(state, db):
@@ -146,7 +267,9 @@ def run(action,state,accounts,stage):
     forward=action.startswith('forward-')
     if forward and version!=2:raise ValueError('forward recovery requires existing schema 2')
     current=evidence(state,accounts,db,20 if forward else 12)
-    if forward:current['recovery_mode']='forward-existing-schema2'
+    if forward:
+        current['recovery_mode']='forward-existing-schema2'
+        current['review_state_sha256']=notification_review_tree(state)
     projection_matches(state,db)
     if action in ('inspect','forward-inspect'):
         if not forward and version != 1: raise ValueError('legacy preparation requires unchanged schema 1')

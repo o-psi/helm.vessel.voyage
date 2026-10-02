@@ -255,3 +255,49 @@ fn complete_label_without_pinned_forward_proof_cannot_supersede_original_uncerta
     );
     f.done();
 }
+
+fn source_review() -> serde_json::Value {
+    serde_json::json!({"state_sha256":"a".repeat(64),"review_state_sha256":"b".repeat(64),"canonical_sha256":"c".repeat(64),"accounts_sha256":"d".repeat(64),"sessions":["11111111-1111-4111-8111-111111111111"],"session_count":1,"recovery_mode":"forward-existing-schema2"})
+}
+#[test]
+fn semantic_notification_review_tolerates_only_raw_header_drift_before_quiescence() {
+    let approved = source_review();
+    let mut observed = approved.clone();
+    observed["state_sha256"] = "e".repeat(64).into();
+    ensure_reviewed_source(&approved, &observed, false).unwrap();
+    let object = observed.as_object_mut().unwrap();
+    object.remove("sessions");
+    object.insert("backup_sha256".into(), "f".repeat(64).into());
+    ensure_reviewed_source(&approved, &observed, true).unwrap();
+    assert_eq!(approved["state_sha256"], "a".repeat(64)); // Review is never rewritten.
+}
+#[test]
+fn semantic_review_refuses_logical_clock_schema_accounts_context_and_missing_claim_changes() {
+    let approved = source_review();
+    for claim in [
+        "review_state_sha256",
+        "canonical_sha256",
+        "accounts_sha256",
+        "session_count",
+        "sessions",
+        "recovery_mode",
+    ] {
+        let mut changed = approved.clone();
+        changed[claim] = serde_json::json!("independent effect");
+        assert!(ensure_reviewed_source(&approved, &changed, false).is_err());
+    }
+    for missing in ["review_state_sha256", "state_sha256", "accounts_sha256"] {
+        let mut changed = approved.clone();
+        changed.as_object_mut().unwrap().remove(missing);
+        assert!(ensure_reviewed_source(&approved, &changed, false).is_err());
+    }
+    let mut unknown = approved.clone();
+    unknown["unreviewed_authority"] = serde_json::json!(true);
+    assert!(ensure_reviewed_source(&approved, &unknown, false).is_err());
+    let mut old_review = approved.clone();
+    old_review
+        .as_object_mut()
+        .unwrap()
+        .remove("review_state_sha256");
+    assert!(ensure_reviewed_source(&old_review, &approved, false).is_err());
+}

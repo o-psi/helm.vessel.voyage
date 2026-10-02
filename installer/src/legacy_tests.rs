@@ -33,6 +33,10 @@ journal.execute('INSERT INTO sessions VALUES(?,?,?,?)',(session,0,json.dumps(sav
 for slot in range(256):journal.execute('INSERT INTO notification_outbox VALUES(?,?,?)',(slot,'00000000000000000000',' '*1024))
 journal.commit();journal.close()
 (accounts/'accounts.json').write_text('{}')
+namespace={'__name__':'fixture_source'};exec(schemas['notification_helper'],namespace)
+notifications=state/'notifications';notifications.mkdir(mode=0o700)
+notice=sqlite3.connect(notifications/'notifications.sqlite3');notice.execute('PRAGMA journal_mode=PERSIST');notice.executescript(namespace['NOTIFICATION_SCHEMA']);notice.close()
+
 "#;
     crate::service::command::run(
         Path::new("/usr/bin/python3"),
@@ -43,7 +47,7 @@ journal.commit();journal.close()
             state.to_str().unwrap(),
             accounts.to_str().unwrap(),
         ],
-        Some(&serde_json::to_vec(&serde_json::json!({"catalogue":include_str!("fixtures/legacy-v1.0.2-catalogue.sql"),"journal":include_str!("fixtures/legacy-v1.0.2-journal.sql")})).unwrap()),
+        Some(&serde_json::to_vec(&serde_json::json!({"catalogue":include_str!("fixtures/legacy-v1.0.2-catalogue.sql"),"journal":include_str!("fixtures/legacy-v1.0.2-journal.sql"),"notification_helper":include_str!("legacy_update.py")})).unwrap()),
     )
     .unwrap();
     (state, accounts, stage)
@@ -297,5 +301,113 @@ fn forward_recovery_refuses_new_authority_and_unobserved_owner_cleanup() {
         }
         assert!(begin_forward(&state, &accounts, &stage).is_err());
         assert!(!stage.join("legacy-catalogue.sqlite3").exists());
+    }
+}
+
+fn notification_sql(state: &Path, statement: &str) {
+    crate::service::command::run(Path::new("/usr/bin/python3"),&["-I","-c","import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('PRAGMA journal_mode=PERSIST'); c.executescript(sys.argv[2]); c.close()",state.join("notifications/notifications.sqlite3").to_str().unwrap(),statement],None).unwrap();
+}
+#[test]
+fn live_review_normalizes_real_idle_sqlite_physical_drift_but_held_proof_stays_raw() {
+    let f = Fixture::new();
+    let (state, accounts, stage) = setup(&f);
+    sql(
+        &state,
+        include_str!("../../vessel/src/process/database_v2_migration.sql"),
+    );
+    let before = forward_evidence(&state, &accounts, &stage).unwrap();
+    // Exactly the courier's repeated idempotent header transaction; no row changes.
+    notification_sql(&state, "BEGIN IMMEDIATE; PRAGMA user_version=1; COMMIT;");
+    let after = forward_evidence(&state, &accounts, &stage).unwrap();
+    assert_ne!(before["state_sha256"], after["state_sha256"]);
+    assert_eq!(before["review_state_sha256"], after["review_state_sha256"]);
+    assert_eq!(before["canonical_sha256"], after["canonical_sha256"]);
+    assert_eq!(before["accounts_sha256"], after["accounts_sha256"]);
+    let guard = begin_forward(&state, &accounts, &stage).unwrap();
+    guard.verify().unwrap();
+    notification_sql(&state, "BEGIN IMMEDIATE; PRAGMA user_version=1; COMMIT;");
+    assert!(guard.verify().is_err());
+}
+#[test]
+fn notification_review_pins_clock_complete_rows_and_every_other_private_file() {
+    use std::os::unix::fs::PermissionsExt;
+    for variant in 0..3 {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        sql(
+            &state,
+            include_str!("../../vessel/src/process/database_v2_migration.sql"),
+        );
+        let before = forward_evidence(&state, &accounts, &stage).unwrap();
+        match variant {
+            0 => notification_sql(&state, "UPDATE clock SET now=1 WHERE id=1;"),
+            1 => notification_sql(
+                &state,
+                "INSERT INTO destinations VALUES('destination','grant','source','{}',100,NULL,NULL,0,NULL);",
+            ),
+            _ => {
+                let path = state.join("private-other.json");
+                std::fs::write(&path, b"new private effect").unwrap();
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+        }
+        let after = forward_evidence(&state, &accounts, &stage).unwrap();
+        assert_ne!(before["review_state_sha256"], after["review_state_sha256"]);
+    }
+}
+#[test]
+fn notification_review_refuses_changed_schema_hot_missing_or_nonprivate_pairs() {
+    use std::os::unix::fs::PermissionsExt;
+    for variant in 0..15 {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        sql(
+            &state,
+            include_str!("../../vessel/src/process/database_v2_migration.sql"),
+        );
+        let directory = state.join("notifications");
+        let db = directory.join("notifications.sqlite3");
+        let journal = directory.join("notifications.sqlite3-journal");
+        match variant {
+            0 => notification_sql(&state, "PRAGMA user_version=2;"),
+            1 => notification_sql(&state, "CREATE TABLE unreviewed_authority(value TEXT);"),
+            2 => notification_sql(
+                &state,
+                "CREATE TRIGGER unreviewed AFTER INSERT ON destinations BEGIN DELETE FROM clock; END;",
+            ),
+            3 => notification_sql(
+                &state,
+                "ALTER TABLE destinations ADD COLUMN hidden_authority TEXT;",
+            ),
+            4 => std::fs::remove_file(journal).unwrap(),
+            5 => std::fs::remove_file(db).unwrap(),
+            6 => std::fs::write(journal, b"hot journal header must refuse").unwrap(),
+            7 => std::fs::set_permissions(db, std::fs::Permissions::from_mode(0o644)).unwrap(),
+            8 => {
+                std::fs::hard_link(&db, directory.join("other-link")).unwrap();
+            }
+            9 => {
+                let moved = directory.join("original.sqlite3");
+                std::fs::rename(&db, &moved).unwrap();
+                std::os::unix::fs::symlink(moved, db).unwrap();
+            }
+            10 => {
+                std::fs::write(directory.join("notifications.sqlite3-wal"), b"").unwrap();
+            }
+            11 => {
+                std::fs::write(directory.join("notifications.sqlite3-shm"), b"").unwrap();
+            }
+            12 => notification_sql(&state, "PRAGMA application_id=1;"),
+            13 => notification_sql(&state, "UPDATE clock SET now='unsupported';"),
+            _ => {
+                let moved = state.join("retained-notifications");
+                std::fs::rename(&directory, &moved).unwrap();
+                std::os::unix::fs::symlink(moved, directory).unwrap();
+            }
+        }
+        assert!(
+            forward_evidence(&state, &accounts, &stage).is_err(),
+            "variant {variant}"
+        );
     }
 }
