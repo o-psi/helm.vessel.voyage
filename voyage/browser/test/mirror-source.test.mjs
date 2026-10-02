@@ -47,3 +47,15 @@ test('recorder stop acknowledges actual inactive state and clears queued capture
  assert.equal(scope.__voyageMirror.enable('wrong',3),false);assert.equal(scope.__voyageMirror.enable('fixture-key',1),false);assert.equal(scope.__voyageMirror.drain(0).error,'recorder_disabled');
  const repeated=scope.__voyageMirror.stop('fixture-key',2);assert.equal(ended,1);assert.equal(repeated.recording,false);
 });
+
+test('private recorder expression never passes key through hostile page argument iterators',async()=>{
+ const {recorderExpression}=await import('../worker.mjs');const key='11111111-2222-4333-8444-555555555555';
+ const record=options=>{options.emit({type:4,data:{href:'about:blank'}});options.emit({type:2,data:{node:{type:0,childNodes:[]}}});return ()=>{};};record.takeFullSnapshot=()=>{};
+ const scope={rrweb:{record}};const source=(await readFile(join(dirname(fileURLToPath(import.meta.url)),'..','mirror-source.mjs'),'utf8')).replace('__VOYAGE_CAPTURE_KEY__',key);
+ runInNewContext(source,scope);
+ runInNewContext(`this.observed=[];const observed=this.observed,originalIterator=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){for(let i=0;i<this.length;i++)if(typeof this[i]==='string')observed[observed.length]=this[i];return originalIterator.call(this);};Object.defineProperty(Object.prototype,'key',{get(){observed[observed.length]='getter';return 'forged';},configurable:true});this.globalThis={__voyageMirror:{enable(){observed[observed.length]='forged global';return true;}}};`,scope);
+ const first=runInNewContext(recorderExpression('drain',key,1),scope);assert.equal(first.error,undefined);
+ const stopped=runInNewContext(recorderExpression('stop',key,2),scope);assert.equal(stopped.recording,false);
+ assert.equal(scope.__voyageMirror.enable(key,1),false);assert.equal(scope.__voyageMirror.drain(0).error,'recorder_disabled');
+ assert.equal(scope.observed.includes(key),false);assert.equal(scope.observed.includes('forged global'),false);
+});

@@ -750,6 +750,7 @@ export async function runCuaProductionQualification(context,cfg){
    ['both_actual_connections_renewed','browser_identity_retained','no_effect_replay','no_transport_rewrite']);
 stage('zero_viewer_capture_pause');
 const idleItem=native[0],idlePrior={...idleItem.state.status.binding};
+const idleLedger=await conditionLedger(cfg,'a_idle',[{...idleItem,session:cfg.sessions[0]}],cfg.host_observer.ledger_a);
 const idleClaims=new Set(idleItem.state.native_claims.keys());
 const idleEffects={browser_starts:idleItem.state.browser_starts,browser_closes:idleItem.state.browser_closes};
 await proof('close_dock_for_idle',{label:cfg.sessions[0].label},
@@ -762,7 +763,7 @@ idleRequest.label=cfg.sessions[0].label;idleRequest.worker_program=cfg.host_obse
 const idleStarted=Date.now();
 const [idleProof,idleCost]=await Promise.all([
  sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'idle'],idleRequest,20000).then(JSON.parse),
- sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.cost_script,'--ledger',cfg.host_observer.ledger_a,'--seconds','10','--interval','0.25','--output','-'],null,20000).then(JSON.parse),
+ sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.cost_script,'--ledger',idleLedger.path,'--seconds','10','--interval','0.25','--output','-'],null,20000).then(JSON.parse),
 ]);
 const idleEvidence=idleWindowQualified(idleProof,{label:cfg.sessions[0].label});
 assert.equal(idleCost.status,'observed');
@@ -773,7 +774,7 @@ const idleNewClaims=[...idleItem.state.native_claims.entries()].filter(([id])=>!
 const idleReconnected=idleReconnectQualified(idlePrior,idleItem.state.status,idleNewClaims,idleEffects,idleItem.state);
 await proof('reopen_dock_after_idle',{label:cfg.sessions[0].label},
  ['dock_open','same_running_browser','fresh_attach','other_browser_unchanged','no_browser_start_or_close']);
-report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,active_windows_unchanged:report.matrix.length===9};
+report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,host_ledger_scope:idleLedger.scope,active_windows_unchanged:report.matrix.length===9};
 
   stage('explicit_owned_browser_close');attempted.add(0);await closeBrowser(native[0].page);
   attempted.add(1);await closeBrowser(native[1].page);

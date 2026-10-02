@@ -7,6 +7,16 @@ import { chromium } from 'playwright-core';
 import { Journal, UUID, privateDir } from './journal.mjs';
 import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
 
+// Host-validated literals only. Page-side parameter destructuring/iterators can
+// observe argument-array values, so the private key never travels in that form.
+export function recorderExpression(operation,key,generation,cursor=0,budget=2200000){
+  if(!UUID.test(key)||!Number.isSafeInteger(generation)||generation<0||!Number.isSafeInteger(cursor)||cursor<0||!Number.isSafeInteger(budget)||budget<0||budget>2200000)refuse('invalid_capture_permit');
+  const target='this.__voyageMirror',literal=JSON.stringify(key);
+  if(operation==='stop')return `${target}?${target}.stop(${literal},${generation}):({recorder_absent:true})`;
+  if(operation!=='drain')refuse('invalid_capture_operation');
+  return `${target}&&${target}.enable(${literal},${generation})?${target}.drain(${cursor},${budget},${literal},${generation}):({error:'recorder_disabled'})`;
+}
+
 class BeforeEffect extends Refusal {}
 const beforeEffect = code => { throw new BeforeEffect(code); };
 const exposed = (e,point=false) => {
@@ -363,7 +373,7 @@ export class Worker {
     this.recorderStopObserved=false;
     const generation=++this.captureActivityGeneration;
     let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
-    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(function([key,generation]){const recorder=this.__voyageMirror;return recorder?recorder.stop(key,generation):{recorder_absent:true};},[this.recorderCapability,generation]),1000))));
+    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(recorderExpression('stop',this.recorderCapability,generation)),1000))));
     this.recorderStopObserved=retired&&!this.captureTaskUncertain&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
     await this.publishCaptureObservation();
     this.frameVisuals.clear();
@@ -401,7 +411,7 @@ export class Worker {
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     captureGuard();
-    const value=await bounded(page.evaluate(function([cursor,key,generation]){const recorder=this.__voyageMirror;if(!recorder?.enable(key,generation))return {error:'recorder_disabled'};return recorder.drain(cursor,2200000,key,generation);},[since,this.recorderCapability,generation]),5000);
+    const value=await bounded(page.evaluate(recorderExpression('drain',this.recorderCapability,generation,since)),5000);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
@@ -422,7 +432,7 @@ export class Worker {
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
         captureGuard();
-        const child=await bounded(frame.evaluate(function([since,budget,key,generation]){const recorder=this.__voyageMirror;if(!recorder?.enable(key,generation))return {error:'recorder_disabled'};return recorder.drain(since,budget,key,generation);},[cursor,550000,this.recorderCapability,generation]),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
+        const child=await bounded(frame.evaluate(recorderExpression('drain',this.recorderCapability,generation,cursor,550000)),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
         this.inlineAssets(child.events,frame.url());
         const bytes=Buffer.from(JSON.stringify(child.events));
