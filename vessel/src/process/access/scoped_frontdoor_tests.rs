@@ -450,3 +450,185 @@ async fn already_loaded_connection_and_session_rechecks_refuse_same_revision_tok
     );
     assert!(s.registrations.read().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn accepted_private_notification_then_late_grant_drift_is_unknown_and_retains_exact_receipt()
+{
+    use voyage_protocol::notifications::{Destination, NotificationKind, NotificationOperation};
+    for drift in ["token", "rights", "revision", "revoked"] {
+        let f = Fixture::new();
+        let s = f.supervisor().await;
+        let g = seed(&f);
+        let r = f.registration();
+        database::save(&f.0, &r).await.unwrap();
+        let destination = Destination {
+            id: Uuid::new_v4(),
+            recipient_grant_id: g.grant_id,
+            recipient_principal_id: g.principal_id,
+            recipient_grant_revision: g.revision,
+            source_vessel_id: g.vessel_id,
+            source_session_id: r.session_id,
+            event_kinds: vec![NotificationKind::Test],
+            expires_at_ms: store::now().unwrap() + 60_000,
+            notification_ttl_ms: 30_000,
+            quiet_hours_utc: None,
+        };
+        s.notifications(
+            NotificationOperation::Configure {
+                command_id: Uuid::new_v4(),
+                destination: destination.clone(),
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let id = Uuid::new_v4();
+        // This is the actual production scoped dispatch branch, using only the
+        // owned private SQLite acceptance store. No runtime/provider is started.
+        let accepted = s
+            .notifications(
+                NotificationOperation::Accept {
+                    command_id: id,
+                    destination_id: destination.id,
+                },
+                Some(GrantBinding {
+                    grant_id: g.grant_id,
+                    principal_id: g.principal_id,
+                    revision: g.revision,
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(accepted["accepted_at_ms"].as_u64().is_some());
+        let path = f.0.join("notifications/notifications.sqlite3");
+        let receipt = || {
+            let db = rusqlite::Connection::open_with_flags(
+                &path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .unwrap();
+            let command: (String, String, i64) = db
+                .query_row(
+                    "SELECT id,destination_id,operation FROM commands WHERE id=?1",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            let state: (String, i64) = db
+                .query_row(
+                    "SELECT payload,accepted FROM destinations WHERE id=?1",
+                    [destination.id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            let count: i64 = db
+                .query_row("SELECT count(*) FROM commands", [], |row| row.get(0))
+                .unwrap();
+            (command, state, count)
+        };
+        let before = receipt();
+        assert_eq!(before.0, (id.to_string(), destination.id.to_string(), 2));
+        assert_eq!(before.2, 2);
+        let mut changed = g.clone();
+        match drift {
+            "token" => changed.token_hash = store::hash("late-synthetic-auth-rotation"),
+            "rights" => changed.rights.clear(),
+            "revision" => changed.revision += 1,
+            _ => changed.revoked = true,
+        }
+        f.save_connection(&changed);
+        // Deterministic boundary-level regression: place the independent change
+        // after actual dispatch settlement, before its factored final checker.
+        // This does not claim an end-to-end scheduler/native race observation.
+        let wire = super::super::super::api::response(s.finish_connected_reply(&g, accepted));
+        assert!(wire.error.is_some());
+        assert!(
+            wire.outcome_unknown,
+            "late {drift} must not promise definite nonadmission"
+        );
+        assert!(
+            wire.result.is_null(),
+            "revoked reply must not expose its payload"
+        );
+        assert_eq!(
+            receipt(),
+            before,
+            "exact accepted operation was not replayed or rewritten"
+        );
+        assert!(
+            s.registrations
+                .read()
+                .await
+                .unwrap()
+                .contains_key(&r.session_id)
+        );
+    }
+}
+
+#[tokio::test]
+async fn readonly_success_stays_redacted_and_preflight_saved_pin_refusal_is_definite() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let mut g = seed(&f);
+    let frozen = store::connection_authority_fingerprint(&g).unwrap();
+    let normal = super::super::super::api::response(
+        s.connected_with_authority(
+            g.grant_id,
+            TOKEN,
+            Some(&frozen),
+            VesselCommand::Capabilities,
+        )
+        .await,
+    );
+    assert!(normal.error.is_none());
+    assert!(!normal.outcome_unknown);
+    let redacted = s
+        .finish_connected_reply(
+            &g,
+            json!({"catalogue":{"summary":"private fixture history"}}),
+        )
+        .unwrap();
+    assert!(redacted["catalogue"]["summary"].is_null());
+    g.accounts.push(Uuid::new_v4());
+    f.save_connection(&g);
+    let id = Uuid::new_v4();
+    let session = Uuid::new_v4();
+    let refused = super::super::super::api::response(
+        s.connected_with_authority(
+            g.grant_id,
+            TOKEN,
+            Some(&frozen),
+            VesselCommand::Start {
+                command_id: id,
+                session_id: session,
+                workspace: f.0.clone(),
+            },
+        )
+        .await,
+    );
+    assert!(refused.error.is_some());
+    assert!(!refused.outcome_unknown);
+    assert!(
+        !f.0.join("access/connection-commands")
+            .join(format!("{id}.json"))
+            .exists()
+    );
+    assert!(!f.0.join("sessions").join(session.to_string()).exists());
+    assert!(s.registrations.read().await.unwrap().is_empty());
+    // With no complete Vessel effect classifier, an authority failure AFTER a
+    // successful read is also conservatively unknown; it never releases data.
+    let late_read = super::super::super::api::response(s.finish_connected_reply(
+        &store::authenticate_connection(&f.0, g.grant_id, TOKEN).unwrap(),
+        json!({"safe":true}),
+    ));
+    assert!(late_read.error.is_none());
+    assert!(!late_read.outcome_unknown);
+    let mut changed = g.clone();
+    changed.revoked = true;
+    f.save_connection(&changed);
+    let withheld =
+        super::super::super::api::response(s.finish_connected_reply(&g, json!({"safe":true})));
+    assert!(withheld.error.is_some());
+    assert!(withheld.outcome_unknown);
+    assert!(withheld.result.is_null());
+}

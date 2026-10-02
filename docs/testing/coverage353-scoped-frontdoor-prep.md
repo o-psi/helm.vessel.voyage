@@ -44,6 +44,31 @@ validate required protocol/identity/features without a closed capability-key lis
 No public command schema or raw credential field was added. Private expectation
 None roundtrip and exact SystemOpenSocket auth equality have prepared regressions.
 
+
+## Late authority changes after successful dispatch
+
+[Related outcome defect](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5947018021):
+the final saved-connection check runs after dispatch has succeeded. A late grant
+rotation/revocation previously produced a generic error and a false definite
+`outcome_unknown=false` reply despite an already accepted effect. The factored
+production reply boundary now marks that postdispatch failure with the existing
+`OutcomeUnknown` type. All preflight authentication/fingerprint/rights refusals
+remain definite; no grant fence is relaxed and no operation is replayed.
+
+Vessel commands have no exhaustive effect classifier, so the failed late check is
+conservatively unknown for any successful dispatch, including a read. The payload
+is withheld after authority loss. Successful reads retain normal definite replies
+and the existing history redaction. This is an observation of the original exact
+operation, never permission to automatically retry or disclose a revoked reply.
+
+Two additional source-prepared parents cover four actual private SQLite acceptance
+settlements followed by token/rights/revision/revocation drift, exact command and
+accepted destination state retention, normal read/history redaction, and frozen
+pin refusal before a Start intent/session is created. The accepted-effect test
+invokes the actual notification branch, then the same factored production late
+checker; it is a **boundary-level** deterministic test, not an end-to-end scheduler
+race, native owner or provider claim. Tests remain unexecuted pending the parent gate.
+
 ## Prepared assertion families
 
 - Private connection current-principal/revision/schema/right/account/enrollment/

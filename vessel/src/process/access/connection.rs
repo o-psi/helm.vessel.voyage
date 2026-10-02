@@ -97,7 +97,7 @@ impl Supervisor {
             Ok(())
         };
         let operation = command.clone();
-        let mut response = match command {
+        let response = match command {
             VesselCommand::Notifications { operation } => {
                 self.notifications(
                     operation,
@@ -488,7 +488,21 @@ impl Supervisor {
             }
             _ => anyhow::bail!("operation requires local account-owner authority"),
         }?;
-        store::current_connection(&self.directory, &grant)?;
+        self.finish_connected_reply(&grant, response)
+    }
+
+    fn finish_connected_reply(
+        &self,
+        grant: &ConnectionGrant,
+        mut response: Value,
+    ) -> Result<Value> {
+        // Dispatch already succeeded. A later revocation/rotation can withhold its
+        // response, but cannot establish that no effect was admitted. Preserve
+        // the exact original operation for receipt observation, never replay it.
+        // Vessel commands have no exhaustive effect classifier; conservatively
+        // mark every failed postdispatch authority observation as unknown.
+        store::current_connection(&self.directory, grant)
+            .map_err(|error| error.context(super::super::routing::OutcomeUnknown))?;
         if !grant.rights.contains(&ProcessRight::History) {
             super::redact_catalogue_reply(&mut response);
         }
