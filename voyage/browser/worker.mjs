@@ -393,7 +393,7 @@ export class Worker {
       const connection=frame?._connection;
       if(typeof connection?.toImpl!=='function')refuse('observation_unavailable');
       const implementation=connection.toImpl(frame),page=frame.page();
-      if(!implementation||implementation._page!==connection.toImpl(page)||implementation._page._browserContext!==connection.toImpl(this.context)||typeof implementation._id!=='string'||frame.isDetached())refuse('observation_unavailable');
+      if(!implementation||implementation._page!==connection.toImpl(page)||implementation._page.browserContext!==connection.toImpl(this.context)||typeof implementation._id!=='string'||frame.isDetached())refuse('observation_unavailable');
       const frameId=implementation._id;
       for(let target=frame;target;target=target.parentFrame()){
         try{session=await this.openRecorderSession(target===page.mainFrame()?page:target);break;}
