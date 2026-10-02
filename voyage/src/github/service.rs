@@ -678,3 +678,7 @@ fn validate_receipt(operation: &Operation, value: &Value) -> Result<Receipt> {
 #[cfg(test)]
 #[path = "service_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(test)]
+#[path = "service_operator_fixture_tests.rs"]
+mod operator_fixture;

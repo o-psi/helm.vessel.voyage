@@ -314,14 +314,33 @@ pub async fn execute(
 }
 
 pub async fn execute_args(
-    mut context: crate::tools::ToolContext,
+    context: crate::tools::ToolContext,
     session_id: Option<uuid::Uuid>,
     args: Args,
 ) -> Result<CommandResult> {
-    use super::{
-        publication::{Action, Draft, ReviewEvent},
-        service::Service,
-    };
+    execute_args_with(
+        context,
+        session_id,
+        args,
+        None,
+        super::service::Service::new,
+    )
+    .await
+}
+
+// Both public dispatch and bounded loopback contract fixtures use this body.
+// Production always supplies the fixed-origin service and its private journal.
+async fn execute_args_with(
+    mut context: crate::tools::ToolContext,
+    session_id: Option<uuid::Uuid>,
+    args: Args,
+    directory: Option<std::path::PathBuf>,
+    service_factory: impl FnOnce(
+        crate::tools::ToolContext,
+        Option<uuid::Uuid>,
+    ) -> Result<super::service::Service>,
+) -> Result<CommandResult> {
+    use super::publication::{Action, Draft, ReviewEvent};
     if let Some(token) = context
         .github
         .as_ref()
@@ -381,19 +400,33 @@ pub async fn execute_args(
         let owner = super::store::Owner::new(context.policy.workspace(), session_id, None)?;
         let policy = context.policy.clone();
         let cancel = context.cancellation.clone();
-        let value = super::service::database(move |store| {
+        let work = move |store: &mut super::store::Store| {
             policy.check_current()?;
-            ensure!(!write || policy.access_mode() != crate::config::AccessMode::ReadOnly,
-                "GitHub journal maintenance is denied in read-only mode");
+            ensure!(
+                !write || policy.access_mode() != crate::config::AccessMode::ReadOnly,
+                "GitHub journal maintenance is denied in read-only mode"
+            );
             ensure!(!cancel.is_cancelled(), "GitHub operator action cancelled");
             match args.command {
                 Command::Inspect { id } => Ok(serde_json::to_value(store.inspect(id, &owner)?)?),
                 Command::List { offset } => Ok(serde_json::to_value(store.list(&owner, offset)?)?),
-                Command::Cancel { id, digest } => Ok(serde_json::to_value(store.cancel(id, &digest, &owner)?)?),
-                Command::Forget { id, digest } => { store.forget(id, &digest, &owner)?; Ok(serde_json::json!({"forgotten":id,"notice":"Local maintenance does not prove an operation was unsent or authorize repetition."})) }
+                Command::Cancel { id, digest } => {
+                    Ok(serde_json::to_value(store.cancel(id, &digest, &owner)?)?)
+                }
+                Command::Forget { id, digest } => {
+                    store.forget(id, &digest, &owner)?;
+                    Ok(
+                        serde_json::json!({"forgotten":id,"notice":"Local maintenance does not prove an operation was unsent or authorize repetition."}),
+                    )
+                }
                 _ => unreachable!(),
             }
-        }).await?;
+        };
+        let value = if let Some(directory) = directory {
+            super::service::database_at(directory, work).await?
+        } else {
+            super::service::database(work).await?
+        };
         context.policy.check_current()?;
         result.display =
             serde_json::to_string_pretty(&super::redact_value(&value, &context.redactor))?;
@@ -404,7 +437,7 @@ pub async fn execute_args(
             serde_json::to_string_pretty(&super::repository::discover(&context).await?)?;
         return Ok(result);
     }
-    let service = Service::new(context.clone(), session_id)?;
+    let service = service_factory(context.clone(), session_id)?;
     let value = match args.command {
         Command::Auth => {
             serde_json::json!({"host":"github.com","credential_source":"explicitly delegated HELM_GITHUB_TOKEN","actor":service.actor().await?})
@@ -601,3 +634,7 @@ async fn read_input(
 #[cfg(test)]
 #[path = "operator_final_tests.rs"]
 mod final_tests;
+
+#[cfg(test)]
+#[path = "operator_production_tests.rs"]
+mod production_tests;

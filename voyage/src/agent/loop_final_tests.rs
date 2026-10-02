@@ -1040,3 +1040,405 @@ async fn revoked_authority_blocks_public_operator_and_inference_entrypoints() {
     assert_eq!(observed.executions.load(Ordering::SeqCst), 0);
     assert!(observed.requests.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn github_operator_help_is_available_without_provider_or_github_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![], false);
+    let result = agent
+        .github_command(
+            uuid::Uuid::new_v4(),
+            vec!["--help".into()],
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(result.display.contains("Usage:"));
+    assert!(result.reference.is_none() && result.feedback.is_none());
+    assert!(observed.requests.lock().unwrap().is_empty());
+    assert_eq!(observed.discoveries.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn operator_cloned_context_keeps_explicit_approval_and_refuses_disabled_github() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![], false);
+    let error = agent
+        .github_command_with_approver(
+            uuid::Uuid::new_v4(),
+            vec!["auth".into()],
+            CancellationToken::new(),
+            Arc::new(UnattendedApprover { allow: true }),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("capability is disabled"));
+    assert!(observed.requests.lock().unwrap().is_empty());
+    assert_eq!(observed.executions.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn read_only_operator_permission_distinguishes_reference_inspection_from_edits() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, observed) = fixture(root.path(), vec![], false);
+    let config = crate::Config {
+        access: Some(AccessMode::ReadOnly),
+        ..Default::default()
+    };
+    agent.context.policy =
+        Arc::new(crate::policy::Policy::new(&config, root.path().into()).unwrap());
+    agent.github_operator_authority(false).unwrap();
+    assert!(
+        agent
+            .github_operator_authority(true)
+            .unwrap_err()
+            .to_string()
+            .contains("read-only")
+    );
+    assert!(observed.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn inventory_presentation_redacts_controls_without_changing_executable_definitions() {
+    struct Metadata;
+    #[async_trait]
+    impl Tool for Metadata {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "metadata_probe".into(),
+                description: "Visible\nSECRET_LOOP_VALUE\u{202e}suffix".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                output_schema: None,
+                annotations: None,
+            }
+        }
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+            _: &ToolContext,
+        ) -> Result<String, ToolError> {
+            panic!("presentation must never execute a tool")
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, observed) = fixture(root.path(), vec![], false);
+    agent.tools.register(Metadata);
+    let definitions = agent.tool_inventory();
+    let original = definitions
+        .iter()
+        .find(|definition| definition.name == "metadata_probe")
+        .unwrap();
+    assert!(original.description.contains("SECRET_LOOP_VALUE"));
+    let display = agent.tool_inventory_display();
+    let display = display
+        .iter()
+        .find(|display| display.starts_with("metadata_probe"))
+        .unwrap();
+    assert!(display.contains("[REDACTED]"));
+    assert!(display.contains("\\n"));
+    assert!(display.contains("\\u{202e}"));
+    assert!(!display.chars().any(char::is_control));
+    assert!(!display.contains("SECRET_LOOP_VALUE"));
+    assert!(observed.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn inventory_escape_cannot_form_a_configured_secret_on_the_public_surface() {
+    struct Metadata;
+    #[async_trait]
+    impl Tool for Metadata {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "escape_probe".into(),
+                description: "first\nsecond".into(),
+                input_schema: serde_json::json!({"type":"object"}),
+                output_schema: None,
+                annotations: None,
+            }
+        }
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+            _: &ToolContext,
+        ) -> Result<String, ToolError> {
+            panic!("metadata only")
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _) = fixture(root.path(), vec![], false);
+    agent.tools.register(Metadata);
+    agent.context.redactor = Arc::new(crate::tools::Redactor::new(["first\\nsecond".into()]));
+    assert!(agent.tool_inventory_display().iter().any(String::is_empty));
+    assert!(
+        agent
+            .tool_inventory()
+            .iter()
+            .any(|tool| tool.name == "escape_probe" && tool.description == "first\nsecond")
+    );
+}
+
+#[tokio::test]
+async fn plain_terminal_fallback_is_empty_and_observed_shutdown_does_not_invent_resources() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![], false);
+    let (terminals, policy) = agent.plain_terminals().unwrap();
+    assert!(terminals.list().await.unwrap().is_empty());
+    assert_eq!(policy.workspace(), root.path());
+    let shutdown = agent.shutdown_plain_terminals().await;
+    assert!(shutdown.observation_complete);
+    assert!(shutdown.remaining.is_empty() && shutdown.failures.is_empty());
+    assert!(observed.requests.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn plain_terminal_metadata_reflects_owned_live_and_exited_processes_then_retires_them() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, observed) = fixture(root.path(), vec![], false);
+    agent.tools = ToolRegistry::standard_with_terminal_limits(2, 65536);
+    let session = uuid::Uuid::new_v4();
+    let run = uuid::Uuid::new_v4();
+    let command = "exec sleep 30";
+    for name in [Some("owned-operator-terminal"), None] {
+        let launch = if name.is_some() {
+            "while [ ! -e release-terminal ]; do sleep 0.02; done"
+        } else {
+            command
+        };
+        agent
+            .operator_tool(
+                session,
+                run,
+                CancellationToken::new(),
+                "process",
+                serde_json::json!({"action":"start","command":launch,"name":name}),
+            )
+            .await
+            .unwrap();
+    }
+    let metadata = agent.terminal_metadata();
+    assert_eq!(metadata.len(), 2);
+    assert!(
+        metadata
+            .iter()
+            .all(|terminal| terminal.state == crate::terminal::TerminalState::Running)
+    );
+    assert!(
+        metadata
+            .iter()
+            .any(|terminal| terminal.title == "owned-operator-terminal")
+    );
+    assert!(metadata.iter().any(|terminal| terminal.title == command));
+    let (terminals, policy) = agent.plain_terminals().unwrap();
+    assert_eq!(policy.workspace(), root.path());
+    assert_eq!(terminals.list().await.unwrap().len(), 2);
+    let named = metadata
+        .iter()
+        .find(|terminal| terminal.title == "owned-operator-terminal")
+        .unwrap();
+    std::fs::write(
+        root.path().join("release-terminal"),
+        b"owned fixture release",
+    )
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if agent.terminal_metadata().iter().any(|terminal| {
+                terminal.id == named.id
+                    && matches!(
+                        terminal.state,
+                        crate::terminal::TerminalState::Exited { .. }
+                    )
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        agent
+            .terminal_metadata()
+            .iter()
+            .any(|terminal| terminal.title == command
+                && terminal.state == crate::terminal::TerminalState::Running)
+    );
+    let shutdown = agent.shutdown_plain_terminals().await;
+    assert!(shutdown.observation_complete, "{shutdown:?}");
+    assert!(shutdown.remaining.is_empty() && shutdown.failures.is_empty());
+    assert!(agent.terminal_metadata().is_empty());
+    assert!(terminals.list().await.unwrap().is_empty());
+    assert!(observed.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn scoped_public_run_wrapper_preserves_history_and_canonical_usage_without_coordinator() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![answer("Observed wrapper answer")], false);
+    let outcome = agent
+        .run_scoped(
+            vec![Message::new(Role::User, "Earlier context")],
+            "Current prompt".into(),
+            CancellationToken::new(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.answer, "Observed wrapper answer");
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(outcome.usage.input_tokens, 7);
+    assert_eq!(outcome.usage.output_tokens, 3);
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content == "Earlier context")
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|message| message.content == "Current prompt")
+    );
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .all(|message| message.role != Role::System)
+    );
+    assert_eq!(observed.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn default_optional_checkpoint_hooks_allow_canonical_only_embedders_to_complete() {
+    struct CanonicalOnly(Mutex<Vec<Vec<Message>>>);
+    #[async_trait]
+    impl RunCheckpoint for CanonicalOnly {
+        fn run_id(&self) -> uuid::Uuid {
+            uuid::Uuid::nil()
+        }
+        async fn canonical(&self, messages: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+            self.0.lock().unwrap().push(messages.to_vec());
+            Ok(())
+        }
+        async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
+            Ok(())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let (agent, observed) = fixture(root.path(), vec![answer("Canonical-only answer")], false);
+    let checkpoint = CanonicalOnly(Mutex::new(Vec::new()));
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Current prompt".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "loop-model".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(outcome.answer, "Canonical-only answer");
+    assert!(
+        checkpoint
+            .0
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .iter()
+            .any(|message| message.role == Role::Assistant
+                && message.content == "Canonical-only answer")
+    );
+    assert_eq!(observed.requests.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn recovery_debug_reports_accounting_without_disclosing_canonical_history() {
+    let recovery = CanonicalRecovery {
+        messages: vec![Message::new(Role::User, "PRIVATE_CANONICAL_HISTORY")],
+        usage: Usage {
+            input_tokens: 11,
+            output_tokens: 5,
+        },
+    };
+    let diagnostic = format!("{recovery:?}");
+    assert!(diagnostic.contains("message_count: 1"));
+    assert!(diagnostic.contains("input_tokens: 11"));
+    assert!(!diagnostic.contains("PRIVATE_CANONICAL_HISTORY"));
+}
+
+#[test]
+fn context_failure_recovery_retains_full_history_without_public_secret_diagnostics() {
+    let messages = vec![Message::new(Role::User, "PRIVATE_CANONICAL_HISTORY")];
+    let usage = Usage {
+        input_tokens: 11,
+        output_tokens: 5,
+    };
+    for error in [
+        AgentError::from(crate::context::ContextError {
+            estimated: 1024,
+            limit: 32,
+        }),
+        AgentError::ContextExhausted(None),
+    ] {
+        let error = error.with_recovery(&messages, &usage);
+        let retained = error.recovery().unwrap();
+        assert_eq!(retained.messages[0].content, "PRIVATE_CANONICAL_HISTORY");
+        assert_eq!(retained.usage.input_tokens, 11);
+        assert!(
+            !error
+                .public_failure_reason()
+                .contains("PRIVATE_CANONICAL_HISTORY")
+        );
+        assert!(!format!("{retained:?}").contains("PRIVATE_CANONICAL_HISTORY"));
+    }
+}
+
+#[test]
+fn public_failure_categories_never_echo_runtime_private_diagnostics() {
+    for error in [
+        AgentError::Completion("PRIVATE_DIAGNOSTIC".into()),
+        AgentError::Policy("PRIVATE_DIAGNOSTIC".into()),
+        AgentError::WorkspaceInstructions("PRIVATE_DIAGNOSTIC".into()),
+        AgentError::Provider(ProviderError::Request("PRIVATE_DIAGNOSTIC".into())),
+        AgentError::Cancelled,
+        AgentError::Checkpoint(CheckpointError),
+        AgentError::UsageOverflow,
+    ] {
+        assert!(!error.public_failure_reason().contains("PRIVATE_DIAGNOSTIC"));
+        assert!(error.recovery().is_none());
+        assert!(!error.is_incomplete());
+    }
+}
+
+#[test]
+fn wrapped_incomplete_failure_preserves_recovery_and_original_public_category() {
+    let error = AgentError::Finalization(Box::new(FinalizationFailure {
+        source: Box::new(AgentError::Provider(ProviderError::Incomplete)),
+        recovery: CanonicalRecovery {
+            messages: vec![Message::new(Role::User, "PRIVATE_CANONICAL_HISTORY")],
+            usage: Usage::default(),
+        },
+        readiness: None,
+        shutdown: OwnedShutdown {
+            remaining: vec![],
+            observation_complete: false,
+        },
+    }));
+    assert!(error.is_incomplete());
+    assert_eq!(
+        error.public_failure_reason(),
+        ProviderError::Incomplete.public_failure_reason()
+    );
+    assert_eq!(
+        error.recovery().unwrap().messages[0].content,
+        "PRIVATE_CANONICAL_HISTORY"
+    );
+    assert!(!format!("{error:?}").contains("PRIVATE_CANONICAL_HISTORY"));
+}
