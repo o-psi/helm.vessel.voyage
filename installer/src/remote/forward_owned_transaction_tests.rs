@@ -139,6 +139,12 @@ directory=state/'sessions'/session;(directory/'journal').mkdir(parents=True)
 journal=sqlite3.connect(directory/'journal/journal.sqlite3');journal.executescript(schemas['journal']);saved={'id':session,'revision':0,'created_at':'2026-09-30T00:00:00Z','updated_at':'2026-09-30T00:00:00Z','workspace':str(state),'model':'synthetic-model','messages':[],'usage':{'input_tokens':0,'output_tokens':0}};journal.execute('INSERT INTO sessions VALUES(?,?,?,?)',(session,0,json.dumps(saved),1))
 for slot in range(256):journal.execute('INSERT INTO notification_outbox VALUES(?,?,?)',(slot,'00000000000000000000',' '*1024))
 journal.commit();journal.close();(root/'accounts/accounts.json').write_text('{}')
+# A real already-run ordinary owner has materialized every cold lock inode.
+# Keep them in the reviewed tree: begin_forward must acquire the actual flocks,
+# never add private files after review or skip their evidence.
+for lock in (state/'supervisor.lock',directory/'startup.lock',directory/'guardian.lock',directory/'journal'/(session+'.execution.lock')):
+ lock.touch(mode=0o600,exist_ok=False)
+
 namespace={'__name__':'fixture_source'};exec(schemas['helper'],namespace);notice=state/'notifications';notice.mkdir(mode=0o700);db=sqlite3.connect(notice/'notifications.sqlite3');db.execute('PRAGMA journal_mode=PERSIST');db.executescript(namespace['NOTIFICATION_SCHEMA']);db.close()
 "#;
     let schemas = serde_json::json!({"catalogue":include_str!("../fixtures/legacy-v1.0.2-catalogue.sql"),"migration":include_str!("../../../vessel/src/process/database_v2_migration.sql"),"journal":include_str!("../fixtures/legacy-v1.0.2-journal.sql"),"helper":include_str!("../legacy_update.py")});

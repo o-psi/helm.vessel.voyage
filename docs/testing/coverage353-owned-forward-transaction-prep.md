@@ -83,3 +83,16 @@ measurement, archive preceding profiles/objects, audit the complete current obje
 set and publish only the compact summary. Own the resulting main publication and
 actual hosted archive follow-through. No focused/source-prep outcome closes353 or
 replaces remaining native/browser/platform/provider obligations.
+
+## Concrete fixture correction after the first focused run
+
+The first integrated forward focus passed3/9 and failed6 because the synthetic
+already-run owner lacked cold supervisor/startup/execution lock inodes before
+review. `begin_forward` correctly materialized/acquired those real lock files,
+changing the complete reviewed private-tree digest; the production guard refused
+before target configuration. The seed now creates all four existing private empty
+lock files before prepare, matching an actual already-run owner. It never holds or
+replays those locks. The handover still takes the real kernel flocks, preserves
+all lock-file evidence and requires the same semantic/prequiescence and raw/held
+proofs. No production code or exclusion changed. Failure evidence is retained;
+the relevant corrected focus/full gate remains pending.
