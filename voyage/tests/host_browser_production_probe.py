@@ -254,6 +254,86 @@ def initialize_ledger(request):
             'scope': 'selected current Voyage leaves and browser guardian descendants; excludes unrelated host services',
             'clients': request['clients'], 'bindings': bindings, 'ledger': {'schema': 1, 'roots': roots}}
 
+def validate_idle_metadata(value, pid, browser, source_sha256):
+    assert set(value)=={'schema','pid','browser','sequence','observed_at_ms','browser_running','zero_viewers','recorder_stop_observed','source_sha256'}
+    assert type(value['schema']) is int and value['schema']==1 and type(value['pid']) is int and value['pid']==pid and value['browser']==browser
+    assert type(value['sequence']) is int and value['sequence']>0 and type(value['observed_at_ms']) is int and value['observed_at_ms']>0
+    assert value['source_sha256']==source_sha256 and re.fullmatch('[a-f0-9]{64}',source_sha256)
+    assert all(value[key] is True for key in ('browser_running','zero_viewers','recorder_stop_observed'))
+
+
+def idle_observation(request):
+    # Read only the selected owned worker's private source-written metadata.
+    # No status/mirror call, lock acquisition, process control or timer-only proof.
+    assert set(request) == {'schema','capacity','sessions','proofs','label','worker_program'} and request['schema'] == 1
+    assert len(request['sessions']) == len(request['proofs']) == 2
+    pairs=[(item,proof) for item,proof in zip(request['sessions'],request['proofs']) if item['label']==request['label']]
+    assert len(pairs)==1
+    item,proof=pairs[0]
+    assert all(item[k] == proof[k] for k in ('label','session_id','browser_id','root'))
+    root=directory(item['root']); capacity=directory(request['capacity'])
+    worker_program=program(request['worker_program'],'worker')
+    root_pin=(root.stat().st_dev,root.stat().st_ino)
+    capacity_pin=(capacity.stat().st_dev,capacity.stat().st_ino)
+    lock_raw,lock_pin=private(root/'worker.lock',8192,True);lock=json.loads(lock_raw)
+    assert lock['browser']==item['browser_id']
+    original=next(value for value in proof['processes'] if value['pid']==lock['pid'])
+    pid=original['pid']; start=original['start_ticks']
+    guardian=identity(original['ppid']);assert guardian and guardian['state']!='Z'
+    tree=inventory([{'label':item['label'],'pid':guardian['pid'],'start_ticks':guardian['start_ticks'],'descendants':True}])
+    candidates=[]
+    for seen in tree.values():
+        argv=words(seen)
+        profiles=[arg.split('=',1)[1] for arg in argv if arg.startswith('--user-data-dir=')]
+        if len(profiles)==1 and not any(arg.startswith('--type=') for arg in argv) and Path(profiles[0]).is_relative_to(Path(proof['scratch'])):
+            candidates.append((seen,profiles[0]))
+    assert len(candidates)==1
+    browser,profile=candidates[0]
+    assert directory(profile).is_relative_to(Path(proof['scratch']))
+    image=Path(f'/proc/{browser["pid"]}/exe');image_path=os.readlink(image)
+    assert Path(image_path).name in ('chromium','chrome','chrome-headless-shell') and not image_path.endswith(' (deleted)')
+    image_meta=image.stat();image_pin=(image_meta.st_dev,image_meta.st_ino,image_meta.st_size,image_meta.st_mtime_ns,image_meta.st_ctime_ns)
+    assert stat.S_ISREG(image_meta.st_mode) and image_meta.st_mode & 0o111 and not image_meta.st_mode & 0o022
+    with image.open('rb') as stream:browser_source_sha256=hashlib.file_digest(stream,'sha256').hexdigest()
+    def sample():
+        assert (directory(root).stat().st_dev,root.stat().st_ino)==root_pin
+        assert (directory(capacity).stat().st_dev,capacity.stat().st_ino)==capacity_pin
+        current=identity(pid);assert current and current['start_ticks']==start and current['state']!='Z'
+        assert Path(f'/proc/{pid}').stat().st_uid==os.getuid()
+        active_browser=identity(browser['pid']);active_guardian=identity(guardian['pid'])
+        assert active_browser and active_guardian and active_browser['state']!='Z' and active_guardian['state']!='Z'
+        assert all(active_browser[key]==browser[key] for key in ('pid','start_ticks','ppid'))
+        assert all(active_guardian[key]==guardian[key] for key in ('pid','start_ticks','ppid'))
+        assert Path(f'/proc/{browser["pid"]}').stat().st_uid==os.getuid()
+        assert os.readlink(image)==image_path
+        named_image=image.stat();assert image_pin==(named_image.st_dev,named_image.st_ino,named_image.st_size,named_image.st_mtime_ns,named_image.st_ctime_ns)
+        current_tree=inventory([{'label':item['label'],'pid':guardian['pid'],'start_ticks':guardian['start_ticks'],'descendants':True}])
+        assert browser['pid'] in current_tree and current_tree[browser['pid']]['start_ticks']==browser['start_ticks']
+        assert any(arg=='--user-data-dir='+profile for arg in words(active_browser))
+        current_lock,current_pin=private(root/'worker.lock',8192,True)
+        assert current_lock==lock_raw and current_pin==lock_pin
+        raw,pin=private(root/'capture-observation.json',4096,True);value=json.loads(raw)
+        validate_idle_metadata(value,pid,item['browser_id'],request['worker_program']['sha256'])
+        assert words(current)[1]==worker_program['path']
+        named=Path(worker_program['path']).lstat()
+        assert worker_program['inode']==(named.st_dev,named.st_ino,named.st_size,named.st_mtime_ns,named.st_ctime_ns)
+        assert slots(capacity,item['session_id'])==proof['slots']
+        return raw,pin,value
+    started=int(time.time()*1000);raw,pin,first=sample()
+    assert 0<=started-first['observed_at_ms']<=15000
+    samples=0
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        later,later_pin,value=sample();assert later==raw and later_pin==pin and value==first
+        samples+=1;time.sleep(min(.25,max(0,deadline-time.monotonic())))
+    later,later_pin,value=sample();assert later==raw and later_pin==pin and value==first
+    ended=int(time.time()*1000)
+    return {'schema':1,'phase':'idle','label':item['label'],'browser_running':True,
+            'zero_viewers_observed':True,'recorder_stop_ack_observed':True,'worker_identity_unchanged':True,
+            'private_metadata_identity_unchanged':True,'slot_retained':True,'browser_root_identity_unchanged':True,'browser_program_sha256':browser_source_sha256,
+            'started_at_ms':started,'ended_at_ms':ended,'samples':samples,
+            'scope':'owned running browser zero-viewer recorder-stop interval; private source metadata, no page or frame content'}
+
 def local_authority(request):
     assert set(request) == {'schema','directory','vessel_id','sessions'} and type(request['schema']) is int and request['schema'] == 1
     base = directory(request['directory'])
@@ -316,11 +396,13 @@ def local_authority(request):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=['before','after','ledger','local-authority'])
+    parser.add_argument('phase', choices=['before','after','ledger','local-authority','idle'])
     args = parser.parse_args()
     assert __debug__ and sys.platform == 'linux'
     data = sys.stdin.buffer.read(65537); assert len(data) <= 65536
     request = json.loads(data)
+    if args.phase == 'idle':
+        json.dump(idle_observation(request),sys.stdout);return
     if args.phase == 'local-authority':
         json.dump(local_authority(request),sys.stdout);return
     if args.phase == 'ledger':

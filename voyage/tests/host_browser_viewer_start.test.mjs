@@ -13,6 +13,7 @@ function fixture({running=false,startOnConnect,read}={}){
    sent.push(operation);
    if(operation.action==='status'&&read)await read();
    if(operation.action==='start')current=status(true);
+   if(operation.action==='detach')current={...current,binding:{...binding}};
    if(operation.action==='attach')current={...current,binding:{...current.binding,attachment_id:operation.binding.attachment_id}};
    return {status:current,value:null};
   }});
@@ -45,4 +46,12 @@ test('disposing an opening viewer during its status read prevents a late Start',
  const opening=f.session.connect();
  await Promise.resolve();f.session.dispose();release();await opening;
  assert.deepEqual(f.sent.map(value=>value.action),['status']);assert.equal(f.session.closed,true);
+});
+
+test('explicit Disconnect then Check uses fresh Status and reattaches without Start',async()=>{
+ const f=fixture({running:true});await f.session.connect({start:false});
+ const before=f.sent.filter(op=>op.action==='attach').length;f.session.disconnect();
+ await new Promise(resolve=>setImmediate(resolve));await f.session.recover();
+ assert.equal(f.sent.filter(op=>op.action==='attach').length,before+1);
+ assert.equal(f.sent.filter(op=>op.action==='start').length,0);f.session.dispose();
 });

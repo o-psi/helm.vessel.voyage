@@ -819,3 +819,29 @@ coverage, arbitrary real-site frame fidelity or unsupported-frame interaction.
 The existing 45-second coordination, 600-second owned job, actor/HMAC/CSRF,
 request-count and privacy boundaries remain unchanged. Source preparation is
 not evidence of passing deployed qualification.
+
+## Prepared zero-viewer capture-pause interval
+
+After real renewal and before browser closure, close only fixture A's Web dock
+(retain its React tab/connection) and use Native A's existing **Disconnect viewer**
+control. Wait for the exact acknowledged detach. Browser B remains independent.
+Observe A's actual private source-produced capture state and host ledger for ten
+seconds: same live worker/browser/source/file identities, zero producer viewers,
+positive recorder-stop acknowledgement and unchanged reserved slot. An elapsed
+timer, absent dock, guessed boolean or PID0 alone is insufficient.
+
+Native A reconnects on the same owned page using **Check browser status**; no
+one-shot launcher or extra Native page/reopen is used. Require a fresh confirmed
+Attach on the same browser/incarnation and no actual Native Start/Close dispatch
+counter increase. Reopen A's Web dock normally, requiring the same running
+browser/fresh Attach and no Start/Close. Fixed coordination operations are
+`close_dock_for_idle` and `reopen_dock_after_idle`, each bound to A's label and
+exact boolean proof schema. Media observations use their separately documented
+fixed operations. No URL/script/content crosses this mailbox.
+
+The ten-second interval leaves all nine aligned active windows and the existing
+600-second job, 45-second requests, three-page ownership and one private-reopen
+bounds unchanged. The `cua` driver contains this stage; actual host qualification
+remains required; preparation is not a pass. Run the focused idle helper/producer
+contracts with the one coordinated final source gate; no test was executed during
+this preparation.

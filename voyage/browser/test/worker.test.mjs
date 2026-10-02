@@ -126,6 +126,16 @@ test('one sandboxed browser serves bounded live DOM to authorized viewers',{time
  await call('join',{viewer});await call('control',{viewer,mode:'agent'});
  const receipts=await fs.readdir(path.join(root,'receipts'));
  for(const file of receipts)assert.doesNotMatch(await fs.readFile(path.join(root,'receipts',file),'utf8'),/PRIVATE-SENTINEL/);
+ // Actual last disconnect acknowledges stopped recorders without closing Chromium.
+ const idleBrowser=worker.browser;await call('disconnect',{viewer});
+ const idle=JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8'));
+ assert.equal(idle.browser,idleBrowser);assert.equal(idle.browser_running,true);
+ assert.equal(idle.zero_viewers,true);assert.equal(idle.recorder_stop_observed,true);
+ assert.equal(worker.task.contexts().length,1);assert.equal(worker.page.isClosed(),false);
+ const reattached=randomUUID();await call('join',{viewer:reattached});
+ const resumed=await call('mirror',{viewer:reattached,since:0});
+ assert.equal(worker.browser,idleBrowser);assert.equal(resumed.value.reset,true);
+ assert.equal(JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8')).zero_viewers,false);
  await call('close');assert.equal(worker.task,null);
 });
 
@@ -230,4 +240,43 @@ test('three simultaneous localized surfaces retain aggregate bounds and private/
  assert.equal(worker.status().open,true);assert.deepEqual(worker.status().viewers,[]);
  assert.equal((await request('mirror',{viewer,since:0})).error.code,'viewer_missing');
  assert.equal(captures,before,'zero viewers/status reads do not capture localized images');
+});
+
+test('idle metadata never promotes missing, failed or superseded stop acknowledgements',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-idle333-'));const worker=new Worker();
+ worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};
+ worker.lock=await fs.open(path.join(root,'worker.lock'),'wx',0o600);worker.lockPath=path.join(root,'worker.lock');
+ const frame=value=>({evaluate:async()=>value});const page=frames=>({isClosed:()=>false,frames:()=>frames});
+ try{
+  for(const frames of [[],[frame(undefined)],[{evaluate:async()=>{throw Error('detached');}}],[frame({recording:true,pending_events:1,pending_bytes:2})]]){
+   worker.tabs.set('fixture',page(frames));await worker.stopMirrors();
+   assert.equal(JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8')).recorder_stop_observed,false);
+  }
+  worker.tabs.set('fixture',page([frame({recording:false,pending_events:0,pending_bytes:0})]));await worker.stopMirrors();
+  const stopped=JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8'));assert.equal(stopped.recorder_stop_observed,true);
+  await worker.publishCaptureObservation({joining:true});assert.equal(JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8')).zero_viewers,false);
+  worker.tabs.set('fixture',page([frame({recorder_absent:true})]));await worker.stopMirrors();assert.equal(worker.recorderStopObserved,true);
+  worker.tabs.set('fixture',page([{evaluate:async()=>{worker.captureActivityGeneration++;return {recording:false,pending_events:0,pending_bytes:0};}}]));
+  await worker.stopMirrors();assert.equal(worker.recorderStopObserved,false,'superseded stop ack is not current proof');
+  await fs.unlink(path.join(root,'capture-observation.json'));const unrelated=path.join(root,'unrelated');await fs.writeFile(unrelated,'preserve',{mode:0o600});await fs.symlink(unrelated,path.join(root,'capture-observation.json'));
+  await assert.rejects(worker.dispatch({op:'join',viewer:randomUUID()}),error=>error.code==='observation_unavailable');
+  assert.equal(worker.viewers.size,0);assert.equal(await fs.readFile(unrelated,'utf8'),'preserve');
+
+ }finally{await worker.lock.close();worker.lock=null;await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('last disconnect retires a held prior mirror before positive recorder-stop acknowledgement',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-held-mirror333-')),worker=new Worker();
+ worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};
+ worker.lock=await fs.open(path.join(root,'worker.lock'),'wx',0o600);worker.lockPath=path.join(root,'worker.lock');
+ const viewer=randomUUID();worker.viewers.set(viewer,{seq:0,frameCursors:new Map()});
+ let release;const held=new Promise(resolve=>{release=resolve;});worker.assetEffects.add(held);
+ let drains=0;const frame={evaluate:async()=>({recording:false,pending_events:0,pending_bytes:0})};
+ worker.page={isClosed:()=>false,frames:()=>[frame],evaluate:async()=>{drains++;return {events:[],cursor:0};}};worker.tabs.set('fixture',worker.page);
+ try{
+  const mirror=worker.dispatch({op:'mirror',viewer,since:0});const rejected=assert.rejects(mirror,error=>error.code==='capture_fenced');
+  const detached=worker.dispatch({op:'disconnect',viewer});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(worker.recorderStopObserved,false);assert.equal(drains,0);
+  release();await rejected;await detached;assert.equal(drains,0);assert.equal(worker.captureTasks.size,0);assert.equal(worker.recorderStopObserved,true);
+ }finally{release();await worker.lock.close();worker.lock=null;await fs.rm(root,{recursive:true,force:true});}
 });

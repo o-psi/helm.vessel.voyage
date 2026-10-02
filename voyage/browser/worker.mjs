@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { chromium } from 'playwright-core';
 import { Journal, UUID, privateDir } from './journal.mjs';
@@ -91,6 +91,7 @@ const bounded=async(p,ms=12000)=>{let timer;try{return await Promise.race([p,new
 
 export class Worker {
   constructor(){
+    this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
@@ -135,6 +136,7 @@ export class Worker {
     if(!config||!path.isAbsolute(config.root||'')||!path.isAbsolute(config.executable||''))refuse('invalid_config');
     this.config={...config,width:number(config.width??1280,320,3840),height:number(config.height??720,240,2160)};
     this.setPolicy(config);
+    this.captureProgramSha256=createHash('sha256').update(await fs.readFile(fileURLToPath(import.meta.url))).digest('hex');
     await privateDir(config.root);
     const lockPath=path.join(config.root,'worker.lock');
     try{this.lock=await fs.open(lockPath,'wx',0o600);}catch{refuse('state_locked');}
@@ -183,11 +185,11 @@ export class Worker {
       case 'close':return this.close();
       case 'shutdown':await this.close();await this.releaseLock();return {shutdown:true};
       case 'policy':this.setPolicy(req);await this.fence();this.proxy?.update(this.allowed,this.publicWeb);return null;
-      case 'join':identifier(req.viewer);if(this.viewers.has(req.viewer))refuse('viewer_exists');if(this.viewers.size>=4)refuse('viewer_limit');if(this.mode==='private'&&this.controller!==req.viewer)refuse('private');this.viewers.set(req.viewer,{seq:0,mirrorCursor:0,frameCursors:new Map()});return null;
+      case 'join':identifier(req.viewer);if(this.viewers.has(req.viewer))refuse('viewer_exists');if(this.viewers.size>=4)refuse('viewer_limit');if(this.mode==='private'&&this.controller!==req.viewer)refuse('private');if(!await this.publishCaptureObservation({joining:true}))beforeEffect('observation_unavailable');this.viewers.set(req.viewer,{seq:0,mirrorCursor:0,frameCursors:new Map()});if(this.viewers.size===1)this.captureActivityGeneration++;this.recorderStopObserved=false;return null;
       case 'disconnect':{
         identifier(req.viewer);this.viewers.delete(req.viewer);
         if(this.controller===req.viewer){if(this.mode!=='private'){this.mode='agent';this.controller=null;}await this.fence();}
-        if(!this.viewers.size)await this.stopMirrors();return null;
+        if(!this.viewers.size)await this.stopMirrors();else await this.publishCaptureObservation();return null;
       }
       case 'control':{
         this.viewer(req.viewer);if(!['agent','human','private'].includes(req.mode))refuse('invalid_mode');
@@ -198,7 +200,7 @@ export class Worker {
         await this.fence([...this.viewers.keys()]);
         return null;
       }
-      case 'mirror':return this.mirror(req);
+      case 'mirror':{const task=this.mirror(req);this.captureTasks.add(task);try{return await task;}catch(error){if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;}finally{this.captureTasks.delete(task);}}
       case 'input':{
         if(req.claim===true)return this.claimInput(req);
         const effect=this.input(req);this.effects.add(effect);try{return await effect;}finally{this.effects.delete(effect);}
@@ -216,6 +218,7 @@ export class Worker {
     try{
       this.task=await chromium.launch({...base,proxy:{server:this.proxy.server,username:this.proxy.username,password:this.proxy.password,bypass:'<-loopback>'}});
       if(this.disconnected)refuse('parent_disconnected');
+      this.task.on('disconnected',()=>{this.recorderStopObserved=false;void this.publishCaptureObservation();});
       this.context=await this.task.newContext({viewport:{width:this.config.width,height:this.config.height},acceptDownloads:true,serviceWorkers:'block'});
       this.context.setDefaultTimeout(5000);this.context.setDefaultNavigationTimeout(10000);
       await this.context.route('**/*',async route=>{
@@ -227,7 +230,7 @@ export class Worker {
       this.context.on('page',p=>this.registerPage(p));
       const directory=path.dirname(fileURLToPath(import.meta.url));
       const vendor=await fs.readFile(path.join(directory,'rrweb-vendor.mjs'),'utf8');
-      const recorder=await fs.readFile(path.join(directory,'mirror-source.mjs'),'utf8');
+      const recorder=(await fs.readFile(path.join(directory,'mirror-source.mjs'),'utf8')).replace('__VOYAGE_CAPTURE_KEY__',this.recorderCapability);
       await this.context.addInitScript({content:`${vendor}\n;${recorder}`});
       const page=await this.context.newPage();await this.select(this.idFor(page));
       return null;
@@ -244,7 +247,7 @@ export class Worker {
     page.on('dialog',dialog=>{if(page===this.page)this.dialog=dialog;else void dialog.dismiss().catch(()=>{});});
     page.on('response',response=>{const effect=this.cacheAsset(response);this.assetEffects.add(effect);void effect.finally(()=>this.assetEffects.delete(effect));});
     page.on('framenavigated',frame=>{this.frameIds.set(frame,randomUUID());if(page===this.page&&frame===page.mainFrame()){this.advance('document');this.dialog=null;}else if(page===this.page)this.invalidate();});
-    page.on('close',()=>{this.metadata.delete(id);this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');}});
+    page.on('close',()=>{this.metadata.delete(id);this.tabs.delete(id);if(this.page===page){this.page=null;this.active=null;this.advance('tab','document');this.recorderStopObserved=false;void this.publishCaptureObservation();}});
     page.on('download',download=>{void this.recordDownload(download);});
   }
   async recordDownload(download){
@@ -357,18 +360,48 @@ export class Worker {
   async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);await this.stopMirrors();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');}
   frameId(frame){let id=this.frameIds.get(frame);if(!id){id=randomUUID();this.frameIds.set(frame,id);}return id;}
   async stopMirrors(){
-    await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(()=>globalThis.__voyageMirror?.stop()),1000))));
+    this.recorderStopObserved=false;
+    const generation=++this.captureActivityGeneration;
+    let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
+    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(function([key,generation]){const recorder=this.__voyageMirror;return recorder?recorder.stop(key,generation):{recorder_absent:true};},[this.recorderCapability,generation]),1000))));
+    this.recorderStopObserved=retired&&!this.captureTaskUncertain&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
+    await this.publishCaptureObservation();
     this.frameVisuals.clear();
     for(const viewer of this.viewers.values()){viewer.mirrorCursor=0;viewer.frameCursors.clear();}
   }
+  // Private metadata only; never a receipt/admission or public topology field.
+  // Failure leaves proof unavailable and cannot turn a control effect into replay.
+  async publishCaptureObservation({joining=false}={}){
+    if(!this.lock||!this.config?.root)return true;
+    const root=this.config.root,destination=path.join(root,'capture-observation.json');
+    const temporary=destination+'.'+randomUUID();
+    const publish=this.capturePublication.then(async()=>{
+    try{
+      await privateDir(root);
+      const existing=await fs.lstat(destination).catch(error=>{if(error.code!=='ENOENT')throw error;return null;});
+      if(existing&&(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1||(existing.mode&0o077)||existing.uid!==process.getuid()))throw Error('private observation unavailable');
+      const value={schema:1,pid:process.pid,browser:this.browser,source_sha256:this.captureProgramSha256,sequence:++this.captureObservationSequence,
+        observed_at_ms:Date.now(),browser_running:!!this.task&&typeof this.task.isConnected==='function'&&this.task.isConnected()&&!!this.page&&!this.page.isClosed(),zero_viewers:!joining&&this.viewers.size===0,
+        recorder_stop_observed:!joining&&this.viewers.size===0&&this.recorderStopObserved};
+      const fd=await fs.open(temporary,'wx',0o600);
+      try{await fd.writeFile(JSON.stringify(value));await fd.sync();}finally{await fd.close();}
+      await fs.rename(temporary,destination);return true;
+    }catch{this.recorderStopObserved=false;await fs.unlink(temporary).catch(()=>{});return false;}
+    });
+    this.capturePublication=publish.catch(()=>{});return await publish;
+  }
   async mirror(req){
     const viewer=this.viewer(req.viewer);this.requireOpen();
+    this.recorderStopObserved=false;
+    const generation=this.captureActivityGeneration;
+    const captureGuard=()=>{if(generation!==this.captureActivityGeneration||!this.viewers.size)refuse('capture_fenced');this.viewer(req.viewer);};
     const since=number(req.since,0,Number.MAX_SAFE_INTEGER),page=this.page,stamp=this.epochs.capture;
     // Chromium pauses page evaluation while a JavaScript dialog is open.
     // Keep the read channel responsive so the human can dismiss that dialog.
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
-    const value=await bounded(page.evaluate(cursor=>globalThis.__voyageMirror?.drain(cursor)??{error:'recorder_unavailable'},since),5000);
+    captureGuard();
+    const value=await bounded(page.evaluate(function([cursor,key,generation]){const recorder=this.__voyageMirror;if(!recorder?.enable(key,generation))return {error:'recorder_disabled'};return recorder.drain(cursor,2200000,key,generation);},[since,this.recorderCapability,generation]),5000);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
@@ -388,12 +421,14 @@ export class Worker {
         const frameId=this.frameId(frame),parentId=parent===page.mainFrame()?null:this.frameId(parent);
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
-        const child=await bounded(frame.evaluate(([since,budget])=>globalThis.__voyageMirror?.drain(since,budget)??{error:'recorder_unavailable'},[cursor,550000]),2500);
+        captureGuard();
+        const child=await bounded(frame.evaluate(function([since,budget,key,generation]){const recorder=this.__voyageMirror;if(!recorder?.enable(key,generation))return {error:'recorder_disabled'};return recorder.drain(since,budget,key,generation);},[cursor,550000,this.recorderCapability,generation]),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
         this.inlineAssets(child.events,frame.url());
         const bytes=Buffer.from(JSON.stringify(child.events));
         if(bytes.length>650000)continue;
-        const frameVisuals=remainingMedia?await bounded(this.captureFrameVisuals(frame,frameId),1800).catch(()=>[]):[];
+        captureGuard();
+        const frameVisuals=remainingMedia?await bounded(this.captureFrameVisuals(frame,frameId),1800).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;return []; }):[];
         remainingMedia-=frameVisuals.length;
         frames.push({frame_id:frameId,parent_frame_id:parentId,host_node_id:hostId,
           encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:child.cursor,reset:child.reset,visuals:frameVisuals});
@@ -402,7 +437,8 @@ export class Worker {
       }catch{}finally{await host?.dispose().catch(()=>{});}
     }
     for(const id of this.frameVisuals.keys())if(!nextCursors.has(id))this.frameVisuals.delete(id);
-    const visuals=await bounded(this.captureVisuals(page,mirrored),5000).catch(()=>this.visuals.filter(item=>!mirrored.has(item.id)));
+    captureGuard();
+    const visuals=await bounded(this.captureVisuals(page,mirrored),5000).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;return this.visuals.filter(item=>!mirrored.has(item.id));});
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     const bytes=Buffer.from(JSON.stringify(value.events));
@@ -662,7 +698,7 @@ export class Worker {
     try{await this.fence();}catch{}
     const results=await Promise.allSettled([this.task?.close(),this.proxy?.close()]);
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');
-    this.task=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.tabs.clear();this.metadata.clear();this.viewers.clear();this.downloads.clear();this.assets.clear();this.assetBytes=0;this.closing=false;
+    this.task=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.tabs.clear();this.metadata.clear();this.viewers.clear();this.downloads.clear();this.assets.clear();this.assetBytes=0;this.closing=false;this.recorderStopObserved=false;await this.publishCaptureObservation();
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');return null;
   }
   async releaseLock(){if(this.lock){await this.lock.close();this.lock=null;await fs.unlink(this.lockPath);}}

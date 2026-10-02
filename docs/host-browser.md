@@ -60,3 +60,40 @@ Operations retain exact receipts; an uncertain effect is never retried automatic
 An unavailable observation can be retried independently of a prior effect. The
 worker's content-free receipts never contain element text, form input or log text.
 These operations do not provide arbitrary JavaScript, CDP or filesystem access.
+
+
+### Private zero-viewer observation
+
+The worker writes bounded owner-only `capture-observation.json` metadata at
+attachment/disconnection/capture-stop transitions, never per mirror poll. It
+contains only worker/browser/source identity, a sequence/time, browser liveness
+and zero-viewer/recorder-stop observations. No page, URL, input, frame topology or
+credential enters this diagnostic, public status or canonical receipts. It is
+not an execution grant, cleanup receipt or evidence of website effects.
+
+A successful stop observation requires actual source-recorder stop acknowledgments
+with inactive recording and empty pending capture, or an observed absent recorder
+in that frame. Failed, detached or inaccessible frames keep it unconfirmed. The
+source-created recorder closure and its global slot are immutable; repeating the
+init script retains that closure. A concurrent capture/attachment change cannot
+promote an old stop acknowledgement. A joining viewer first invalidates prior
+idle evidence; inability to publish that invalidation is an existing
+`observation_unavailable` pre-effect refusal, not permission to reuse stale proof.
+
+The maintained qualification host probe checks this private producer metadata
+against actual worker PID/start/browser and the independently pinned source,
+private file/directory identities and retained slot for a ten-second interval.
+The client disconnects normally without closing the browser; later reconnect
+uses the existing page's status-recovery control, same browser and a fresh
+attachment. The extra idle interval is separate from the nine active cost windows.
+Source contracts and Linux qualification remain distinct; native evidence is
+required before claiming this observation passed on a deployment.
+
+Recorder start permission is disabled until the worker enables a monotonic
+capture generation over its existing private pipe. A stop invalidates earlier
+permits; exposed page drain cannot reactivate recording without that private
+capability. Stop proof follows bounded retirement of prior mirror work; unresolved
+work keeps observation unconfirmed. The idle host probe independently observes
+the actual Chromium root/program/profile and guardian, rather than trusting a
+Node-owned liveness boolean. Native reconnect decisions use fresh Status before
+reattaching without Start.

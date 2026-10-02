@@ -254,9 +254,13 @@ export class BrowserConnection {
     async recover(){
         if(this.closed||this.busy)return;
         this.issue=null;this.clearMirror();
-        if(!this.status||!this.attached||!this.status.running)return this.connect({start:false});
+        if(!this.status)return this.connect({start:false});
         this.phase='recovering';this.emit();
-        try{await this.request({action:'status'});if(this.attached&&this.status.running)await this.pull();this.schedulePoll();}
+        try{await this.request({action:'status'});
+            // Disconnect sends its exact detach without accepting a late reply.
+            // Decide reattachment from this fresh status, never the old binding.
+            if(!this.attached)return await this.connect({start:false});
+            if(this.status.running)await this.pull();this.schedulePoll();}
         catch{this.fail('status-unavailable');}
     }
     async control(mode){

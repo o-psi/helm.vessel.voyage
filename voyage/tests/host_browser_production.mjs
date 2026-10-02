@@ -1,3 +1,4 @@
+import {idleWindowQualified,idleReconnectQualified} from './host_browser_idle.mjs';
 // Actual deployed React + TUI-launcher qualification. No socket/route rewrites,
 // server authentication bypass, ambient browser access or inference submission.
 import assert from 'node:assert/strict';
@@ -747,6 +748,33 @@ export async function runCuaProductionQualification(context,cfg){
   report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,...freshA.private_reclaim,explicit_return:true};
   stage('actual_cua_renewal');await proof('observe_real_renewal',{labels:cfg.sessions.map(s=>s.label)},
    ['both_actual_connections_renewed','browser_identity_retained','no_effect_replay','no_transport_rewrite']);
+stage('zero_viewer_capture_pause');
+const idleItem=native[0],idlePrior={...idleItem.state.status.binding};
+const idleClaims=new Set(idleItem.state.native_claims.keys());
+const idleEffects={browser_starts:idleItem.state.browser_starts,browser_closes:idleItem.state.browser_closes};
+await proof('close_dock_for_idle',{label:cfg.sessions[0].label},
+ ['dock_closed','qualification_tab_retained','other_browser_unchanged','no_browser_start_or_close']);
+await idleItem.page.getByLabel('More browser options',{exact:true}).click();
+await idleItem.page.getByRole('button',{name:'Disconnect viewer',exact:true}).click();
+await until(()=>[...idleItem.state.native_claims.entries()].some(([id,claim])=>!idleClaims.has(id)&&claim.action==='detach'));
+const idleRequest=hostRequest();idleRequest.proofs=resources.proofs;
+idleRequest.label=cfg.sessions[0].label;idleRequest.worker_program=cfg.host_observer.programs.worker;
+const idleStarted=Date.now();
+const [idleProof,idleCost]=await Promise.all([
+ sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'idle'],idleRequest,20000).then(JSON.parse),
+ sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.cost_script,'--ledger',cfg.host_observer.ledger_a,'--seconds','10','--interval','0.25','--output','-'],null,20000).then(JSON.parse),
+]);
+const idleEvidence=idleWindowQualified(idleProof,{label:cfg.sessions[0].label});
+assert.equal(idleCost.status,'observed');
+assert.ok(measurementWindowAligned(idleStarted,[{start:idleCost.window_started_at_ms,end:idleCost.window_ended_at_ms},{start:idleProof.started_at_ms,end:idleProof.ended_at_ms}]));
+assert.ok(idleCost.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
+await idleItem.page.getByRole('button',{name:'Check browser status',exact:true}).click();await ready(idleItem.page);
+const idleNewClaims=[...idleItem.state.native_claims.entries()].filter(([id])=>!idleClaims.has(id)).map(([,claim])=>claim);
+const idleReconnected=idleReconnectQualified(idlePrior,idleItem.state.status,idleNewClaims,idleEffects,idleItem.state);
+await proof('reopen_dock_after_idle',{label:cfg.sessions[0].label},
+ ['dock_open','same_running_browser','fresh_attach','other_browser_unchanged','no_browser_start_or_close']);
+report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,active_windows_unchanged:report.matrix.length===9};
+
   stage('explicit_owned_browser_close');attempted.add(0);await closeBrowser(native[0].page);
   attempted.add(1);await closeBrowser(native[1].page);
   const request=hostRequest();request.proofs=resources.proofs;
@@ -756,7 +784,7 @@ export async function runCuaProductionQualification(context,cfg){
   report.native_wire=await saveNativeWire(cfg,report.native_windows);
   for(const state of nativeStates){assert.equal(state.unknown,0);assert.equal(state.refused,0);assert.equal(state.duplicate_effect,false);assert.equal(state.overflow,false);}
   const measurementsComplete=report.matrix.every(w=>w.host_window_aligned&&w.cua_web.every(v=>v.status!=='unavailable'&&v.window_aligned));
-  report.status=measurementsComplete?'passed':'interaction_passed_measurements_incomplete';stage('complete');
+  report.status=measurementsComplete&&report.zero_viewer_idle?.observed===true?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
  }finally{
   report.cleanup.close_attempted=[...attempted];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;

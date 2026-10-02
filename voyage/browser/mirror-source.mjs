@@ -2,14 +2,20 @@
 // never receive viewer authority. The worker reads this bounded recorder through
 // its private Playwright pipe; no page network channel is created.
 (() => {
+  // Repeat initialization keeps the immutable source-created closure. The first
+  // init script runs before site scripts; they cannot replace this global slot.
+  if(Object.getOwnPropertyDescriptor(globalThis,'__voyageMirror')?.configurable===false){delete globalThis.rrweb;return;}
   const library = globalThis.rrweb;
   delete globalThis.rrweb;
+  const CAPABILITY='__VOYAGE_CAPTURE_KEY__';
+  let enabled=false,captureGeneration=0;
+  const authorized=(key,generation)=>key===CAPABILITY&&Number.isSafeInteger(generation)&&generation>=captureGeneration;
   const LIMIT = 2500000;
   let stop = null, sequence = 0, size = 0, overflow = false, unavailable = null;
   let events = [], metadata = null;
 
   function emit(event) {
-    if (unavailable || overflow) return;
+    if (!enabled || unavailable || overflow) return;
     const length = JSON.stringify(event).length;
     if (length > LIMIT) { unavailable = 'page_too_large'; events = []; return; }
     if (size + length > LIMIT || events.length >= 1024) { overflow = true; return; }
@@ -21,8 +27,9 @@
   function start() {
     if (stop || unavailable) return;
     if (!library?.record) { unavailable = 'recorder_unavailable'; return; }
+    const startedGeneration=captureGeneration;
     stop = library.record({
-      emit,
+      emit:event=>{if(enabled&&captureGeneration===startedGeneration)emit(event);},
       inlineStylesheet: true,
       inlineImages: true,
       collectFonts: true,
@@ -39,8 +46,16 @@
     if (!events.some(({event}) => event.type === 2)) unavailable = 'snapshot_unavailable';
   }
 
-  globalThis.__voyageMirror = Object.freeze({
-    drain(since, budget = 2200000) {
+  // Keep the source-created recorder closure authoritative after site scripts
+  // begin. Neither its object nor global slot can be replaced with a claimed ack.
+  Object.defineProperty(globalThis,'__voyageMirror',{writable:false,configurable:false,value:Object.freeze({
+    enable(key,generation){
+      if(!authorized(key,generation))return false;
+      if(generation>captureGeneration){stop?.();stop=null;events=[];size=0;overflow=false;metadata=null;}
+      captureGeneration=generation;enabled=true;return true;
+    },
+    drain(since, budget = 2200000,key,generation) {
+      if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'recorder_disabled'};
       if (!Number.isSafeInteger(since) || since < 0) return {error:'invalid_cursor'};
       start();
       if (unavailable) return {error:unavailable};
@@ -68,8 +83,11 @@
       return Number.isSafeInteger(id) && id > 0 ? library?.record?.mirror?.getNode(id) ?? null : null;
     },
     id(node) { return library?.record?.mirror?.getId(node) ?? -1; },
-    stop() {
+    stop(key,generation) {
+      if(!authorized(key,generation))return {error:'stale_capture_permit'};
+      captureGeneration=generation;enabled=false;
       stop?.();stop=null;events=[];size=0;overflow=false;metadata=null;
+      return {recording:stop!==null,pending_events:events.length,pending_bytes:size};
     },
-  });
+  })});
 })();

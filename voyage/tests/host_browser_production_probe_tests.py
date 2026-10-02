@@ -133,5 +133,22 @@ class ProgramContracts(unittest.TestCase):
             with self.assertRaises(AssertionError): probe.program(spec,'node')
 
 
+class IdleMetadataContracts(unittest.TestCase):
+    def test_exact_running_zero_viewer_stop_ack_only(self):
+        value={'schema':1,'pid':321,'browser':str(uuid.uuid4()),'sequence':4,'observed_at_ms':1000,
+               'browser_running':True,'zero_viewers':True,'recorder_stop_observed':True,'source_sha256':'a'*64}
+        probe.validate_idle_metadata(value,321,value['browser'],'a'*64)
+        for field in ['browser_running','zero_viewers','recorder_stop_observed']:
+            changed=copy.deepcopy(value);changed[field]=False
+            with self.assertRaises(AssertionError):probe.validate_idle_metadata(changed,321,value['browser'],'a'*64)
+        for field in ['schema','pid','sequence','observed_at_ms']:
+            changed=copy.deepcopy(value);changed[field]=True
+            with self.assertRaises(AssertionError):probe.validate_idle_metadata(changed,321,value['browser'],'a'*64)
+        changed=copy.deepcopy(value);changed['page']='private topology'
+        with self.assertRaises(AssertionError):probe.validate_idle_metadata(changed,321,value['browser'],'a'*64)
+        with self.assertRaises(AssertionError):probe.validate_idle_metadata(value,322,value['browser'],'a'*64)
+        with self.assertRaises(AssertionError):probe.validate_idle_metadata(value,321,str(uuid.uuid4()),'a'*64)
+
+
 if __name__=='__main__':
     unittest.main()
