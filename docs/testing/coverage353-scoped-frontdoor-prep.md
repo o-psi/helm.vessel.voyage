@@ -135,9 +135,13 @@ refused before their intended parent/participant checks. They now persist each
 explicit synthetic child variant and assert the intended attenuation/refusal label.
 No production scope or parent guard is weakened.
 
-The BIN failure was a write-side `ConnectionReset` while sending the deliberate
-`MAX_FRAME_BYTES+1` WebSocket frame. The production frame guard can close from its
-length header before the payload flush. Only that oversized refusal case accepts
+The BIN failure was a write-side `ConnectionReset`; the retained original fixture
+has no case ID, so its exact loop iteration is not independently established.
+Source identifies the deliberate `MAX_FRAME_BYTES+1` frame as a path whose production
+frame guard can close from its length header before the payload flush. The correction
+is restricted to that premise; the parent's rerun must confirm it resolves the
+actual failure, and any other failing iteration remains a failure. Only that
+oversized refusal case accepts
 write-side reset/broken-pipe; all other frame writes remain strict. It still must
 observe closed transport, no command reply/session creation, unchanged grant and
 positive owned service retirement. Private case metadata now identifies any
