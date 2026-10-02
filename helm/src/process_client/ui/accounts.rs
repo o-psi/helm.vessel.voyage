@@ -1701,3 +1701,7 @@ mod accounts_final_tests;
 #[cfg(all(test, unix))]
 #[path = "accounts/socket_journey_tests.rs"]
 mod socket_journey_tests;
+
+#[cfg(all(test, unix))]
+#[path = "accounts/event_loading_family_tests.rs"]
+mod event_loading_family_tests;

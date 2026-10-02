@@ -964,3 +964,7 @@ mod coverage_tests;
 #[cfg(test)]
 #[path = "inference_picker_coverage_tests.rs"]
 mod picker_coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "inference/event_loading_family_tests.rs"]
+mod event_loading_family_tests;
