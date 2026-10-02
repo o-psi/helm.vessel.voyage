@@ -1,9 +1,36 @@
-# Documentation
+# Voyage guides
 
-**Start here:** [Your first voyage in Helm Web](getting-started-web.md) or
-[Your first voyage in the terminal](getting-started.md). The browser guide covers
-sign-in and connecting an owner-operated Vessel; the terminal guide covers local
-Linux use. Both clients connect to Vessel-supervised Voyage processes.
+<a id="documentation"></a>
+
+New to Voyage? Start with one small task and a folder you want help with.
+You don't need to learn the internal architecture before using it.
+
+## Get started
+
+| What you want to do | Guide |
+| --- | --- |
+| Use a browser chat interface | [Your first voyage in Helm Web](getting-started-web.md) |
+| Work locally in a Linux terminal | [Your first voyage in the terminal](getting-started.md) |
+| Install or update the programs | [Installation and updates](../installer/README.md) |
+| Connect an AI account and choose a model | [Accounts and models](provider-accounts.md) |
+| Connect another computer | [Vessel connections](vessel-connections.md) |
+
+**Helm** is your interface, **Vessel** is the service on the computer doing the
+work, and a **voyage** is your ongoing AI conversation. Browser use needs a
+connected machine; AI access and credit come from your chosen provider.
+
+## Setup help
+
+- [Detailed terminal setup and recovery](terminal-setup-reference.md)
+- [Browser connection setup reference](web-setup-reference.md)
+- [Provider failures and recovery](provider-attempts.md)
+- [Helm Web operation and deployment](helm-web.md)
+
+## For LLMs, developers and operators
+
+Start with [readme.llm.md](../readme.llm.md) for component boundaries, source
+locations, exact setup paths, permissions and implementation limits.
+The references below retain the engineering and verification detail.
 
 The architecture documents define the intended product. Current-operation guides
 describe the clients and binaries in the source tree. Commands for unimplemented

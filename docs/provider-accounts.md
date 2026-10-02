@@ -1,4 +1,28 @@
-# Named native provider accounts
+# Accounts and models
+
+<a id="named-native-provider-accounts"></a>
+
+Your AI account supplies the model that does the work. Voyage lets you choose
+that account; it does not include AI credit. Signing in to Helm Web only signs
+you in to the interface.
+
+## If you are setting up your first account
+
+1. Follow the [browser](getting-started-web.md) or [terminal](getting-started.md)
+   guide and open the profile/account controls.
+2. For an eligible ChatGPT account, use the private sign-in screen. This route
+   is experimental, so model access can depend on the account and provider.
+3. For an OpenAI or Anthropic API key, use [private API setup](#execution-host-api-enrollment)
+   on the computer doing the work. API billing is separate from chat subscriptions.
+
+A **model** is the AI you choose. A **profile** saves your account and model
+choices for later. Start with the normal settings; you can explore advanced
+options after the first task works. Enter credentials only in private setup,
+never in the chat.
+
+The rest of this page is the detailed account reference for setup, switching,
+recovery, and existing installations. For the wider source and permission model,
+see [readme.llm.md](../readme.llm.md).
 
 Tracking: [#213](https://github.com/o-psi/voyage/issues/213). The design and
 acceptance matrix are in [the account plan](provider-accounts-plan.md).
