@@ -43,8 +43,13 @@ pub(crate) fn run(name: &str, body: impl FnOnce()) {
             "ordinary fixture user required"
         );
         let home = std::path::PathBuf::from(std::env::var_os("HOME").unwrap());
-        assert!(home.is_absolute() && crate::config::default_data_dir().starts_with(&home));
+        let data = crate::config::default_data_dir();
+        assert!(home.is_absolute() && data.starts_with(&home));
         assert!(std::env::var_os("VOYAGE_CREDENTIAL_KEY_FILE").is_none());
+        // Normal executing-host bootstrap provides the data root. The private
+        // storage API creates only its leaf and intentionally refuses missing
+        // ancestors; reproduce that prerequisite inside this owned child.
+        crate::attachment::journal::prepare_directory(data).unwrap();
         body();
         return;
     }

@@ -51,7 +51,10 @@ and actual execution-lock exclusion before recycling one observed slot.
 
 Every cold/global-root case runs the fixed exact child test binary with private
 HOME/XDG roots, cleared environment, ordinary UID and explicit parent/process
-group checks. The parent environment and production hosts are untouched. Child
+group checks. Before its scenario, the child creates the normal private
+executing-host data root using `prepare_directory`; private storage continues to
+refuse missing ancestors instead of creating or relaxing them. The parent
+environment and production hosts are untouched. Child
 stdout/stderr are private bounded files, retained on failure; a finite deadline
 stops/reaps only the owned test child. The existing LLVM profile location is
 preserved for the coordinated measurement. No independent Cargo process runs.
@@ -67,9 +70,15 @@ effect reconciliation is manufactured. A dead PID alone never admits recovery.
 
 ## Gate and remaining scope
 
-Source formatting, Python fixture AST and diff checks precede independent review.
-No test/build/Cargo/native-host/provider/credential operation has been executed
-for this cohort. The final source gate and full workspace coverage are pending;
+Source formatting, Python fixture AST and diff checks preceded independent review.
+The parent's full source-final gate on `78ff047` observed common fixture setup
+failures: the runner had created XDG_DATA_HOME but omitted its `helm` data-root
+leaf, so cold allocation/recovery refused the missing ancestor before their
+scenario assertions. Its retained child logs identify that exact refusal; the
+original failure evidence and live measurement are preserved. The runner-only
+setup correction is source-prepared, with execution pending the parent's next
+coordinated gate. No native-host/provider/credential operation was performed.
+The final source gate and full workspace coverage are pending;
 that separate gate must include both production fixes and these final scenarios.
 The prior ready Helm/saved-authority/history/composer cohort can finish on its
 own unchanged source.
