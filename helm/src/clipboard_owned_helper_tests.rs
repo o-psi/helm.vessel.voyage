@@ -8,7 +8,7 @@ use std::{
 };
 
 const CHILD: &str = "clipboard::owned_helper_tests::owned_clipboard_child";
-const SCRIPT: &str = r#"#!/usr/bin/python3
+const SCRIPT: &str = r#"#!/usr/bin/python3 -I
 import json, os, pathlib, sys, time
 case = CASE
 program = pathlib.Path(sys.argv[0]).name
@@ -64,6 +64,81 @@ elif case == 'oversized-text': sys.stdout.buffer.write(b'x'*65537)
 elif case == 'empty-text': pass
 else: sys.stdout.buffer.write('private 日本語 text'.encode())
 "#;
+
+struct FailureRoot {
+    inner: Option<tempfile::TempDir>,
+    passed: bool,
+}
+impl FailureRoot {
+    fn path(&self) -> &std::path::Path {
+        self.inner.as_ref().unwrap().path()
+    }
+    fn keep(mut self) -> PathBuf {
+        self.inner.take().unwrap().keep()
+    }
+}
+impl Drop for FailureRoot {
+    fn drop(&mut self) {
+        if self.passed {
+            return;
+        }
+        let Some(root) = self.inner.take() else {
+            return;
+        };
+        let raw = fs::read_to_string(root.path().join("calls.jsonl")).unwrap_or_default();
+        for call in raw
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        {
+            if call["pid"].as_u64().is_none()
+                || call["start_ticks"].as_u64().is_none()
+                || call["program"].as_str().is_none()
+            {
+                continue;
+            }
+            if let Some(pid) = call["pid"].as_u64().and_then(|v| i32::try_from(v).ok())
+                && same_helper(root.path(), &call)
+                && unsafe { libc::getpgid(pid) } == pid
+                && call["pgid"].as_i64() == Some(pid as i64)
+            {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
+        // Attempted signal is not observed cleanup. Preserve every failed fixture.
+        let _retained = root.keep();
+    }
+}
+
+struct ChildGuard(Option<std::process::Child>);
+impl std::ops::Deref for ChildGuard {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().unwrap()
+    }
+}
+impl std::ops::DerefMut for ChildGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().unwrap()
+    }
+}
+impl ChildGuard {
+    fn wait_with_output(mut self) -> std::io::Result<std::process::Output> {
+        // Caller has positively observed this exact child's terminal status.
+        self.0.take().unwrap().wait_with_output()
+    }
+}
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+        }
+    }
+}
 
 fn calls(root: &std::path::Path) -> Vec<serde_json::Value> {
     fs::read_to_string(root.join("calls.jsonl"))
@@ -159,7 +234,10 @@ fn linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children() {
         "wsl-empty",
         "wsl-invalid-file",
     ] {
-        let root = tempfile::tempdir().unwrap();
+        let mut root = FailureRoot {
+            inner: Some(tempfile::tempdir().unwrap()),
+            passed: false,
+        };
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
         let bin = root.path().join("bin");
         fs::create_dir(&bin).unwrap();
@@ -184,6 +262,8 @@ fn linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children() {
             .env("XDG_CACHE_HOME", root.path().join("cache"))
             .env("XDG_RUNTIME_DIR", root.path().join("runtime"))
             .env("CLIPBOARD_OWNED_CASE", case)
+            .env("CLIPBOARD_OWNED_PARENT", std::process::id().to_string())
+            .env("CLIPBOARD_OWNED_ROOT", root.path())
             .env("CLIPBOARD_NEVER_EXPORT", "synthetic-env-secret")
             .env("LANG", "C.UTF-8")
             .args(["--exact", CHILD, "--nocapture", "--test-threads=1"])
@@ -196,7 +276,7 @@ fn linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children() {
         if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
             child.env("LLVM_PROFILE_FILE", profile);
         }
-        let mut process = child.spawn().unwrap();
+        let mut process = ChildGuard(Some(child.spawn().unwrap()));
         let deadline = std::time::Instant::now() + Duration::from_secs(12);
         loop {
             if process.try_wait().unwrap().is_some() {
@@ -209,8 +289,10 @@ fn linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children() {
                     if same_helper(root.path(), &call) {
                         let pid = call["pid"].as_u64().unwrap() as i32;
                         assert_eq!(call["pgid"].as_i64(), Some(pid as i64));
-                        unsafe {
-                            libc::kill(-pid, libc::SIGKILL);
+                        if unsafe { libc::getpgid(pid) } == pid {
+                            unsafe {
+                                libc::kill(-pid, libc::SIGKILL);
+                            }
                         }
                     }
                 }
@@ -227,6 +309,7 @@ fn linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_helpers_retired(root.path());
+        root.passed = true;
     }
 }
 
@@ -236,6 +319,23 @@ fn owned_clipboard_child() {
         return;
     };
     let root = std::env::current_dir().unwrap();
+    let parent: u32 = std::env::var("CLIPBOARD_OWNED_PARENT")
+        .expect("private fixture parent required")
+        .parse()
+        .unwrap();
+    assert_eq!(unsafe { libc::getppid() } as u32, parent);
+    assert_eq!(
+        fs::read_link(format!("/proc/{parent}/exe")).unwrap(),
+        std::env::current_exe().unwrap()
+    );
+    assert_eq!(
+        PathBuf::from(std::env::var_os("CLIPBOARD_OWNED_ROOT").unwrap()),
+        root
+    );
+    assert_eq!(root.canonicalize().unwrap(), root);
+    let root_meta = fs::symlink_metadata(&root).unwrap();
+    assert_eq!(root_meta.uid(), unsafe { libc::geteuid() });
+    assert_eq!(root_meta.mode() & 0o077, 0);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -254,7 +354,9 @@ fn owned_clipboard_child() {
                     .unwrap(),
                 cancel: cancel.clone(),
                 deadline: Instant::now()
-                    + if case == "expired" {
+                    + if case == "cancel" {
+                        Duration::from_secs(5)
+                    } else if case == "expired" {
                         Duration::ZERO
                     } else {
                         Duration::from_millis(250)
