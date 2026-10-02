@@ -1,6 +1,7 @@
 //! Actual lazy Catalog -> runtime register -> ToolRegistry boundaries. No ELF execution.
 use super::*;
 use crate::extensions::catalog::Scope;
+use sdk::LaunchAdapter;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 const ROOT: &str = "VOYAGE_OWNED_REGISTRY_ROOT";
 const CASE: &str = "VOYAGE_OWNED_REGISTRY_CASE";
