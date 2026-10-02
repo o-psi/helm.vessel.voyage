@@ -40,8 +40,8 @@ async function decodeMirror(value) {
 // Read-only mirror cursors may be repeated; page actions never are.
 export class BrowserConnection {
     constructor({transport, context, mirror, frameLayer, changed = () => {}, onReplay = () => {}, onVisuals = () => {},
-        uuid = () => crypto.randomUUID(), timeout = 25000}) {
-        Object.assign(this,{transport,context,mirror,frameLayer,changed,onReplay,onVisuals,uuid,timeout});
+        uuid = () => crypto.randomUUID(), timeout = 25000, startOnConnect = true}) {
+        Object.assign(this,{transport,context,mirror,frameLayer,changed,onReplay,onVisuals,uuid,timeout,startOnConnect});
         this.status=null;this.phase='idle';this.issue=null;this.sequence=0;
         this.queue=[];this.sending=false;this.urgentPromise=null;this.busy=false;this.closed=false;
         this.epoch=0;this.cursor=0;this.streaming=false;this.polling=false;this.replayer=null;this.frames=new Map();
@@ -187,7 +187,7 @@ export class BrowserConnection {
         }finally{clearTimeout(timer);}
     }
     fail(kind){this.discardQueued('input_unconfirmed');this.issue=kind;this.phase=kind==='input-unknown'?'needs-review':'error';this.emit();}
-    async connect({start=true}={}){
+    async connect({start=this.startOnConnect}={}){
         if(this.busy||this.closed)return;
         const epoch=++this.epoch;this.busy=true;this.issue=null;this.phase='connecting';this.emit();
         try{
