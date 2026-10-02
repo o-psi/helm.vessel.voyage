@@ -429,6 +429,27 @@ async fn fresh(
     drop(owner);
     (parent, peer, meter, result)
 }
+fn exact_accepted_usage(parent: &Parent, peer: &Peer, accepted_run: &Value) {
+    let stable = peer.mode.lock().unwrap().receipt.clone().unwrap();
+    assert_eq!(accepted_run, &stable["run_id"]);
+    assert_eq!(accepted_run, &stable["execution_usage"]["run_id"]);
+    let (child, _) = parent.allocation().unwrap();
+    assert_eq!(stable["command_id"], child.command_id.to_string());
+    assert_eq!(
+        stable["execution_usage"]["budget"],
+        serde_json::to_value(&child).unwrap()
+    );
+    let retained: String = parent
+        .db()
+        .query_row(
+            "SELECT receipt FROM process_goal_allocations WHERE request_id=?1",
+            [child.command_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let retained: Value = serde_json::from_str(&retained).unwrap();
+    assert_eq!(retained, stable["execution_usage"]);
+}
 #[tokio::test]
 async fn registry_submit_uses_production_durable_allocation_and_exact_dispatch_before_one_effect() {
     let (parent, peer, meter, result) = fresh(
@@ -446,6 +467,7 @@ async fn registry_submit_uses_production_durable_allocation_and_exact_dispatch_b
     .await
     .unwrap();
     assert_eq!(peer.count("submit"), 1);
+    exact_accepted_usage(&parent, &peer, &result["result"]["run_id"]);
     let (child, dispatch) = parent.allocation().unwrap();
     assert!(dispatch.is_some());
     assert_eq!(child.tokens, 500);
@@ -473,6 +495,7 @@ async fn registry_create_reserves_budget_before_creation_then_dispatches_same_ch
     .unwrap();
     assert_eq!(peer.count("start_settings"), 1);
     assert_eq!(peer.count("submit"), 1);
+    exact_accepted_usage(&parent, &peer, &result["result"]["submit"]["run_id"]);
     let (child, dispatch) = parent.allocation().unwrap();
     assert_eq!(
         dispatch.unwrap()["command"]["budget"],
