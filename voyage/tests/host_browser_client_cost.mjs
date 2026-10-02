@@ -31,8 +31,8 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
   const bytes=Buffer.byteLength(event.request.postData||'', 'utf8');
   if(bytes>4*1024*1024){overflow=true;return;}traffic.http_operation_request_payload_bytes+=bytes;
  }});
- on('Network.loadingFailed',event=>{if(earlyRequests.delete(event.requestId)){if(active)crossWindow++;return;}if(active&&requests.delete(event.requestId))traffic.http_operation_failures++;});
- on('Network.loadingFinished',event=>{if(earlyRequests.delete(event.requestId)){if(active)crossWindow++;return;}if(active&&requests.delete(event.requestId)){
+ on('Network.loadingFailed',event=>{if(earlyRequests.delete(event.requestId))return;if(active&&requests.delete(event.requestId))traffic.http_operation_failures++;});
+ on('Network.loadingFinished',event=>{if(earlyRequests.delete(event.requestId))return;if(active&&requests.delete(event.requestId)){
   if(!Number.isSafeInteger(event.encodedDataLength)||event.encodedDataLength<0){overflow=true;return;}
   traffic.http_operation_response_encoded_bytes+=event.encodedDataLength;traffic.http_operation_responses++;
   if(bodyReads.size>=128){overflow=true;return;}

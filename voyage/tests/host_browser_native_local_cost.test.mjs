@@ -62,7 +62,7 @@ test('prewindow request crossing and selected silent websocket source are unknow
  const f=fixture();const original=f.cdp.send;f.cdp.send=async(name)=>{if(name==='Network.enable')f.cdp.emit('Network.requestWillBeSent',{requestId:'early',request:{url:'http://127.0.0.1:1/operation',postData:'prewindow fixture'}});return original(name);};
  const meter=await browserCost(f.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
  f.cdp.emit('Network.loadingFinished',{requestId:'early',encodedDataLength:5});const value=await meter.stop();
- assert.equal(value.status,'unknown');assert.ok(value.prewindow_requests_crossing>0);assert.equal(value.traffic.http_operation_request_payload_bytes,0);assert.equal(value.traffic.http_operation_response_payload_bytes,0);
+ assert.equal(value.status,'unknown');assert.equal(value.prewindow_requests_crossing,1);assert.equal(value.traffic.http_operation_request_payload_bytes,0);assert.equal(value.traffic.http_operation_response_payload_bytes,0);
  const w=fixture();const silent=await browserCost(w.context,{}, {webSocketUrls:['wss://fixture.invalid/socket'],maxMilliseconds:1000});
  const missing=await silent.stop();assert.equal(missing.status,'unknown');assert.equal(missing.websocket_traffic_qualified,false);
 });
