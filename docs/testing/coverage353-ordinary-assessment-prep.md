@@ -26,8 +26,9 @@ unavailable `tempfile` reference replaced by the maintained installer fixture,
 and an inventory type alias required by Clippy. Assertions and production
 refusal behavior were preserved.
 
-This is locally verified source. Normal Main publication and an actual hosted
-build/archive follow-through remain pending. It establishes none of
+Normal Main publication and exact hosted build/archive verification subsequently
+passed, as recorded below. The locally measured source and published build source
+remain distinct. This delivery establishes none of
 the separate browser, native platform, Root installation or stable release gates.
 
 This cohort was originally prepared without compilation or execution on
@@ -122,3 +123,41 @@ after the final relevant edit. Preserve previous/foreign evidence, audit all
 current object/source attribution and publish the compact summary with normal
 main delivery and actual hosted archive follow-through. This cohort does not
 close #353, the milestone or deferred/native system-install acceptance.
+
+## Published source and verified hosted artifact
+
+Normal Main **`036ea6e487114dd2ae34ed30fce0f53ab1dd6919`** was published and
+verified clean against remote Main. It includes the corrected standard-scope
+measurement of clean **`e10603830e17d3428f8154140ff0b983f20fd337`** and outcome
+records. The earlier report which counted two new test files by their filenames
+was rejected; `_tests.rs` names and a fresh full run restored the existing standard
+scope. No counts were manually subtracted and no production source was excluded.
+
+Actual [run 37012904856](https://github.com/o-psi/helm.vessel.voyage/actions/runs/37012904856)
+terminated **SUCCESS**, performed a new build (not a skip), and identifies exact
+publication source `036ea6e` in checkout/source logs, archive `BUILD.txt` and public
+release target. Version **`1.0.3-nightly.20261002.37012904856.1`**. The hosted
+workflow is build-only; the passing **2,936/0/8** test and **80.069551%** line
+coverage results above are local. There are 73 semantic new parents plus three
+inert default child entries; nested child results are not extra parent counts.
+
+The public [development prerelease](https://github.com/o-psi/helm.vessel.voyage/releases/tag/nightly-1.0.3-nightly.20261002.37012904856.1)
+contains the [archive](https://github.com/o-psi/helm.vessel.voyage/releases/download/nightly-1.0.3-nightly.20261002.37012904856.1/voyage-1.0.3-nightly.20261002.37012904856.1-x86_64-unknown-linux-gnu.tar.gz)
+and [checksum](https://github.com/o-psi/helm.vessel.voyage/releases/download/nightly-1.0.3-nightly.20261002.37012904856.1/voyage-1.0.3-nightly.20261002.37012904856.1-x86_64-unknown-linux-gnu.tar.gz.sha256).
+Anonymous guarded download and independent verification both exited zero under
+1 GiB with zero swap. The **45,933,005-byte** archive SHA-256 is
+**`9aa418c94b0977a8ccf278b2489b16d31f9b4efc4cdca115c18d61a2b106f432`**;
+public checksum text and GitHub archive asset digest agree. The checksum asset's
+GitHub digest matches its bytes. Safe bounded unique relative paths, no links or
+path escape, exact four-binary/123-browser-asset membership and every manifest
+hash passed, including worker and guardian. Manifest SHA-256:
+`a0f532fcf4d2c80fe4e2d1d62594df16b5e140a8fb652e9f74b5816bd03e2201`.
+
+Durable [#353 checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5953597060)
+and [#375 checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/375#issuecomment-5953596259)
+retain source, quality, archive and limitation identities. No native installation
+of this artifact was performed or inferred; CT106 and other native evidence remain
+bound to their separately qualified source. This development prerelease is not a
+stable release. #333, #353 and #375 remain open; full 100% reachable-production
+coverage, measured scope and explicit deferred authority/platform limits are
+unchanged.
