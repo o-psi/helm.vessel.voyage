@@ -2,19 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cuaBrowserCost} from './host_browser_cua_cost.mjs';
 const socketUrl='wss://fixture.example/v1/vessel/browser-socket';
-const options={label:'a',socketUrl,tabId:'own-tab',connectionId:'own-connection',sessionIds:['session-a','session-b']};
+const options={label:'a',socketUrl,tabId:'3',connectionId:'own-connection',sessionIds:['session-a','session-b']};
 const metricNames=['TaskDuration','ScriptDuration','LayoutDuration','RecalcStyleDuration','JSHeapUsedSize','JSHeapTotalSize','Nodes','Documents','JSEventListeners'];
 function fixture(){
  const calls=[],queue=[];let cursor=0,samples=0;
  const cap={async send(method,params,opts){
   calls.push({method,params,opts});
-  if(method==='Target.getTargetInfo')return {targetInfo:{targetId:'own-target',url:'https://private-fixture.example/never-return'}};
+  assert.notEqual(method,'Target.getTargetInfo');
+  assert.equal(opts,undefined);
   if(method==='Performance.getMetrics'){samples++;return {metrics:metricNames.map((name,i)=>({name,value:100+i+samples}))};}
   return {};
  },async readEvents(opts){calls.push({method:'readEvents',opts});if(opts.afterSequence===undefined)return {cursor,events:[],hasMore:false,truncated:false};
   return queue.shift()||{cursor,events:[],hasMore:false,truncated:false};}};
- const tab={capabilities:{async get(name){assert.equal(name,'cdp');return cap;}}};
- const add=(events,extra={})=>{cursor+=events.length;queue.push({cursor,events:events.map((event,i)=>({sequence:cursor-events.length+i+1,source:{tabId:'own-tab',targetId:'own-target'},...event})),hasMore:false,truncated:false,...extra});};
+ const tab={id:'3',capabilities:{async get(name){calls.push({method:'getCapability',name});assert.equal(name,'cdp');return cap;}}};
+ const add=(events,extra={})=>{cursor+=events.length;queue.push({cursor,events:events.map((event,i)=>({sequence:cursor-events.length+i+1,source:{tabId:3},...event})),hasMore:false,truncated:false,...extra});};
  return {tab,calls,add};
 }
 const frame=(method,payload)=>({method,params:{requestId:'own-socket',response:{opcode:1,payloadData:payload}}});
@@ -34,7 +35,7 @@ test('real documented event boundary reduces payloads to counts and renderer del
  assert.equal(result.sent_bytes,new TextEncoder().encode(data).length);
  assert.equal(result.received_bytes,9+new TextEncoder().encode(replied).length);assert.equal(result.task_seconds,1);assert.equal(result.node_delta,1);assert.equal(result.renewal_acks,1);assert.equal(result.status,'observed');
  const output=JSON.stringify(result);for(const value of [socketUrl,'SYNTHETIC_PRIVATE_TOKEN','SYNTHETIC_PRIVATE_INPUT','own-target','own-socket'])assert.equal(output.includes(value),false);
- assert.ok(f.calls.filter(c=>c.method==='readEvents').every(c=>c.opts.target.targetId==='own-target'));
+ assert.ok(f.calls.filter(c=>c.method==='readEvents').every(c=>!Object.hasOwn(c.opts,'target')));
  await observer.stop();
 });
 test('truncated event retention and wrong-tab attribution refuse without invented zeros',async()=>{
@@ -66,4 +67,23 @@ test('clean close or unacknowledged replacement cannot reuse old authenticated h
  f.add([{method:'Network.webSocketClosed',params:{requestId:'own-socket'}},
   {method:'Network.webSocketCreated',params:{requestId:'unacknowledged',url:socketUrl}}]);
  await assert.rejects(observer.finish,/observation unavailable/);await observer.stop();
+});
+
+test('selected-tab identity is exact before acquiring a capability',async()=>{
+ for(const tabId of ['4','03',3.5,Number.MAX_SAFE_INTEGER+1,null]){
+  const f=fixture();await assert.rejects(cuaBrowserCost(f.tab,{...options,tabId}),/observation unavailable/);
+  assert.equal(f.calls.length,0);
+ }
+ const f=fixture(),observer=await cuaBrowserCost(f.tab,{...options,tabId:3});await observer.stop();
+});
+test('events require selected-tab identity and consistent optional target metadata',async()=>{
+ for(const source of [{},{tabId:'03'},{tabId:4},{tabId:3,targetId:''},{targetId:'own-target'}]){
+  const f=fixture(),observer=await cuaBrowserCost(f.tab,options);
+  f.add([{method:'Network.webSocketCreated',params:{requestId:'own-socket',url:socketUrl},source}]);
+  await assert.rejects(observer.poll,/observation unavailable/);await observer.stop();
+ }
+ const f=fixture(),observer=await cuaBrowserCost(f.tab,options);
+ f.add([{...ack,source:{tabId:3,targetId:'own-target'}}]);await observer.poll();
+ f.add([{...ack,source:{tabId:'3',targetId:'different-target'}}]);
+ await assert.rejects(observer.poll,/observation unavailable/);await observer.stop();
 });

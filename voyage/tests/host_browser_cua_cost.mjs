@@ -6,27 +6,38 @@ const metricNames=['TaskDuration','ScriptDuration','LayoutDuration','RecalcStyle
  'JSHeapUsedSize','JSHeapTotalSize','Nodes','Documents','JSEventListeners'];
 const allowedLabel=value=>typeof value==='string'&&/^[A-Za-z0-9_.-]{1,48}$/.test(value);
 const fail=()=>{throw Error('bounded qualification CDP observation unavailable');};
+const tabIdentity=value=>{
+ if(typeof value==='number')return Number.isSafeInteger(value)&&value>0?String(value):null;
+ return typeof value==='string'&&/^[1-9][0-9]*$/.test(value)&&Number.isSafeInteger(Number(value))&&String(Number(value))===value?value:null;
+};
 const bytes=frame=>frame.opcode===2?atob(frame.payloadData).length:new TextEncoder().encode(frame.payloadData).length;
 
 export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,sessionIds=[]}){
- if(!allowedLabel(label)||!tabId||!connectionId||sessionIds.length!==2)fail();
+ const selectedTab=tabIdentity(tab?.id);
+ if(!allowedLabel(label)||!selectedTab||tabIdentity(tabId)!==selectedTab||!connectionId||sessionIds.length!==2)fail();
  const url=new URL(socketUrl);if(url.protocol!=='wss:'||url.pathname!=='/v1/vessel/browser-socket'||url.search||url.hash||url.username||url.password)fail();
  const cap=await tab.capabilities.get('cdp');
- // This is the selected tab's target, not Target.getTargets/SystemInfo or a
- // browser-wide attachment. Do not emit targetInfo (it contains the page URL).
- const info=await cap.send('Target.getTargetInfo',{});
- const target={targetId:info.targetInfo?.targetId};if(!target.targetId)fail();
- await cap.send('Network.enable',{}, {target});
- await cap.send('Performance.enable',{}, {target});
- await cap.send('Runtime.enable',{}, {target});
- const seed=await cap.readEvents({limit:1,methods,target,timeoutMs:0});
+ // The capability defaults to this selected tab and current origin. Raw
+ // Target.getTargetInfo is unsupported; never discover or attach ambient targets.
+ await cap.send('Network.enable',{});
+ await cap.send('Performance.enable',{});
+ await cap.send('Runtime.enable',{});
+ const seed=await cap.readEvents({limit:1,methods,timeoutMs:0});
  if(seed.truncated||!Number.isSafeInteger(seed.cursor))fail();
  let cursor=seed.cursor,closed=false,window=null;const expires=Date.now()+600000;
  const sockets=new Set(),effects=new Set(),requests=new Map(),children=new Set();
  const totals={sent_bytes:0,received_bytes:0,sent_frames:0,received_frames:0,connections:0,closed_connections:0,authenticated_acks:0,renewal_acks:0,
   duplicate_effects:0,unknown_effects:0,refused_effects:0};
- const sourceMatches=source=>source && (!source.targetId||source.targetId===target.targetId)
-  && (!source.tabId||source.tabId===tabId) && (source.targetId===target.targetId||source.tabId===tabId);
+ let observedTarget=null;
+ const sourceMatches=source=>{
+  if(!source||tabIdentity(source.tabId)!==selectedTab)return false;
+  if(source.targetId!==undefined){
+   if(typeof source.targetId!=='string'||!source.targetId)return false;
+   if(observedTarget!==null&&source.targetId!==observedTarget)return false;
+   observedTarget=source.targetId;
+  }
+  return true;
+ };
  const recordCommand=text=>{
   if(!text.includes('"command"'))return;
   const frame=JSON.parse(text),command=frame.request?.command,op=command?.operation;
@@ -47,7 +58,7 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
  async function poll(){
   if(closed||Date.now()>=expires)fail();
   for(let page=0;page<20;page++){
-   const result=await cap.readEvents({afterSequence:cursor,limit:1000,methods,target,timeoutMs:0});
+   const result=await cap.readEvents({afterSequence:cursor,limit:1000,methods,timeoutMs:0});
    if(result.truncated||!Number.isSafeInteger(result.cursor)||result.cursor<cursor||result.events.length>1000)fail();
    for(const event of result.events){
     if(!sourceMatches(event.source))fail();
@@ -85,7 +96,7 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
   fail();
  }
  async function metrics(){
-  const response=await cap.send('Performance.getMetrics',{}, {target});
+  const response=await cap.send('Performance.getMetrics',{});
   const all=Object.fromEntries(response.metrics.map(m=>[m.name,m.value]));
   if(metricNames.some(name=>!Number.isFinite(all[name])))fail();
   return Object.fromEntries(metricNames.map(name=>[name,all[name]]));
@@ -112,7 +123,7 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
     metric_scope:'selected target renderer metrics; renderer/process sharing is possible, so do not sum task/heap across tabs',
     child_targets_observed:children.size,truncated:false};
   },
-  async stop(){closed=true;await cap.send('Performance.disable',{}, {target});await cap.send('Network.disable',{}, {target});}
+  async stop(){closed=true;await cap.send('Performance.disable',{});await cap.send('Network.disable',{});}
  };
  observer.measureAt=async(startedAt,milliseconds=10000)=>{
   if(!Number.isSafeInteger(startedAt)||milliseconds!==10000||startedAt-Date.now()>30000||Date.now()-startedAt>1000)fail();

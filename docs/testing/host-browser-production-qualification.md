@@ -247,7 +247,8 @@ a window, and records actual snapshot times. Identical read-only retries across
 a write are bounded; effects are never repeated. This instrumented native-client
 cost includes the observer's small file/thread overhead.
 
-`voyage/tests/host_browser_cua_cost.mjs` implements the supported CUA capability.
+`voyage/tests/host_browser_cua_cost.mjs` uses the selected-tab CUA capability.
+Available API calls alone do not establish a passing cost measurement.
 Root loads `cuaBrowserCost` in its persistent CUA runtime, on each fixture tab:
 
 ```js
@@ -267,16 +268,21 @@ await observer.stop();
 ```
 
 Exact API calls are `tab.capabilities.get('cdp')`, scoped `cap.send` and
-`cap.readEvents({afterSequence,limit:1000,methods,target,timeoutMs:0})`.
-`Target.getTargetInfo` selects only that tab, without returning its URL. The
-collector enables Network/Performance/Runtime and captures the current cursor
+`cap.readEvents({afterSequence,limit:1000,methods,timeoutMs:0})`. These calls
+use the capability's default selected-tab/current-origin scope; they do not
+supply an attached-child target or use unsupported `Target.getTargetInfo`.
+The supplied ID must match `tab.id` exactly, allowing only canonical decimal
+string versus safe integer representation. The collector enables
+Network/Performance/Runtime and captures the current cursor
 before Root's normal same-origin reload. The real Fleet socket then creates an
 attributable event; an already-open socket missing `webSocketCreated` cannot
 be called measured. No constructor/endpoint replacement or login export occurs.
 
 Events are WebSocket created/closed/sent/received, fixed console diagnostics and
-owned attached/detached child-target metadata. Both supplied tab/target IDs must
-agree. Pagination drains `hasMore` through at most 20 pages; gaps, `truncated`,
+owned attached/detached child-target metadata. Every event must carry the exact
+selected tab ID. If optional target metadata appears, it must remain consistent
+within this observer; it does not broaden the observation scope. Pagination
+drains `hasMore` through at most 20 pages; gaps, `truncated`,
 wrong attribution and unacknowledged/closed sockets refuse. Child session IDs
 come only from owned `Target.attachedToTarget`, never a browser-wide target list.
 Only selected application-frame lengths survive reduction. Production fixed
