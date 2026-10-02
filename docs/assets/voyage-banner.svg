@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+<title id="title">Voyage</title><desc id="desc">Voyage. An AI workspace on your own machine. Red sails chart a route across a charcoal background.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#171419"/><stop offset="1" stop-color="#29131d"/></linearGradient><linearGradient id="red" x2="1" y2="1"><stop stop-color="#ff7c88"/><stop offset="1" stop-color="#e11d48"/></linearGradient><radialGradient id="glow"><stop stop-color="#e11d48" stop-opacity=".19"/><stop offset="1" stop-color="#e11d48" stop-opacity="0"/></radialGradient></defs>
+<rect width="1200" height="360" rx="20" fill="url(#bg)"/>
+<ellipse cx="935" cy="170" rx="270" ry="260" fill="url(#glow)"/>
+<g fill="none" stroke="#fda4af" stroke-opacity=".11"><circle cx="930" cy="170" r="108"/><circle cx="930" cy="170" r="152"/><circle cx="930" cy="170" r="210"/><path d="M930 0V360M660 170H1200"/></g>
+<path d="M55 300C265 225 395 350 640 290S995 315 1160 270" fill="none" stroke="#fda4af" stroke-opacity=".16"/>
+<path d="M742 241C800 235 804 275 844 242S896 226 930 226" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="4 7"/>
+<circle cx="742" cy="241" r="5" fill="#fb7185"/>
+<path d="M922 76L851 213H922Z" fill="url(#red)"/><path d="M938 113V213H1007Z" fill="#fff1f2" opacity=".9"/>
+<path d="M849 230H1009L987 247H872Z" fill="#fb7185"/>
+<circle cx="1056" cy="78" r="4" fill="#fda4af"/><path d="M1056 65V91M1043 78H1069" stroke="#fda4af" stroke-opacity=".4"/>
+<rect x="65" y="62" width="28" height="4" rx="2" fill="#fb7185"/>
+<text x="65" y="97" fill="#fda4af" font-family="Arial, sans-serif" font-size="14" letter-spacing="3">HELM / VESSEL / VOYAGE</text>
+<text x="60" y="202" fill="#fff1f2" font-family="Arial, sans-serif" font-size="91" font-weight="700" letter-spacing="-4">Voyage<tspan fill="#fb7185">.</tspan></text>
+<text x="65" y="248" fill="#decbd2" font-family="Arial, sans-serif" font-size="24">An AI workspace on your own machine.</text>
+</svg>

@@ -1,6 +1,18 @@
-# Voyage
+<a id="voyage"></a>
+
+![Voyage — an AI workspace on your own machine](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-banner.svg)
+
+<div align="center">
 
 ### Turn “can you help me with this?” into work you can see.
+
+**[Get started](#choose-how-you-want-to-use-it)** &nbsp; · &nbsp;
+**[User guides](docs/README.md)** &nbsp; · &nbsp;
+**[For LLMs & developers](readme.llm.md)**
+
+</div>
+
+<br />
 
 Voyage lets you work with an AI on your own computer or server. Pick a folder,
 explain what you want in everyday language, and follow along as it reads files,
@@ -9,50 +21,52 @@ answers questions, or makes changes with the access you allow.
 Start small: understand a folder, work through some notes, or draft a document.
 Keep the conversation and come back to it when you have more to do.
 
-**[Get started](#choose-how-you-want-to-use-it)** ·
-**[User guides](docs/README.md)** ·
-**[For LLMs and developers](readme.llm.md)**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-dark.svg" />
+  <img width="100%" src="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-light.svg" alt="Choose a folder. Ask in your own words. Follow the work." />
+</picture>
+
+<br />
 
 ## A few things to try
 
-> “Read these notes and give me a short summary, with the open questions at the end.”
+<table>
+<tr><td width="33%" valign="top"><h3>Understand</h3><p>“Explain the main files in this folder. Tell me where to start without changing anything.”</p></td>
+<td width="33%" valign="top"><h3>Make sense of it</h3><p>“Read these notes and give me a short summary, with the open questions at the end.”</p></td>
+<td width="33%" valign="top"><h3>Make something</h3><p>“Draft a getting-started guide from the files in this project. Ask me about anything unclear.”</p></td></tr>
+</table>
 
-> “Help me understand this folder. Explain the main files without changing anything.”
-
-> “Draft a getting-started guide from the files in this project. Ask me about anything unclear.”
-
-These are starting prompts, not prebuilt workflows. What Voyage can do depends
-on the files you share, your chosen AI model, and the access you give it.
+What Voyage can do depends on the files you share, your chosen AI model, and the
+access you give it.
 
 ## Work at your pace
 
-- **Choose what to share.** Work in a folder you select. Start in read-only mode
-  when you want explanations before edits.
-- **Follow the work.** Read the conversation and tool activity, answer questions,
-  and review requests for permission.
-- **Pick up where you left off.** Return to a saved conversation for the next step.
-  Closing the interface does not cancel work already running on your machine.
-- **Use the interface that suits you.** Open Voyage in a web browser or use its
-  terminal app. Both connect to the machine doing the work.
+<table>
+<tr><td width="50%" valign="top"><h3>Your folder. Your starting point.</h3><p>Choose what to share. Begin in read-only mode when you want explanations before edits.</p></td>
+<td width="50%" valign="top"><h3>A conversation you can return to.</h3><p>Come back for the next step. Closing the interface does not cancel work already running on your machine.</p></td></tr>
+<tr><td valign="top"><h3>Follow along as it works.</h3><p>Read the conversation and tool activity, answer questions, and review requests for permission.</p></td>
+<td valign="top"><h3>Browser or terminal.</h3><p>Use the interface that suits you. Both connect to the computer doing the work.</p></td></tr>
+</table>
+
+<br />
 
 <a id="start-with-helm-web"></a>
 <a id="start-in-the-terminal"></a>
 
 ## Choose how you want to use it
 
-| | Best when… | Start here |
-| --- | --- | --- |
-| **Web browser** | You want a familiar chat interface and have a connected machine, or someone who can help set one up. | [Your first voyage in the browser](docs/getting-started-web.md) |
-| **Terminal** | You use Linux and are comfortable copying a few commands into a terminal. | [Your first voyage in the terminal](docs/getting-started.md) |
+<table>
+<tr><td width="50%" valign="top"><h3>In your browser</h3><p>A familiar chat interface, connected to a machine you control.</p><p>Best when you already have a connected machine, or someone who can help set one up.</p><p><strong><a href="docs/getting-started-web.md">Start with Helm Web →</a></strong></p></td>
+<td width="50%" valign="top"><h3>In your terminal</h3><p>Work locally on Linux, right from the folder you want help with.</p><p>Best when you are comfortable copying a few commands into a terminal.</p><p><strong><a href="docs/getting-started.md">Start in the terminal →</a></strong></p></td></tr>
+</table>
 
-**New to the setup?** The browser is the friendlier interface once a machine is
-connected. It currently needs a Linux machine with a secure public connection;
-signing in to the website alone is not enough. The guide separates what you do
-in the browser from what the person setting up that machine needs to do.
+**Before you begin:** browser use needs a Linux machine with a secure public
+connection; signing in to the website alone does not provide one. The browser
+guide separates your first conversation from the operator's setup.
 
-For local terminal use, the installer supports Linux x86-64 with glibc 2.39+,
-Python 3.11+, curl, and a systemd user session. The guides explain which build to
-install; the current browser setup uses a public development nightly.
+The local installer supports Linux x86-64 with glibc 2.39+, Python 3.11+, curl,
+and a systemd user session. The current browser setup uses a public development
+nightly. Voyage is under active development, and some setup still needs technical help.
 
 ## Three names, one workflow
 
@@ -66,19 +80,20 @@ prevents changes; it does not keep shared content from the provider.
 
 Voyage does not include AI credit. Provider access and charges are separate from
 signing in to Helm Web; [the account guide](docs/provider-accounts.md) explains
-the supported options. Voyage is under active development, and some setup still
-requires technical help.
+the supported options.
 
 <a id="learn-more"></a>
 
 ## Find your next step
 
-- [First voyage in the browser](docs/getting-started-web.md)
-- [First voyage in the terminal](docs/getting-started.md)
-- [Installation and updates](installer/README.md)
-- [Accounts and models](docs/provider-accounts.md)
-- [All user guides and technical documentation](docs/README.md)
+[**Browser guide**](docs/getting-started-web.md) ·
+[**Terminal guide**](docs/getting-started.md) ·
+[**Installation & updates**](installer/README.md) ·
+[**Accounts & models**](docs/provider-accounts.md) ·
+[**All documentation**](docs/README.md)
 
-**Working on Voyage, or reading this with an LLM?** Start with
-[readme.llm.md](readme.llm.md) for the architecture, source map, commands,
+---
+
+**Building on Voyage? Reading with an LLM?**
+[readme.llm.md →](readme.llm.md) maps the architecture, source, commands,
 permissions, and current implementation limits.

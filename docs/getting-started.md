@@ -1,3 +1,5 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Your first voyage in the terminal
 
 Start with one small task: ask Voyage to explain a folder without changing it.

@@ -1,3 +1,5 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Install and upgrade Voyage
 
 New to Voyage? Follow the [terminal walkthrough](../docs/getting-started.md) or

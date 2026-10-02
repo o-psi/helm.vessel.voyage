@@ -1,3 +1,5 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Your first voyage in Helm Web
 
 Use Voyage from a browser: choose a folder, describe a task, and follow the work

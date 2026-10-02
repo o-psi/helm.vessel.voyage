@@ -1,3 +1,5 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Voyage guides
 
 <a id="documentation"></a>

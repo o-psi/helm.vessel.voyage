@@ -1,3 +1,5 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Connecting to Vessels inside Helm
 
 A Vessel connection tells Voyage which computer should do the work. For local
