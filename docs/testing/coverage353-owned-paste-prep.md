@@ -25,12 +25,17 @@ or remote authenticated upload. The `begin_panel_paste` native acquisition path,
 question-editor/native interaction and arbitrary storage/kernel faults retain
 their independent remaining coverage/evidence obligations; this is not 100%.
 
-Only source/rustfmt/path review and `git diff --check` are completed during
-preparation. **No Cargo command, compile, test or coverage export has run.**
-The next cohort coordinator should integrate this commit independently of ongoing
-critical artifact publication, run the Helm library `paste::family_tests` filter
-under the existing bounded sole Cargo/instrumentation window, fix concrete
-failures while retaining meaningful assertions, then strict applicable checks and
-one independent full workspace coverage measurement after final cohort edits.
-Keep source/object/profile identity and the full denominator; focused mixed totals
-are not publication evidence. Keep #353's full reachable-production goal open.
+## Verified cohort outcome
+
+At clean `4c28730`, all nine focused paste/image tests passed. Compilation corrected
+a missing KeyEvent import and asserted authored text from the actual ordered
+SubmitContent Text parts, retaining public metadata/private-data/no-replay checks.
+Formatting and strict workspace all-target/all-feature Clippy passed. Full workspace
+tests passed 2,616 / zero failures / eight ignored; the corrected 17-object/381-own-
+profile audit retains all 541 prior/current files and unchanged 235 foreign profiles,
+with 103,430 / 133,957 lines (77.211344%). Prior/focused evidence remains archived;
+the mixed default report is rejected. See `coverage/latest.json` and the gap ledger.
+
+Remaining native acquisition/question/kernel/provider/platform and source gaps stay
+explicit. This cohort does not establish 100% or full release readiness. Keep #353's
+full reachable-production objective and full denominator; no skipped check is passing.

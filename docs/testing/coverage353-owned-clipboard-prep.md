@@ -1,7 +1,8 @@
 # Owned Linux clipboard adapter journeys (#353)
 
 Source preparation for [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353).
-This is not a test, coverage, native Windows/macOS, or human clipboard result.
+This cohort is verified on owned Linux fixtures; it is not a native Windows/macOS
+or human clipboard result.
 
 The family contains 27 private self-libtest children. Each clears inherited
 environment, selects private HOME/XDG/workspace and a PATH containing only owned
@@ -37,5 +38,14 @@ binary entry point is needed. The delivery coordinator owns the sole Cargo gate:
 focus `clipboard::owned_helper_tests::linux_clipboard_routes_bounds_privacy_and_cleanup_use_owned_children`
 on Helm LIB, then strict applicable checks and the final full workspace coverage
 measurement after final relevant edits. Retain all current objects/profiles and
-the full denominator; do not publish a focused mixed report. Compilation/runtime
-and coverage outcomes remain pending.
+the full denominator; focused mixed reports are not publication evidence.
+
+## Verified cohort outcome
+
+At clean `4c28730`, the focused clipboard parent passed (27 owned child scenarios),
+and full workspace tests passed 2,616 / zero failures / eight ignored. Formatting
+and strict all-target/all-feature Clippy passed. The corrected 17-object, own-only
+381-profile audit retains all 541 prior/current workspace files and unchanged 235
+foreign profiles: 103,430 / 133,957 lines (77.211344%). Previous/focused evidence
+is preserved. #353 remains open; native/provider/browser/Root and remaining source
+gaps retain their own obligations. See `coverage/latest.json` and the gap ledger.

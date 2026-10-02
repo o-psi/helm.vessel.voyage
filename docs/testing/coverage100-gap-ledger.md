@@ -11,57 +11,56 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `e68d65f0b10a4f8e03178f2433e749b700920009`, recorded in
-`coverage/latest.json`, passed **2,605 tests, zero failures, eight ignored**.
-It covers **103,107 / 133,957 lines (76.970222%)**, 9,375 / 12,210 functions
-and 162,540 / 221,892 regions. **30,850 line gaps remain**, including one
-known standard-library line. #353's reachable-production objective remains unmet.
+Clean source `4c28730343ef1b3cd2ace6e477f340a09e1a9c25`, recorded in
+`coverage/latest.json`, passed **2,616 tests, zero failures, eight ignored**.
+It covers **103,430 / 133,957 lines (77.211344%)**, 9,400 / 12,210 functions
+and 163,024 / 221,892 regions. **30,527 line gaps remain**, including one
+known standard-library line. #353's full reachable-production objective is unmet.
 
-All **541 current workspace files and all 539 prior files** and the same known
+All **541 current workspace files and all 541 prior files** and the same known
 standard-library mapping are retained, using all 14 Cargo test targets plus three
-integration entry points as 17 distinct current objects. Only 354 own profiles
-were merged; 235 foreign profiles remained byte-identical. Child libtest summaries
-are retained separately, with all outcomes passing, instead of being counted as
-extra Cargo targets. The mixed default export is rejected. Detailed reports and
-source/object/profile manifests remain under ignored
-`target/coverage-report/v103-forward-browser-final`.
+integration entry points as 17 distinct current objects. Only 381 own profiles
+were merged; 235 foreign profiles remained byte-identical. The mixed default
+export is rejected. Exact corrected summary/detailed JSON/HTML agree in totals and
+source inventory; 17 current objects are archived with hash identity. Evidence
+remains under ignored `target/coverage-report/v103-clipboard-paste-final`.
 
-Compared with the prior published c15 record: 1,222 more covered lines, 1,121 more
-measured lines and +0.270381 percentage points. Actual ordinary frontend, owned
-terminal, administration, counter and raw/semantic forward proof cases preserve
-exact identity, unknown outcomes and observed cleanup. #403 repairs no-save cleanup
-and prepared-owner observation without replay. No exclusions were added or prior
-production files removed. Failed/focused profiles and19 premeasurement objects were
-preserved before this independent measurement.
+Compared with the prior e68d65f record: **323 more covered lines, unchanged measured
+scope and +0.241122 percentage points**. The clipboard parent validates 27 private
+Linux self-library/helper scenarios; nine paste/image tests retain current field/
+owner, exact receipts, private drafts and no automatic Submit after upload refusal.
+Small unchanged execution/submission branch variation remains measured (-3 lines),
+without exclusions. Focused execution, formatting and strict workspace all-target/
+all-feature Clippy passed. 409 prior/focused own profiles and previous object/export
+evidence were preserved before this independent measurement.
 
-Native Root, live-provider, browser JavaScript and other-platform evidence are
-separate. Native CT119 normal legacy bootstrap passed independently; forced rollback,
-death/context, CT106 forward recovery and original-owner/browser TLS/full-site/media/
-client cost remain unfinished. Postcomplete idle notification SQLite physical drift
-is explicit; full logical contents remain verified. These checks do not establish
-full release readiness or the 100% reachable-production objective.
+No human clipboard, native Windows/macOS API, paid provider, Root/system, browser
+or 100% result is inferred. Native CT119 normal legacy bootstrap and the critical
+#403 artifact remain separate evidence; CT106/forced rollback/death/context,
+original-owner Web/browser TLS/full-site/media/client cost and full release readiness
+retain their unfinished obligations. See [reachability map](coverage353-reachability-map.md),
+[clipboard cohort](coverage353-owned-clipboard-prep.md) and
+[paste/image cohort](coverage353-owned-paste-prep.md).
 
 ## Current largest areas
 
-This map uses the same retained current-object summary as the published baseline.
-Directory rows contain nested files; “direct files” rows contain only files directly
-in that source directory. These are measured line gaps, not a classification of
-reachability or assertion quality. The full workspace contributes **30,849 uncovered
-lines**; the remaining one reported gap is the retained standard-library mapping.
-No files were excluded.
+Directory rows contain nested files; direct-file rows contain only files directly
+in that directory. These are measured gaps, not universal reachability or assertion
+classifications. Workspace source contributes **30,526 uncovered lines**; one
+retained standard-library gap remains. No production file was excluded.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
 | `vessel/src/process/` | 8,536 | 19,111 |
-| `helm/src/process_client/` | 7,835 | 34,087 |
-| `voyage/src (direct files)` | 2,227 | 13,237 |
+| `helm/src/process_client/` | 7,657 | 34,087 |
+| `voyage/src (direct files)` | 2,228 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
 | `installer/src/remote/` | 1,384 | 2,542 |
 | `voyage/src/tools/` | 1,191 | 7,865 |
 | `installer/src (direct files)` | 1,109 | 2,308 |
 | `voyage/src/attachment/` | 862 | 12,458 |
-| `voyage/src/server/` | 774 | 5,687 |
-| `helm/src (direct files)` | 666 | 3,096 |
+| `voyage/src/server/` | 775 | 5,687 |
+| `helm/src (direct files)` | 520 | 3,096 |
 | `vessel/src (direct files)` | 654 | 1,556 |
 | `voyage/src/github/` | 521 | 3,177 |
 | `voyage/src/provider/` | 404 | 5,747 |
@@ -69,11 +68,10 @@ No files were excluded.
 | `voyage/src/subagent/` | 244 | 2,402 |
 | `crates/voyage-storage/src/` | 225 | 643 |
 
-The largest ordinary client and supervisor areas remain the next source targets.
-Privileged, other-platform, provider and OS fault responsibilities still require
-explicit reachability/evidence accounting; a deferred native journey is not a
-passing check or permission to exclude its source. The older maps below are
-historical checkpoints for comparison, not current measured line addresses.
+The largest ordinary client and supervisor areas remain source targets. Native,
+privileged, provider and OS fault responsibilities retain explicit evidence
+accounting. A deferred journey is not a passing check or grounds for exclusion.
+The older maps below are historical checkpoints, not current gap addresses.
 
 ## Historical audited checkpoint and area map
 
