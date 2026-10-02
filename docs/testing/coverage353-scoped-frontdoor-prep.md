@@ -124,3 +124,23 @@ objects/files, commit the compact summary and own main/actual hosted archive
 follow-through. No test-prep or percentage improvement closes353 or defers its
 full reachable-production objective; Root/system/adoption/platform/browser/provider
 obligations remain separately accounted for without denominator pruning.
+
+## First coordinated gate fixture corrections
+
+The full gate on frozen `78ff047` retained three library failures and one owned
+BIN failure. Terminal's synthetic JSON omitted its mandatory run/terminal IDs
+(Cancel already supplied its run ID). The two older account attenuation fixtures
+had no saved authoritative child record, so the full saved-scope guard correctly
+refused before their intended parent/participant checks. They now persist each
+explicit synthetic child variant and assert the intended attenuation/refusal label.
+No production scope or parent guard is weakened.
+
+The BIN failure was a write-side `ConnectionReset` while sending the deliberate
+`MAX_FRAME_BYTES+1` WebSocket frame. The production frame guard can close from its
+length header before the payload flush. Only that oversized refusal case accepts
+write-side reset/broken-pipe; all other frame writes remain strict. It still must
+observe closed transport, no command reply/session creation, unchanged grant and
+positive owned service retirement. Private case metadata now identifies any
+retained failed child fixture. The original failure directory/logs are preserved.
+These isolated corrections passed rustfmt/diff checks only; the parent owns the
+relevant rerun and fresh final measurement after the initial gate terminates.

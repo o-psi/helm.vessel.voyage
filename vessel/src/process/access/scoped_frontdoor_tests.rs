@@ -206,7 +206,7 @@ async fn workspace_rights_cancel_and_lifecycle_admission_never_use_owner_flag_as
         json!({"op":"workspace_file","path":"no-file.txt"}),
         json!({"op":"snapshot"}),
         json!({"op":"cancel","command_id":Uuid::new_v4(),"expected_revision":0,"expires_at_ms":u64::MAX,"run_id":Uuid::new_v4()}),
-        json!({"op":"terminal","operation":{"action":"snapshot"}}),
+        json!({"op":"terminal","run_id":Uuid::new_v4(),"terminal_id":Uuid::new_v4(),"operation":{"action":"snapshot"}}),
     ];
     for owner in [false, true] {
         for op in &operations {

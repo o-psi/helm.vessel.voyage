@@ -144,6 +144,9 @@ fn derived_session_requires_current_parent_and_never_delegates_enrollment() {
         principal_id: parent.principal_id,
     });
     child.rights = vec![ProcessRight::AccountUse];
+    // Exercise the participant/parent admission against a real saved child,
+    // rather than failing the new frozen-scope check on a missing record.
+    f.save_session(&child);
     assert!(
         current_session_scope(&f.0, &child)
             .unwrap_err()
@@ -151,15 +154,33 @@ fn derived_session_requires_current_parent_and_never_delegates_enrollment() {
             .contains("missing participant binding")
     );
     child.rights.push(ProcessRight::AccountEnroll);
-    assert!(current_session_scope(&f.0, &child).is_err());
+    f.save_session(&child);
+    assert!(
+        current_session_scope(&f.0, &child)
+            .unwrap_err()
+            .to_string()
+            .contains("account participant scope denied")
+    );
     child.rights.pop();
     child.accounts.push(Uuid::new_v4());
-    assert!(current_session_scope(&f.0, &child).is_err());
+    f.save_session(&child);
+    assert!(
+        current_session_scope(&f.0, &child)
+            .unwrap_err()
+            .to_string()
+            .contains("account participant scope denied")
+    );
     child.accounts.pop();
+    f.save_session(&child);
     let mut revoked = parent.clone();
     revoked.revoked = true;
     f.save_session(&revoked);
-    assert!(current_session_scope(&f.0, &child).is_err());
+    assert!(
+        current_session_scope(&f.0, &child)
+            .unwrap_err()
+            .to_string()
+            .contains("access revoked")
+    );
 }
 
 #[test]
@@ -180,12 +201,26 @@ fn connection_derived_actor_uses_human_binding_and_checks_attenuation() {
         Scope::Session(child.clone()).actor(&f.0),
         Scope::Connection(parent.clone()).actor(&f.0)
     );
+    // Parent attenuation is tested after the same exact child is published.
+    f.save_session(&child);
     assert!(current_session_scope(&f.0, &child).is_ok());
     child.enrollment_connections.push(Uuid::new_v4());
-    assert!(current_session_scope(&f.0, &child).is_err());
+    f.save_session(&child);
+    assert!(
+        current_session_scope(&f.0, &child)
+            .unwrap_err()
+            .to_string()
+            .contains("account connection authority changed")
+    );
     child.enrollment_connections.pop();
     child.connection_binding.as_mut().unwrap().revision += 1;
-    assert!(current_session_scope(&f.0, &child).is_err());
+    f.save_session(&child);
+    assert!(
+        current_session_scope(&f.0, &child)
+            .unwrap_err()
+            .to_string()
+            .contains("account connection authority changed")
+    );
 }
 
 #[tokio::test]

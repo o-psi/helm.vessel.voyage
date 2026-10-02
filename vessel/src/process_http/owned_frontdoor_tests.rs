@@ -213,6 +213,9 @@ impl Wire {
         tokio::time::timeout(Duration::from_secs(4),async{let mut s=tokio::net::TcpStream::connect(address).await.unwrap();s.write_all(format!("GET {} HTTP/1.1\r\nHost: {address}\r\n{headers}Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: voyage.vessel.v1\r\n\r\n",voyage_protocol::duplex::SOCKET_PATH).as_bytes()).await.unwrap();let mut out=Vec::new();while !out.ends_with(b"\r\n\r\n"){out.push(s.read_u8().await.unwrap());assert!(out.len()<8192);}let status=String::from_utf8(out).unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();(Self(s),status)}).await.unwrap()
     }
     async fn frame(&mut self, opcode: u8, bytes: &[u8]) {
+        self.write_frame(opcode, bytes).await.unwrap();
+    }
+    async fn write_frame(&mut self, opcode: u8, bytes: &[u8]) -> std::io::Result<()> {
         assert!(bytes.len() <= voyage_protocol::duplex::MAX_FRAME_BYTES + 1);
         let mut packet = vec![0x80 | opcode];
         if bytes.len() < 126 {
@@ -230,7 +233,6 @@ impl Wire {
         tokio::time::timeout(Duration::from_secs(3), self.0.write_all(&packet))
             .await
             .unwrap()
-            .unwrap();
     }
     async fn send(&mut self, frame: &ClientFrame) {
         self.frame(1, &serde_json::to_vec(frame).unwrap()).await;
@@ -344,6 +346,10 @@ async fn owned_ordinary_public_grant_and_socket_lifecycle() {
                 .create(root.join(d))
                 .unwrap();
         }
+        write(
+            &root.join("case.json"),
+            &serde_json::json!({"case":case,"journey":"owned-frontdoor"}),
+        );
         let mut owner = Owner::spawn(&root);
         let ready = tokio::time::timeout(Duration::from_secs(12), async {
             loop {
@@ -439,9 +445,28 @@ async fn owned_ordinary_public_grant_and_socket_lifecycle() {
                     assert!(wire.next().await.is_none());
                 }
                 12 => {
-                    wire.frame(1, &vec![b'x'; voyage_protocol::duplex::MAX_FRAME_BYTES + 1])
-                        .await;
-                    assert!(wire.next().await.is_none());
+                    // The production frame-size guard can close on the declared
+                    // oversized length before this payload flush completes. Only
+                    // this deliberate refusal may observe a write-side close;
+                    // ordinary frames retain strict successful writes.
+                    let oversized = vec![b'x'; voyage_protocol::duplex::MAX_FRAME_BYTES + 1];
+                    match wire.write_frame(1, &oversized).await {
+                        Ok(()) => (),
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::BrokenPipe
+                            ) =>
+                        {
+                            ()
+                        }
+                        Err(error) => panic!("oversize refusal write failed unexpectedly: {error}"),
+                    }
+                    assert!(
+                        wire.next().await.is_none(),
+                        "oversized frame must close without a command reply"
+                    );
                 }
                 13 => {
                     let id = Uuid::new_v4();
