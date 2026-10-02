@@ -469,11 +469,22 @@ case!(
     {
         let mut r = Rig::new(1, 4096);
         let id = r.start("a", "/bin/cat").await;
-        let lock = r.tool.starting.lock().unwrap();
+        let starting = r.tool.starting.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _lock = starting.lock().unwrap();
+            entered_tx.send(()).unwrap();
+            // Hold the real admission lock on another thread, with a finite
+            // refusal bound; no synchronous guard is held across this await.
+            let _ = release_rx.recv_timeout(Duration::from_secs(4));
+        });
+        entered_rx.recv_timeout(Duration::from_secs(4)).unwrap();
         let report = r.tool.shutdown(Duration::ZERO).await;
         assert!(!report.observation_complete);
         assert!(r.tool.has_owned_work());
-        drop(lock);
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
         assert!(
             r.call(json!({"action":"write","id":id,"data":"blocked-after-shutdown"}))
                 .await
