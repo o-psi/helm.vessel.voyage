@@ -60,6 +60,21 @@ fn owned(root: &Path) -> Vec<(u32, String)> {
         })
         .collect()
 }
+fn process_role(pid: u32, role: &[u8]) -> bool {
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .ok()
+        .is_some_and(|args| args.split(|byte| *byte == 0).nth(1) == Some(role))
+}
+fn parent_pid(pid: u32) -> Option<u32> {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()?
+        .rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()
+}
 struct ChildOwner {
     child: Option<Child>,
     root: PathBuf,
@@ -602,9 +617,22 @@ async fn journey(root: &Path, mode: &str) {
         .join("sessions")
         .join(process.session_id.to_string());
     let pids = owned(&runtime_root);
-    assert_eq!(pids.len(), 1);
-    assert_ne!(pids[0].0, service.pid());
-    let runtime_identity = pids[0].clone();
+    let execution: Vec<_> = pids
+        .iter()
+        .filter(|(pid, _)| process_role(*pid, b"serve"))
+        .collect();
+    let guardians: Vec<_> = pids
+        .iter()
+        .filter(|(pid, _)| process_role(*pid, b"supervise"))
+        .collect();
+    assert_eq!(execution.len(), 1, "one exact execution owner");
+    assert_eq!(guardians.len(), 1, "one separate owned cleanup guardian");
+    let runtime_identity = execution[0].clone();
+    let guardian_identity = guardians[0].clone();
+    assert_ne!(runtime_identity.0, guardian_identity.0);
+    assert_ne!(runtime_identity.0, service.pid());
+    assert_eq!(parent_pid(runtime_identity.0), Some(guardian_identity.0));
+    assert_eq!(parent_pid(guardian_identity.0), Some(service.pid()));
     if mode == "restart-held" {
         let token = api.credential.token.clone();
         service.terminate().await;
@@ -613,6 +641,11 @@ async fn journey(root: &Path, mode: &str) {
             start(runtime_identity.0).as_ref(),
             Some(&runtime_identity.1)
         );
+        assert_eq!(
+            start(guardian_identity.0).as_ref(),
+            Some(&guardian_identity.1)
+        );
+        assert_eq!(parent_pid(runtime_identity.0), Some(guardian_identity.0));
         let snap = raw(&runtime_root, RuntimeCommand::Snapshot).await.result;
         assert_eq!(snap["run"]["run_id"], submitted["run_id"]);
         assert!(matches!(
@@ -725,6 +758,10 @@ async fn journey(root: &Path, mode: &str) {
     assert_ne!(
         start(runtime_identity.0).as_ref(),
         Some(&runtime_identity.1)
+    );
+    assert_ne!(
+        start(guardian_identity.0).as_ref(),
+        Some(&guardian_identity.1)
     );
     assert!(!directory.join("process-http.json").exists());
     runtimes.finished = true;
