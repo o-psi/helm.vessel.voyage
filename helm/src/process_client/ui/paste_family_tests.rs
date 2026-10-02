@@ -2,6 +2,7 @@
 use super::super::{coverage_support, right_panel::Editor, socket_support_tests::Server};
 use super::*;
 use base64::Engine as _;
+use crossterm::event::KeyEvent;
 use serde_json::json;
 use std::sync::{
     Arc,
@@ -448,7 +449,6 @@ async fn image_send_freezes_exact_public_parts_and_upload_refusal_never_submits(
     let VoyageCommand::SubmitContent {
         command_id,
         expected_revision,
-        prompt,
         content,
         ..
     } = original.as_ref()
@@ -457,7 +457,14 @@ async fn image_send_freezes_exact_public_parts_and_upload_refusal_never_submits(
     };
     assert_eq!(*command_id, id);
     assert_eq!(*expected_revision, 17);
-    assert_eq!(prompt, "owned text before after");
+    let authored = content
+        .iter()
+        .filter_map(|part| match part {
+            voyage_protocol::content::ContentPart::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(authored, "owned text before after");
     assert_eq!(
         content,
         &attachments::content(&app.views[&target].draft, &private).unwrap()
