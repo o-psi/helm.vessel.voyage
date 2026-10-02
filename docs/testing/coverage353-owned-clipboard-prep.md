@@ -8,6 +8,9 @@ environment, selects private HOME/XDG/workspace and a PATH containing only owned
 `wl-paste`, `xclip` and `powershell.exe` scripts. They cannot query the desktop
 clipboard. Only the coordinator's `LLVM_PROFILE_FILE` passes to the libtest
 child; the production reader's environment allowlist is checked separately.
+Fake Python helpers use `-I`, so interpreter startup cannot consult the
+developer's user-site configuration after the production reader removes HOME.
+The child also pins its actual parent PID/executable and canonical private root.
 
 Assertions cover Unicode literal text, read-only input despite retired command
 denials, sandbox and unavailable workspace refusal before helpers, Wayland to
@@ -24,6 +27,10 @@ The parent bounds each child to twelve seconds. On timeout it signals only
 matched owned helper groups and retains private failure evidence; it does not
 claim observed cleanup or a passing result. No system configuration, user
 clipboard, provider, Vessel, grant or native platform outside Linux is used.
+Owned child/failure guards apply on nonzero exits and panic paths as well as
+timeout. Signals require the helper's current process group to match the pinned
+group. Cancellation has a five-second reader deadline and a separate two-second
+admission bound; the explicit timeout case retains its 250 ms deadline.
 
 The parent and its children use the same Helm LIB executable, so no new native
 binary entry point is needed. The delivery coordinator owns the sole Cargo gate:
