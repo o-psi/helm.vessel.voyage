@@ -125,7 +125,22 @@ impl OwnedVessel {
     async fn finish(&mut self, client: &Client) {
         let processes = catalogue(client).await;
         for process in processes {
-            if process.state != ProcessState::Stopped {
+            let has_executor = owned_pids(
+                &self
+                    .directory
+                    .join("sessions")
+                    .join(process.session_id.to_string()),
+                &self.voyage,
+            )
+            .into_iter()
+            .any(|(pid, _)| {
+                let arguments = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                matches!(
+                    arguments.split(|byte| *byte == 0).nth(1),
+                    Some(b"serve" | b"serve-bound")
+                )
+            });
+            if has_executor {
                 client
                     .request(VesselCommand::Stop {
                         session_id: process.session_id,
