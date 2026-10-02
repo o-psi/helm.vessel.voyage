@@ -93,12 +93,13 @@ is not mislabelled deletion of authoritative conversation history.
 ## First coordinated gate fixture correction
 
 The coordinator's frozen `95b6159` full measurement produced a Helm result of
-841 passed and one failed among 842 parents. The failure was the new frozen
-pending-receipt replay-gap stage; the workspace measurement was still running
+841 passed and one failed among 842 parents. The failed parent was the new frozen
+pending-receipt journey; its original generic wait did not identify the stage.
+The workspace measurement was still running
 when this isolated correction was prepared, so no whole-workspace outcome is
 inferred here. Failed evidence remains in the coordinator's retained report.
 
-The scripted session event used revision 18, while the later cursor-21 full
+Source inspection found that the scripted session event used revision 18, while the later cursor-21 full
 snapshot inherited the helper's default revision 17. App correctly refused that
 regressive canonical snapshot; its cursor could not install. The fixture now
 returns the current revision 18 and the same applied name, without changing the
