@@ -1,6 +1,6 @@
 use super::*;
 use crate::process_client::loopback_tests::{Peer, response, send};
-use serde_json::json;
+use serde_json::{Value, json};
 use voyage_protocol::{duplex::ServerFrame, vessel::*};
 fn process() -> ProcessInfo {
     serde_json::from_value(json!({"session_id":Uuid::new_v4(),"incarnation":Uuid::new_v4(),"workspace":"/synthetic","state":"live"})).unwrap()
