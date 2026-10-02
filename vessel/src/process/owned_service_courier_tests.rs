@@ -627,8 +627,8 @@ async fn journey(root: &Path, mode: &str) {
         .collect();
     assert_eq!(execution.len(), 1, "one exact execution owner");
     assert_eq!(guardians.len(), 1, "one separate owned cleanup guardian");
-    let runtime_identity = execution[0].clone();
-    let guardian_identity = guardians[0].clone();
+    let runtime_identity = (*execution[0]).clone();
+    let guardian_identity = (*guardians[0]).clone();
     assert_ne!(runtime_identity.0, guardian_identity.0);
     assert_ne!(runtime_identity.0, service.pid());
     assert_eq!(parent_pid(runtime_identity.0), Some(guardian_identity.0));
