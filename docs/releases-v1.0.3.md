@@ -44,13 +44,24 @@ recorded in closed #366/#372 and #377, respectively. The fresh 80-turn journey
 passed: 160 messages, 2,720 ordered events, retention-gap recovery and lossless
 17-message paging without repeated inference, with observed cleanup.
 
-Helm Web `4bb4ae03709d2a3eac5e299df729cab1f4d374a7` is deployed through the
-existing scoped updater in CT 106.
-Public health, manifest and all six asset files matched the verified local build;
-authenticated reload and Changes panel keyboard focus restoration passed.
-The UX delivery is recorded in closed core #377 and Web #5. The current archive also passed the expanded actual native/Web-adapter browser
-journey with observed cleanup; see [browser qualification](testing/host-browser-v1.0.3.md).
-Complete deployed browser acceptance remains a separate gate.
+Helm Web `424d8d2397304da633d5b3dcb74b5c80ca58e0f2` is deployed in CT 106
+through the existing scoped updater. Deployment invocation
+`8164933cd4a944efa432e684d8bf0abf` was verified at 19:30:52 UTC.
+All 214 Web checks passed (zero failures and zero skips), along with typecheck
+and the production build. The exact public manifest and all six public asset
+hashes matched that verified build. A normal authenticated root reload observed
+five of five Vessel connections connected.
+
+This Web source includes the shared browser opening-intent correction: explicit
+dock opening may start a browser once; socket renewal, owner changes and
+incidental viewer remounts observe or reattach without restarting a stopped
+browser. Explicit **Start browser** remains available, and closing the panel
+only detaches. See [the coordinated source contract](testing/browser-viewer-opening-intent.md).
+The earlier UX delivery and Changes focus restoration are recorded in closed
+core #377 and Web #5. Earlier archive qualification passed the expanded native/
+Web-adapter browser journey with observed cleanup; see
+[browser qualification](testing/host-browser-v1.0.3.md). Those historical results
+do not establish the pending new core gate or complete deployed browser acceptance.
 
 CT 106 completed one separately reviewed forward recovery on qualified source
 `79507feba866f99d8576351b75e4fbc50fa5a527`, restoring managed service paths and
@@ -65,15 +76,35 @@ The closed #401 record distinguishes normal upgrades and live-owner refusal,
 CT128 startup rollback/old-reader qualification, and CT127 helper-boundary
 retirement evidence from synthetic manager/PID tests. Original uncertain updates,
 failed attempts, snapshots, quarantine and changed-context refusals remain
-preserved; they are not relabelled successful rollback. CT129's unresolved
-supervisor lifetime remains an explicit owned-fixture disposition in #375. Closing
-#401's repair scope does not establish native system installation, every possible
-rollback fault or complete browser acceptance.
+preserved; they are not relabelled successful rollback. CT129's disposable
+fixture lifetime is now observed stopped. Cleanup
+`7e80567a-b53c-4d10-a07a-ae267d502ae9` recorded intent SHA
+`aeb4e299fcc939c025bfe0bde2323df50367aca2a73cc1bb85770e7c20489ba1`
+before one graceful shutdown. Proxmox task
+`UPID:pve:001EB99A:0177AA5C:6AC00340:vzshutdown:129:root@pam:` reached
+terminal OK; CT/LXC were stopped, its cgroup was absent and no exact container
+process instance remained. Result SHA
+`1665cfcaa493b65f1980f62847fb0c3336d885425d32ee115fab1b2bba502313`
+records that disposition. Disk/configuration, the original receipt, quarantine
+and changed operator namespace remain preserved. Historical readiness and
+rollback remain unknown; fixture shutdown does not retroactively qualify them.
+Closing #401's repair scope does not establish native system installation, every
+possible rollback fault or complete browser acceptance.
 
-Complete deployed browser/site/privacy/cost/cleanup acceptance stays open in
-[#333](https://github.com/o-psi/helm.vessel.voyage/issues/333). Its explicit bounded
-qualification and observed cleanup must finish before stable publication; current
-job and route state are tracked in that delivery record.
+Complete deployed native browser/site/privacy/renewal and nine-window cost
+qualification stays open in [#333](https://github.com/o-psi/helm.vessel.voyage/issues/333).
+The actual replacement A browser `08a21fc6-8cca-49c8-a0ea-9e03c2c1e4c1`
+has complete maintained cleanup evidence: all 16 pinned process instances are
+gone, guardian completion is observed, and its scratch, worker lock and capacity
+slot are absent. See [the exact cleanup checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/333#issuecomment-5959727302).
+This cleanup does not establish passing full browser qualification.
+
+No browser qualification job is active, and Web qualification is disabled in the
+restored dotenv baseline. The original temporary route operation
+`5385acaf-b6eb-4b49-80e7-6855c108f73c` remains applied; its guarded exact-baseline
+restoration is still owed. Full qualification and required restoration must
+finish before stable publication. The new core source gate remains pending;
+no stable release or new passing core result is claimed here.
 
 ## Planned assets and installation
 
