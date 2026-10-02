@@ -130,7 +130,7 @@ impl App {
         tokio::spawn(async move {
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(25),
-                client.voyage(
+                client.voyage_observed(
                     target.session,
                     incarnation,
                     VoyageCommand::Controls {
@@ -140,7 +140,13 @@ impl App {
                 ),
             )
             .await;
-            let value = result.ok().and_then(Result::ok);
+            // Controls is an unpinned read on the wire. Its returned owner is
+            // still exact presentation context, never silently the old owner.
+            let value = result
+                .ok()
+                .and_then(Result::ok)
+                .filter(|(_, owner)| *owner == incarnation)
+                .map(|(value, _)| value);
             let _ = sender
                 .send(Update::Completion {
                     request_id,

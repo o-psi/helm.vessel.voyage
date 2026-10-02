@@ -1,6 +1,6 @@
 # Ordinary completion metadata and input cohort (#353)
 
-Source preparation only. **22 new Rust parents are uncompiled and unrun**;
+Source preparation only. **23 new Rust parents are uncompiled and unrun**;
 rustfmt/source/diff validation is not execution evidence. The five existing
 completion parents remain and retain their identity, unsafe-token, draft and
 render assertions. The current c14 address map has 126 candidate zero addresses
@@ -30,6 +30,13 @@ boundaries. No public wire contract, grant, provider, command authority, executo
 or mutation path changes. The only Update changes carry this lookup UUID and
 private typed context from the producer to its existing consumer.
 
+Independent review additionally corrected the read-only wire contract:
+Controls deliberately sends no incarnation pin. The producer uses
+`voyage_observed` and checks the returned owner against the captured incarnation
+before retaining any inventory. A same-session/new-owner response is refused
+even while the catalogue still reports the old owner. The protocol stays intact.
+Wrong-session response refusal is retained as a separate case.
+
 ## Meaningful journeys
 
 The fixture reuses the maintained authenticated loopback `loopback_tests::Peer`
@@ -40,7 +47,7 @@ human credential/input, browser, service or global environment is accessed.
 
 Assertions cover:
 
-- Exact model/tool/terminal session/incarnation/section/run requests, deduplicated
+- Exact model/tool/terminal session/unpinned-incarnation/section/run requests, deduplicated
   pending discovery, literal TestBackend rendering and Tab editing only the
   unsent draft; no execution or inferred account selection.
 - Model → tool → model held replies, full account tuple changes, provider/model
@@ -52,7 +59,7 @@ Assertions cover:
   capability refusal and picker metadata are real synthetic protocol reads,
   not new enrollment, grants or provider work.
 - Errors with a fixed private diagnostic marker never shown or put in history,
-  exact foreign public envelope refusal, no automatic retry, and explicit
+  exact wrong-session/new-owner public envelope refusal, no automatic retry, and explicit
   erase-space/reload with one fresh read identity.
 - The **actual unchanged 25-second completion deadline**, followed by the late
   original reply: no metadata install, callback replay or duplicate read. This

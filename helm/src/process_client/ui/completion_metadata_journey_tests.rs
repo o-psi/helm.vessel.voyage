@@ -115,7 +115,10 @@ impl Journey {
             panic!("completion may emit only the exact read-only Controls request")
         };
         assert_eq!(session_id, self.target.session);
-        assert_eq!(incarnation, Some(self.incarnation));
+        assert_eq!(
+            incarnation, None,
+            "Controls is an unpinned read; its observed reply owner must be checked separately"
+        );
         assert_eq!(run_id, run);
         assert_eq!(actual, section);
         wire
@@ -514,7 +517,7 @@ async fn unavailable_metadata_has_no_diagnostic_payload_or_implicit_retry_and_ex
 }
 
 #[tokio::test]
-async fn exact_public_receipt_envelope_refuses_foreign_owner_before_installing_inventory() {
+async fn exact_public_envelope_refuses_wrong_session_before_installing_inventory() {
     let mut j = Journey::new().await;
     j.text("/terminal ");
     j.app.sync_completion();
@@ -531,6 +534,33 @@ async fn exact_public_receipt_envelope_refuses_foreign_owner_before_installing_i
     assert!(j.paint().contains("Options unavailable"));
     assert!(!j.paint().contains("FOREIGN-TERMINAL"));
     j.preserved("/terminal ");
+    j.quiet().await;
+    j.finish().await;
+}
+
+#[tokio::test]
+async fn same_session_new_reply_owner_is_refused_before_catalogue_has_caught_up() {
+    let mut j = Journey::new().await;
+    j.text("/terminal ");
+    j.app.sync_completion();
+    let wire = j.command("terminals", None).await;
+    let replacement = Uuid::new_v4();
+    j.peer
+        .voyage_reply(
+            wire,
+            j.target.session,
+            replacement,
+            json!([{"id":"NEW-OWNER-TERMINAL"}]),
+        )
+        .await;
+    // The old authenticated catalogue observation is deliberately unchanged.
+    assert_eq!(j.app.views[&j.target].process.incarnation, j.incarnation);
+    j.install().await;
+    assert!(j.paint().contains("Options unavailable"));
+    assert!(!j.paint().contains("NEW-OWNER-TERMINAL"));
+    assert!(j.app.completion.metadata.as_ref().unwrap().value.is_none());
+    j.preserved("/terminal ");
+    j.app.sync_completion();
     j.quiet().await;
     j.finish().await;
 }
