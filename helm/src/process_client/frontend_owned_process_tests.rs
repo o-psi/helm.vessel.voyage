@@ -447,7 +447,7 @@ async fn journey(mode: &str) {
         let selected = config.clone();
         let root = workspace.clone();
         let temporary = mode != "saved";
-        let running = tokio::spawn(async move {
+        let running = tokio::task::spawn_local(async move {
             run(
                 selected,
                 Some(root),
@@ -547,7 +547,7 @@ async fn journey(mode: &str) {
         let mut selected = config.clone();
         selected.model = "owned-explicit-branch-model".into();
         let reference = parent.session_id.to_string();
-        let running = tokio::spawn(async move {
+        let running = tokio::task::spawn_local(async move {
             run(
                 selected,
                 None,
@@ -699,11 +699,11 @@ fn owned_ordinary_frontend_preserves_canonical_history_exact_delivery_and_cleanu
             .unwrap();
         assert_eq!(unsafe { libc::getppid() }, parent);
         assert_eq!(unsafe { libc::getsid(0) }, unsafe { libc::getpid() });
-        tokio::runtime::Builder::new_current_thread()
+        let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .unwrap()
-            .block_on(journey(&mode));
+            .unwrap();
+        tokio::task::LocalSet::new().block_on(&runtime, journey(&mode));
         return;
     }
     for mode in [
