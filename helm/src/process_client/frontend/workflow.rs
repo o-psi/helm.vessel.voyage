@@ -103,11 +103,14 @@ pub async fn run(
         let run_id = serde_json::from_value(receipt["run_id"].clone())
             .context("workflow receipt omitted run")?;
         drop(input_monitor);
-        super::super::plain::follow(&client, process.session_id, run_id).await
+        let result = super::super::plain::follow(&client, process.session_id, run_id).await;
+        Ok((run_id, result))
     }
     .await;
+    let (run_id, execution) = execution?;
     if no_save {
-        super::discard(&client, &process).await?;
+        super::wait_temporary_cleanup(&client, &process, run_id).await?;
+        super::discard_for_run(&client, &process, Some(run_id)).await?;
     }
     execution
 }

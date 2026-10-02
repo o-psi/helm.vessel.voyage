@@ -137,3 +137,7 @@ An unknown reply is never replayed; only its exact durable deletion and positive
 stopped current owner may confirm it. A transport case refuses a wrong returned owner
 or changed workspace before accepting the matching prepared owner. No dead owner is
 claimed to have survived restart, and no second Stop/Delete is sent.
+
+The workflow no-save consumer uses the same positively accepted run UUID, bounded
+read-only cleanup and exact deletion owner path; unknown WorkflowSubmit retains its
+private work. Public plain following keeps its existing Result<()> interface.
