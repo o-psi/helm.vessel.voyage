@@ -11,6 +11,7 @@ import {performance} from 'node:perf_hooks';
 import {browserCost,inputVisibleLatency} from './host_browser_client_cost.mjs';
 import {requestNativeReopen,nativePageOwner} from './host_browser_native_reopen.mjs';
 import {measurementWindowAligned,privateBindingSnapshot,privateReclaimQualified} from './host_browser_qualification_windows.mjs';
+import {mediaColor,mediaMovementFacts} from './host_browser_media_pixels.mjs';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
@@ -175,7 +176,7 @@ function nativeReceiptClaim(operation){
  return {...operation,binding:{...binding}}; // Only typed IDs/epochs/mode, never human input.
 }
 function observation(page,session,socketUrl,{native=false}={}){
- const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),native_claims:new Map(),pending_effects:0,confirmed:0,unknown:0,refused:0,
+ const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),native_claims:new Map(),browser_starts:0,browser_closes:0,pending_effects:0,confirmed:0,unknown:0,refused:0,
   connections:0,hellos:0,duplicate_effect:false,overflow:false,
   traffic:{sent_bytes:0,received_bytes:0,sent_frames:0,received_frames:0}};
  tracked.set(page,state);
@@ -200,7 +201,7 @@ function observation(page,session,socketUrl,{native=false}={}){
   page.on('request',request=>{
    const url=new URL(request.url());if(url.pathname!=='/operation'||url.hostname!=='127.0.0.1')return;
    const body=request.postData();if(!body||body.length>256*1024){state.overflow=true;return;}
-   try{const op=JSON.parse(body);sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
+   try{const op=JSON.parse(body);if(op.action==='start')state.browser_starts++;if(op.action==='close')state.browser_closes++;sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
   });
   page.on('requestfailed',request=>{const op=state.pending.get(request);if(op&&effect(op.action)){state.unknown++;state.pending_effects--;}state.pending.delete(request);});
   page.on('response',async response=>{
@@ -327,6 +328,85 @@ async function fallback(page,selector,minimum=1){
   return true;
  });
 }
+// Only the pinned synthetic /media page may disclose these small color reductions.
+function ownedMedia(cfg,site){
+ const fixture=new URL(cfg.fixture.url),url=new URL(site.url);
+ return site.label==='owned-media'&&site.kind==='frame-media'&&url.origin===fixture.origin
+  &&url.pathname===fixture.pathname.replace(/\/ui$/,'/media')&&/^\/release-qualification-333\/[A-Za-z0-9_-]{8,48}\/media$/.test(url.pathname);
+}
+function publicMediaFence(page){
+ const state=tracked.get(page);assert.ok(state?.status?.running&&state.status.mode!=='private');
+ assert.ok(!state.overflow&&!state.unknown&&!state.refused&&!state.duplicate_effect);
+ const b=state.status.binding;assert.ok(b&&uuid(b.incarnation)&&uuid(b.browser_id));
+ return JSON.stringify([b.incarnation,b.browser_id,b.tab_id,b.document_epoch,b.capture_epoch,b.controller_epoch]);
+}
+async function playbackFact(page){
+ return mirror(page).locator('#video-state').evaluate(e=>({state:e.dataset.state,frames:Number(e.dataset.frames),time_ms:Number(e.dataset.timeMs),starts:Number(e.dataset.starts)}));
+}
+async function mediaHandles(page){
+ const fence=publicMediaFence(page);await fallback(page,'.browser-next-visual',3);
+ const handles={};
+ try{for(const [name,selector] of [['canvas','#canvas'],['video','#video'],['unsupported','#unsupported-frame']]){
+  const rect=await mirror(page).locator(selector).evaluate(e=>{const r=e.getBoundingClientRect();return {left:Math.max(0,r.left),top:Math.max(0,r.top),width:r.width,height:r.height};});
+  const images=viewer(page).locator('.browser-next-visual');
+  const indexes=await images.evaluateAll((elements,rect)=>elements.flatMap((e,i)=>Math.abs(parseFloat(e.style.left)-rect.left)<2&&Math.abs(parseFloat(e.style.top)-rect.top)<2&&Math.abs(parseFloat(e.style.width)-rect.width)<2&&Math.abs(parseFloat(e.style.height)-rect.height)<2?[i]:[]),rect);
+  assert.equal(indexes.length,1,'exact localized surface unavailable or ambiguous');
+  handles[name]=await images.nth(indexes[0]).elementHandle();assert.ok(handles[name]);
+ }
+ assert.equal(publicMediaFence(page),fence);return {page,fence,handles};
+ }catch(error){await Promise.all(Object.values(handles).map(handle=>handle.dispose()));throw error;}
+}
+async function mediaSample(observed){
+ assert.equal(publicMediaFence(observed.page),observed.fence);
+ const value={};
+ for(const [name,handle] of Object.entries(observed.handles)){
+  let sample;
+  await until(async()=>{
+   assert.equal(publicMediaFence(observed.page),observed.fence);
+   sample=await handle.evaluate(e=>{
+   if(!e.isConnected||e.tagName!=='IMG')throw Error('localized surface node retired');
+   if(!e.complete||e.naturalWidth<8||e.naturalHeight<8)return null;
+   if(!e.src.startsWith('data:image/jpeg;base64,')||e.src.length>270000)throw Error('localized image shape unavailable');
+   const scratch=e.ownerDocument.createElement('canvas');scratch.width=4;scratch.height=4;
+   const context=scratch.getContext('2d',{willReadFrequently:true});if(!context)return null;
+   context.drawImage(e,Math.floor(e.naturalWidth/2)-2,Math.floor(e.naturalHeight/2)-2,4,4,0,0,4,4);
+   return {version:Number(e.dataset.version),node_id:Number(e.dataset.nodeId),pixels:[...context.getImageData(0,0,4,4).data]};
+   });return sample!==null;
+  },2000);
+  assert.ok(sample,'same decoded localized image node unavailable');
+  assert.ok(Number.isSafeInteger(sample.version)&&sample.version>0&&Number.isSafeInteger(sample.node_id)&&sample.node_id>0);
+  observed.node_ids??={};observed.node_ids[name]??=sample.node_id;assert.equal(sample.node_id,observed.node_ids[name]);
+  value[name]={version:sample.version,color:mediaColor(sample.pixels)};
+ }
+ value.playback=await playbackFact(observed.page);
+ assert.equal(publicMediaFence(observed.page),observed.fence);return value;
+}
+async function mediaMovement(observed){
+ const samples=[],deadline=performance.now()+12000;let facts;
+ for(let i=0;i<24&&performance.now()<deadline;i++){
+  const sample=await mediaSample(observed);samples.push(sample);
+  assert.equal(sample.unsupported.color,'orange','unsupported frame did not decode its synthetic content');
+  if(samples.length>=2){try{facts=mediaMovementFacts(samples);}catch{}if(facts)break;}
+  await sleep(550);
+ }
+ assert.ok(facts,'localized canvas/video content or decoded playback did not qualify');
+ observed.unsupported=samples.at(-1).unsupported;
+ return {...facts,all_three_simultaneously_visible:true,same_dom_image_nodes:true,unsupported_frame_color:'orange',scope:'synthetic localized JPEG samples at worker cadence; not full video cadence or audio'};
+}
+async function mediaFrameChanged(observed){
+ const before=observed.unsupported;assert.ok(before&&before.color==='orange');let latest;
+ await until(async()=>{latest=await mediaSample(observed);return latest.unsupported.color==='blue'&&latest.unsupported.version>before.version;},10000);
+ assert.equal(await mirror(observed.page).locator('#unsupported-state').getAttribute('data-changes'),'1');
+ return {content_changed:true,decoded_colors:['orange','blue'],same_dom_image_node:true,first_version:before.version,last_version:latest.unsupported.version,all_three_simultaneously_visible:true};
+}
+async function disposeMedia(observed){await Promise.all(Object.values(observed.handles).map(handle=>handle.dispose()));}
+async function playOwnedMedia(page){
+ await ready(page);await mirror(page).getByRole('button',{name:'Play synthetic video',exact:true}).click();
+ await until(async()=>{const value=await playbackFact(page);return value.state==='playing'&&value.starts===1&&value.frames>=3;},10000);
+ await ready(page);
+}
+async function changeOwnedFrame(page){await ready(page);await mirror(page).getByRole('button',{name:'Change unsupported frame',exact:true}).click();await ready(page);}
+
 async function frameContaining(page,text){
  const count=await page.locator('.browser-next-frame iframe').count();assert.ok(count<=8);
  for(let i=0;i<count;i++){const frame=page.frameLocator('.browser-next-frame iframe').nth(i);
@@ -453,9 +533,19 @@ export async function runProductionQualification(context,cfg){
   report.site_classes.dynamic_action_both=true;report.site_classes.cross_origin_action_both=true;report.site_classes.nested_action_both=true;
   stage('approved_representative_sites');
   for(const site of cfg.sites){await navigate(nativeB.page,site.url,site.ready_selector);await loaded(webB.page,site);
-   if(site.fallback_selector){await fallback(nativeB.page,site.fallback_selector,site.minimum_fallback_images);await fallback(webB.page,site.fallback_selector,site.minimum_fallback_images);}
+   let media=null;
+   if(ownedMedia(cfg,site)){
+    await playOwnedMedia(nativeB.page);const acquired=await Promise.allSettled([mediaHandles(nativeB.page),mediaHandles(webB.page)]);
+    if(acquired.some(value=>value.status==='rejected')){
+     await Promise.all(acquired.filter(value=>value.status==='fulfilled').map(value=>disposeMedia(value.value)));
+     throw acquired.find(value=>value.status==='rejected').reason;
+    }
+    const views=acquired.map(value=>value.value);
+    try{const movement=await Promise.all(views.map(mediaMovement));await changeOwnedFrame(nativeB.page);const unsupported=await Promise.all(views.map(mediaFrameChanged));media={native:{movement:movement[0],unsupported:unsupported[0]},react:{movement:movement[1],unsupported:unsupported[1]}};}
+    finally{await Promise.all(views.map(disposeMedia));}
+   }else if(site.fallback_selector){await fallback(nativeB.page,site.fallback_selector,site.minimum_fallback_images);await fallback(webB.page,site.fallback_selector,site.minimum_fallback_images);}
    for(const [kind,page] of [['native',nativeB.page],['react',webB.page]])await viewer(page).screenshot({path:path.join(cfg.output,`public-${site.label}-${kind}.png`)});
-   report.sites.push({label:site.label,kind:site.kind,url_sha256:hash(site.url),loaded_both:true,localized_fallback:!!site.fallback_selector});
+   report.sites.push({label:site.label,kind:site.kind,url_sha256:hash(site.url),loaded_both:true,localized_fallback:!!site.fallback_selector,media});
   }
   stage('private_handoff');const old={...nativeA.state.status.binding};await mode(nativeA.page,'Browse privately','private');await excluded(webA.page);
   await navigate(nativeA.page,cfg.fixture.private.url,cfg.fixture.private.ready_selector);
@@ -617,11 +707,22 @@ export async function runCuaProductionQualification(context,cfg){
   report.site_classes.dynamic_action_both=true;report.site_classes.cross_origin_action_both=true;report.site_classes.nested_action_both=true;
   stage('approved_public_sites');
   for(const site of cfg.sites){await navigate(native[1].page,site.url,site.ready_selector);
-   await proof('observe_public_site',{label:cfg.sessions[1].label,site_label:site.label,selector:site.ready_selector,
-    fallback_selector:site.fallback_selector||null},['fixture_visible','no_input_sent']);
-   if(site.fallback_selector)await fallback(native[1].page,site.fallback_selector,site.minimum_fallback_images);
+   let media=null;
+   if(ownedMedia(cfg,site)){
+    await playOwnedMedia(native[1].page);const observed=await mediaHandles(native[1].page);
+    try{const movement=await mediaMovement(observed);
+     await proof('observe_media_surfaces',{label:cfg.sessions[1].label},['all_three_visible','canvas_decoded_content_changes','video_decoded_content_changes','video_playback_frames_advance','same_surface_versions_advance','unsupported_frame_orange','no_input_sent']);
+     await changeOwnedFrame(native[1].page);const unsupported=await mediaFrameChanged(observed);
+     await proof('observe_media_frame_change',{label:cfg.sessions[1].label},['all_three_visible','unsupported_frame_blue','same_unsupported_surface_version_advance','no_input_sent']);
+     media={native:{movement,unsupported},react:{decoded_visual_proofs_observed:true,no_input_sent:true}};
+    }finally{await disposeMedia(observed);}
+   }else{
+    await proof('observe_public_site',{label:cfg.sessions[1].label,site_label:site.label,selector:site.ready_selector,
+     fallback_selector:site.fallback_selector||null},['fixture_visible','no_input_sent']);
+    if(site.fallback_selector)await fallback(native[1].page,site.fallback_selector,site.minimum_fallback_images);
+   }
    await viewer(native[1].page).screenshot({path:path.join(cfg.output,`public-${site.label}-native.png`)});
-   report.sites.push({label:site.label,kind:site.kind,url_sha256:hash(site.url),visible_both:true,localized_fallback:!!site.fallback_selector});
+   report.sites.push({label:site.label,kind:site.kind,url_sha256:hash(site.url),visible_both:true,localized_fallback:!!site.fallback_selector,media});
   }
   stage('private_cua_exclusion');await mode(native[0].page,'Browse privately','private');
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);

@@ -197,3 +197,37 @@ test('cross-origin frame mirror stays private and frame actions expire on naviga
  assert.notEqual(refreshed.value.frames[0].frame_id,frameId);
  assert.match(gunzipSync(Buffer.from(refreshed.value.frames[0].data_base64,'base64')).toString(),/New child document/);
 });
+
+test('three simultaneous localized surfaces retain aggregate bounds and private/zero-viewer fences',{timeout:45000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-three-surfaces-')),worker=new Worker();
+ const poster='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="60"><rect width="100" height="60" fill="blue"/></svg>');
+ const server=http.createServer((req,res)=>{
+  res.setHeader('Content-Type','text/html');
+  if(req.url==='/frame'){res.end('<style>html,body{margin:0;background:orange}</style><p>Bounded child</p>');return;}
+  res.end(`<style>body{margin:0}iframe{border:0}</style><canvas width="100" height="60"></canvas><video width="100" height="60" poster="${poster}"></video>${Array.from({length:9},(_,i)=>`<iframe id="frame-${i}" width="40" height="30" src="/frame"></iframe>`).join('')}<script>const c=document.querySelector('canvas').getContext('2d');c.fillStyle='orange';c.fillRect(0,0,100,60)</script>`);
+ });
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const origin=`http://127.0.0.1:${server.address().port}`;
+ t.after(async()=>{await worker.dispose();await new Promise(resolve=>server.close(resolve));await fs.rm(root,{recursive:true,force:true});});
+ const request=(op,args={})=>worker.request({id:randomUUID(),op,browser:worker.browser,epochs:{...worker.epochs},...args});
+ const call=async(op,args={})=>{const reply=await request(op,args);assert.equal(reply.ok,true,JSON.stringify(reply));return reply.result;};
+ await call('init',{config:{root,executable,public_web:false,origins:[{origin,private_network:true}],width:800,height:480}});
+ await call('open');await call('agent',{action:{kind:'navigate',url:origin}});
+ const viewer=randomUUID(),other=randomUUID();await call('join',{viewer});await call('join',{viewer:other});
+ let captures=0;const capture=worker.captureVisuals.bind(worker);worker.captureVisuals=(...args)=>{captures++;return capture(...args);};
+ const reply=await call('mirror',{viewer,since:0});
+ const ids=await worker.page.evaluate(()=>['canvas','video','#frame-8'].map(selector=>globalThis.__voyageMirror.id(document.querySelector(selector))));
+ assert.equal(reply.value.frames.length,8,'bounded child mirrors remain eight');
+ assert.deepEqual(new Set(reply.value.visuals.map(item=>item.id)),new Set(ids),'canvas,video and ninth unsupported frame are present together');
+ assert.equal(reply.value.visuals.length,3);
+ for(const image of reply.value.visuals){const bytes=Buffer.from(image.data_base64,'base64');assert.ok(bytes.length<=200000);assert.equal(bytes.readUInt16BE(0),0xffd8);}
+ assert.ok(Buffer.byteLength(JSON.stringify(reply.value))<=2800000);
+ await call('control',{viewer,mode:'private'});
+ assert.equal((await request('mirror',{viewer:other,since:0})).error.code,'viewer_missing');
+ const privateView=await call('mirror',{viewer,since:0});assert.equal(privateView.value.visuals.length,3);
+ await call('disconnect',{viewer});const before=captures;
+ await sleep(1100);await call('status');
+ assert.equal(worker.status().open,true);assert.deepEqual(worker.status().viewers,[]);
+ assert.equal((await request('mirror',{viewer,since:0})).error.code,'viewer_missing');
+ assert.equal(captures,before,'zero viewers/status reads do not capture localized images');
+});

@@ -84,11 +84,31 @@ class Site(http.server.BaseHTTPRequestHandler):
             self.reply(route,b'<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="green"/></svg>','image/svg+xml');return
         elif route=='/media':
             data=('''<!doctype html><title>Media fixture</title><h1>Media qualification fixture</h1>
-<canvas id="canvas" width="240" height="80"></canvas><video id="video" width="240" height="80" autoplay muted loop playsinline src="'''+base+'''/synthetic.webm"></video>
-'''+''.join('<iframe width="100" height="55" title="Bounded frame '+str(i)+'" src="'+base+'/opaque"></iframe>' for i in range(9))+'''
-<script>let n=0;setInterval(()=>{let c=canvas.getContext('2d');c.fillStyle=n++%2?'blue':'orange';c.fillRect(0,0,240,80)},250)</script>''').encode()
-        elif route=='/opaque':
-            data=b'<!doctype html><h1>Opaque sandbox fixture</h1><p>Localized fallback may be required.</p>'
+<style>body{margin:8px;font:16px sans-serif}.surfaces{display:flex;gap:8px}.frame-row{display:flex;flex-wrap:wrap;gap:4px}iframe{border:0}</style>
+<button id="play-media">Play synthetic video</button><output id="video-state" data-state="paused" data-frames="0" data-time-ms="0" data-starts="0">Synthetic video paused</output>
+<output id="canvas-state" data-frame="0" data-color="orange">Canvas orange frame 0</output>
+<div class="surfaces"><canvas id="canvas" width="240" height="80"></canvas><video id="video" width="240" height="80" muted loop playsinline preload="auto" src="'''+base+'''/synthetic.webm"></video></div>
+<button id="change-unsupported">Change unsupported frame</button><output id="unsupported-state" data-changes="0">Unsupported frame orange</output><div class="frame-row">
+'''+''.join('<iframe id="'+('unsupported-frame' if i==8 else 'bounded-frame-'+str(i))+'" width="100" height="55" title="Bounded frame '+str(i)+'" src="'+base+'/opaque"></iframe>' for i in range(9))+'''</div>
+<script>
+const canvas=document.getElementById('canvas'),video=document.getElementById('video'),progress=document.getElementById('video-state'),canvasState=document.getElementById('canvas-state');
+let paint=0;const draw=()=>{const color=paint%2?'blue':'orange';canvas.getContext('2d').fillStyle=color;canvas.getContext('2d').fillRect(0,0,240,80);canvasState.dataset.frame=String(paint++);canvasState.dataset.color=color;canvasState.textContent='Canvas '+color+' frame '+(paint-1);};
+draw();const timer=setInterval(()=>{draw();if(paint>=120)clearInterval(timer);},700);
+let attempted=false,frames=0,last=0;
+document.getElementById('play-media').onclick=async event=>{
+ if(attempted)return;attempted=true;event.currentTarget.disabled=true;progress.dataset.starts='1';
+ if(typeof video.requestVideoFrameCallback!=='function'){progress.dataset.state='unsupported';progress.textContent='Decoded video callbacks unavailable';return;}
+ video.playbackRate=.75;
+ const observed=(_now,metadata)=>{frames++;if(_now-last>=250||frames===1){last=_now;progress.dataset.frames=String(frames);progress.dataset.timeMs=String(Math.round(metadata.mediaTime*1000));progress.textContent='Decoded video frames '+frames;}
+  if(frames<600&&!video.paused)video.requestVideoFrameCallback(observed);else{video.pause();progress.dataset.state='ended';}};
+ try{await video.play();progress.dataset.state='playing';video.requestVideoFrameCallback(observed);}catch{progress.dataset.state='refused';progress.textContent='Synthetic playback refused';}
+};
+video.addEventListener('error',()=>{progress.dataset.state='error';progress.textContent='Synthetic media decoding unavailable';});
+document.getElementById('change-unsupported').onclick=event=>{event.currentTarget.disabled=true;document.getElementById('unsupported-frame').src="'''+base+'''/opaque-alt";const marker=document.getElementById('unsupported-state');marker.dataset.changes='1';marker.textContent='Unsupported frame blue';};
+</script>''').encode()
+        elif route in ('/opaque','/opaque-alt'):
+            color='orange' if route=='/opaque' else 'blue'
+            data=('<!doctype html><style>html,body{margin:0;width:100%;height:100%;background:'+color+'}</style><title>Bounded fallback '+color+'</title><p style="position:absolute;left:2px;top:2px;margin:0;font:10px sans-serif">'+color+'</p>').encode()
         elif route=='/synthetic.webm':
             self.reply(route,self.server.video,'video/webm');return
         else:

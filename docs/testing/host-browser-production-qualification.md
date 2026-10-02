@@ -768,3 +768,54 @@ verified public archive/checksum/source/version/4binaries/123assets; #404 closed
 This Python/docs-only bootstrap delivery does not require a duplicate hosted
 Rust build. Its publication and a distinct actual native pass remain necessary;
 source contracts are not native/fullsite/cost/privacy/renewal/cleanup acceptance.
+
+### Simultaneous media content oracle
+
+The pinned synthetic `/media` fixture keeps canvas, video and the ninth iframe
+visible together. The worker selects at most three top-level localized surfaces,
+with a shared 4.5-second capture deadline inside the unchanged five-second bound.
+Each JPEG remains at most 200,000 bytes; child media stays bounded to two, the
+whole mirror remains at most 2,800,000 bytes, and the private pipe remains below
+4 MiB. Over-budget/unavailable images do not qualify through mere IMG presence.
+
+One native viewer dispatches **Play synthetic video** once. The existing synthetic
+WebM is reused without generation or replacement. The fixture's 0.75 playback
+rate and 700 ms canvas changes avoid phase aliasing with one-second fallback
+capture. Actual `requestVideoFrameCallback` observations supply decoded-frame
+and media-time progression; a timer or a playing label alone is insufficient.
+The oracle requires both orange and blue decoded center pixels and advancing
+versions on each exact retained canvas/video image. A separate explicit native
+**Change unsupported frame** action must change the ninth localized image from
+orange to blue on the same source surface, while all three remain visible.
+
+For CUA, preload the installed bundled `jpeg-js` 0.4.4 decoder before the job
+clock. It is available in the local Codex dependency runtime; do not fetch a
+package during qualification. `host_browser_media_pixels.mjs` exposes
+`readOwnedMediaJpegs`, `decodeMediaJpeg`, `reduceCuaMedia` and
+`mediaMovementFacts`. The DOM reader performs one bounded read-only observation
+of the exact public media replay. It creates no canvas or page state and reads no
+hidden rrweb/runtime objects. It retains the actual three IMG nodes for twelve
+samples, requiring unchanged browser/incarnation/document/capture fences,
+geometry and authenticated `data-node-id` surface identities. Public image and
+fence metadata are cleared by private/excluded/unavailable/disconnected viewer
+states and disposal; they are identity observations, never authority.
+
+Keep the reader's JPEG data URLs only in the CUA Node runtime. Decode with the
+existing decoder under 0.25 MP and 16 MiB limits, then retain only synthetic color
+classes, versions and bounded playback facts. Never print/save the raw reader
+result or include its images in a mailbox response. The fixed
+`observe_media_surfaces` step must independently establish all three visible,
+canvas/video decoded content changes, decoded playback progression and advancing
+same-surface versions, with the ninth surface orange. Keep that exact identity
+and version observation; `observe_media_frame_change` must then observe the same
+surface and fences, a strictly newer version and actual decoded blue pixels.
+Both Web steps are observation only. Failure to execute the read-only probe or
+decoder, missing identity, static decoded pixels, playback refusal, expired
+windows or missing surfaces are unqualified outcomes, not zero-valued success.
+
+These checks establish changing localized JPEG content and decoded synthetic
+playback. They do not certify original video frame cadence, audio, codec/DRM
+coverage, arbitrary real-site frame fidelity or unsupported-frame interaction.
+The existing 45-second coordination, 600-second owned job, actor/HMAC/CSRF,
+request-count and privacy boundaries remain unchanged. Source preparation is
+not evidence of passing deployed qualification.

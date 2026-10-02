@@ -82,6 +82,7 @@ const agentObservation = ({offset,limit,textOffset}) => {
 const controlSignature=e=>JSON.stringify({connected:e.isConnected,tag:e.tagName,attributes:[...e.attributes].slice(0,128).map(a=>[a.name,a.value.slice(0,16384)]),text:(e.innerText||'').slice(0,1024),disabled:e.disabled,readonly:e.readOnly,checked:e.checked,value:typeof e.value==='string'?e.value.slice(0,16384):null,optionCount:e.options?.length,options:e.tagName==='SELECT'?[...e.options].slice(0,64).map(o=>[o.value,o.selected,o.disabled]):null});
 const safeLocation=url=>{try{const u=new URL(url);u.username='';u.password='';return u.href.slice(0,8192);}catch{return '';}};
 const MAX_TEXT=16384, MAX_BYTES=2*1024*1024;
+const MAX_MAIN_VISUALS=3, MAIN_VISUAL_DEADLINE_MS=4500;
 const text=(v,max=MAX_TEXT)=>{if(typeof v!=='string'||Buffer.byteLength(v)>max)refuse('invalid_text');return v;};
 const beforeText=(v,max=MAX_TEXT)=>{try{return text(v,max);}catch(e){if(e instanceof Refusal)beforeEffect(e.code);throw e;}};
 const number=(v,min,max)=>{if(!Number.isInteger(v)||v<min||v>max)refuse('invalid_number');return v;};
@@ -303,22 +304,25 @@ export class Worker {
   async captureVisuals(page,mirrored=new Set()){
     if(Date.now()-this.visualAt<1000)return this.visuals.filter(item=>!mirrored.has(item.id));
     this.visualAt=Date.now();
-    const targets=await page.evaluate(hidden=>[...document.querySelectorAll('canvas,video,iframe')].slice(0,12).map(element=>{
+    const deadline=this.visualAt+MAIN_VISUAL_DEADLINE_MS;
+    const targets=await page.evaluate(({hidden,limit})=>[...document.querySelectorAll('canvas,video,iframe')].slice(0,12).map(element=>{
       const rect=element.getBoundingClientRect(),style=getComputedStyle(element);
       const left=Math.max(0,rect.left),top=Math.max(0,rect.top);
       return {id:globalThis.__voyageMirror?.id(element),left,top,x:left,y:top,
         width:Math.max(0,Math.min(innerWidth,rect.right)-left),height:Math.max(0,Math.min(innerHeight,rect.bottom)-top),
         visible:style.visibility!=='hidden'&&style.display!=='none'&&rect.width>8&&rect.height>8&&rect.right>0&&rect.bottom>0&&rect.left<innerWidth&&rect.top<innerHeight};
-    }).filter(item=>item.visible&&item.id>0&&!hidden.includes(item.id)).sort((a,b)=>b.width*b.height-a.width*a.height).slice(0,2),[...mirrored]);
+    }).filter(item=>item.visible&&item.id>0&&!hidden.includes(item.id)).sort((a,b)=>b.width*b.height-a.width*a.height).slice(0,limit),{hidden:[...mirrored],limit:MAX_MAIN_VISUALS});
     const visuals=[];
     for(const target of targets){
+      if(Date.now()>=deadline)break;
       if(mirrored.has(target.id))continue;
       try{
         const clip={x:Math.max(0,target.x),y:Math.max(0,target.y),
           width:Math.min(target.width,this.config.width),height:Math.min(target.height,this.config.height)};
         if(clip.width<8||clip.height<8)continue;
-        let content=await page.screenshot({type:'jpeg',quality:55,clip,timeout:2500});
-        if(content.length>200000)content=await page.screenshot({type:'jpeg',quality:30,clip,timeout:2500});
+        const timeout=()=>Math.max(1,Math.min(1500,deadline-Date.now()));
+        let content=await page.screenshot({type:'jpeg',quality:55,clip,timeout:timeout()});
+        if(content.length>200000&&Date.now()<deadline)content=await page.screenshot({type:'jpeg',quality:30,clip,timeout:timeout()});
         if(content.length<=200000)visuals.push({id:target.id,left:target.left,top:target.top,width:clip.width,height:clip.height,version:this.visualAt,data_base64:content.toString('base64')});
       }catch{}
     }
