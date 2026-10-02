@@ -406,7 +406,7 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
         "Recovery requires five explicit reviewed options"
     );
     let mut options = std::collections::BTreeMap::new();
-    for pair in arguments.chunks_exact(2) {
+    for pair in arguments.as_chunks::<2>().0 {
         ensure!(
             options.insert(pair[0].as_str(), pair[1].as_str()).is_none(),
             "Repeated recovery option"
