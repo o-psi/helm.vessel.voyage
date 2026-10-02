@@ -1,4 +1,7 @@
 //! Explicit, local clipboard acquisition. Payloads must never enter diagnostics.
+#[cfg(all(test, target_os = "linux"))]
+#[path = "clipboard_owned_helper_tests.rs"]
+mod owned_helper_tests;
 use anyhow::{Result, bail, ensure};
 use std::{fmt, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command, time::Instant};
