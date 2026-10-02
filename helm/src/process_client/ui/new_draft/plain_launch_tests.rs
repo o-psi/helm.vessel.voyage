@@ -44,12 +44,21 @@ async fn peer(
         let incarnation = Uuid::new_v4();
         let mut session = Uuid::nil();
         for step in 0..3 {
-            let frame = tokio::time::timeout(Duration::from_secs(5), ws.next())
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
-            let text = frame.into_text().unwrap();
+            let text = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match ws.next().await.unwrap().unwrap() {
+                        tokio_tungstenite::tungstenite::Message::Text(text) => break text,
+                        tokio_tungstenite::tungstenite::Message::Ping(bytes) => {
+                            ws.send(tokio_tungstenite::tungstenite::Message::Pong(bytes))
+                                .await
+                                .unwrap();
+                        }
+                        other => panic!("unexpected owned peer frame: {other:?}"),
+                    }
+                }
+            })
+            .await
+            .unwrap();
             let ClientFrame::Command {
                 request_id,
                 request,
