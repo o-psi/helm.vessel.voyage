@@ -73,14 +73,21 @@ struct OwnedVessel {
 impl OwnedVessel {
     fn start(directory: PathBuf) -> Self {
         let voyage = binary("voyage");
+        let log_path = directory.parent().unwrap().join("frontend-vessel.log");
+        std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+        let log = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(log_path)
+            .unwrap();
         let child = Command::new(binary("vessel"))
             .args(["local-serve", "--directory"])
             .arg(&directory)
             .arg("--voyage-binary")
             .arg(&voyage)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(log.try_clone().unwrap())
+            .stderr(log)
             .spawn()
             .unwrap();
         Self {
@@ -782,7 +789,11 @@ fn owned_ordinary_frontend_preserves_canonical_history_exact_delivery_and_cleanu
             output.rewind().unwrap();
             let mut text = String::new();
             output.take(65536).read_to_string(&mut text).unwrap();
-            panic!("owned frontend child failed in {mode}: {text}");
+            let retained = root.keep();
+            panic!(
+                "owned frontend child failed in {mode}; private fixture retained at {}: {text}",
+                retained.display()
+            );
         }
         assert!(
             owned_pids(root.path(), &binary("voyage")).is_empty(),
