@@ -15,8 +15,8 @@ gap count and LCOV address count remain distinct. Nothing is excluded or removed
 from the denominator by this cohort.
 
 The new test module exercises the public `recover-user` dispatcher and whole
-prepare/apply/status flows, preserving the original unknown receipt. Its23 private
-transaction scenarios are grouped into eight test families; a ninth test checks
+prepare/apply/status flows, preserving the original unknown receipt. Its24 private
+transaction scenarios are grouped into nine test families; a tenth test checks
 ordinary system-protocol discovery and three non-root refusals. Real owned SQLite,
 filesystem publication, manifest/hash verification, kernel file locks, inherited
 helper leases and bounded Python/curl helpers run inside the existing private
@@ -41,7 +41,7 @@ or native Root success is inferred.
 | Family | Assertions |
 | --- | --- |
 | Two forward completions | Exact target pointer/publication, separate complete recovery, original receipt still unknown and byte-identical, retained canonical/account/session/formats, snapshot, no quarantine, no duplicate apply. One path tolerates only semantic-equal idle notification layout drift before quiescence. |
-| Fourteen pre-effect context refusals | Original receipt/metadata/pointer/running manifest/target manifest/target binary/account/other private state/notification clock/cleanup/other unknown operation/unit/execution lease/new journal schema changes refuse before quarantine/snapshot/publication. Independent changes are preserved. |
+| Fourteen pre-effect context refusals | Original receipt/metadata/pointer/running manifest/target manifest/target binary/account/other private state/notification clock/cleanup/other unknown operation/unit/guardian lease/new journal schema changes refuse before quarantine/snapshot/publication. Independent changes are preserved. |
 | Gateway stop refusal | Unknown separate recovery and quarantine are retained; no snapshot, old apply replay or automatic rollback. |
 | Target start refusal after publication | Target pointer and raw snapshot remain retained, not silently downgraded; status cannot start a stopped target or infer readiness. |
 | Target account writer | A real private fixture write during target readiness breaks held proof; changed bytes, snapshot, quarantine and unknown recovery remain observable, with no restore/replay. |
@@ -96,3 +96,13 @@ replays those locks. The handover still takes the real kernel flocks, preserves
 all lock-file evidence and requires the same semantic/prequiescence and raw/held
 proofs. No production code or exclusion changed. Failure evidence is retained;
 the relevant corrected focus/full gate remains pending.
+
+The second focused run passed6/9. Two remaining fixture premises were corrected:
+notification writes now explicitly keep `journal_mode=PERSIST` on each connection,
+as the actual store does, so the semantic-idle/strict-held-header assertions exercise
+a valid cold pair rather than accidentally deleting its journal. The pre-effect
+live-owner case holds the guardian lease, which inspection actually observes.
+A distinct tenth test holds the execution lease through approved service quiescence;
+actual snapshot lock acquisition must refuse without cancellation, backup, restore
+or pointer change, preserving the separate unknown recovery and original receipt.
+No production admission, raw proof or lock exclusion was weakened.

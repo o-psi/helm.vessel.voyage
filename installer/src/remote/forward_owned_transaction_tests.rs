@@ -121,6 +121,9 @@ fn json_file(path: &Path, value: &serde_json::Value) {
 fn execute_sql(path: &Path, statement: &str) {
     crate::service::command::run(Path::new("/usr/bin/python3"), &["-I", "-c", "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.executescript(sys.argv[2]);c.close()",path.to_str().unwrap(),statement],None).unwrap();
 }
+fn notification_sql(path: &Path, statement: &str) {
+    crate::service::command::run(Path::new("/usr/bin/python3"), &["-I", "-c", "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('PRAGMA journal_mode=PERSIST');c.executescript(sys.argv[2]);c.close()", path.to_str().unwrap(), statement], None).unwrap();
+}
 fn seed(f: &Fixture) {
     for name in ["state", "accounts", "units", ".config/systemd/user"] {
         files::private_directory(&f.root.join(name)).unwrap();
@@ -165,7 +168,7 @@ fn declared_release(f: &Fixture, name: &str, version: &str, change_on_readiness:
         )
     } else if change_on_readiness == 2 {
         format!(
-            "/usr/bin/python3 -I -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.executescript(\"BEGIN IMMEDIATE; PRAGMA user_version=1; COMMIT;\");c.close()' {}\n",
+            "/usr/bin/python3 -I -c 'import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(\"PRAGMA journal_mode=PERSIST\");c.executescript(\"BEGIN IMMEDIATE; PRAGMA user_version=1; COMMIT;\");c.close()' {}\n",
             quote(&f.root.join("state/notifications/notifications.sqlite3"))
         )
     } else {
@@ -510,7 +513,7 @@ fn ordinary_forward_publishes_exact_target_keeps_original_unknown_and_all_canoni
         let source = record.review.source_evidence.clone();
         let approved = review_hash(&record.review).unwrap();
         if idle_header_drift {
-            execute_sql(
+            notification_sql(
                 &owned
                     .f
                     .root
@@ -617,7 +620,7 @@ fn independently_changed_ordinary_context_refuses_before_quarantine_or_publicati
                 b"new private state",
             )
             .unwrap(),
-            8 => execute_sql(
+            8 => notification_sql(
                 &owned
                     .f
                     .root
@@ -638,9 +641,12 @@ fn independently_changed_ordinary_context_refuses_before_quarantine_or_publicati
             }
             12 => {
                 _live_lease = Some(
-                    files::lock(&owned.f.root.join(format!(
-                        "state/sessions/{SESSION}/journal/{SESSION}.execution.lock"
-                    )))
+                    files::lock(
+                        &owned
+                            .f
+                            .root
+                            .join(format!("state/sessions/{SESSION}/guardian.lock")),
+                    )
                     .unwrap(),
                 );
             }
@@ -932,4 +938,40 @@ fn ordinary_system_protocol_discovery_does_not_admit_root_update_effects() {
         assert!(error.contains("requires root"), "{error}");
     }
     f.done();
+}
+
+#[test]
+fn independently_held_execution_lease_refuses_quiescent_snapshot_without_cancel_or_restore() {
+    let owned = Owned::new(0);
+    let mut record = owned.prepare();
+    let approved = review_hash(&record.review).unwrap();
+    let execution = owned.f.root.join(format!(
+        "state/sessions/{SESSION}/journal/{SESSION}.execution.lock"
+    ));
+    let live = files::lock(&execution).unwrap();
+    owned.queue_before_effects();
+    owned.f.call(&["stop", GATEWAY], "");
+    owned.queue_quiesce();
+    assert!(apply_entry(&mut record, &approved).is_err());
+    owned.f.done();
+    assert_eq!(record.phase, "unconfirmed");
+    assert_eq!(current().unwrap(), owned.old);
+    assert!(record.proof.is_none());
+    assert!(owned.f.root.join("state/update-quarantine.json").exists());
+    assert!(
+        !directory()
+            .unwrap()
+            .join(OPERATION)
+            .join("legacy-catalogue.sqlite3")
+            .exists()
+    );
+    assert!(
+        files::lock(&execution).is_err(),
+        "independent writer is never cancelled or borrowed"
+    );
+    owned.original_unchanged();
+    owned.no_replay(&mut record);
+    crate::remote::recover_user(&["status".into(), OPERATION.into()]).unwrap();
+    owned.f.done();
+    drop(live);
 }
