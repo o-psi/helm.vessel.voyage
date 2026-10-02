@@ -1,56 +1,99 @@
-# Voyage
+<a id="voyage"></a>
 
-Work with an AI agent from your browser or terminal. Ask about a project, edit
-files, and return to the same conversation later. Closing Helm does not cancel
-work already running on a Vessel.
+![Voyage — an AI workspace on your own machine](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-banner.svg)
 
-**Helm Web** is the browser interface ([private source repository](https://github.com/o-psi/webhelm); access required). **Helm** is the terminal interface. Both
-connect to a **Vessel** on a machine you control; each **Voyage** runs there as an
-independent process. Your provider credentials stay on that executing machine.
+<div align="center">
 
-## Start with Helm Web
+### Turn “can you help me with this?” into work you can see.
 
-1. Install a [current Vessel and Voyage build](installer/README.md#public-nightly-installation)
-   on a Linux machine you control. The public nightly is the current development
-   path for Web-compatible Vessel features.
-2. Give that Vessel an authenticated, publicly reachable HTTPS/WSS endpoint.
-   Installing the local service alone does not publish it to the internet.
-3. Open [Helm Web](https://helm.vessel.voyage/), choose an available sign-in option,
-   and pair your Vessel. Select its workspace and an AI account/profile, then
-   choose **Create voyage**. Sending a message starts the work.
+**[Get started](#choose-how-you-want-to-use-it)** &nbsp; · &nbsp;
+**[User guides](docs/README.md)** &nbsp; · &nbsp;
+**[For LLMs & developers](readme.llm.md)**
 
-Follow the [Helm Web first-voyage guide](docs/getting-started-web.md) for pairing,
-account setup, and the exact requirements. Helm Web provides the interface; it
-does not host agent compute or include provider credit.
+</div>
 
-## Start in the terminal
+<br />
 
-**Linux x86-64** needs curl, Python 3.11+, glibc 2.39+, and a systemd user
-session. Run as your ordinary user, without `sudo`:
+Voyage lets you work with an AI on your own computer or server. Pick a folder,
+explain what you want in everyday language, and follow along as it reads files,
+answers questions, or makes changes with the access you allow.
 
-```sh
-curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh
-sh install.sh
-export PATH="$HOME/.local/bin:$PATH"
-cd /path/to/your/project
-helm --access read-only
-```
+Start small: understand a folder, work through some notes, or draft a document.
+Keep the conversation and come back to it when you have more to do.
 
-The bootstrap installs the latest stable release and starts the local Vessel.
-Replace the project path with a folder you are comfortable sharing with your AI
-provider. In Helm, open **Account** below the message box (or type `/account`) to
-connect an eligible provider account and choose a model. Voyage does not include
-AI credit. Then try asking: “What is in this folder, and where should I start?”
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-dark.svg" />
+  <img width="100%" src="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-light.svg" alt="Choose a folder. Ask in your own words. Follow the work." />
+</picture>
 
-The [terminal first-voyage guide](docs/getting-started.md) covers account setup,
-read-only work, and returning to a conversation. The [installer guide](installer/README.md)
-covers review-first installation, the public nightly, upgrades, and rollback.
+<br />
 
-## Learn more
+## A few things to try
 
-- [Helm Web setup and limits](docs/helm-web.md) — login, public Vessel connections, pairing, and deployment.
-- [Accounts and models](docs/provider-accounts.md) — provider access and billing distinctions.
-- [Vessel connections](docs/vessel-connections.md) — local and remote connection management.
-- [Configuration](docs/configuration.md) — models, permissions, and settings.
-- [Build and contribute](docs/development.md) — work on Voyage itself.
-- [All documentation](docs/README.md) — architecture, security, and verification.
+<table>
+<tr><td width="33%" valign="top"><h3>Understand</h3><p>“Explain the main files in this folder. Tell me where to start without changing anything.”</p></td>
+<td width="33%" valign="top"><h3>Make sense of it</h3><p>“Read these notes and give me a short summary, with the open questions at the end.”</p></td>
+<td width="33%" valign="top"><h3>Make something</h3><p>“Draft a getting-started guide from the files in this project. Ask me about anything unclear.”</p></td></tr>
+</table>
+
+What Voyage can do depends on the files you share, your chosen AI model, and the
+access you give it.
+
+## Work at your pace
+
+<table>
+<tr><td width="50%" valign="top"><h3>Your folder. Your starting point.</h3><p>Choose what to share. Begin in read-only mode when you want explanations before edits.</p></td>
+<td width="50%" valign="top"><h3>A conversation you can return to.</h3><p>Come back for the next step. Closing the interface does not cancel work already running on your machine.</p></td></tr>
+<tr><td valign="top"><h3>Follow along as it works.</h3><p>Read the conversation and tool activity, answer questions, and review requests for permission.</p></td>
+<td valign="top"><h3>Browser or terminal.</h3><p>Use the interface that suits you. Both connect to the computer doing the work.</p></td></tr>
+</table>
+
+<br />
+
+<a id="start-with-helm-web"></a>
+<a id="start-in-the-terminal"></a>
+
+## Choose how you want to use it
+
+<table>
+<tr><td width="50%" valign="top"><h3>In your browser</h3><p>A familiar chat interface, connected to a machine you control.</p><p>Best when you already have a connected machine, or someone who can help set one up.</p><p><strong><a href="docs/getting-started-web.md">Start with Helm Web →</a></strong></p></td>
+<td width="50%" valign="top"><h3>In your terminal</h3><p>Work locally on Linux, right from the folder you want help with.</p><p>Best when you are comfortable copying a few commands into a terminal.</p><p><strong><a href="docs/getting-started.md">Start in the terminal →</a></strong></p></td></tr>
+</table>
+
+**Before you begin:** browser use needs a Linux machine with a secure public
+connection; signing in to the website alone does not provide one. The browser
+guide separates your first conversation from the operator's setup.
+
+The local installer supports Linux x86-64 with glibc 2.39+, Python 3.11+, curl,
+and a systemd user session. The current browser setup uses a public development
+nightly. Voyage is under active development, and some setup still needs technical help.
+
+## Three names, one workflow
+
+**Helm** is the interface you use: browser or terminal. **Vessel** is the service
+on the computer doing the work. A **voyage** is your ongoing AI conversation and
+its work. You choose the folder and AI account on that computer.
+
+Your AI provider credentials stay on the computer doing the work. Relevant file
+contents and tool results may be sent to your chosen provider. Read-only mode
+prevents changes; it does not keep shared content from the provider.
+
+Voyage does not include AI credit. Provider access and charges are separate from
+signing in to Helm Web; [the account guide](docs/provider-accounts.md) explains
+the supported options.
+
+<a id="learn-more"></a>
+
+## Find your next step
+
+[**Browser guide**](docs/getting-started-web.md) ·
+[**Terminal guide**](docs/getting-started.md) ·
+[**Installation & updates**](installer/README.md) ·
+[**Accounts & models**](docs/provider-accounts.md) ·
+[**All documentation**](docs/README.md)
+
+---
+
+**Building on Voyage? Reading with an LLM?**
+[readme.llm.md →](readme.llm.md) maps the architecture, source, commands,
+permissions, and current implementation limits.

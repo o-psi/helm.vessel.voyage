@@ -1,4 +1,19 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Connecting to Vessels inside Helm
+
+A Vessel connection tells Voyage which computer should do the work. For local
+terminal use, that is usually your own computer. In the browser, it is the
+computer you or its operator have connected to Helm Web.
+
+New here? Use the [browser first-voyage guide](getting-started-web.md) or
+[local terminal guide](getting-started.md). Once connected, you choose a folder
+and AI profile on that computer. The browser connection requires a secure public
+endpoint; the [operator setup reference](web-setup-reference.md) explains how to
+provide it.
+
+This page keeps the detailed connection, pairing and recovery controls.
+[readme.llm.md](../readme.llm.md) maps the underlying transport and authority.
 
 Helm's **Vessels** panel manages human connections independently of conversation
 text and model-driven coordination. A connection identifies where work executes;

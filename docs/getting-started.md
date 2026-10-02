@@ -1,201 +1,115 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Your first voyage in the terminal
 
-For browser use, start with [Your first voyage in Helm Web](getting-started-web.md).
-
-Follow this guide for **local Linux terminal use**: install the programs, open
-Helm, set up an account privately, ask one small question about a folder, inspect
-the result, and return to the same conversation. No remote server or project map
-is required.
-
-The Linux x86-64 v1.0.2 binary release is described in the
-[release guide](releases-v1.0.2.md). These instructions are not a
-claim that a new user's live login or paid request has been tested. Subscription
-sign-in uses an experimental provider endpoint. Installation, authentication,
-account selection, and model access are different checks; none guarantees the next.
+Start with one small task: ask Voyage to explain a folder without changing it.
+You can follow this walkthrough by copying the commands and replacing the example
+folder path with your own. For the browser interface, use the
+[browser guide](getting-started-web.md).
 
 ## Before you start
 
-You need a Linux machine, a terminal, a folder you are comfortable letting the
-selected provider learn about, and permission to use that provider. Start with a
-small folder without secrets. Model requests can send file contents and tool results
-to the selected provider. Read-only mode prevents tool mutations, **not disclosure**,
-and is application policy rather than an OS sandbox.
+You need a Linux x86-64 computer with glibc 2.39+, curl, Python 3.11+, and a
+systemd user session. You also need an eligible AI provider account. Voyage does
+not include AI credit; [account options](provider-accounts.md) explains API keys
+and the experimental ChatGPT sign-in route. A chat subscription does not
+automatically provide API credit or access to every model.
 
-Choose your billing route before entering credentials:
-
-| What you have | Route | What it does not provide |
-| --- | --- | --- |
-| A ChatGPT account eligible for the provider's subscription/device flow | Private ChatGPT sign-in in Helm below | OpenAI API credit; guaranteed subscription entitlement or model availability |
-| OpenAI API credit and an API key | [Private API setup](provider-accounts.md#execution-host-api-enrollment) | ChatGPT subscription access |
-| Anthropic API credit and an API key | [Private API setup](provider-accounts.md#execution-host-api-enrollment) | Access merely from a Claude chat subscription |
-| An old `vessel auth login` or imported Codex cache | [Legacy migration](provider-accounts.md#legacy-migration) | A ready named/default account just because a cache exists |
-| None of these | Obtain eligible access directly from your chosen provider first | Helm does not include provider credit |
-
-The walkthrough below uses ChatGPT device sign-in. If that route is not appropriate,
-complete the API branch instead and rejoin at **First task** with a named default
-account. Do not buy a subscription on the assumption this experimental integration
-will work for it.
+Choose a small folder without secrets for your first task. Relevant files and
+results may be sent to the AI provider. Read-only mode prevents edits, not sharing.
 
 ## 1. Install on Linux
 
 ### Prebuilt release (recommended)
 
-Use Linux x86-64 with glibc 2.39+, curl, Python 3.11+ and a reachable systemd
-user manager. Run as your ordinary user, never with sudo. Fetch the current
-bootstrap, inspect it if desired, then install the latest published release:
+Open a terminal as your ordinary user. Run these commands without `sudo`:
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
   https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh -o install.sh
 sh install.sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-No arguments means `install --start`: it installs a versioned release and enables
-and starts the local Vessel user service. To review without publishing, use
-`sh install.sh install --dry-run`; to leave an inactive service inactive, use
-`sh install.sh install --no-start`. The script checks prerequisites before download
-and verifies the archive and binary hashes before handing off to the Rust installer.
-It does not edit shell startup files, enable lingering, expose a public port or
-pair Helm Web. A running service stays active with `--no-start` during an upgrade.
+This installs the latest stable release and starts the local service that runs
+Voyage. Wait for installation to finish successfully before continuing. The PATH
+command makes the programs available in this terminal; the installer does not
+change your shell's startup settings.
 
-After success, use the printed PATH command, then continue to **2. Launch Helm**.
-For a pinned release or manual archive verification, see the
-[v1.0.2 release installation](releases-v1.0.2.md) and
-[bootstrap details](../installer/README.md#download-a-published-version).
-
-The installer does not edit shell startup files. Add the printed PATH entry using
-your shell's normal configuration if you want it in future terminals. If installation
-refuses an existing unmanaged command, read the [replacement procedure](../installer/README.md)
-instead of deleting it. An install failure is a blocker; do not continue with an
-older `helm` accidentally found on PATH.
-
-Already have a trusted full archive? Use its sibling `bin/voyage-installer` and
-follow the [local-release procedure](../installer/README.md#install-from-a-local-release).
-Keep its binaries and guide directories together. A standalone installer does not
-contain the runtime programs. Upgrades require an available published stable or
-nightly release, or explicit local binaries. Building from source is covered in the
-[contributor guide](development.md). Native macOS/Windows are outside this Linux
-installer walkthrough.
+If you want to inspect the installation first, run
+`sh install.sh install --dry-run` before `sh install.sh`.
+For development nightlies, upgrades, or an existing installation, see the
+[installer guide](../installer/README.md).
 
 ## 2. Launch Helm
 
-Change to the folder for your first task, then launch with inspection-only authority:
+Replace the example path with the folder you want help with:
 
 ```sh
 cd /path/to/your/folder
 helm --access read-only
 ```
 
-Replace `/path/to/your/folder` with a real folder path. Helm connects to the local
-Vessel and can start one if absent; do not start another supervisor by hand just
-because the screen is still connecting. If connection fails, use **Ctrl+G Vessels**
-and inspect the error before retrying.
-
-A **draft** is an unsent first message, not a running voyage. **Ctrl+N** opens a new
-local draft. Check the executing host and workspace displayed above the first
-message. **F1** opens help. You can leave without submitting using **Ctrl+C**.
+Helm is Voyage's terminal interface. You will see a place to type a message and
+controls for the machine, folder, and AI settings. **F1** opens help.
+If it cannot connect, open **Vessels** with **Ctrl+G** and read the connection error.
 
 ## 3. Create an execution profile
 
-Open **Profile** beneath the composer. If this host already has a valid default
-account, a **Default** profile is created automatically. Otherwise press **N** to
-create a profile, enter a name such as `Everyday`, and choose its provider account,
-model, thinking level and service tier. Profile settings do not include permissions
-or instructions.
+A **profile** saves your choice of AI account and model.
 
-In the profile editor, use account sign-in to add a ChatGPT account. Choose the
-intended connection if more than one is offered, then enter a descriptive new
-alias such as `personal`. Existing aliases are not silently overwritten. The
-private account view also remains available through `/account`.
+1. Open **Profile** below the message box.
+2. Choose an existing profile, or press **N** to create one. A name such as
+   `Everyday` is enough.
+3. Select an account and model. If you need a ChatGPT account, use the account
+   sign-in option in the profile editor and follow the provider's browser steps.
+4. Choose **Save profile**, then select it with **Enter**.
 
-The dedicated private sign-in view shows the executing host, provider website,
-temporary device code, expiry, and status. Press **O** to open the displayed
-provider page, or open it yourself, and enter the displayed code there. Complete
-the provider's instructions in the browser. **Never paste a password, API key,
-token, or device code into the conversation.** The private view is not model input;
-provider tokens remain on the executing host.
+Leave advanced thinking and service settings unset unless you want to change
+them. For API keys, follow [private account setup](provider-accounts.md#execution-host-api-enrollment)
+on the computer running Voyage. Enter credentials only in private account setup,
+never in the conversation.
 
-After enrollment, return to the profile editor, choose the account and model, and
-use **Save profile**. Leave thinking/service unset unless you intend an override.
-Back in the profile list, **Enter** selects the profile without sending a message.
-The first saved profile becomes the default for new voyages.
-
-The profile list offers **E** to edit, **D** to duplicate, **X** to delete (with
-confirmation) and **F** to make the selected profile the default. Owner or
-full-access human connections can manage profiles. Scoped users can select visible
-profiles but need the host owner to manage them. Editing or deleting a profile
-leaves existing voyages' copied settings unchanged. An unavailable account or model
-requires correction; it does not silently select another account.
-
-If the view needs more space, enlarge the terminal to at least **44 × 22**.
-If sign-in fails, read its failure category. **R** inspects the same attempt;
-**N** closes the old attempt before offering a new one. After a lost connection,
-reconnect through **Ctrl+G**, then reopen Account to inspect retained enrollment.
-Do not start duplicate sign-ins to fix an unknown outcome. A successful enrollment
-is not proof of credit or model entitlement. See [account recovery](provider-accounts.md#device-sign-in-in-helm).
+If sign-in or model selection fails, the [detailed account and recovery reference](terminal-setup-reference.md#3-create-an-execution-profile)
+explains how to inspect the problem. Account sign-in alone does not guarantee
+credit or model access.
 
 ## 4. First task
 
-Back in the draft, check that its workspace, account/model, and read-only access
-are the ones you intended. Type this, then press **Enter**:
+Check the selected folder, profile, and read-only access. Type this and press **Enter**:
 
-> List the top-level files in this folder and explain briefly what this folder
-> appears to contain. Do not modify files or run project scripts. Say what you
-> could not determine.
+> Explain the main files in this folder in plain language. Don't change anything
+> or run project scripts. Tell me what you couldn't determine.
 
-The first send creates the voyage and submits the message. Wait for a visible
-outcome. Creating a voyage is not proof that the provider accepted the request.
-If sending shows an unknown/pending outcome, keep that draft and let Helm inspect
-its retained request; do not create a second voyage to repeat the same task.
-
-Do not paste credentials if the model asks for them. If the provider refuses
-billing, authentication, or model access, correct the account outside chat.
-[Provider attempts](provider-attempts.md) explains observed failures and safe
-continuation. There is no automatic move to someone else's account.
+The first message creates your voyage. Watch the answer and tool activity.
+If a request is waiting or its outcome is uncertain, inspect its status before
+sending the same task again.
 
 ## 5. Inspect what happened
 
-Read the answer and the visible tool activity, not just the status label. Compare
-claimed filenames with your folder. **PageUp/PageDown** scroll the transcript;
-**Ctrl+End** returns to the latest output. Use **F9 Actions → Details** to inspect
-the selected voyage's identity and process details. The provider-attempt details
-help distinguish a request failure from a completed task.
+Read the answer and compare its file references with your folder. Ask a follow-up:
 
-This first task should not change files. Read-only refusal is expected if a tool
-tries to mutate them. For future write tasks, review the requested access change
-explicitly and inspect the actual diff before trusting or committing changes.
-An assistant's success sentence alone is not verification.
+> Which file should I look at first, and why?
 
-To stop work, use **F9 Actions → Cancel current run**. A requested cancellation is
-not observed cleanup. **Ctrl+C leaves Helm; it does not cancel the voyage.**
+For a later editing task, use **Voyage Actions → Access** to review a change from
+read-only to **Ask first**. Review the actual changes before relying on them.
+**Ask first** uses the runtime's approval policy; it is not a promise of one
+approval for every individual file edit.
 
 ## 6. Leave and return
 
-Press **Ctrl+C** to leave Helm. Later, open it again from your task folder:
+**Ctrl+C** closes Helm without cancelling work already running. To stop work,
+use the voyage's stop/cancel action instead. A computer shutdown or runtime
+failure can still interrupt it.
 
-```sh
-helm --access read-only
-```
-
-Press **F2 Voyages**, choose the existing voyage, and press **Enter**. Inspect its
-history and current status before sending a follow-up. For example:
-
-> Which file would you suggest I read first, and why?
-
-This continues the existing conversation; **Ctrl+N** would create a separate draft.
-Reopening Helm does not mean a dead process survived a reboot, nor does reconnect
-cancel or replay work. If cleanup or delivery is unresolved, inspect that state
-before requesting another effect. A completed voyage may later appear **Settled**;
-that label is not proof that its answer is correct.
+Launch Helm again in the same folder, open **F2 Voyages**, and select the saved
+voyage with **Enter**. Read its status, then continue the conversation.
+**Ctrl+N** starts a separate draft when you want a new task.
 
 ## Where to go next
 
-- **Another provider or existing credentials:** [named accounts](provider-accounts.md)
-  and [provider configuration](configuration.md#providers-and-authentication).
-- **Remote work:** [Vessel connections](vessel-connections.md). The workspace and
-  credentials belong to the executing host, not automatically to your laptop.
-- **Admin tasks:** [installation/upgrades/services](../installer/README.md) and
-  [operations](operations.md). No service or remote-access administration is needed
-  just to understand the first task above.
-- **Development:** [build and contribution guide](development.md),
-  [quality and verification limits](quality.md), and [architecture](architecture.md).
+- [Detailed terminal setup and recovery](terminal-setup-reference.md)
+- [Accounts and models](provider-accounts.md)
+- [Installation and updates](../installer/README.md)
+- [Connecting another computer](vessel-connections.md)
+- [Technical guide for LLMs and developers](../readme.llm.md)

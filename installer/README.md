@@ -1,4 +1,15 @@
+![Voyage guides](https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-guide.svg)
+
 # Install and upgrade Voyage
+
+New to Voyage? Follow the [terminal walkthrough](../docs/getting-started.md) or
+[browser walkthrough](../docs/getting-started-web.md) first. This page is the
+installation reference for the person setting up or maintaining the computer.
+
+For local use, start with [Download a published version](#download-a-published-version).
+For browser use, the current setup needs the [public development nightly](#public-nightly-installation)
+and a separate secure connection setup. Installing the programs does not include
+an AI account or credit.
 
 The Linux installer installs a complete release: `helm`, `vessel`, `voyage` and
 `voyage-installer`. With no action it opens an interactive review/apply/cancel
