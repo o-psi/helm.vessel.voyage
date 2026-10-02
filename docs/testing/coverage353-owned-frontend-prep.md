@@ -128,3 +128,12 @@ foreign cleanup refusal, identity change during observation and a changed run be
 deletion. The real temporary-success/provider-failure/branch journeys must still
 pass after this correction, followed by strict checks, full coverage and hosted
 follow-through. This preparation is not a passing result or issue closure.
+
+Canonical deletion can wake a suspended voyage under a new incarnation. The real
+journey also exposed an old-incarnation observation fence that rejected its valid
+completed deletion. Deletion now records the authenticated reply's prepared owner
+and observes that exact owner, session, workspace and durable command/cleanup receipt.
+An unknown reply is never replayed; only its exact durable deletion and positively
+stopped current owner may confirm it. A transport case refuses a wrong returned owner
+or changed workspace before accepting the matching prepared owner. No dead owner is
+claimed to have survived restart, and no second Stop/Delete is sent.

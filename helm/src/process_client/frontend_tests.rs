@@ -624,3 +624,56 @@ async fn no_save_deletion_rechecks_accepted_run_identity_after_cleanup() {
         json!({"run":{"run_id":Uuid::new_v4(),"state":"completed"},"pending_cleanup_run":null,"revision":9})).await;
     assert!(task.await.unwrap().is_err());
 }
+
+#[tokio::test]
+async fn no_save_deletion_observes_new_prepared_owner_and_refuses_other_identity_or_workspace() {
+    let mut peer = Peer::open().await;
+    let process = process();
+    let owner = Uuid::new_v4();
+    let c = peer.client.clone();
+    let p = process.clone();
+    let task = tokio::spawn(async move { discard(&c, &p).await });
+    let (id, _) = peer.command().await;
+    peer.voyage_reply(
+        id,
+        process.session_id,
+        process.incarnation,
+        json!({"revision":8}),
+    )
+    .await;
+    let (id, command) = peer.command().await;
+    let VesselCommand::Voyage(VoyageRequest {
+        command:
+            VoyageCommand::Delete {
+                command_id,
+                expected_revision: 8,
+                ..
+            },
+        ..
+    }) = command
+    else {
+        panic!("one exact delete")
+    };
+    peer.voyage_reply(id, process.session_id, owner, json!({"accepted":true}))
+        .await;
+    for case in 0..3 {
+        let (id, command) = peer.command().await;
+        assert!(
+            matches!(command, VesselCommand::Inspect { session_id } if session_id==process.session_id)
+        );
+        let mut info = process.clone();
+        info.incarnation = owner;
+        info.state = ProcessState::Stopped;
+        info.deletion = Some(
+            json!({"command_id":command_id,"status":"applied","deleted":true,"cleanup":"observed"}),
+        );
+        if case == 0 {
+            info.incarnation = Uuid::new_v4();
+        }
+        if case == 1 {
+            info.workspace = "/other-workspace".into();
+        }
+        peer.reply(id, serde_json::to_value(info).unwrap()).await;
+    }
+    task.await.unwrap().unwrap();
+}

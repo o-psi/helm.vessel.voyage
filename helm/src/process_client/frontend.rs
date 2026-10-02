@@ -377,7 +377,7 @@ async fn discard_for_run(
             .ok_or_else(|| anyhow::anyhow!("snapshot revision missing"))?;
         let command_id = Uuid::new_v4();
         let result = client
-            .voyage(
+            .voyage_observed(
                 process.session_id,
                 process.incarnation,
                 VoyageCommand::Delete {
@@ -393,6 +393,14 @@ async fn discard_for_run(
         {
             return result.map(|_| ());
         }
+        let deletion_owner = result.as_ref().ok().map(|(_, owner)| *owner);
+        ensure!(
+            deletion_owner.is_none_or(|owner| !owner.is_nil()),
+            "Temporary voyage deletion returned an invalid owner; retain its exact command identity"
+        );
+        // Canonical deletion may wake a suspended session under a new owner. Pin
+        // a returned owner when available; an uncertain reply requires its exact
+        // durable deletion receipt and positively observed stopped owner instead.
         // Delete already shuts the runtime down. Sending Stop races that shutdown
         // and can turn a successful discovery into an uncertain cleanup error.
         // Observe the exact durable deletion and clean stop instead; never replay
@@ -406,7 +414,9 @@ async fn discard_for_run(
                     .await
                     && let Ok(info) = serde_json::from_value::<ProcessInfo>(value)
                     && info.session_id == process.session_id
-                    && info.incarnation == process.incarnation
+                    && !info.incarnation.is_nil()
+                    && deletion_owner.is_none_or(|owner| info.incarnation == owner)
+                    && info.workspace == process.workspace
                     && info.state == voyage_protocol::vessel::ProcessState::Stopped
                     && info.deletion.as_ref().is_some_and(|receipt| {
                         receipt["command_id"].as_str() == Some(command_id.to_string().as_str())
