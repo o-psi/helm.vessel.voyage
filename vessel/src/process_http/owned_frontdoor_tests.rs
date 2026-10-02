@@ -101,14 +101,12 @@ impl Owner {
 }
 impl Drop for Owner {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            if start(self.pid).as_ref() == Some(&self.ticks)
-                && fs::read_link(format!("/proc/{}/exe", self.pid)).ok()
-                    == std::env::current_exe().ok()
-            {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        if let Some(mut child) = self.child.take()
+            && start(self.pid).as_ref() == Some(&self.ticks)
+            && fs::read_link(format!("/proc/{}/exe", self.pid)).ok() == std::env::current_exe().ok()
+        {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
@@ -149,10 +147,9 @@ async fn actor(root: PathBuf) {
                 },
             )
             .await
+                && r.error.is_none()
             {
-                if r.error.is_none() {
-                    break r.result;
-                }
+                break r.result;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
