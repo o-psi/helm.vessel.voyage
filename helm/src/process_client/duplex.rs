@@ -21,6 +21,30 @@ use voyage_protocol::{
     },
 };
 
+#[cfg(target_os = "linux")]
+#[path = "duplex_qualification.rs"]
+mod qualification;
+#[cfg(not(target_os = "linux"))]
+mod qualification {
+    pub(super) struct Meter;
+    pub(super) struct Attempt;
+    impl Attempt {
+        pub(super) fn connected(&mut self) {}
+    }
+    impl Meter {
+        pub(super) fn attempt(self: &std::sync::Arc<Self>) -> Attempt {
+            Attempt
+        }
+        pub(super) fn sent(&self, _: usize) {}
+        pub(super) fn received(&self, _: usize) {}
+        pub(super) fn heard(&self) {}
+        pub(super) fn retired(&self, _: bool) {}
+    }
+    pub(super) fn from_env(_: uuid::Uuid) -> Option<std::sync::Arc<Meter>> {
+        None
+    }
+}
+
 /// Monotonic loss counter cannot hide a disconnect behind a coalesced reconnect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ConnectionState {
@@ -199,7 +223,19 @@ impl Slot {
                 }
             });
         }
+        let configured_measurement = if client.is_local() {
+            None
+        } else {
+            qualification::from_env(client.id())
+        };
+        let mut measured_attempt = configured_measurement.as_ref().map(|meter| meter.attempt());
         let (request, pin) = client.socket_request()?;
+        let measurement = if request.uri().scheme_str() == Some("wss") {
+            configured_measurement
+        } else {
+            drop(measured_attempt.take());
+            None
+        };
         let config = WebSocketConfig::default()
             .max_message_size(Some(MAX_FRAME_BYTES))
             .max_frame_size(Some(MAX_FRAME_BYTES))
@@ -256,6 +292,12 @@ impl Slot {
             );
             *observed = Some(vessel_id);
         }
+        if let Some(attempt) = &mut measured_attempt {
+            attempt.connected();
+        }
+        if let Some(meter) = &measurement {
+            meter.received(text.len());
+        }
         let (sender, receiver) = mpsc::channel(MAX_IN_FLIGHT);
         let stop = self.stop.child_token();
         let handle = Handle {
@@ -274,6 +316,7 @@ impl Slot {
                 socket_id,
                 reverse,
                 state.clone(),
+                measurement,
             )
             .await;
             stop.cancel();
@@ -446,6 +489,7 @@ async fn run(
     socket_id: Uuid,
     reverse: Arc<Mutex<Option<mpsc::Sender<IncomingReverseRequest>>>>,
     state: watch::Sender<ConnectionState>,
+    measurement: Option<Arc<qualification::Meter>>,
 ) -> Result<()> {
     let (mut sink, mut stream) = socket.split();
     let mut pending: HashMap<Uuid, Pending> = HashMap::new();
@@ -501,11 +545,13 @@ async fn run(
             message = stream.next() => {
                 let message = message.ok_or_else(|| anyhow::anyhow!("Vessel socket closed"))?.map_err(|_| anyhow::anyhow!("Vessel socket interrupted"))?;
                 last_received = tokio::time::Instant::now();
+                if let Some(meter) = &measurement {meter.heard();}
                 match message {
                     Message::Ping(bytes) => Some(Message::Pong(bytes)),
                     Message::Pong(_) => None,
                     Message::Close(_) => break,
                     Message::Text(text) => {
+                        if let Some(meter) = &measurement { meter.received(text.len()); }
                         let frame:ServerFrame=serde_json::from_str(&text).map_err(|_|anyhow::anyhow!("invalid Vessel socket frame"))?;
                         match frame {
                             ServerFrame::Hello{..} => anyhow::bail!("duplicate Vessel socket greeting"),
@@ -553,10 +599,17 @@ async fn run(
             }
         };
         cleanup.extend(send);
-        for message in cleanup { tokio::time::timeout(Duration::from_secs(5),sink.send(message)).await.map_err(|_|anyhow::anyhow!("Vessel socket write stalled"))?.map_err(|_|anyhow::anyhow!("Vessel socket write failed"))?; }
+        for message in cleanup {
+            let length=match &message {Message::Text(text)=>Some(text.len()),_=>None};
+            tokio::time::timeout(Duration::from_secs(5),sink.send(message)).await.map_err(|_|anyhow::anyhow!("Vessel socket write stalled"))?.map_err(|_|anyhow::anyhow!("Vessel socket write failed"))?;
+            if let (Some(meter),Some(length))=(&measurement,length) {meter.sent(length);}
+        }
       }
       Ok(())
     }.await;
+    if let Some(meter) = &measurement {
+        meter.retired(result.is_err());
+    }
     // Publish a retired handle before exposing the loss to watch consumers.
     // Otherwise an immediate reconnect can enqueue on the still-draining actor.
     stop.cancel();
@@ -691,6 +744,7 @@ mod subscription_tests {
             socket_id,
             Arc::new(Mutex::new(None)),
             state,
+            None,
         ));
         let session_id = Uuid::new_v4();
         let incarnation = Uuid::new_v4();

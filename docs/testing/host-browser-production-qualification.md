@@ -115,7 +115,7 @@ private directory; earlier evidence is not overwritten.
 | `console_origin`, `web_connection`, `web_socket` | Actual HTTPS console origin, saved Web connection database UUID and pinned real `wss://…/v1/vessel/browser-socket` endpoint. The physical Vessel UUID is not the saved connection UUID. |
 | `web_mode` | `playwright` or `cua`, as described below. |
 | `client_ledger` | `automatic` generates an exact private PID/starttime ledger for this process's two TUI clients and its own Chromium server. Alternatively an existing private ledger may include explicitly owned renderer/native client roots. It must not include unrelated browser tabs/processes. |
-| `native_wire_evidence` | Private host-produced native application-payload measurement, schema below. The driver never substitutes localhost HTTP bytes or TCP/TLS bytes for this layer. Missing evidence prevents overall acceptance. |
+| `native_wire_evidence` | New private result path. The harness produces nine windows from the opt-in source-owned native WSS collector; bridge/TCP/TLS bytes are not substitutes. |
 | `fixture` | `{url,ready_selector,counter_selector,click_name,private:{url,ready_selector,input_label}}` for the approved owned HTTPS fixture. Standard counter is `/ui`, `h1`, `#count`, `Increment task counter`; private page is `/private`, `h1`, `Synthetic private input`. |
 | `site_classes` | `{url,ready_selector,asset_selector,asset_width,shadow_selector,shadow_text,css_color,frame_texts}`. Standard values: `/site-classes`, `#result`, `#authenticated-asset`, `40`, `#shadow`, `Open shadow content`, `rgb(17, 51, 85)`, `["Cross-origin child content","Nested child content"]`. |
 | `sites` | Three to six explicitly approved `{label,kind,url,ready_selector}` records, including `static`, `dynamic`, `frame-media`. URLs must be pinned canonical final HTTPS URLs, because navigation waits for authoritative URL/new document epoch and the replay marker. Add `{fallback_selector:".browser-next-visual",minimum_fallback_images:3}` to the owned `/media` case. At least one record per class must be an approved representative site if those claims are to be made; using only the owned fixture does not prove broader fidelity. |
@@ -212,10 +212,145 @@ Native wire evidence is a private `{schema:1,scope:"owned native Helm public WSS
 application bytes",verified_identity:true,roots:[...],windows:[...]}` object.
 Its two `{label,pid,start_ticks}` roots must exactly match the invoking TUI
 clients, in order. Nine windows have exact `condition`/`index` and nonnegative
-integer `sent_bytes`/positive `received_bytes`. Retain the actual authorized collection method, PID/socket
-identities, layer and timestamp evidence externally. Only fixed byte totals are
-copied to the summary. Such an observer is not supplied by the browser CDP helper;
-do not manufacture these numbers to obtain a green result.
+integer `sent_bytes`/positive `received_bytes`. The native source observer now
+provides this layer, separately from browser CDP. Only fixed totals reach the
+summary; no value is inferred from ciphertext or localhost bridge bytes.
+
+### Source-owned native and supported CUA collectors
+
+`helm/src/process_client/duplex_qualification.rs` is default-off. The launcher
+sets `HELM_QUALIFICATION_WSS_OUTPUT` to a new private file per TUI and
+`HELM_QUALIFICATION_WSS_LABEL` to its exact owned label. Only actual `wss` socket
+activations enable it. It counts received Text payload bytes and Text bytes after
+successful sink send, taking no frame content, credential, URL or command ID.
+HTTP upgrade, TLS/TCP and Ping/Pong are excluded. Successful send is not peer
+acknowledgement or website success.
+
+The bounded writer holds a new `0600` inode in the invoking user's private
+directory, publishes every 200 ms and expires at 600 seconds. One route ID plus
+a multiple-route flag bounds attribution. PID/starttime, active socket,
+handshake failures, disconnection/loss counters and source age prevent historical
+connection counts from qualifying a retired socket. The harness pins inode and
+process identity, rejects stale/unknown/expired data and transport changes within
+a window, and records actual snapshot times. Identical read-only retries across
+a write are bounded; effects are never repeated. This instrumented native-client
+cost includes the observer's small file/thread overhead.
+
+`voyage/tests/host_browser_cua_cost.mjs` implements the supported CUA capability.
+Root loads `cuaBrowserCost` in its persistent CUA runtime, on each fixture tab:
+
+```js
+const observer = await cuaBrowserCost(fixtureTab, {
+  label: 'a', tabId: EXACT_OWNED_TAB_ID,
+  socketUrl: EXACT_PINNED_BROWSER_SOCKET,
+  connectionId: EXACT_SAVED_CONNECTION_ID,
+  sessionIds: [OWNED_SESSION_A, OWNED_SESSION_B],
+});
+// Root performs a normal same-origin reload, then opens Browser.
+await observer.poll();
+await observer.begin();
+// Observe the actual coordinated ten-second window without repeating input.
+const counts = await observer.finish();
+// Put only counts in the exact private response; never emit raw CDP events.
+await observer.stop();
+```
+
+Exact API calls are `tab.capabilities.get('cdp')`, scoped `cap.send` and
+`cap.readEvents({afterSequence,limit:1000,methods,target,timeoutMs:0})`.
+`Target.getTargetInfo` selects only that tab, without returning its URL. The
+collector enables Network/Performance/Runtime and captures the current cursor
+before Root's normal same-origin reload. The real Fleet socket then creates an
+attributable event; an already-open socket missing `webSocketCreated` cannot
+be called measured. No constructor/endpoint replacement or login export occurs.
+
+Events are WebSocket created/closed/sent/received, fixed console diagnostics and
+owned attached/detached child-target metadata. Both supplied tab/target IDs must
+agree. Pagination drains `hasMore` through at most 20 pages; gaps, `truncated`,
+wrong attribution and unacknowledged/closed sockets refuse. Child session IDs
+come only from owned `Target.attachedToTarget`, never a browser-wide target list.
+Only selected application-frame lengths survive reduction. Production fixed
+`[Helm connection]` metadata proves connected/renewal acknowledgement; transient
+selected-operation correlation reduces duplicate/refused/unknown/pending effects
+to counts. Auth/private payloads and console objects are not emitted or fetched.
+
+Performance facts are Task/Script/Layout duration, JS heap and node/document/
+listener counts. Renderer sharing is possible: do not sum task time or heap
+across tabs or present them as whole-browser OS CPU/RSS. The mailbox includes
+heap/node deltas and actual start/duration; the harness checks Web/host alignment.
+A late sample is incomplete. Root must coordinate actual CT/CUA windows rather
+than filling numbers for an interval that already ended. These collectors and
+regressions are prepared source, not executed native/cost proof.
+
+### Exact Home Proxmox → CT106 preparation order
+
+Serialize this with recovery/native jobs. Source `76c26aa` rejected the retained
+legacy owner during preparation; certificate-valid `/up` and `/health` did not
+prove admission. Continue only after the corrected qualified archive is deployed
+and the same tenant/principal/Vessel is admitted. No uncertain update replay,
+grant rewriting or loopback-discovery substitution for TLS.
+
+1. **Read-only references.** As the existing ordinary execution account, resolve
+   current binaries, credential references, authoritative session/capacity roots,
+   Python/Node/Playwright and worker/guardian. Return versions/hashes/UID and
+   permission/availability booleans only. Run current Helm
+   `connect --access-file EXISTING_PRIVATE_REFERENCE --no-start list` with a
+   30-second deadline. No secret contents, create/rename/Submit or browser starts.
+2. **Dependencies before effects.** Preparation observed Debian 13.6, Node
+   20.19.2, Playwright-core 1.63.0, missing Chromium, about 9.6 GiB disk, 2 GiB
+   RAM/no swap. Maintained worker Node minimum is **20.20.0**. Read-only:
+   `apt-cache policy chromium chromium-sandbox nodejs`,
+   `apt-get -s --no-install-recommends install chromium chromium-sandbox`, and
+   `df -Pk /usr /var/cache/apt/archives /tmp`. Record exact transaction, sizes,
+   removals/upgrades and service effects. Cached candidates are not refreshed pins.
+3. **Approved maintenance provisioning.** Refresh official apt metadata, resolve
+   matching Chromium/sandbox versions, repeat the minimal simulation with exact
+   pins, then install only that approved `--no-install-recommends` transaction.
+   Verify normal package ownership/sandbox with `dpkg-query -L chromium-sandbox`
+   and `stat`; no chmod repair, `--no-sandbox` or container/kernel policy change.
+   Prefer supported official Debian Node; otherwise the host operator resolves
+   an official nodejs.org supported LTS archive and published checksum, verifies
+   and extracts it into the executing user's private runtime. No runtime/model
+   fetch, unpinned latest resolution or global Node replacement in the journey.
+4. **Actual Node override.** `Launch::discover()` checks `/usr/bin/node`, then
+   `/usr/local/bin/node`, ignoring PATH. Private Node alone does not select it.
+   Executing-host private LaunchConfig must set `config.host_browser_launch` to
+   `{node:ABSOLUTE_SUPPORTED_NODE,worker:QUALIFIED_RELEASE/share/voyage/browser/worker.mjs,
+   chromium:/usr/bin/chromium,config:{public_web:true,origins:[],width:1280,height:720}}`.
+   This is not portable settings or an invented environment override. Required
+   sandbox mode disables host-browser launch and remains a real refusal.
+5. **Existing native TLS authority.** Current Connections UI imports but has no
+   export action. Local supervisor discovery is separate loopback authority.
+   The already-authorized host helper may reuse the exact retained encrypted
+   `VesselConnection.credential` locally for the authenticated owner's selected
+   tenant/connection/revision, with unchanged endpoint/Vessel/principal/grant.
+   Supply the original native-format access file privately, owned `0600`, never
+   stdout/chat; do not mint/mutate grants or invent missing identity fields.
+   Recheck metadata before/after use; parser incompatibility is a real dependency.
+6. **Two owned fixtures.** Use a normal dedicated synthetic named account if
+   needed (closed loopback endpoint, synthetic credential/binding), preserving
+   unrelated account/environment entries. Retain session/create UUIDs before:
+   `CURRENT_HELM connect --access-file EXISTING_PRIVATE_REFERENCE --no-start new
+   --id SESSION_UUID --command-id CREATE_UUID --workspace OWNED_WORKSPACE
+   --config-path PRIVATE_LAUNCH_JSON`. `New` has no `--name`. Read `inspect`, then
+   typed `request SESSION_UUID` Rename JSON with fresh command UUID, observed
+   `expected_revision`, bounded `expires_at_ms`, and
+   `name:qualification-333-RUN-a/b`. Require exact success/empty history/no run;
+   never Submit/Goal/infer. Resolve lost creates by retained ID, not another create.
+7. **Real site/operator/cost.** Approve only an owned temporary prefix on two
+   existing certificate-valid HTTPS origins and pinned synthetic WebM. Start the
+   bounded site separately. Prepare exact A/AB ledgers, helper hashes, private
+   config/mailbox. Run `python3 voyage/tests/host_browser_production.py --config
+   PRIVATE` as ordinary account with `web_mode:cua`, `host_observer.mode:local`,
+   `client_ledger:automatic` and new `native_wire_evidence` path. Root alone owns
+   two actual authenticated fixture tabs, CDP collection, normal reload/dock/
+   actions. Preserve public native/browser WSS endpoints and strict TLS. Collect
+   all nine aligned windows/site/privacy/renewal facts, explicit two browser
+   closes and independent host `after` proof.
+8. **Observed completion only.** Missing permission/heap/transport/cleanup data
+   is unknown, never zero/pass. Dispose only owned clients/fixture. Retain unknown
+   outcomes, slots/scratch/receipts until actual cleanup; no old-effect retry.
+   Claims are only for the actual Linux host/sites. Source, installation,
+   certificates and boolean operator responses are not a production journey pass.
 
 ### Owned HTTPS site and final evidence
 

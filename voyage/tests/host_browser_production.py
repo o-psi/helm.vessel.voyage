@@ -46,7 +46,7 @@ def main():
     for item in config['sessions']:
         assert str(uuid.UUID(item['id'])) == item['id']
         assert item['title'].startswith('qualification-333-')
-        assert re.fullmatch(r'[A-Za-z0-9_.-]{1,48}', item['label']) and len(item['title']) <= 64
+        assert re.fullmatch(r'[A-Za-z0-9_.-]{1,40}', item['label']) and len(item['title']) <= 64
         assert Path(item['workspace']).is_absolute() and item['workspace'] != '/'
     helm, node = Path(config['helm']), Path(config['node'])
     assert helm.is_absolute() and helm.is_file() and node.is_absolute() and node.is_file()
@@ -75,8 +75,9 @@ def main():
     report={'schema':1,'status':'pending','cleanup':{},'helm_sha256':hashlib.sha256(helm.read_bytes()).hexdigest(),
             'source_sha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
                              ('host_browser_production.py','host_browser_production.mjs','host_browser_cost.py',
-                              'host_browser_client_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py')}}
+                              'host_browser_client_cost.mjs','host_browser_cua_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py')}}
     clients=[]
+    config['native_metrics_files']=[]
     driver=Path(__file__).with_name('host_browser_production.mjs')
     def cli(*parts):
         result=subprocess.run([str(helm),'connect','--access-file',str(access),'--no-start',*parts],
@@ -96,7 +97,11 @@ def main():
             snap=cli('inspect',item['id'])
             assert snap['session_id']==item['id'] and not snap['messages'] and not snap.get('run') and snap.get('pending_cleanup_run') is None
             captured=root/(item['label']+'-launcher')
-            use_env={**env,'QUALIFICATION_LAUNCHER':str(captured)}
+            metrics=output/('native-'+item['label']+'-wss-private.json')
+            config['native_metrics_files'].append(str(metrics))
+            use_env={**env,'QUALIFICATION_LAUNCHER':str(captured),
+                     'HELM_QUALIFICATION_WSS_OUTPUT':str(metrics),
+                     'HELM_QUALIFICATION_WSS_LABEL':'native-'+item['label']}
             client=launch([str(helm),'connect','--access-file',str(access),'--no-start'],use_env,root,output/(item['label']+'-private.pty'),120,36)
             clients.append(client)
             wait(lambda:item['title'] in screen(client),40)

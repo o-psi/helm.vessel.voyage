@@ -12,7 +12,7 @@ import {browserCost,inputVisibleLatency} from './host_browser_client_cost.mjs';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
-const label=value=>typeof value==='string'&&/^[A-Za-z0-9_.-]{1,48}$/.test(value);
+const label=value=>typeof value==='string'&&/^[A-Za-z0-9_.-]{1,40}$/.test(value);
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const effect=action=>!['status','mirror','receipt'].includes(action);
 const tracked=new WeakMap();
@@ -28,13 +28,52 @@ function nativeWireSummary(wire,cfg){
   return {condition:w.condition,index:w.index,sent_bytes:w.sent_bytes,received_bytes:w.received_bytes};
  })};
 }
-async function privateJson(file,limit=1024*1024){
+async function nativeSnapshot(cfg){
+ const values=[];
+ for(let i=0;i<2;i++){
+  let value;const deadline=Date.now()+1000;
+  // The passive native writer uses a pinned inode. Repeating this bounded
+  // metadata read across its 200ms write is safe; no command/effect is sent.
+  while(!value){try{value=await privateJson(cfg.native_metrics_files[i],4096,true);}catch{
+   if(Date.now()>=deadline)throw Error('native byte observation unavailable');await sleep(25);
+  }}
+  cfg.native_metrics_identity??=[];const pinned=cfg.native_metrics_identity[i]??=value.identity;
+  assert.deepEqual(value.identity,pinned);value={...value.value,inode:pinned};
+  const root=cfg.client_roots[i];for(const key of ['label','pid','start_ticks'])assert.equal(value[key],root[key]);
+  assert.equal(value.scope,'native WSS Text application bytes; excludes HTTP upgrade, TLS/TCP and control frames');
+  assert.equal(value.status,'observed');assert.equal(value.routes,1);assert.ok(value.connections>=1);assert.equal(value.transport_failures,0);
+  assert.equal(value.active,1);assert.equal(value.handshake_failures,0);
+  assert.ok(Date.now()-value.captured_at_ms>=0&&Date.now()-value.captured_at_ms<=1000);
+  for(const key of ['sent_bytes','received_bytes','sent_frames','received_frames','elapsed_ms','captured_at_ms','connections','attempts','disconnected','transport_failures','handshake_failures'])assert.ok(Number.isSafeInteger(value[key])&&value[key]>=0);
+  values.push(value);
+ }
+ return values;
+}
+function nativeWindow(condition,index,before,after){
+ const selected=condition==='ab_four_viewers'?[0,1]:[0];
+ const clients=selected.map(i=>{
+  assert.ok(after[i].captured_at_ms>before[i].captured_at_ms);
+  assert.deepEqual(after[i].inode,before[i].inode);
+  for(const key of ['attempts','connections','disconnected','transport_failures'])assert.equal(after[i][key],before[i][key]);
+  for(const sample of [before[i],after[i]])assert.ok(Number.isFinite(sample.source_age_ms)&&sample.source_age_ms<=2000);
+  for(const key of ['sent_bytes','received_bytes'])assert.ok(after[i][key]>=before[i][key]);
+  return {label:before[i].label,started_at_ms:before[i].captured_at_ms,ended_at_ms:after[i].captured_at_ms,
+   sent_bytes:after[i].sent_bytes-before[i].sent_bytes,received_bytes:after[i].received_bytes-before[i].received_bytes};
+ });
+ return {condition,index,sent_bytes:clients.reduce((n,c)=>n+c.sent_bytes,0),received_bytes:clients.reduce((n,c)=>n+c.received_bytes,0),clients};
+}
+async function saveNativeWire(cfg,windows){
+ const wire={schema:1,scope:'owned native Helm public WSS application bytes',verified_identity:true,
+  roots:cfg.client_roots.map(({label,pid,start_ticks})=>({label,pid,start_ticks})),windows};
+ await save(cfg.native_wire_evidence,wire);return nativeWireSummary(wire,cfg);
+}
+async function privateJson(file,limit=1024*1024,withIdentity=false){
  const handle=await fs.open(file,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK|constants.O_CLOEXEC);
  try{const meta=await handle.stat();assert.ok(meta.isFile()&&meta.uid===process.getuid()&&meta.nlink===1&&!(meta.mode&0o077)&&meta.size<=limit);
  const bytes=Buffer.alloc(meta.size+1),{bytesRead}=await handle.read(bytes,0,bytes.length,0),after=await handle.stat();
   assert.equal(bytesRead,meta.size);for(const key of ['dev','ino','size','mtimeMs','ctimeMs'])assert.equal(meta[key],after[key]);
   assert.ok(after.uid===process.getuid()&&after.nlink===1&&!(after.mode&0o077));
-  return JSON.parse(bytes.subarray(0,bytesRead));
+  const value=JSON.parse(bytes.subarray(0,bytesRead));return withIdentity?{value,identity:{dev:meta.dev,ino:meta.ino}}:value;
  }finally{await handle.close();}
 }
 async function save(file,value){await fs.writeFile(file,JSON.stringify(value,null,2),{mode:0o600,flag:'wx'});}
@@ -231,7 +270,7 @@ async function closeBrowser(page){await ready(page);
 export async function runProductionQualification(context,cfg){
  validate(cfg);context.setDefaultTimeout(30000);
  const report={schema:1,status:'pending',source:'actual production routes; no adapter/mock socket',
-  stages:[],matrix:[],latencies:[],sites:[],cleanup:{},limitations:['Native viewer HTTP bytes are not native public WSS wire bytes.',
+  stages:[],matrix:[],native_windows:[],latencies:[],sites:[],cleanup:{},limitations:['Native viewer HTTP bytes are not native public WSS wire bytes.',
    'Renderer task duration is not whole-client OS CPU. RSS includes shared pages; PSS apportions them.',
    'Fixture B browser is already allocated by its TUI while condition A scopes only fixture A.']};
  const pages=[],states=[],closeAttempts=new Set();let resources=null;
@@ -253,6 +292,8 @@ export async function runProductionQualification(context,cfg){
   stage('cost_'+condition);await sleep(2000);
   for(let index=0;index<3;index++){
    const started=new Date().toISOString();await save(path.join(cfg.output,`window-${condition}-${index}.json`),{schema:1,condition,index,started});
+   const nativeBefore=await nativeSnapshot(cfg);
+   const nativeAfter=sleep(10000).then(()=>nativeSnapshot(cfg));
    const costs=await Promise.all(active.map(({page,native})=>browserCost(context,page,{nativeOperationUrls:native?[new URL('/operation',page.url()).href]:[],maxMilliseconds:10000})));
    const trafficBefore=active.map(({state})=>({...state.traffic}));
    const trafficAfter=sleep(10000).then(()=>active.map(({state})=>({...state.traffic})));
@@ -260,8 +301,9 @@ export async function runProductionQualification(context,cfg){
    const localPromise=new Promise((resolve,reject)=>execFile(cfg.python||'/usr/bin/python3',[
     path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
     '--seconds','10','--interval','0.25','--output','-'],{timeout:20000,maxBuffer:256*1024},(error,stdout)=>error?reject(Error('owned client measurement failed')):resolve(stdout)));
-   const [hostRaw,clientRaw,trafficEnd]=await Promise.all([hostPromise,localPromise,trafficAfter]);
+   const [hostRaw,clientRaw,trafficEnd,nativeEnd]=await Promise.all([hostPromise,localPromise,trafficAfter,nativeAfter]);
    const measurements=await Promise.all(costs.map(cost=>cost.stop()));
+   report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
    const host=JSON.parse(hostRaw),client=JSON.parse(clientRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
    assert.ok(host.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));assert.ok(client.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
    report.matrix.push({condition,index,started,host,client,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
@@ -332,7 +374,7 @@ export async function runProductionQualification(context,cfg){
   const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
   for(const s of states){assert.equal(s.overflow,false);assert.equal(s.unknown,0);assert.equal(s.refused,0);assert.equal(s.duplicate_effect,false);}
-  report.native_wire=nativeWireSummary(await privateJson(cfg.native_wire_evidence,65536),cfg);
+  report.native_wire=await saveNativeWire(cfg,report.native_windows);
   report.status=report.matrix.every(w=>w.host_window_aligned)?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
  }finally{
@@ -353,7 +395,7 @@ export async function runProductionQualification(context,cfg){
 export async function runCuaProductionQualification(context,cfg){
  validate(cfg);assert.equal(cfg.web_mode,'cua');context.setDefaultTimeout(30000);
  const report={schema:1,status:'pending',mode:'actual native pages plus authenticated CUA Web tabs',
-  matrix:[],sites:[],latencies:[],cleanup:{},limitations:['CUA Web renderer metrics must be supplied from actual per-tab observation; unavailable metrics do not pass.',
+  matrix:[],native_windows:[],sites:[],latencies:[],cleanup:{},limitations:['CUA Web renderer metrics must be supplied from actual per-tab observation; unavailable metrics do not pass.',
    'Native HTTP bridge bytes are not native public WSS application bytes.',
    'Host reports are produced through the separately authorized host conduit; this process performs no service changes.']};
  const native=[],attempted=new Set();let resources=null;
@@ -371,21 +413,28 @@ export async function runCuaProductionQualification(context,cfg){
   stage('cost_'+condition);
   for(let index=0;index<3;index++){
    const started=new Date().toISOString();await save(path.join(cfg.output,`window-${condition}-${index}.json`),{schema:1,condition,index,started});
+   const nativeBefore=await nativeSnapshot(cfg);
+   const nativeAfter=sleep(10000).then(()=>nativeSnapshot(cfg));
    const nativeCosts=await Promise.all(pages.map(item=>browserCost(context,item.page,{nativeOperationUrls:[new URL('/operation',item.page.url()).href],maxMilliseconds:10000})));
-   const actualWeb=webLabels.length?web('measure_window',{condition,index,milliseconds:10000,labels:webLabels}):Promise.resolve({viewers:[]});
-   const [hostRaw,client,cua]=await Promise.all([
+   const actualWeb=webLabels.length?web('measure_window',{condition,index,milliseconds:10000,started_at_ms:Date.parse(started),labels:webLabels}):Promise.resolve({viewers:[]});
+   const [hostRaw,client,cua,nativeEnd]=await Promise.all([
     sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000),
-    localCost(),actualWeb]);
+    localCost(),actualWeb,nativeAfter]);
    const host=JSON.parse(hostRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
+   report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
    assert.ok(host.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));assert.ok(client.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
    assert.equal(cua.viewers.length,webLabels.length);
    const summaries=cua.viewers.map((v,i)=>{
     assert.equal(v.label,webLabels[i]);
     if(v.status==='unavailable')return {label:v.label,status:'unavailable',category:'per_tab_measurement_unavailable'};
+    assert.equal(v.status,'observed');for(const key of ['duplicate_effects','unknown_effects','refused_effects','pending_effects'])assert.equal(v[key],0);
     assert.equal(v.scope,'actual CUA qualification Web tab renderer and public WSS application payload');
     for(const key of ['task_seconds','heap_used_bytes','sent_bytes','received_bytes'])assert.ok(Number.isFinite(v[key])&&v[key]>=0);
     assert.ok(v.received_bytes>0&&v.selected_connection_observed===true);
-    return {label:v.label,task_seconds:v.task_seconds,heap_used_bytes:v.heap_used_bytes,sent_bytes:v.sent_bytes,received_bytes:v.received_bytes,scope:v.scope};
+    assert.equal(v.truncated,false);
+    return {label:v.label,task_seconds:v.task_seconds,heap_used_bytes:v.heap_used_bytes,heap_delta_bytes:v.heap_delta_bytes,
+     nodes:v.nodes,node_delta:v.node_delta,metric_scope:v.metric_scope,sent_bytes:v.sent_bytes,received_bytes:v.received_bytes,scope:v.scope,
+     window_aligned:Number.isFinite(v.captured_at_ms)&&Math.abs(v.captured_at_ms-Date.parse(started))<1000&&Math.abs(v.elapsed_ms-10000)<1000};
    });
    report.matrix.push({condition,index,started,host,client,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
     cua_web:summaries,native:await Promise.all(nativeCosts.map(c=>c.stop()))});
@@ -465,9 +514,9 @@ export async function runCuaProductionQualification(context,cfg){
   const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
   await proof('close_fixture_panels',{labels:cfg.sessions.map(s=>s.label)},['only_owned_fixture_tabs_closed','unrelated_tabs_retained']);
-  report.native_wire=nativeWireSummary(await privateJson(cfg.native_wire_evidence,65536),cfg);
+  report.native_wire=await saveNativeWire(cfg,report.native_windows);
   for(const item of native){assert.equal(item.state.unknown,0);assert.equal(item.state.refused,0);assert.equal(item.state.duplicate_effect,false);assert.equal(item.state.overflow,false);}
-  const measurementsComplete=report.matrix.every(w=>w.host_window_aligned&&w.cua_web.every(v=>v.status!=='unavailable'));
+  const measurementsComplete=report.matrix.every(w=>w.host_window_aligned&&w.cua_web.every(v=>v.status!=='unavailable'&&v.window_aligned));
   report.status=measurementsComplete?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
  }finally{
