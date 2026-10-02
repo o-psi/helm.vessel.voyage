@@ -242,12 +242,9 @@ case!(
         let command = format!("printf '%s' '{}'; /bin/cat", "界".repeat(900));
         let id = r.start("bounded", &command).await;
         owned::until(|| {
-            r.tool.processes.lock().unwrap()[&id]
-                .output
-                .lock()
-                .unwrap()
-                .dropped
-                > 0
+            let processes = r.tool.processes.lock().unwrap();
+            let capture = processes[&id].output.lock().unwrap();
+            capture.dropped > 0 && capture.base + capture.bytes.len() >= 900 * "界".len()
         })
         .await;
         assert!(
@@ -258,13 +255,51 @@ case!(
                 .dropped_unread_bytes
                 > 0
         );
+        let before = r.tool.processes.lock().unwrap()[&id].cursor;
+        for budget in [1, "status: running\n".len()] {
+            let mut tiny = r.context.clone();
+            tiny.max_output_bytes = budget;
+            assert!(
+                r.registry
+                    .execute("process", json!({"action":"read","id":id}), &tiny)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(r.tool.processes.lock().unwrap()[&id].cursor, before);
+        }
+        let (base, bytes) = {
+            let processes = r.tool.processes.lock().unwrap();
+            let capture = processes[&id].output.lock().unwrap();
+            (capture.base, capture.bytes.clone())
+        };
         let first = r.call(json!({"action":"read","id":id})).await.unwrap();
-        assert!(first.len() < 1024);
+        assert!(first.len() <= r.context.max_output_bytes);
         assert!(first.contains("unread bytes remain"));
         let cursor = r.tool.processes.lock().unwrap()[&id].cursor;
+        assert!(cursor > base && cursor < base + bytes.len());
+        let first_text = first
+            .strip_prefix("status: running\n")
+            .unwrap()
+            .split("\n\n[")
+            .next()
+            .unwrap();
+        assert_eq!(first_text, String::from_utf8_lossy(&bytes[..cursor - base]));
+        assert_ne!(bytes[cursor - base] & 0xc0, 0x80);
         let second = r.call(json!({"action":"read","id":id})).await.unwrap();
-        assert!(second.len() < 1024);
-        assert!(r.tool.processes.lock().unwrap()[&id].cursor >= cursor);
+        assert!(second.len() <= r.context.max_output_bytes);
+        let next = r.tool.processes.lock().unwrap()[&id].cursor;
+        assert!(next > cursor && next <= base + bytes.len());
+        let second_text = second
+            .strip_prefix("status: running\n")
+            .unwrap()
+            .split("\n\n[")
+            .next()
+            .unwrap();
+        assert_eq!(
+            second_text,
+            String::from_utf8_lossy(&bytes[cursor - base..next - base])
+        );
+        assert!(!second_text.contains('\u{fffd}'));
         r.finish().await;
     }
 );

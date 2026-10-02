@@ -564,15 +564,23 @@ impl ProcessTool {
             .get_mut(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
         let capture = process.output.lock().map_err(failed)?;
-        let (result, cursor) = unread_chunk(&capture, process.cursor, max);
-        process.cursor = cursor;
         let status = process
             .child
             .try_wait()
             .map_err(failed)?
             .map(|s| format!("exited: {s:?}"))
             .unwrap_or_else(|| "running".into());
-        Ok(format!("status: {status}\n{result}"))
+        let prefix = format!("status: {status}\n");
+        let available = max.checked_sub(prefix.len()).ok_or_else(|| {
+            ToolError::Failed("terminal read budget cannot fit status metadata".into())
+        })?;
+        let (result, cursor) = unread_chunk(&capture, process.cursor, available)?;
+        let output = format!("{prefix}{result}");
+        // Commit source-byte consumption only after the complete response fits.
+        // Registry admission must not discard an oversized read after its cursor
+        // has already consumed output that the model never received.
+        process.cursor = cursor;
+        Ok(output)
     }
     fn input(&self, id: Uuid) -> Result<input::Input, ToolError> {
         self.processes
@@ -864,19 +872,76 @@ fn platform_command(command: &str) -> CommandBuilder {
     builder.arg(command);
     builder
 }
-fn unread_chunk(capture: &Capture, cursor: usize, max: usize) -> (String, usize) {
+fn unread_chunk(
+    capture: &Capture,
+    cursor: usize,
+    max: usize,
+) -> Result<(String, usize), ToolError> {
     if capture.privacy.is_some() {
-        return ("[model capture unavailable: human attachment made this terminal private; output remains withheld after detach. Start a new terminal for model-observed work.]".into(), capture.base);
+        let text = "[model capture unavailable: human attachment made this terminal private; output remains withheld after detach. Start a new terminal for model-observed work.]";
+        if text.len() > max {
+            return Err(ToolError::Failed(
+                "terminal read budget cannot fit privacy metadata".into(),
+            ));
+        }
+        return Ok((text.into(), capture.base));
     }
     let offset = cursor.saturating_sub(capture.base).min(capture.bytes.len());
-    let end = offset.saturating_add(max).min(capture.bytes.len());
-    let remaining = capture.bytes.len() - end;
-    let mut result = String::from_utf8_lossy(&capture.bytes[offset..end]).into_owned();
-    if remaining > 0 {
-        result.push_str(&format!("\n\n[{remaining} unread bytes remain]"));
+    let mut end = offset.saturating_add(max).min(capture.bytes.len());
+    loop {
+        end = complete_utf8_prefix(&capture.bytes, offset, end);
+        let remaining = capture.bytes.len() - end;
+        let mut result = String::from_utf8_lossy(&capture.bytes[offset..end]).into_owned();
+        if remaining > 0 {
+            result.push_str(&format!("\n\n[{remaining} unread bytes remain]"));
+        }
+        if result.len() <= max && (end > offset || remaining == 0) {
+            return Ok((result, capture.base + end));
+        }
+        if end == offset {
+            return Err(ToolError::Failed(
+                "terminal read budget cannot fit unread output and metadata".into(),
+            ));
+        }
+        // Lossy decoding can expand invalid source bytes. Footer size also
+        // depends on the exact unconsumed byte count; bound the rendered result,
+        // not merely its source slice. Each retry strictly reduces the slice.
+        let excess = result.len().saturating_sub(max).max(1);
+        // A rendered deficit can exceed the source length when invalid bytes
+        // expand to replacement characters. Try smaller nonempty source slices
+        // instead of skipping straight to zero when one byte could still fit.
+        let halfway = offset + (end - offset) / 2;
+        end = end.saturating_sub(excess).max(halfway).max(offset);
     }
-    (result, capture.base + end)
 }
+/// Avoid splitting a known complete UTF-8 character solely because of a response
+/// budget. Capture may begin with lost/invalid bytes; those keep the existing
+/// lossy display contract, with cursor movement measured in original bytes.
+fn complete_utf8_prefix(bytes: &[u8], offset: usize, end: usize) -> usize {
+    if end == bytes.len() {
+        return end;
+    }
+    for start in (end.saturating_sub(3).max(offset)..end).rev() {
+        if bytes[start] & 0xc0 == 0x80 {
+            continue;
+        }
+        let width = match bytes[start] {
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => 1,
+        };
+        if end - start < width
+            && start + width <= bytes.len()
+            && std::str::from_utf8(&bytes[start..start + width]).is_ok()
+        {
+            return start;
+        }
+        break;
+    }
+    end
+}
+
 fn failed(error: impl std::fmt::Display) -> ToolError {
     ToolError::Failed(error.to_string())
 }
@@ -1002,7 +1067,7 @@ mod screen_tests {
         assert!(capture.revision > revision);
         assert_eq!(capture.parser.screen().size(), (3, 5));
         assert!(capture.bytes.is_empty());
-        let (read, _) = unread_chunk(&capture, 0, 1024);
+        let (read, _) = unread_chunk(&capture, 0, 1024).unwrap();
         assert!(!read.contains("secret"));
         assert_eq!(capture.privacy.as_ref().unwrap().suppressed_output_bytes, 6);
     }
@@ -1084,6 +1149,7 @@ mod screen_tests {
         assert!(capture.bytes.is_empty());
         assert!(
             !unread_chunk(&capture, 0, 4096)
+                .unwrap()
                 .0
                 .contains("synthetic-private-value")
         );
@@ -1118,3 +1184,6 @@ mod lifecycle_tests;
 
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) mod owned_lifetime_tests;
+
+#[cfg(test)]
+mod output_budget_tests;

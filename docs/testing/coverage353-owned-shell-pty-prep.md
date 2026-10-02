@@ -94,3 +94,11 @@ masquerade as an observed waiting process. Existing production execution timeout
 cancellation, parent/stage limits and positive retirement assertions are kept.
 No policy is weakened and no timeout is increased. These corrections are source
 only until Root completes the next coordinated full gate.
+
+The corrected gate at `c7ffb4c` passed the three held shell journeys and failed
+only the Unicode parent's first read. That later failure exposed a production
+complete-response budget/cursor defect, tracked separately in
+[#404](https://github.com/o-psi/helm.vessel.voyage/issues/404). The prepared
+[read budget and source-cursor contract](terminal-read-output-budget.md) keeps the
+256-byte context, strengthens exact UTF-8/source/gap assertions, and retains the
+same stage/cleanup limits. It requires another coordinated source-final gate.
