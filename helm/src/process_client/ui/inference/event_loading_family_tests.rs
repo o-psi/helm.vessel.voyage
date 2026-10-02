@@ -558,44 +558,45 @@ async fn explicit_setting_selection_retains_one_revision_bound_command_and_never
     assert!(reasoning_effort.is_some());
     let update = peer.reply().await;
     peer.app.update(update);
-    let host = peer.host.lock().unwrap();
-    let requests: Vec<_> = host
-        .calls
-        .iter()
-        .filter_map(|call| match call {
-            VesselCommand::Voyage(request) => Some(request),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        requests
+    {
+        let host = peer.host.lock().unwrap();
+        let requests: Vec<_> = host
+            .calls
             .iter()
-            .filter(|r| matches!(r.command, VoyageCommand::SetAccountInference { .. }))
-            .count(),
-        1
-    );
-    let mutation = requests
-        .iter()
-        .find(|r| matches!(r.command, VoyageCommand::SetAccountInference { .. }))
-        .unwrap();
-    assert_eq!(mutation.session_id, peer.target.session);
-    // This mutation is session/revision/account scoped, unlike a live-resource
-    // action. The durable pending record retains its observed incarnation while
-    // the authoritative command contract intentionally omits it on the wire.
-    assert_eq!(
-        pending.incarnation,
-        peer.app.views[&peer.target].process.incarnation
-    );
-    assert!(!mutation.command.requires_incarnation());
-    assert_eq!(mutation.incarnation, None);
-    assert!(
-        matches!(mutation.command,VoyageCommand::SetAccountInference {command_id,..} if command_id==pending.command_id)
-    );
-    assert_eq!(
-        serde_json::to_value(&mutation.command).unwrap(),
-        serde_json::to_value(original.as_ref()).unwrap()
-    );
-    drop(host);
+            .filter_map(|call| match call {
+                VesselCommand::Voyage(request) => Some(request),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| matches!(r.command, VoyageCommand::SetAccountInference { .. }))
+                .count(),
+            1
+        );
+        let mutation = requests
+            .iter()
+            .find(|r| matches!(r.command, VoyageCommand::SetAccountInference { .. }))
+            .unwrap();
+        assert_eq!(mutation.session_id, peer.target.session);
+        // This mutation is session/revision/account scoped, unlike a live-resource
+        // action. The durable pending record retains its observed incarnation while
+        // the authoritative command contract intentionally omits it on the wire.
+        assert_eq!(
+            pending.incarnation,
+            peer.app.views[&peer.target].process.incarnation
+        );
+        assert!(!mutation.command.requires_incarnation());
+        assert_eq!(mutation.incarnation, None);
+        assert!(
+            matches!(mutation.command,VoyageCommand::SetAccountInference {command_id,..} if command_id==pending.command_id)
+        );
+        assert_eq!(
+            serde_json::to_value(&mutation.command).unwrap(),
+            serde_json::to_value(original.as_ref()).unwrap()
+        );
+    }
     assert_eq!(
         peer.app.views[&peer.target].draft.text,
         "Models keep unsent Δ"
