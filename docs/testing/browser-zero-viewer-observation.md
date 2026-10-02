@@ -60,3 +60,15 @@ work; timeout or unsettled/uncertain capture prevents a positive acknowledgement
 Late mutation callbacks from an older recording generation are ignored.
 The Native status-recovery path now decides attachment after fresh Status;
 an observed NIL attachment reconnects without Start on the same owned page.
+
+Private recorder controls use a narrowly scoped CDP session owned by the worker.
+The pinned Playwright 1.63 in-process adapter supplies the exact frame identity;
+the worker verifies membership in the owned frame tree and selects that frame's
+default execution context by its unique identity. Direct `Runtime.evaluate` avoids
+website-owned `eval` and argument hooks. Missing adapters, context changes or
+frame retirement make the observation unavailable. No public CDP endpoint or
+new user authority is introduced. A session whose creation resolves after its
+deadline retains an explicit cleanup obligation and is detached exactly once.
+The recorder closure is strict and its global slot is immutable; ordinary website
+globals remain available to the site. The actual-browser hostile-hook regression
+and the late-session regression require execution in the coordinated gate.

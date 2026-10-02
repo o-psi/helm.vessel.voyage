@@ -30,7 +30,7 @@ test('replay resources use host-captured bytes and never retain stylesheet URLs'
 });
 
 test('tab selection stops old frame recorders and clears viewer cursors',async()=>{
- const worker=new Worker(),stopped=[];
+ const worker=new Worker(),stopped=[];worker.recorderCall=frame=>frame.evaluate();
  const page=name=>({isClosed:()=>false,frames:()=>[{evaluate:async()=>{stopped.push(name);}}],
   setViewportSize:async()=>{},bringToFront:async()=>{}});
  const old=page('old'),next=page('next'),oldId=randomUUID(),nextId=randomUUID();
@@ -244,7 +244,7 @@ test('three simultaneous localized surfaces retain aggregate bounds and private/
 
 test('idle metadata never promotes missing, failed or superseded stop acknowledgements',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-idle333-'));const worker=new Worker();
- worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};
+ worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};worker.recorderCall=frame=>frame.evaluate();
  worker.lock=await fs.open(path.join(root,'worker.lock'),'wx',0o600);worker.lockPath=path.join(root,'worker.lock');
  const frame=value=>({evaluate:async()=>value});const page=frames=>({isClosed:()=>false,frames:()=>frames});
  try{
@@ -267,7 +267,7 @@ test('idle metadata never promotes missing, failed or superseded stop acknowledg
 
 test('last disconnect retires a held prior mirror before positive recorder-stop acknowledgement',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-held-mirror333-')),worker=new Worker();
- worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};
+ worker.config={root};worker.captureProgramSha256='a'.repeat(64);worker.task={};worker.recorderCall=frame=>frame.evaluate();
  worker.lock=await fs.open(path.join(root,'worker.lock'),'wx',0o600);worker.lockPath=path.join(root,'worker.lock');
  const viewer=randomUUID();worker.viewers.set(viewer,{seq:0,frameCursors:new Map()});
  let release;const held=new Promise(resolve=>{release=resolve;});worker.assetEffects.add(held);
@@ -279,4 +279,29 @@ test('last disconnect retires a held prior mirror before positive recorder-stop 
   await new Promise(resolve=>setImmediate(resolve));assert.equal(worker.recorderStopObserved,false);assert.equal(drains,0);
   release();await rejected;await detached;assert.equal(drains,0);assert.equal(worker.captureTasks.size,0);assert.equal(worker.recorderStopObserved,true);
  }finally{release();await worker.lock.close();worker.lock=null;await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('private recorder CDP path bypasses hostile website eval and argument hooks',{timeout:45000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'worker-private-cdp333-')),worker=new Worker();
+ t.after(async()=>{await worker.dispose();await fs.rm(root,{recursive:true,force:true});});
+ const call=async(op,args={})=>{const reply=await worker.request({id:randomUUID(),op,browser:worker.browser,epochs:{...worker.epochs},...args});assert.equal(reply.ok,true,JSON.stringify(reply));return reply.result;};
+ await call('init',{config:{root,executable,public_web:false,origins:[],width:640,height:480}});await call('open');
+ await worker.page.evaluate(()=>{const seen=[];window.captureSeen=seen;const originalEval=window.eval;window.eval=function(source){seen.push(String(source));return originalEval(source);};const originalIterator=Array.prototype[Symbol.iterator];Array.prototype[Symbol.iterator]=function(){for(let i=0;i<this.length;i++)if(typeof this[i]==='string')seen.push(this[i]);return originalIterator.call(this);};});
+ const viewer=randomUUID();await call('join',{viewer});await call('mirror',{viewer,since:0});await call('disconnect',{viewer});
+ const observed=await worker.page.evaluate(()=>window.captureSeen);
+ assert.ok(!observed.some(value=>value.includes(worker.recorderCapability)),'private permit escaped through website transport hooks');
+ const state=JSON.parse(await fs.readFile(path.join(root,'capture-observation.json'),'utf8'));assert.equal(state.zero_viewers,true);assert.equal(state.recorder_stop_observed,true);
+ const late=await worker.page.evaluate(()=>globalThis.__voyageMirror.drain(0));assert.equal(late.error,'recorder_disabled');
+ const again=randomUUID();await call('join',{viewer:again});const replay=await call('mirror',{viewer:again,since:0});assert.equal(replay.value.reset,true);
+});
+
+
+test('late recorder CDP session creation retains ownership until exact detach',async()=>{
+ const worker=new Worker();let resolveOpening,detached=0;
+ worker.context={newCDPSession:()=>new Promise(resolve=>{resolveOpening=resolve;})};
+ await assert.rejects(worker.openRecorderSession({}),error=>error.code==='operation_timeout');
+ assert.equal(worker.captureTaskUncertain,true);assert.equal(worker.recorderSessionCleanups.size,1);
+ resolveOpening({detach:async()=>{detached++;}});
+ await Promise.allSettled([...worker.recorderSessionCleanups]);await Promise.resolve();
+ assert.equal(detached,1);assert.equal(worker.recorderSessionCleanups.size,0);
 });

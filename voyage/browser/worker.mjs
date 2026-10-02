@@ -101,7 +101,7 @@ const bounded=async(p,ms=12000)=>{let timer;try{return await Promise.race([p,new
 
 export class Worker {
   constructor(){
-    this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();
+    this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();this.recorderSessionCleanups=new Set();
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
@@ -369,11 +369,57 @@ export class Worker {
   }
   async select(id,stamp=this.epochs.control){this.guard(stamp);const page=this.tabs.get(id);if(!page)refuse('tab_missing');await page.setViewportSize({width:this.config.width,height:this.config.height});this.guard(stamp);await page.bringToFront();this.guard(stamp);await this.stopMirrors();this.guard(stamp);this.page=page;this.active=id;this.dialog=null;this.advance('tab','document','capture');}
   frameId(frame){let id=this.frameIds.get(frame);if(!id){id=randomUUID();this.frameIds.set(frame,id);}return id;}
+  // Pinned Playwright 1.63 local adapter supplies browser-native frame identity.
+  // No identity is obtained from website JS, URLs or sibling ordering. The only
+  // CDP expression is our recorder operation, in that exact default context.
+  async openRecorderSession(target){
+    const opening=this.context.newCDPSession(target);
+    try{return await bounded(opening,1000);}
+    catch(error){
+      if(error.code==='operation_timeout'){
+        this.captureTaskUncertain=true;
+        // The original creation can finish after the observation deadline.
+        // Retain that ownership obligation and detach its exact late result.
+        const cleanup=opening.then(session=>bounded(session.detach(),1000));
+        this.recorderSessionCleanups.add(cleanup);
+        void cleanup.catch(()=>{this.captureTaskUncertain=true;}).finally(()=>this.recorderSessionCleanups.delete(cleanup));
+      }
+      throw error;
+    }
+  }
+  async recorderCall(frame,operation,cursor=0,budget=2200000,generation=this.captureActivityGeneration){
+    let session;const contexts=new Map();let stale=false,selected=null;
+    try{
+      const connection=frame?._connection;
+      if(typeof connection?.toImpl!=='function')refuse('observation_unavailable');
+      const implementation=connection.toImpl(frame),page=frame.page();
+      if(!implementation||implementation._page!==connection.toImpl(page)||implementation._page._browserContext!==connection.toImpl(this.context)||typeof implementation._id!=='string'||frame.isDetached())refuse('observation_unavailable');
+      const frameId=implementation._id;
+      for(let target=frame;target;target=target.parentFrame()){
+        try{session=await this.openRecorderSession(target===page.mainFrame()?page:target);break;}
+        catch(error){if(!String(error.message).includes('does not have a separate CDP session'))throw error;}
+      }
+      if(!session)refuse('observation_unavailable');
+      const contains=(tree,id)=>tree.frame?.id===id||(tree.childFrames||[]).some(child=>contains(child,id));
+      const created=event=>{const context=event.context;if(context.auxData?.isDefault&&context.auxData.frameId===frameId)contexts.set(context.id,context);};
+      const destroyed=event=>{if(selected?.id===event.executionContextId)stale=true;contexts.delete(event.executionContextId);};
+      session.on('Runtime.executionContextCreated',created);session.on('Runtime.executionContextDestroyed',destroyed);session.on('Runtime.executionContextsCleared',()=>{stale=true;contexts.clear();});
+      const before=await bounded(session.send('Page.getFrameTree'),1000);if(!contains(before.frameTree,frameId))refuse('observation_unavailable');
+      await bounded(session.send('Runtime.enable'),1000);
+      if(contexts.size!==1)refuse('observation_unavailable');selected=[...contexts.values()][0];
+      if(typeof selected.uniqueId!=='string'||!selected.uniqueId)refuse('observation_unavailable');
+      const expression=recorderExpression(operation,this.recorderCapability,generation,cursor,budget);
+      const result=await bounded(session.send('Runtime.evaluate',{expression,uniqueContextId:selected.uniqueId,returnByValue:true,awaitPromise:true,timeout:750}),1000);
+      const after=await bounded(session.send('Page.getFrameTree'),1000);
+      if(stale||frame.isDetached()||implementation._id!==frameId||contexts.get(selected.id)?.uniqueId!==selected.uniqueId||!contains(after.frameTree,frameId)||result.exceptionDetails)refuse('observation_unavailable');
+      return result.result?.value;
+    }finally{if(session)await bounded(session.detach(),1000).catch(()=>{this.captureTaskUncertain=true;});}
+  }
   async stopMirrors(){
     this.recorderStopObserved=false;
     const generation=++this.captureActivityGeneration;
     let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
-    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(frame.evaluate(recorderExpression('stop',this.recorderCapability,generation)),1000))));
+    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(this.recorderCall(frame,'stop',0,2200000,generation),1000))));
     this.recorderStopObserved=retired&&!this.captureTaskUncertain&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
     await this.publishCaptureObservation();
     this.frameVisuals.clear();
@@ -411,7 +457,7 @@ export class Worker {
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     captureGuard();
-    const value=await bounded(page.evaluate(recorderExpression('drain',this.recorderCapability,generation,since)),5000);
+    const value=await bounded(this.recorderCall(page.mainFrame(),'drain',since,2200000,generation),5000);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
@@ -432,7 +478,7 @@ export class Worker {
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
         captureGuard();
-        const child=await bounded(frame.evaluate(recorderExpression('drain',this.recorderCapability,generation,cursor,550000)),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
+        const child=await bounded(this.recorderCall(frame,'drain',cursor,550000,generation),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
         this.inlineAssets(child.events,frame.url());
         const bytes=Buffer.from(JSON.stringify(child.events));

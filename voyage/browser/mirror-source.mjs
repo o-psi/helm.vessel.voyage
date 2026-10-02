@@ -2,6 +2,7 @@
 // never receive viewer authority. The worker reads this bounded recorder through
 // its private Playwright pipe; no page network channel is created.
 (() => {
+  'use strict';
   // Repeat initialization keeps the immutable source-created closure. The first
   // init script runs before site scripts; they cannot replace this global slot.
   if(Object.getOwnPropertyDescriptor(globalThis,'__voyageMirror')?.configurable===false){delete globalThis.rrweb;return;}
