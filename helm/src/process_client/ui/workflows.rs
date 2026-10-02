@@ -1053,3 +1053,7 @@ mod tests {
 #[cfg(test)]
 #[path = "workflows_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "workflow_journey_tests.rs"]
+mod journey_tests;

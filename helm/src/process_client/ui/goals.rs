@@ -1,4 +1,8 @@
 //! Goal control is reviewed human intent. Only Voyage schedules continuation.
+#[cfg(all(test, unix))]
+#[path = "goal_journey_tests.rs"]
+mod journey_tests;
+
 use super::{
     App,
     observe::Update,

@@ -6,11 +6,19 @@ use voyage_protocol::execution_identity::{ExecutionOutcome, IdentityRef, ReviewA
 use voyage_protocol::execution_review_control::*;
 
 #[cfg(unix)]
+fn receipt_root() -> std::path::PathBuf {
+    let root =
+        crate::process_client::cli::default_directory().with_file_name("helm-execution-reviews");
+    #[cfg(test)]
+    let root = super::account_test_support::root("helm-execution-reviews", root);
+    root
+}
+
+#[cfg(unix)]
 fn retain(target: Target, ids: [Uuid; 3]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
-    let root =
-        crate::process_client::cli::default_directory().with_file_name("helm-execution-reviews");
+    let root = receipt_root();
     std::fs::create_dir_all(
         root.parent()
             .context("execution receipt parent unavailable")?,
@@ -48,8 +56,7 @@ fn retain(target: Target, ids: [Uuid; 3]) -> Result<()> {
 fn restored(target: Target) -> Result<Option<[Uuid; 3]>> {
     use std::io::Read;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let root =
-        crate::process_client::cli::default_directory().with_file_name("helm-execution-reviews");
+    let root = receipt_root();
     if !root.try_exists()? {
         return Ok(None);
     }
@@ -305,8 +312,7 @@ impl App {
 
 #[cfg(unix)]
 fn forget(target: Target) -> Result<()> {
-    let root =
-        crate::process_client::cli::default_directory().with_file_name("helm-execution-reviews");
+    let root = receipt_root();
     crate::process_client::local::check_private_directory(&root)?;
     std::fs::remove_file(root.join(format!("{}-{}.json", target.route.id, target.session)))?;
     std::fs::File::open(root)?.sync_all()?;
@@ -320,3 +326,7 @@ fn forget(_target: Target) -> Result<()> {
 #[cfg(test)]
 #[path = "execution_boundary_tests.rs"]
 mod boundary_tests;
+
+#[cfg(all(test, unix))]
+#[path = "execution_journey_tests.rs"]
+mod journey_tests;
