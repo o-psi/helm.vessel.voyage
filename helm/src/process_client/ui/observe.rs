@@ -318,10 +318,16 @@ pub fn spawn(
                     match client.events(subscriptions).await {
                         Ok(mut events) => {
                             let mut ended_unexpectedly = false;
+                            // Only eligible legacy/catalogue-less groups larger
+                            // than the stream limit need timed rotation. A healthy
+                            // unchanged first group must not starve later owners.
+                            let rotate = tokio::time::sleep(Duration::from_secs(2));
+                            tokio::pin!(rotate);
                             // Metadata arrives independently; transcript reads never
                             // wait for a catalogue request or a catalogue timer.
                             loop {
                                 tokio::select! {
+                                    _ = &mut rotate, if count > 32 => { break; },
                                     changed = catalogue_updates.changed() => {
                                         if changed.is_err() { return; }
                                         let current = catalogue_updates.borrow_and_update().clone();
@@ -489,9 +495,15 @@ pub(super) async fn refresh(
         session: process.session_id,
     };
     let result = client
-        .voyage(target.session, process.incarnation, VoyageCommand::Snapshot)
+        .voyage_observed(target.session, process.incarnation, VoyageCommand::Snapshot)
         .await
-        .and_then(|value| Ok(serde_json::from_value::<Snapshot>(value)?))
+        .and_then(|(value, owner)| {
+            anyhow::ensure!(
+                owner == process.incarnation,
+                "Snapshot observation owner changed"
+            );
+            Ok(serde_json::from_value::<Snapshot>(value)?)
+        })
         .map_err(|error| error.to_string());
     let cursor = result
         .as_ref()
@@ -508,7 +520,7 @@ pub(super) async fn refresh(
         return cursor;
     }
     let inventory = client
-        .voyage(
+        .voyage_observed(
             target.session,
             process.incarnation,
             VoyageCommand::Controls {
@@ -517,7 +529,13 @@ pub(super) async fn refresh(
             },
         )
         .await
-        .and_then(|value| Ok(serde_json::from_value(value)?))
+        .and_then(|(value, owner)| {
+            anyhow::ensure!(
+                owner == process.incarnation,
+                "Terminal observation owner changed"
+            );
+            Ok(serde_json::from_value(value)?)
+        })
         .map_err(|error| error.to_string());
     let _ = sender
         .send(Update::Terminals {
@@ -533,3 +551,7 @@ pub(super) async fn refresh(
 #[cfg(all(test, unix))]
 #[path = "observe_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "observation_stream_journey_tests.rs"]
+mod stream_journey_tests;

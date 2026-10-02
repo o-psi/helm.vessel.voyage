@@ -108,10 +108,10 @@ pub(super) fn apply(view: &mut View, event: &Value) -> bool {
             if text.len() > 4096 || run.live_text_truncated {
                 return false;
             }
-            let current = run.live_text.get_or_insert_with(String::new);
-            if offset != current.len() as u64 {
+            if offset != run.live_text.as_ref().map_or(0, |current| current.len()) as u64 {
                 return false;
             }
+            let current = run.live_text.get_or_insert_with(String::new);
             current.push_str(text);
             run.partial_text_bytes = current.len() as u64;
             run.live_text_offset = Some(0);
@@ -176,25 +176,39 @@ pub(super) fn apply(view: &mut View, event: &Value) -> bool {
             let Some(object) = payload.as_object() else {
                 return false;
             };
-            if let Some(total) = object.get("total_messages").and_then(Value::as_u64) {
+            let total = if let Some(value) = object.get("total_messages") {
+                let Some(total) = value.as_u64() else {
+                    return false;
+                };
                 let Ok(total) = usize::try_from(total) else {
                     return false;
                 };
                 if total < snapshot.total_messages {
                     return false;
                 }
-                snapshot.total_messages = total;
-            }
+                Some(total)
+            } else {
+                None
+            };
             if let Some(name) = object.get("name") {
                 if !name.is_null() && !name.is_string() {
                     return false;
                 }
-                snapshot.name = name.as_str().map(str::to_owned);
             }
             if let Some(model) = object.get("model") {
-                let Some(model) = model.as_str() else {
+                if !model.is_string() {
                     return false;
-                };
+                }
+            }
+            // A false application ACK must leave every earlier field untouched.
+            // Validate the complete supplied projection before assigning any.
+            if let Some(total) = total {
+                snapshot.total_messages = total;
+            }
+            if let Some(name) = object.get("name") {
+                snapshot.name = name.as_str().map(str::to_owned);
+            }
+            if let Some(model) = object.get("model").and_then(Value::as_str) {
                 snapshot.model = model.to_owned();
             }
         }
