@@ -85,3 +85,12 @@ pub(crate) fn start_quarantined(bin: &std::path::Path, prior: &Activation) -> Re
 pub(crate) fn state_directory() -> Result<std::path::PathBuf> {
     Ok(unit::Layout::discover()?.state)
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn observe_activation(
+    bin: &std::path::Path,
+    prior: &Activation,
+    previous: bool,
+) -> Result<()> {
+    systemd::observe_activation(bin, prior, previous)
+}

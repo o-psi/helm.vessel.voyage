@@ -20,11 +20,17 @@ rechecked before publication; old ready receipts without those pins refuse apply
 Missing declarations are unknown compatibility, not permission to migrate.
 
 The shipped v1.0.2 Web updater invokes its installed old installer, which has no
-handoff to the candidate implementation. The new quiescent mechanism therefore
-requires an explicitly invoked current trusted installer maintenance/bootstrap
-entry. An unmodified old Web prepare/apply path must not be presented as repaired
-merely because a candidate archive contains the new code. Normal installer entry
-integration and native bootstrap qualification remain delivery obligations.
+handoff to the candidate implementation. Use the normal public `install.sh install`
+or `install.sh upgrade` entry with the current verified bundle (or invoke that
+bundle's current installer with its existing install/upgrade command). The current
+installer's ordinary plan and owner review include the quiescent handover; it
+stages the exact candidate privately and invokes its own snapshot/quarantine
+implementation, never the old Vessel prepare/apply endpoints. Wizard and explicit
+CLI reviews share the same checks. Inactive/unmanaged original services, migrated
+old namespaces or pending uncertain operations refuse before publication rather
+than gaining a speculative bootstrap. An unmodified old Web updater must be
+capability-gated as unsupported; merely containing new code in its download does
+not repair its execution path.
 
 ### Supported quiescent v1.0.2 handover
 

@@ -34,6 +34,8 @@ pub fn start(mut options: Options) -> Task {
             anyhow::ensure!(!flag.load(Ordering::Relaxed), "Preparation cancelled");
             let report = flow::plan(&options)?;
             let mut lines = flow::describe(&report, &options);
+            #[cfg(target_os = "linux")]
+            lines.extend(crate::remote::local_legacy_review(&options, &report)?);
             lines.push(service::preview(
                 &report.release_dir.join("bin"),
                 options.start,

@@ -810,3 +810,44 @@ fn approved_contract_change_is_refused_even_when_legacy_release_identity_is_unch
     cleanup_staging(&mut r).unwrap();
     f.done();
 }
+
+#[test]
+fn current_installer_normal_legacy_entry_refuses_inactive_original_before_publication_or_old_updater_call()
+ {
+    let f = installation();
+    let mut r = record("preparing");
+    let installed = installed_release(&f, &mut r);
+    let path = installed.join("release.json");
+    let mut old: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    old.version = "1.0.2".into();
+    old.update_compatibility = None;
+    fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+    let identity = old.id().unwrap();
+    let renamed = installed.parent().unwrap().join(&identity);
+    fs::rename(&installed, &renamed).unwrap();
+    fs::remove_file(installation_root().unwrap().join("current")).unwrap();
+    std::os::unix::fs::symlink(&renamed, installation_root().unwrap().join("current")).unwrap();
+    files::atomic_json(
+        &installation_root().unwrap().join("transaction.json"),
+        &serde_json::json!({"schema_version":1,"current":identity,"previous":null,"pending":null}),
+    )
+    .unwrap();
+    let bin = candidate(&f, "1.0.3", "printf 1", "exit 0");
+    let options = cli::Options::parse(&[
+        "install".into(),
+        "--bin-dir".into(),
+        bin.to_string_lossy().into_owned(),
+    ])
+    .unwrap();
+    let report = flow::plan(&options).unwrap();
+    inactive_plan(&f);
+    assert!(
+        local_legacy_review(&options, &report)
+            .unwrap_err()
+            .to_string()
+            .contains("original supervisor active")
+    );
+    assert_eq!(current().unwrap(), identity);
+    assert!(!root().unwrap().join("latest.json").exists());
+    f.done();
+}

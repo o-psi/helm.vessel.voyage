@@ -380,3 +380,29 @@ fn restoration_refuses_changed_enablement_and_unreviewed_live_pid_before_stop() 
         f.done();
     }
 }
+
+#[test]
+fn legacy_reconciliation_refuses_changed_unit_or_state_namespace_without_activation_effect() {
+    for changed_state in [false, true] {
+        let f = Fixture::new();
+        let old = binaries(&f, "old");
+        let candidate = binaries(&f, "candidate");
+        let plan = setup(&f, &old, false, false, false);
+        let mut prior = super::super::Activation {
+            active: true,
+            enabled: false,
+            unit_file_state: "disabled".into(),
+            definition: Some(plan.content),
+            state: plan.layout.state,
+        };
+        if changed_state {
+            prior.state = f.root.join("other-state");
+        }
+        f.effective(true);
+        f.query("ActiveState", "inactive");
+        f.query("UnitFileState", "disabled");
+        f.query("InvocationID", "");
+        assert!(observe_activation(&candidate, &prior, false).is_err());
+        f.done();
+    }
+}

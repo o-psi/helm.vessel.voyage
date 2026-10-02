@@ -23,3 +23,18 @@ pub fn run(args: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("Remote updates require a managed Linux installation")
     }
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn local_legacy_review(
+    options: &crate::cli::Options,
+    report: &crate::install::Report,
+) -> anyhow::Result<Vec<String>> {
+    linux::local_legacy_review(options, report)
+}
+#[cfg(target_os = "linux")]
+pub(crate) fn local_legacy_bootstrap(
+    options: &crate::cli::Options,
+    report: &crate::install::Report,
+) -> anyhow::Result<bool> {
+    linux::local_legacy_bootstrap(options, report)
+}

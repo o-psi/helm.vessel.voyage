@@ -1425,6 +1425,15 @@ actual helper exit even if the updater dies. Guardian evidence follows the shipp
 strict boot/lock contract; an empty failed startup requires its explicit authored
 `startup_failed` cleanup proof, not an empty-database assumption.
 
+Current-installer normal install/upgrade and wizard planning now enter the same
+pinned local-owner legacy handover before ordinary binary/service publication.
+An inactive original and pending operation refuse before effects. Reconciliation
+also verifies current exact unit/state/enablement, authenticated state endpoint,
+actual process directory and actual account namespace before lifting quarantine;
+matching executable bytes alone are insufficient. Native normal `install.sh`
+bootstrap remains required, together with environment/unit changes and helper death
+at the proof/restore boundary.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its

@@ -612,6 +612,158 @@ fn cleanup_staging(record: &mut Record) -> Result<()> {
     record.bin_dir = None;
     Ok(())
 }
+fn local_legacy_context(
+    options: &cli::Options,
+    report: &install::Report,
+) -> Result<Option<(Manifest, service::Activation, PathBuf)>> {
+    if !report.changed
+        || !matches!(
+            options.action,
+            Some(cli::Action::Install | cli::Action::Upgrade)
+        )
+    {
+        return Ok(None);
+    }
+    let Some(current) = &report.current_release else {
+        return Ok(None);
+    };
+    let installed = installed_manifest(current)?;
+    if installed.version.trim_start_matches('v') != "1.0.2"
+        || installed.update_compatibility.is_some()
+    {
+        return Ok(None);
+    }
+    let candidate = Manifest::inspect(&options.bin_dir)?;
+    candidate
+        .update_compatibility
+        .as_ref()
+        .context("Legacy bootstrap requires current declared candidate formats")?
+        .validate()?;
+    let previous = installation_root()?.join("releases").join(current);
+    let activation = service::review_activation(&previous.join("bin"))?;
+    ensure!(
+        activation.active,
+        "Legacy bootstrap requires the managed original supervisor active; nothing installed"
+    );
+    service::catalogue(&previous.join("bin"), &activation.state)?;
+    let pid: u32 = systemctl(&[
+        "show",
+        "voyage-vessel.service",
+        "--property=MainPID",
+        "--value",
+    ])?
+    .trim()
+    .parse()?;
+    ensure!(
+        process_executable(pid)? == previous.join("bin/vessel"),
+        "Legacy original supervisor identity unavailable"
+    );
+    let accounts = crate::legacy::accounts_for_process(pid)?;
+    crate::legacy::eligible(&activation.state, &accounts, &installation_root()?)?;
+    Ok(Some((candidate, activation, accounts)))
+}
+
+pub(super) fn local_legacy_review(
+    options: &cli::Options,
+    report: &install::Report,
+) -> Result<Vec<String>> {
+    Ok(if local_legacy_context(options, report)?.is_some() {
+        vec![
+        "CURRENT installer legacy handover: require already quiescent ordinary voyages; no voyage cancellation".into(),
+        "Stop reviewed services, hold every owner lock, snapshot original catalogue, quarantine candidate until unchanged-state proof and service readiness".into(),
+        "On failure restore only the exact proved snapshot; changed/uncertain state remains fenced, never replayed".into(),
+    ]
+    } else {
+        vec![]
+    })
+}
+
+/// Existing public install.sh/current-installer action is the local owner approval.
+/// This never calls the shipped old Vessel UpdatePrepare/UpdateApply endpoints.
+pub(super) fn local_legacy_bootstrap(
+    options: &cli::Options,
+    report: &install::Report,
+) -> Result<bool> {
+    let Some((candidate, activation, accounts)) = local_legacy_context(options, report)? else {
+        return Ok(false);
+    };
+    let _coordinator = files::lock(&root()?.join("coordinator.lock"))?;
+    let _worker = files::lock(&root()?.join("worker.lock"))?;
+    for entry in fs::read_dir(root()?)? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            let pending: Record = serde_json::from_slice(&files::read(&path, 65536)?)?;
+            ensure!(
+                ![
+                    "preparing",
+                    "ready",
+                    "applying",
+                    "committing",
+                    "unconfirmed"
+                ]
+                .contains(&pending.phase.as_str()),
+                "An existing update operation requires observation/recovery before local bootstrap"
+            );
+        }
+    }
+    let operation = uuid::Uuid::new_v4().to_string();
+    let stage = home()?
+        .join(".cache/voyage/upgrades")
+        .join(format!("prepare-local-{operation}"));
+    files::private_directory(&stage)?;
+    candidate.stage(&options.bin_dir, &stage.join("candidate"))?;
+    let previous = report
+        .current_release
+        .clone()
+        .context("Legacy previous identity unavailable")?;
+    let mut record = Record {
+        operation_id: operation,
+        channel: "local-owner".into(),
+        phase: String::new(),
+        message: String::new(),
+        created_at: now(),
+        updated_at: now(),
+        current_release: previous.clone(),
+        release_id: Some(candidate.id()?),
+        version: Some(candidate.version.clone()),
+        description: Some("Verified current-installer local-owner legacy handover".into()),
+        bin_dir: Some(stage.join("candidate/bin")),
+        staging_root: Some(stage),
+        gateways: gateways()?,
+        contracts_sha256: Some([
+            format!("legacy-quiescent:{previous}"),
+            contract_id(&candidate)?,
+        ]),
+        supervisor_activation: Some(activation),
+        legacy_mode: true,
+        legacy_proof: None,
+        legacy_accounts: Some(accounts),
+    };
+    save(
+        &mut record,
+        "applying",
+        "Local owner approved current-installer legacy handover; old updater endpoints were not invoked",
+    )?;
+    let mut staged = options.clone();
+    staged.bin_dir = record.bin_dir.clone().unwrap();
+    staged.local_source = true;
+    if let Err(error) = apply_legacy(&mut record, &staged) {
+        save(
+            &mut record,
+            "unconfirmed",
+            &format!("Local legacy handover unconfirmed: {error}"),
+        )?;
+        return Err(error);
+    }
+    if options.start {
+        service::configure(&report.release_dir.join("bin"), true, false)?;
+    }
+    Ok(true)
+}
+
 fn stop_gateways(record: &Record) -> Result<()> {
     for gateway in &record.gateways {
         ensure!(
@@ -899,6 +1051,37 @@ fn reconcile(record: &mut Record) -> Result<()> {
             .supervisor_activation
             .as_ref()
             .context("Legacy activation unavailable")?;
+        let previous = installed == record.current_release;
+        service::observe_activation(&release.join("bin"), activation, previous)?;
+        let pid: u32 = systemctl(&[
+            "show",
+            "voyage-vessel.service",
+            "--property=MainPID",
+            "--value",
+        ])?
+        .trim()
+        .parse()?;
+        let proof = record
+            .legacy_proof
+            .as_ref()
+            .context("Pinned legacy source proof unavailable")?;
+        ensure!(
+            proof.state == activation.state
+                && record.legacy_accounts.as_ref() == Some(&proof.accounts)
+                && record.staging_root.as_ref() == Some(&proof.stage)
+                && crate::legacy::accounts_for_process(pid)? == proof.accounts,
+            "Running legacy source/account namespace changed"
+        );
+        let arguments = process_arguments(pid)?;
+        let args = arguments
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        ensure!(
+            args.windows(2).any(|pair| pair[0] == b"--directory"
+                && pair[1] == activation.state.as_os_str().as_encoded_bytes()),
+            "Running supervisor state directory differs from pinned legacy source"
+        );
         let quarantine = activation.state.join("update-quarantine.json");
         if quarantine.try_exists()? {
             if Some(installed.as_str()) == record.release_id.as_deref() {

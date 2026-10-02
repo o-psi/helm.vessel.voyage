@@ -99,6 +99,8 @@ fn run() -> Result<bool> {
     };
     let plan = flow::plan(&options)?;
     let mut description = flow::describe(&plan, &options);
+    #[cfg(target_os = "linux")]
+    description.extend(remote::local_legacy_review(&options, &plan)?);
     description.push(service::preview(
         &plan.release_dir.join("bin"),
         options.start,
@@ -124,6 +126,17 @@ fn run() -> Result<bool> {
             "Already current: {}. No binary release change is needed; checking service configuration.",
             plan.release
         );
+    }
+    #[cfg(target_os = "linux")]
+    if remote::local_legacy_bootstrap(&options, &plan)? {
+        println!(
+            "Current-installer quiescent legacy handover complete: {}",
+            plan.release
+        );
+        println!(
+            "Existing conversation/journal identity retained; the old remote updater was not called."
+        );
+        return Ok(false);
     }
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), options.start, false) {

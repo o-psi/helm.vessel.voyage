@@ -204,6 +204,30 @@ pub(super) fn start_quarantined(bin: &Path, prior: &super::Activation) -> Result
     Ok(())
 }
 
+pub(super) fn observe_activation(
+    bin: &Path,
+    prior: &super::Activation,
+    previous: bool,
+) -> Result<()> {
+    let observed = review_activation(bin)?;
+    let expected = if previous {
+        prior.definition.clone()
+    } else {
+        Some(unit::render(bin, &prior.state)?)
+    };
+    ensure!(
+        observed.active
+            && observed.state == prior.state
+            && observed.unit_file_state == prior.unit_file_state
+            && observed.definition == expected,
+        "Current supervisor unit/state/enablement does not match pinned activation"
+    );
+    let layout = unit::Layout::discover()?;
+    unit::check_effective(&layout)?;
+    readiness::catalogue(bin, &prior.state)?;
+    Ok(())
+}
+
 pub(super) fn preview(bin: &Path, start: bool) -> Result<String> {
     let plan = plan(bin, start)?;
     Ok(format!(
