@@ -243,15 +243,34 @@ impl ChildOwner {
 impl Drop for ChildOwner {
     fn drop(&mut self) {
         // Failure cancellation is best effort and is not called observed cleanup.
-        if let Some(mut child) = self.child.take()
-            && start(self.pid).as_ref() == Some(&self.ticks)
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        // /proc/exe disappears for an exited child. The owned Child can reap it
+        // without a signal; requiring a live executable witness first leaks a
+        // zombie on the failure path.
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => return,
+        }
+        let exact_live_owner = start(self.pid).as_ref() == Some(&self.ticks)
+            && fs::metadata(format!("/proc/{}", self.pid))
+                .is_ok_and(|metadata| metadata.uid() == unsafe { libc::geteuid() })
             && fs::read_link(format!("/proc/{}/exe", self.pid))
                 .ok()
                 .as_ref()
                 == Some(&self.image)
-        {
+            && fs::metadata(format!("/proc/{}/exe", self.pid))
+                .is_ok_and(|metadata| (metadata.dev(), metadata.ino()) == self.image_inode);
+        if exact_live_owner {
             let _ = child.kill();
             let _ = child.wait();
+        } else {
+            // It may have exited during identity inspection. Reap that exact
+            // owned child if available, while preserving refusal to signal an
+            // unverified live process.
+            let _ = child.try_wait();
         }
     }
 }

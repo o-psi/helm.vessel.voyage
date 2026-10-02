@@ -68,7 +68,11 @@ permitted only after the identity check; success requires reaping that child,
 absent `/proc` identity and refused connection to its former listener. Supervisor
 discovery must be removed; all owned peer request tasks are joined and their
 Unix sockets are removed/refuse reconnect. Cancellation in panic Drop is only
-best effort, never a passing cleanup observation.
+best effort, never a passing cleanup observation. Drop first tries to reap the
+exact owned child without signalling it, because an exited child's executable
+witness is absent. Only a still-live matching PID/start/UID/executable inode may
+be killed; an exit racing that identity check is rechecked for reaping without
+loosening the signal fence. Failure state/logs remain private and retained.
 
 Requests, response bodies, SSE buffers, peer counts, captured metadata and log
 files have explicit bounds. Each request/phase/process retirement has a finite
