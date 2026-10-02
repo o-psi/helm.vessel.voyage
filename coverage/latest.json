@@ -1,36 +1,36 @@
 {
-  "measured_at_utc": "2026-10-02T08:25:50.814855+00:00",
-  "source_commit": "b31514485e7a0a3edd1f9847d6e1506737d0a89a",
+  "measured_at_utc": "2026-10-02T09:28:56.232933+00:00",
+  "source_commit": "beb0e01be386ae896af74c2ea97f423b24974b13",
   "dirty": false,
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 2764,
+    "passed": 2804,
     "failed": 0,
     "ignored": 8
   },
   "totals": {
     "lines": {
-      "count": 134879,
-      "covered": 106157,
-      "percent": 78.70535813581061
+      "count": 134951,
+      "covered": 106617,
+      "percent": 79.00423116538595
     },
     "functions": {
-      "count": 12290,
-      "covered": 9611,
-      "percent": 78.20179007323027
+      "count": 12299,
+      "covered": 9648,
+      "percent": 78.44540206520855
     },
     "regions": {
-      "count": 223515,
-      "covered": 167631,
-      "notcovered": 55884,
-      "percent": 74.99765116435138
+      "count": 223625,
+      "covered": 168325,
+      "notcovered": 55300,
+      "percent": 75.27110117384014
     }
   },
-  "command": "systemd-run --user --wait --pipe -p UMask=0077 -p MemoryMax=10G -p MemorySwapMax=0 -p RuntimeMaxSec=2400s --working-directory=$PWD /usr/bin/env CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward /usr/bin/cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-native-local-final/html -j 1",
-  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-native-local-final/summary-default.json -v; llvm-profdata merge -sparse with 440 own profiles; audited explicit17-object export, original exclusions retained; exact arguments under ignored corrected-command.json",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$PWD/target LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata RUST_TEST_THREADS=2 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/v103-ui-gateway-ready/html -j1; executed once inside bounded systemd user unit voyage-v103-ui-gateway-ready (UMask0077, MemoryMax10G, MemorySwapMax0, RuntimeMaxSec2400), after formatting, strict Clippy and instrumented entrypoint builds",
+  "report_command": "cargo llvm-cov report --json --summary-only --output-path target/coverage-report/v103-ui-gateway-ready/summary-default.json -v; llvm-profdata merge -sparse with440 own profiles; audited explicit17-object summary/detail/HTML/LCOV exports with original exclusions; exact arguments retained under ignored corrected-command.json",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -40,16 +40,17 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Clean b315144 source: 2764 parent-workspace tests passed, zero failed, eight ignored across 14 Cargo targets; nested child summaries separately retained and excluded from totals.",
-    "All 542 prior/current workspace mappings and the retained standard-library mapping preserved. Exactly 17 distinct current objects comprise 14 test targets plus 3 instrumented real entrypoints. 440 own profiles merged; all 235 foreign profiles byte-identical; dependency/test-source exclusions unchanged.",
-    "Compared with c14fdbf: +74 covered lines, +73 measured lines, +0.012273 percentage points. 28722 aggregate gaps remain; 100% reachable-production objective is unmet.",
-    "Formatting and workspace all-target/all-feature strict Clippy passed. 15 Python and 15 Node source contracts passed separately; neither contributes to Rust coverage or establishes native/TLS execution.",
-    "Explicit Native local qualification uses existing private discovery and no-start, with validated physical Vessel/socket/process identity, exact completed actor-bound receipts, truthful same-private-owner reattachment and new fences/launcher. Existing public mode and Web TLS remain distinct; no credential copy, permission expansion or fabricated public metric.",
-    "Passive observers count successful native socket Text payload and selected native viewer application request/response bodies. Scope, missing/failed/inflight/cross-window data and actual interval alignment are explicit. No contents retained; unsupported/incomplete evidence cannot pass. These are qualified source contracts, not an actual browser measurement.",
-    "Passing full measurement 5m45.472s, 7.7GiB peak, zero swap, j1. Exact export 20.761s, 7GiB peak, zero swap; summary/detail/HTML agree and all 17 objects hash-archived. Default mixed-object report retained and rejected; prior owned raw profiles archived without deleting foreign profiles/caches.",
-    "Fresh archived map has 26551 unique zero addresses and 28722 aggregate gaps. Guard reconstructs all 543 files/12290 groups and every JSON/LCOV counter: difference2171 =95 instantiation maxima/union +2103 overlapping groups -27 file shadowing. No denominator/exclusion/reachability change. 26237 remaining production candidates still need exact behavioral/guard review.",
-    "Actual CT128/127 old-reader checks on the separately qualified936 fault cases passed full canonical/public history and each new observer exit/reaping. Original unconfirmed receipts/failed monitors unchanged. Actual fa66 archive and installed context fixtures verify4 binaries/123 browser assets; these claims are separate from coverage.",
-    "Native CT129/130/131 operator-change injections preserve their changes and full histories, original receipts unconfirmed/quarantine retained. CT129 transitioning service/live namespace readiness is unresolved; no successful rollback/readiness or never-ran claim. Actual deployed browser/TLS/sites/privacy/cost/cleanup and stable release remain pending.",
-    "Root/system/adoption, native macOS/Windows and Tax-Axis scopes parked for1.1 remain separate without denominator removal. Stable1.0.3 remains unpublished; target is unchanged until actual release acceptance."
+    "Clean beb0e01 source:2804 parent-workspace tests passed, zero failed, eight ignored across14 Cargo targets; nested child summary separately retained and excluded from totals. Formatting and workspace all-target/all-feature strict Clippy passed.",
+    "All542 prior/current workspace mappings and one retained standard-library mapping preserved. Exactly17 distinct current objects comprise14 test targets plus3 instrumented real entrypoints.440 own profiles merged; all235 foreign profiles byte-identical. Current summary/detail/HTML agree and17 objects hash-archived; default mixed report retained and rejected.",
+    "Compared with b315144:+460 covered lines,+72 measured lines,+0.298873 percentage points.28334 aggregate gaps remain;100% reachable-production objective is unmet. No denominator/exclusion/reachability change.",
+    "40 new parent journeys pass:13 transcript rendering/interaction,23 completion metadata/current-owner/private-modal/deadline cases,4 legacy gateway restoration parents with7 service-boundary scenarios. Canonical text, drafts, identities, actor/context fences and absence of unintended effects are asserted; line execution does not establish correctness alone.",
+    "Completion read-only Controls retains no wire incarnation pin; actual observed owner is checked against captured lookup owner before options are retained. Unique request/context fences reject late selection/model/account/run drift. Private modal and pending-decision form ownership suppress completion effects. Actual ready-transport15s request expiry is distinguished from the unchanged outer25s completion bound.",
+    "Legacy restoration independently attempts every unchanged reviewed gateway even when supervisor restoration fails; all errors preserve uncertainty and prevent quarantine clear. Existing pointer, held snapshot, quiescence, namespace and activation-context guards remain. Local service-boundary fixtures are not native multi-gateway fault proof.",
+    "Initial1f6d73f gate failed strict Clippy before tests; boxed completion context fixes layout without suppression. Subsequent4b6b744 measurement2801/3/8 failed only new completion fixture premises. Corrected source preserves literal decision/current-owner/privacy/no-effect assertions, actual modal notice and live heartbeat during late-reply rejection. Failed evidence is retained separately.",
+    "Passing measurement4m57.754s,4G peak, zero swap,j1. Exact export21.010s,7.5G peak; accounting6.020s,288.2M peak. Prior owned raw profiles archived; caches and foreign profiles preserved.",
+    "Line accounting reconstructs all543 files/12299 function groups and every JSON/LCOV counter:28334 aggregate gaps versus26187 unique zero addresses; difference2147=95 instantiation maxima/union+2079 overlapping groups-27 file shadowing. This is counting evidence, not reachability classification.",
+    "Unchanged NativeLocal/Python/Node qualification source retains the prior separately passing15Python/15Node contracts; no rerun or new native/TLS claim from this Rust cohort. Actual CT106 normal operation a8296aa1 completes installation of separately qualified6137f15 nightly:4 binaries/123 browser assets verified, services active/enabled and original uncertainty receipt unchanged. Actual paired browser/privacy/renewal/cost/cleanup remains pending.",
+    "Previously recorded CT128/127 old-reader and CT129/130/131 changed-context evidence remains separate. CT129 transitioning-service readiness/cleanup remains unknown. Source observation refresh-owner/stream-rotation/reducer-atomicity fixes are a subsequent isolated cohort, not included in this measurement.",
+    "Root/system/adoption, native macOS/Windows and Tax-Axis scopes parked for1.1 remain separate without denominator removal. Stable1.0.3 remains unpublished; target unchanged until actual release acceptance."
   ]
 }
