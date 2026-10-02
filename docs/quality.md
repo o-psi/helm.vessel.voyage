@@ -1434,6 +1434,13 @@ matching executable bytes alone are insufficient. Native normal `install.sh`
 bootstrap remains required, together with environment/unit changes and helper death
 at the proof/restore boundary.
 
+Final legacy local-plan regressions reject a changed valid candidate release ID
+before staging, record admission or quarantine. Immediate previous-service rollback
+and later reconciliation share the same authenticated unit/state/enablement and
+actual process/account namespace checks before clearing the fence. A changed XDG
+account root or process directory remains unconfirmed despite matching executable
+bytes; these checks do not replay or restore during observation.
+
 ### Legacy owner admission without new rights (#402)
 
 A frozen serialized v1.0.2 owner grant remains valid after upgrade only when its

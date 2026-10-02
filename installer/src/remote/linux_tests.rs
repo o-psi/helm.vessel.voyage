@@ -851,3 +851,88 @@ fn current_installer_normal_legacy_entry_refuses_inactive_original_before_public
     assert!(!root().unwrap().join("latest.json").exists());
     f.done();
 }
+
+#[test]
+fn changed_valid_local_candidate_cannot_replace_owner_reviewed_release_before_staging() {
+    let f = installation();
+    let mut r = record("preparing");
+    let installed = installed_release(&f, &mut r);
+    let path = installed.join("release.json");
+    let mut old: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    old.version = "1.0.2".into();
+    old.update_compatibility = None;
+    let old_id = old.id().unwrap();
+    let renamed = installed.parent().unwrap().join(&old_id);
+    fs::write(path, serde_json::to_vec(&old).unwrap()).unwrap();
+    fs::rename(installed, &renamed).unwrap();
+    fs::remove_file(installation_root().unwrap().join("current")).unwrap();
+    std::os::unix::fs::symlink(&renamed, installation_root().unwrap().join("current")).unwrap();
+    files::atomic_json(
+        &installation_root().unwrap().join("transaction.json"),
+        &serde_json::json!({"schema_version":1,"current":old_id,"previous":null,"pending":null}),
+    )
+    .unwrap();
+    let bin = candidate(&f, "1.0.3", "printf 1", "exit 0");
+    let options = cli::Options::parse(&[
+        "install".into(),
+        "--bin-dir".into(),
+        bin.to_string_lossy().into_owned(),
+    ])
+    .unwrap();
+    let report = flow::plan(&options).unwrap();
+    let path = bin.parent().unwrap().join("release.json");
+    let mut changed: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    changed.version = "1.0.4".into();
+    fs::write(path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert!(
+        local_legacy_bootstrap(&options, &report)
+            .unwrap_err()
+            .to_string()
+            .contains("owner-reviewed plan")
+    );
+    assert_eq!(current().unwrap(), old_id);
+    assert!(!root().unwrap().join("latest.json").exists());
+    f.done();
+}
+
+#[test]
+fn immediate_rollback_and_reconciliation_share_exact_account_and_process_directory_parity() {
+    let f = installation();
+    let mut r = record("applying");
+    let state = f.root.join("state");
+    let accounts = f.root.join("accounts");
+    r.supervisor_activation = Some(service::Activation {
+        active: true,
+        enabled: true,
+        unit_file_state: "enabled".into(),
+        definition: Some("pinned unit".into()),
+        state: state.clone(),
+    });
+    r.legacy_accounts = Some(accounts.clone());
+    let argv = format!("vessel\0local-serve\0--directory\0{}\0", state.display());
+    legacy_namespace_matches(&r, &state, &accounts, argv.as_bytes()).unwrap();
+    assert!(
+        legacy_namespace_matches(
+            &r,
+            &state,
+            &f.root.join("changed-XDG-data/helm"),
+            argv.as_bytes()
+        )
+        .is_err()
+    );
+    let changed = format!(
+        "vessel\0local-serve\0--directory\0{}\0",
+        f.root.join("changed-state").display()
+    );
+    assert!(legacy_namespace_matches(&r, &state, &accounts, changed.as_bytes()).is_err());
+    assert!(
+        legacy_namespace_matches(
+            &r,
+            &f.root.join("changed-state"),
+            &accounts,
+            argv.as_bytes()
+        )
+        .is_err()
+    );
+    f.done();
+}

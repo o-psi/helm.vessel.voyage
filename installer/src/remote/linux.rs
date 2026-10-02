@@ -634,6 +634,10 @@ fn local_legacy_context(
         return Ok(None);
     }
     let candidate = Manifest::inspect(&options.bin_dir)?;
+    ensure!(
+        candidate.id()? == report.release,
+        "Candidate release changed since the owner-reviewed plan; nothing staged or installed"
+    );
     candidate
         .update_compatibility
         .as_ref()
@@ -902,6 +906,7 @@ fn apply_legacy(record: &mut Record, options: &cli::Options) -> Result<()> {
             )?;
             rollback_gateways(record, &previous)?;
             verified_service("voyage-vessel.service", &previous)?;
+            verified_legacy_activation(record, &previous, true)?;
             crate::legacy::clear(&activation.state, &record.operation_id)?;
             Ok(())
         })();
@@ -1009,6 +1014,66 @@ fn apply_worker(record: &mut Record) -> Result<()> {
     Ok(())
 }
 
+fn legacy_namespace_matches(
+    record: &Record,
+    state: &std::path::Path,
+    accounts: &std::path::Path,
+    arguments: &[u8],
+) -> Result<()> {
+    let activation = record
+        .supervisor_activation
+        .as_ref()
+        .context("Legacy activation unavailable")?;
+    ensure!(
+        state == activation.state && record.legacy_accounts.as_deref() == Some(accounts),
+        "Running legacy source/account namespace changed"
+    );
+    if let Some(proof) = &record.legacy_proof {
+        ensure!(
+            proof.state == activation.state
+                && proof.accounts == accounts
+                && record.staging_root.as_ref() == Some(&proof.stage),
+            "Pinned legacy proof namespace changed"
+        );
+    }
+    let args = arguments
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    ensure!(
+        args.windows(2).any(
+            |pair| pair[0] == b"--directory" && pair[1] == state.as_os_str().as_encoded_bytes()
+        ),
+        "Running supervisor state directory differs from pinned legacy source"
+    );
+    Ok(())
+}
+fn verified_legacy_activation(
+    record: &Record,
+    release: &std::path::Path,
+    previous: bool,
+) -> Result<()> {
+    let activation = record
+        .supervisor_activation
+        .as_ref()
+        .context("Legacy activation unavailable")?;
+    service::observe_activation(&release.join("bin"), activation, previous)?;
+    let pid: u32 = systemctl(&[
+        "show",
+        "voyage-vessel.service",
+        "--property=MainPID",
+        "--value",
+    ])?
+    .trim()
+    .parse()?;
+    legacy_namespace_matches(
+        record,
+        &activation.state,
+        &crate::legacy::accounts_for_process(pid)?,
+        &process_arguments(pid)?,
+    )
+}
+
 fn reconcile(record: &mut Record) -> Result<()> {
     let _worker = files::lock(&root()?.join("worker.lock"))?;
     let _installation = install::operation_lock()?;
@@ -1051,16 +1116,7 @@ fn reconcile(record: &mut Record) -> Result<()> {
             .supervisor_activation
             .as_ref()
             .context("Legacy activation unavailable")?;
-        let previous = installed == record.current_release;
-        service::observe_activation(&release.join("bin"), activation, previous)?;
-        let pid: u32 = systemctl(&[
-            "show",
-            "voyage-vessel.service",
-            "--property=MainPID",
-            "--value",
-        ])?
-        .trim()
-        .parse()?;
+        verified_legacy_activation(record, &release, installed == record.current_release)?;
         let proof = record
             .legacy_proof
             .as_ref()
@@ -1068,19 +1124,8 @@ fn reconcile(record: &mut Record) -> Result<()> {
         ensure!(
             proof.state == activation.state
                 && record.legacy_accounts.as_ref() == Some(&proof.accounts)
-                && record.staging_root.as_ref() == Some(&proof.stage)
-                && crate::legacy::accounts_for_process(pid)? == proof.accounts,
-            "Running legacy source/account namespace changed"
-        );
-        let arguments = process_arguments(pid)?;
-        let args = arguments
-            .split(|byte| *byte == 0)
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        ensure!(
-            args.windows(2).any(|pair| pair[0] == b"--directory"
-                && pair[1] == activation.state.as_os_str().as_encoded_bytes()),
-            "Running supervisor state directory differs from pinned legacy source"
+                && record.staging_root.as_ref() == Some(&proof.stage),
+            "Pinned legacy proof namespace changed"
         );
         let quarantine = activation.state.join("update-quarantine.json");
         if quarantine.try_exists()? {
