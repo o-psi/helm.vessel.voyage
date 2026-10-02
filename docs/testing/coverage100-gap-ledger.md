@@ -11,10 +11,10 @@ not represented by this line percentage.
 
 ## Current audited baseline
 
-Clean source `993f730413791aa46e90e6bc716c03dfd730a170`, recorded in
-`coverage/latest.json`, passed **2,621 tests, zero failures, eight ignored**.
-It covers **103,588 / 134,095 lines (77.249711%)**, 9,414 / 12,222 functions
-and 163,232 / 222,071 regions. **30,507 line gaps remain**, including one
+Clean source `2072f0552e788c03f3727d411abbc67c097eadb0`, recorded in
+`coverage/latest.json`, passed **2,622 tests, zero failures, eight ignored**.
+It covers **103,647 / 134,185 lines (77.241868%)**, 9,420 / 12,231 functions
+and 163,337 / 222,250 regions. **30,538 line gaps remain**, including one
 known standard-library line. #353's full reachable-production objective is unmet.
 
 All **541 current workspace files and all 541 prior files** and the same known
@@ -23,15 +23,16 @@ integration entry points as 17 distinct current objects. Only 381 own profiles
 were merged; 235 foreign profiles remained byte-identical. The mixed default
 export is rejected. Exact corrected summary/detailed JSON/HTML agree in totals and
 source inventory; 17 current objects are archived with hash identity. Evidence
-remains under ignored `target/coverage-report/v103-observed-forward-final`.
+remains under ignored `target/coverage-report/v103-credential-forward-final`.
 
-Compared with the prior 4c28730 record: **158 more covered lines, 138 additional
-measured lines and +0.038367 percentage points**. The new forward-only format
-admission derives target formats from current compiled source, pins every observed
-schema/protocol and the executing installer hash, and preserves ordinary rollback
-refusal and strict held raw proof. Focused legacy14 and forward18 selections passed
-(they overlap); formatting and strict workspace all-target/all-feature Clippy passed.
-381 prior/focused own profiles and previous object/export evidence were preserved.
+Compared with the prior 993f730 record: **59 more covered lines, 90 additional
+measured lines and -0.007843 percentage points**. New gateway credential context
+and refusal guards remain measured. The credential-only review reuses the maintained
+supervisor allowlist, pins private file identity/hash and effective/live/recovery
+namespace, and preserves every credential/drop-in/unit byte. Focused forward19
+and maintained parser5 tests, formatting and strict workspace all-target/all-feature
+Clippy passed. Initial parser lint was corrected and ctime read fencing added before
+this measurement. 381 previous own profiles and all prior evidence were preserved.
 
 Native CT106 fresh prepare/apply remains required after a qualified new archive.
 No native Windows/macOS API, paid provider, Root/system, browser or 100% result is
@@ -47,20 +48,20 @@ cost and full release readiness retain their unfinished obligations. See
 
 Directory rows contain nested files; direct-file rows contain only files directly
 in that directory. These are measured gaps, not universal reachability or assertion
-classifications. Workspace source contributes **30,506 uncovered lines**; one
+classifications. Workspace source contributes **30,537 uncovered lines**; one
 retained standard-library gap remains. No production file was excluded.
 
 | Area | Uncovered lines | Measured lines |
 | --- | ---: | ---: |
 | `vessel/src/process/` | 8,536 | 19,111 |
-| `helm/src/process_client/` | 7,658 | 34,087 |
-| `voyage/src (direct files)` | 2,211 | 13,237 |
+| `helm/src/process_client/` | 7,655 | 34,087 |
+| `voyage/src (direct files)` | 2,226 | 13,237 |
 | `installer/src/system_install/` | 2,076 | 2,449 |
-| `installer/src/remote/` | 1,393 | 2,680 |
-| `voyage/src/tools/` | 1,191 | 7,865 |
-| `installer/src (direct files)` | 1,109 | 2,308 |
+| `installer/src/remote/` | 1,400 | 2,766 |
+| `voyage/src/tools/` | 1,190 | 7,865 |
+| `installer/src (direct files)` | 1,109 | 2,311 |
 | `voyage/src/attachment/` | 862 | 12,458 |
-| `voyage/src/server/` | 762 | 5,687 |
+| `voyage/src/server/` | 775 | 5,687 |
 | `helm/src (direct files)` | 520 | 3,096 |
 | `vessel/src (direct files)` | 654 | 1,556 |
 | `voyage/src/github/` | 521 | 3,177 |
