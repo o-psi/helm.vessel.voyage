@@ -1,5 +1,9 @@
 //! UTF-8 composer editing and prompt history, independent of the application.
 
+#[cfg(test)]
+#[path = "composer_editing_tests.rs"]
+mod editing_contract_tests;
+
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
