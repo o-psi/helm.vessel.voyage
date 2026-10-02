@@ -124,6 +124,13 @@ impl Drop for ExchangeGuard {
 }
 impl Worker {
     fn spawn(launch: &Launch, root: &std::path::Path) -> Result<Arc<Self>> {
+        Self::spawn_in(launch, root, std::path::Path::new("/tmp"))
+    }
+    fn spawn_in(
+        launch: &Launch,
+        root: &std::path::Path,
+        temporary_parent: &std::path::Path,
+    ) -> Result<Arc<Self>> {
         ensure!(
             launch.node.is_absolute()
                 && launch.worker.is_absolute()
@@ -134,17 +141,20 @@ impl Worker {
             launch.node.is_file() && launch.worker.is_file() && launch.chromium.is_file(),
             "browser distribution unavailable"
         );
-        // Chromium uses Unix sockets beneath TMPDIR; session journal paths can
-        // exceed sockaddr_un. Own a short private directory until observed cleanup.
-        let temporary = tempfile::Builder::new()
-            .prefix("vhb-")
-            .tempdir_in("/tmp")?
-            .keep();
         let guardian = launch.worker.with_file_name("guardian.py");
         ensure!(
             guardian.is_file(),
             "browser guardian distribution unavailable"
         );
+        // Refuse incomplete distributions before retaining a profile directory:
+        // no child exists yet to own its cleanup. Production uses literal /tmp;
+        // the private helper also permits an owned regression-fixture parent.
+        // Chromium uses Unix sockets beneath TMPDIR; session journal paths can
+        // exceed sockaddr_un. Own a short private directory until observed cleanup.
+        let temporary = tempfile::Builder::new()
+            .prefix("vhb-")
+            .tempdir_in(temporary_parent)?
+            .keep();
         let mut command = tokio::process::Command::new("/usr/bin/python3");
         command
             .arg(&guardian)
@@ -522,6 +532,24 @@ impl HostBrowser {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
+        #[cfg(target_os = "linux")]
+        let session_directory = {
+            ensure!(
+                self.directory.file_name() == Some(std::ffi::OsStr::new("journal")),
+                "browser journal/session layout unavailable"
+            );
+            let session_directory = self
+                .directory
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("browser session directory unavailable"))?;
+            ensure!(
+                session_directory
+                    .parent()
+                    .is_some_and(|parent| !parent.as_os_str().is_empty()),
+                "browser sessions catalogue unavailable"
+            );
+            session_directory
+        };
         // Only this exclusive Voyage owner may retire its own prior guardian
         // evidence before a new launch. A worker lock still refuses uncertain reuse.
         let marker = root.join("guardian-cleanup.json");
@@ -535,7 +563,7 @@ impl HostBrowser {
             {
                 crate::host_browser_capacity::Capacity::acquire_for_session(
                     &capacity_root,
-                    &self.directory,
+                    session_directory,
                     self.session,
                     crate::host_browser_capacity::admission_slots(),
                 )?
@@ -1553,3 +1581,11 @@ mod viewer_metadata_tests {
 #[cfg(all(test, unix))]
 #[path = "host_browser/worker_contract_tests.rs"]
 mod worker_contract_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "host_browser/cold_lifecycle_tests.rs"]
+mod cold_lifecycle_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "host_browser/owned_child_tests.rs"]
+pub(crate) mod owned_child_tests;

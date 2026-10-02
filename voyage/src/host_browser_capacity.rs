@@ -522,3 +522,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "host_browser/capacity_recovery_tests.rs"]
+mod recovery_tests;
