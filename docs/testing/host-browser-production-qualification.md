@@ -82,7 +82,7 @@ from those synthetic harnesses and the retired benchmark.
 The new entry point is:
 
 ```sh
-python3 voyage/tests/host_browser_production.py --config /private/operator-config.json
+python3 -I voyage/tests/host_browser_production.py --config /private/operator-config.json
 ```
 
 This source has not been executed. Source checks are Python AST parsing, Node
@@ -119,7 +119,7 @@ private directory; earlier evidence is not overwritten.
 | `fixture` | `{url,ready_selector,counter_selector,click_name,private:{url,ready_selector,input_label}}` for the approved owned HTTPS fixture. Standard counter is `/ui`, `h1`, `#count`, `Increment task counter`; private page is `/private`, `h1`, `Synthetic private input`. |
 | `site_classes` | `{url,ready_selector,asset_selector,asset_width,shadow_selector,shadow_text,css_color,frame_texts}`. Standard values: `/site-classes`, `#result`, `#authenticated-asset`, `40`, `#shadow`, `Open shadow content`, `rgb(17, 51, 85)`, `["Cross-origin child content","Nested child content"]`. |
 | `sites` | Three to six explicitly approved `{label,kind,url,ready_selector}` records, including `static`, `dynamic`, `frame-media`. URLs must be pinned canonical final HTTPS URLs, because navigation waits for authoritative URL/new document epoch and the replay marker. Add `{fallback_selector:".browser-next-visual",minimum_fallback_images:3}` to the owned `/media` case. At least one record per class must be an approved representative site if those claims are to be made; using only the owned fixture does not prove broader fidelity. |
-| `host_observer` | Mode/paths/hash pins below. Host fixtures and exact ordinary-account ledgers are prepared by the authorized host operator after observing actual PIDs; no permission changes or guessed process identities. |
+| `host_observer` | Mode/paths/hash/program pins below. Host fixtures and exact ordinary-account ledgers are prepared by the authorized host operator after observing actual PIDs; no permission changes or guessed process identities. |
 
 For **Playwright Web mode**, supply `storage_state` containing a legitimately
 provided, existing authorized Web login for this qualification. A fresh owned
@@ -143,13 +143,21 @@ the human browser's per-tab measurements, never presented as the same host.
 
 `host_observer` always specifies absolute `python`, `cost_script`, `probe_script`,
 `capacity`, `ledger_a`, `ledger_ab`, plus `cost_sha256` and `probe_sha256` pins.
-Both maintained helper hashes are verified before observation. `ledger_a` selects
-only fixture A's observed Voyage/browser tree; `ledger_ab` selects A and B. Add
+Both maintained helper hashes are verified before observation. For the selected
+CT106 `local` route, ledgers are now derived after native viewer/bootstrap and
+before the first window of **each** condition; `ledger_a`/`ledger_ab` are retained
+legacy external-ledger fields and are not used for local PID attribution. A
+pre-create Voyage PID may suspend/change and cannot qualify this route. Add
 gateway/supervisor leaf roots only when their exact identities and measurement
 scope are authorized. Distinct roots must not overlap.
 
 - `mode:"local"`: run the fixed helpers as the existing ordinary account on the
-  executing host. This is suitable for a CT106 job launched through the authorized
+  executing host. Supply `programs` with exactly `node`, `worker`, `guardian`,
+  `python` and `voyage`, each `{path,sha256}` for the installed qualified files.
+  Paths must be canonical absolute paths, not wrapper scripts/symlinks. The
+  ordinary launcher stamps its actual qualified Helm path/hash into private
+  `native_helm_program` and captures both TUI PID/start identities; these are
+  verified again by the initializer. This is suitable for a CT106 job launched through the authorized
   HomeProxmox chat; the driver performs no CT/service change itself.
 - `mode:"ssh"`: add `hostname`, `user`, `port`, `known_hosts` and optional
   `identity_file`. Fixed SSH uses batch mode, explicit strict host-key checking,
@@ -162,9 +170,9 @@ scope are authorized. Distinct roots must not overlap.
   record their actual timestamps; mismatched windows leave cost qualification
   incomplete rather than comparing different intervals.
 
-Both samplers use three 10-second windows per condition. The second browser has
-already been allocated by its TUI, but its viewer is not opened and its root is
-excluded in the first two fixture-A measurements. Each condition's exact scope
+Both samplers use three 10-second windows per condition. Both native TUI clients
+are connected, but fixture B's browser is opened only when its actual one-use
+viewer is loaded; its root is excluded from the first two fixture-A measurements. Each condition's exact scope
 is recorded. The common workload is the counter fixture; complex site/media
 actions are fidelity observations outside these windows, not a claim about their
 CPU cost. A no-viewer capture interval and any historical encoder comparison are
@@ -360,7 +368,7 @@ grant rewriting or loopback-discovery substitution for TLS.
 7. **Real site/operator/cost.** Approve only an owned temporary prefix on two
    existing certificate-valid HTTPS origins and pinned synthetic WebM. Start the
    bounded site separately. Prepare exact A/AB ledgers, helper hashes, private
-   config/mailbox. Run `python3 voyage/tests/host_browser_production.py --config
+   config/mailbox. Run `python3 -I voyage/tests/host_browser_production.py --config
    PRIVATE` as ordinary account with `web_mode:cua`, `host_observer.mode:local`,
    `client_ledger:automatic` and new `native_wire_evidence` path. Root alone owns
    two actual authenticated fixture tabs, CDP collection, normal reload/dock/
@@ -450,3 +458,76 @@ Use distinct output paths to preserve earlier measurements.
 These helpers and this plan are unexecuted source. They do not close #333 or
 replace the passing synthetic four-phase record. The qualified
 `host_browser.py`/`host_browser_viewer.mjs` have not been changed by this batch.
+
+
+### Current same-host ledger initialization
+
+The local driver invokes only the pinned `host_browser_production_probe.py ledger`
+after an actual native page reports its running browser binding, before arming a
+cost window. It supplies the one/two selected owned worker roots, current browser
+UUID/incarnation, both native TUI PID/start bootstraps and qualified program pins.
+The read-only initializer verifies ordinary current UID, live process states,
+exact executable inode/path/hash, worker and guardian argument shape, guardian
+parent as the qualified Voyage, private root/worker-lock inode identity, scratch,
+capacity slot and absence of any prior/in-progress cleanup marker. It refuses
+foreign/stopped/suspended/replaced/unknown identities; it never wakes a runtime,
+executes a command, changes permissions, signals a process or repairs a receipt.
+
+Each selected Voyage is a leaf root, and its browser guardian is a descendant
+root; the native client identities are excluded from those host roots. This
+retains Voyage CPU/RSS while avoiding double-counting the browser tree. New
+mode0600 `host-ledger-CONDITION-private.json` and matching proof files are written
+in the newly owned output directory. The Node caller checks the same native
+binding before/after preparation and uses that exact ledger for the three
+windows. The sampler still verifies current root PID/start and bounded descendants
+on every sample. All program/initialization hashing is outside measured windows;
+its overhead is not silently presented as browser CPU. Native TUI/renderer cost
+and coordinator overhead keep their distinct scope.
+
+This automatic initializer is for `mode:"local"`, where the native clients and
+Vessel browser share the CT106 PID namespace. SSH/mailbox retain the explicitly
+externally prepared-ledger boundary and do not gain the ability to interpret a
+client PID in a remote namespace. They are not the selected CT106 acceptance
+route. No static/fictional PID or missing metadata can substitute for the local
+initializer's observation. Python samplers/probe run with `-I`; the probe imports
+its one maintained sibling by fixed importlib path. The main launcher admits only
+its maintained sibling fixture directory after isolated Python startup.
+
+### Existing native credential input dependency
+
+An existing legitimate UID1000 private native credential must already authorize
+the same human principal as the saved Web connection over the approved public
+HTTPS endpoint. Helm's workspace credential parser accepts exactly seven fields:
+`schema_version` (1), `kind` (`workspace`), `endpoint`, `grant_id`, `principal_id`,
+`vessel_id`, `token`. This is distinct from the qualification config's `schema:1`.
+The production driver validates only its private file shape and delegates
+validation/decryption to normal Helm. Do not print or paste its contents.
+
+Keep an existing encrypted connection file at its legitimate original basename
+and credential-key purpose; the storage purpose binds `helm-connection:NAME`.
+If needed, provide only the existing supported `VOYAGE_CREDENTIAL_KEY_FILE` path
+locally to the launcher, never its contents. Do not copy PHP33's encrypted Web
+database credential into UID1000, extract a key through Root, export cookies,
+mint a replacement grant, or rewrite a local discovery credential's endpoint.
+`helm connect` has no endpoint override. Web Connections imports credentials;
+it has no credential export control. If an existing same-principal native public
+file/key is unavailable, retain this as an actual input/authorization dependency
+and ask only for its location. The disabled coordination form cannot create it.
+
+Create/name the two owned empty fixtures through the existing public path only
+after that input and original-owner admission are valid. CLI creation is
+`helm connect --access-file EXISTING --no-start new --id SESSION_UUID
+--command-id CREATE_UUID --workspace HOST_WORKSPACE --config-path PRIVATE_LAUNCH`.
+The option is `--config-path`, not `--config`. The private version1 LaunchConfig
+wrapper must retain the canonical workspace, reviewed config/explicit/selection/
+confirmation and host browser launch settings. If naming by CLI, first inspect
+its revision, then send the normal `request SESSION_UUID` JSON operation with
+`op:"rename"`, an issued command UUID, observed revision, bounded expiry and
+`name:"qualification-333-..."`; creation has no invented `--name` flag. Do not
+Submit, start a Goal, use a provider or change grants while preparing this pass.
+
+Prepared offline initializer contract cases are in
+`voyage/tests/host_browser_production_probe_tests.py` (run with `python3 -I -B`
+after the source-ready verification gate). They use mocked process metadata and
+private file fixtures; they establish no native/production behavior. No test,
+new browser journey or measurement has been run by this source batch.

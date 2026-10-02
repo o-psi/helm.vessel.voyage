@@ -17,6 +17,10 @@ import time
 import sys
 import uuid
 
+# With -I, admit only this maintained source directory for sibling fixtures.
+# No user-site/PYTHONPATH startup or caller-provided import directory is used.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from ui_journeys import launch, paste, screen, send, pty_helpers
 from host_browser import wait
 
@@ -72,6 +76,7 @@ def main():
     (opener/'xdg-open').write_text('#!/usr/bin/python3\nimport os,pathlib,sys\np=pathlib.Path(sys.argv[1]).resolve()\nassert p.is_relative_to(pathlib.Path(os.environ["HOME"]).parent) and p.name=="open.html"\npathlib.Path(os.environ["QUALIFICATION_LAUNCHER"]).write_text(str(p))\n')
     (opener/'xdg-open').chmod(0o700)
     env['PATH']=str(opener)+':'+env['PATH']
+    config['native_helm_program']={'path':str(helm.resolve()),'sha256':hashlib.sha256(helm.resolve().read_bytes()).hexdigest()}
     report={'schema':1,'status':'pending','cleanup':{},'helm_sha256':hashlib.sha256(helm.read_bytes()).hexdigest(),
             'source_sha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
                              ('host_browser_production.py','host_browser_production.mjs','host_browser_cost.py',
@@ -161,4 +166,6 @@ def main():
 
 
 if __name__=='__main__':
+    if not __debug__:
+        raise SystemExit('Qualification validation must be enabled.')
     main()

@@ -111,6 +111,12 @@ function validate(cfg,{launchers=true}={}){
  for(const key of ['python','cost_script','probe_script','capacity','ledger_a','ledger_ab'])assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(host[key]));
  for(const key of ['cost_sha256','probe_sha256'])assert.ok(/^[a-f0-9]{64}$/.test(host[key]));
  for(const s of cfg.sessions)assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(s.host_browser_root));
+ if(host.mode==='local'){
+  assert.ok(host.programs&&typeof host.programs==='object','qualified local program pins required');
+  assert.deepEqual(Object.keys(host.programs).sort(),['guardian','node','python','voyage','worker']);
+  for(const program of Object.values(host.programs)){assert.deepEqual(Object.keys(program).sort(),['path','sha256']);assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(program.path)&&/^[a-f0-9]{64}$/.test(program.sha256));}
+  if(launchers){assert.ok(cfg.native_helm_program);assert.ok(/^\/[A-Za-z0-9_.\/-]+$/.test(cfg.native_helm_program.path)&&/^[a-f0-9]{64}$/.test(cfg.native_helm_program.sha256));}
+ }
 }
 // The authorized host/CUA operator supplies results. A request is issued once,
 // paired with its exact private digest and deadline, and never automatically
@@ -221,6 +227,40 @@ async function pinHostHelpers(cfg){
   const reply=await sshCommand(cfg,['/usr/bin/sha256sum','--',script]);assert.equal(reply.slice(0,64),digest);
  }
 }
+// Same-host automatic ledger derivation happens after actual viewer/bootstrap,
+// before window timing. No guessed pre-create PID can qualify the local route.
+async function conditionLedger(cfg,condition,nativeItems,providedLedger){
+ const h=cfg.host_observer;
+ if(h.mode!=='local')return {path:providedLedger,proof:null,scope:'externally prepared host ledger; separate host PID namespace'};
+ const selected=condition==='ab_four_viewers'?nativeItems.slice(0,2):nativeItems.slice(0,1);
+ assert.equal(selected.length,condition==='ab_four_viewers'?2:1);
+ const shape=item=>{
+  const binding=item.state.status?.binding;assert.ok(item.state.status?.running&&binding);
+  assert.ok(uuid(item.session.id)&&uuid(binding.incarnation)&&uuid(binding.browser_id));
+  return {label:item.session.label,session_id:item.session.id,incarnation:binding.incarnation,browser_id:binding.browser_id,root:item.session.host_browser_root};
+ };
+ const sessions=selected.map(shape);
+ await nativeSnapshot(cfg); // Exact live TUI inode/PID/start/transport bootstrap.
+ const request={schema:1,capacity:h.capacity,sessions,clients:cfg.client_roots,
+  programs:{...h.programs,helm:cfg.native_helm_program}};
+ const proof=JSON.parse(await sshCommand(cfg,[h.python,'-I',h.probe_script,'ledger'],request,15000));
+ assert.equal(proof.schema,1);assert.equal(proof.scope,'selected current Voyage leaves and browser guardian descendants; excludes unrelated host services');
+ assert.ok(Number.isSafeInteger(proof.captured_at_ms)&&Date.now()-proof.captured_at_ms>=0&&Date.now()-proof.captured_at_ms<=1000);
+ assert.deepEqual(proof.clients,cfg.client_roots);
+ assert.equal(proof.bindings.length,sessions.length);assert.equal(proof.ledger.schema,1);assert.equal(proof.ledger.roots.length,sessions.length*2);
+ for(let i=0;i<sessions.length;i++){
+  for(const key of ['label','session_id','incarnation','browser_id'])assert.equal(proof.bindings[i][key],sessions[i][key]);
+  const [voyage,guardian]=proof.ledger.roots.slice(i*2,i*2+2);
+  assert.deepEqual(voyage,{label:'voyage-'+sessions[i].label,pid:proof.bindings[i].voyage.pid,start_ticks:proof.bindings[i].voyage.start_ticks,descendants:false});
+  assert.deepEqual(guardian,{label:'browser-'+sessions[i].label,pid:proof.bindings[i].guardian.pid,start_ticks:proof.bindings[i].guardian.start_ticks,descendants:true});
+ }
+ assert.deepEqual(selected.map(shape),sessions,'native owner/browser changed during ledger preparation');
+ const ledgerPath=path.join(cfg.output,'host-ledger-'+condition+'-private.json');
+ await save(ledgerPath,proof.ledger);
+ await save(path.join(cfg.output,'host-ledger-'+condition+'-proof-private.json'),proof);
+ return {path:ledgerPath,proof,scope:proof.scope};
+}
+
 const viewer=page=>page.locator('.host-browser-viewer');
 const mirror=page=>page.frameLocator('.browser-next-mirror iframe');
 async function ready(page){await until(async()=>!tracked.get(page)?.pending_effects&&
@@ -272,7 +312,7 @@ export async function runProductionQualification(context,cfg){
  const report={schema:1,status:'pending',source:'actual production routes; no adapter/mock socket',
   stages:[],matrix:[],native_windows:[],latencies:[],sites:[],cleanup:{},limitations:['Native viewer HTTP bytes are not native public WSS wire bytes.',
    'Renderer task duration is not whole-client OS CPU. RSS includes shared pages; PSS apportions them.',
-   'Fixture B browser is already allocated by its TUI while condition A scopes only fixture A.']};
+   'Both TUI clients are connected; fixture B browser is opened only for its own viewer condition.']};
  const pages=[],states=[],closeAttempts=new Set();let resources=null;
  const stage=value=>{report.stage=value;report.stages.push(value);};
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
@@ -289,7 +329,9 @@ export async function runProductionQualification(context,cfg){
   await until(()=>state.status?.running);assert.ok(await page.locator('.task-browser-content .host-browser-viewer').count()===1);
   assert.equal(new URL(page.url()).origin,new URL(cfg.console_origin).origin);return {page,state};}
  async function measure(condition,active,ledger){
-  stage('cost_'+condition);await sleep(2000);
+  stage('cost_'+condition);
+  const ledgerEvidence=await conditionLedger(cfg,condition,active.filter(item=>item.native).map(item=>({...item,session:cfg.sessions.find(s=>s.id===item.sessionId)})),ledger);ledger=ledgerEvidence.path;
+  await sleep(2000);
   for(let index=0;index<3;index++){
    const started=new Date().toISOString();await save(path.join(cfg.output,`window-${condition}-${index}.json`),{schema:1,condition,index,started});
    const nativeBefore=await nativeSnapshot(cfg);
@@ -297,16 +339,16 @@ export async function runProductionQualification(context,cfg){
    const costs=await Promise.all(active.map(({page,native})=>browserCost(context,page,{nativeOperationUrls:native?[new URL('/operation',page.url()).href]:[],maxMilliseconds:10000})));
    const trafficBefore=active.map(({state})=>({...state.traffic}));
    const trafficAfter=sleep(10000).then(()=>active.map(({state})=>({...state.traffic})));
-   const hostPromise=sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000);
+   const hostPromise=sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000);
    const localPromise=new Promise((resolve,reject)=>execFile(cfg.python||'/usr/bin/python3',[
-    path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
+    '-I',path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
     '--seconds','10','--interval','0.25','--output','-'],{timeout:20000,maxBuffer:256*1024},(error,stdout)=>error?reject(Error('owned client measurement failed')):resolve(stdout)));
    const [hostRaw,clientRaw,trafficEnd,nativeEnd]=await Promise.all([hostPromise,localPromise,trafficAfter,nativeAfter]);
    const measurements=await Promise.all(costs.map(cost=>cost.stop()));
    report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
    const host=JSON.parse(hostRaw),client=JSON.parse(clientRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
    assert.ok(host.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));assert.ok(client.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
-   report.matrix.push({condition,index,started,host,client,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
+   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
     viewers:measurements.map((value,i)=>({
     kind:active[i].native?'native':'deployed_react',renderer:value,
     actual_web_application_payload:active[i].native?null:Object.fromEntries(Object.keys(trafficBefore[i]).map(k=>[k,trafficEnd[i][k]-trafficBefore[i][k]]))}))});
@@ -314,18 +356,18 @@ export async function runProductionQualification(context,cfg){
  }
  try{
   stage('private_dependencies');await pinHostHelpers(cfg);
-  const nativeA=await newNative(cfg.sessions[0]);states.push(nativeA.state);nativeA.native=true;
+  const nativeA=await newNative(cfg.sessions[0]);states.push(nativeA.state);nativeA.native=true;nativeA.sessionId=cfg.sessions[0].id;
   stage('native_a_fixture');await navigate(nativeA.page,cfg.fixture.url,cfg.fixture.ready_selector);await count(nativeA.page,cfg.fixture.counter_selector,0);
   await measure('a_one_viewer',[nativeA],cfg.host_observer.ledger_a);
   const webA=await newWeb(cfg.sessions[0]);states.push(webA.state);await loaded(webA.page,cfg.fixture);
   assert.equal(webA.state.status.binding.browser_id,nativeA.state.status.binding.browser_id);
   await measure('a_two_viewers',[nativeA,webA],cfg.host_observer.ledger_a);
-  const nativeB=await newNative(cfg.sessions[1]);states.push(nativeB.state);nativeB.native=true;
+  const nativeB=await newNative(cfg.sessions[1]);states.push(nativeB.state);nativeB.native=true;nativeB.sessionId=cfg.sessions[1].id;
   await navigate(nativeB.page,cfg.fixture.url,cfg.fixture.ready_selector);await count(nativeB.page,cfg.fixture.counter_selector,0);
   const webB=await newWeb(cfg.sessions[1]);states.push(webB.state);await loaded(webB.page,cfg.fixture);
   assert.equal(webB.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
   assert.notEqual(nativeA.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
-  stage('pin_actual_host_resources');resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'before'],hostRequest()));
+  stage('pin_actual_host_resources');resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'before'],hostRequest()));
   await save(path.join(cfg.output,'owned-resources-private.json'),resources);
   await measure('ab_four_viewers',[nativeA,webA,nativeB,webB],cfg.host_observer.ledger_ab);
   stage('one_intent_visible_in_both_clients');await ready(nativeA.page);
@@ -371,7 +413,7 @@ export async function runProductionQualification(context,cfg){
   report.renewal={both_actual_react_connections_renewed:true,no_replayed_intents:states.every(s=>!s.duplicate_effect)};
   stage('explicit_owned_browser_cleanup');closeAttempts.add(0);await closeBrowser(webA.page);closeAttempts.add(1);await closeBrowser(nativeB.page);
   const request=hostRequest();request.proofs=resources.proofs;
-  const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'after'],request));
+  const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
   for(const s of states){assert.equal(s.overflow,false);assert.equal(s.unknown,0);assert.equal(s.refused,0);assert.equal(s.duplicate_effect,false);}
   report.native_wire=await saveNativeWire(cfg,report.native_windows);
@@ -406,11 +448,12 @@ export async function runCuaProductionQualification(context,cfg){
  const proof=async(operation,fields,keys)=>{const reply=await web(operation,fields);
   for(const key of keys)assert.equal(reply[key],true);return reply;};
  const localCost=()=>new Promise((resolve,reject)=>execFile(cfg.python||'/usr/bin/python3',[
-  path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
+  '-I',path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
   '--seconds','10','--interval','0.25','--output','-'],{timeout:20000,maxBuffer:256*1024},
   (error,stdout)=>error?reject(Error('owned client measurement failed')):resolve(JSON.parse(stdout))));
  async function measure(condition,pages,webLabels,ledger){
   stage('cost_'+condition);
+  const ledgerEvidence=await conditionLedger(cfg,condition,pages.map((item,i)=>({...item,session:cfg.sessions[i]})),ledger);ledger=ledgerEvidence.path;
   for(let index=0;index<3;index++){
    let scheduled=Date.now();
    if(webLabels.length){
@@ -428,7 +471,7 @@ export async function runCuaProductionQualification(context,cfg){
    const nativeAfter=sleep(10000).then(()=>nativeSnapshot(cfg));
    const nativeCosts=await Promise.all(pages.map(item=>browserCost(context,item.page,{nativeOperationUrls:[new URL('/operation',item.page.url()).href],maxMilliseconds:10000})));
    const [hostRaw,client,cua,nativeEnd]=await Promise.all([
-    sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000),
+    sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.cost_script,'--ledger',ledger,'--seconds','10','--interval','0.25','--output','-'],null,20000),
     localCost(),actualWeb,nativeAfter]);
    const host=JSON.parse(hostRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
    report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
@@ -446,7 +489,7 @@ export async function runCuaProductionQualification(context,cfg){
      nodes:v.nodes,node_delta:v.node_delta,metric_scope:v.metric_scope,sent_bytes:v.sent_bytes,received_bytes:v.received_bytes,scope:v.scope,
      window_aligned:Number.isFinite(v.captured_at_ms)&&Math.abs(v.captured_at_ms-Date.parse(started))<1000&&Math.abs(v.elapsed_ms-10000)<1000};
    });
-   report.matrix.push({condition,index,started,host,client,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
+   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
     cua_web:summaries,native:await Promise.all(nativeCosts.map(c=>c.stop()))});
   }
  }
@@ -471,7 +514,7 @@ export async function runCuaProductionQualification(context,cfg){
    url:new URL(`/voyages/${cfg.web_connection}/${cfg.sessions[1].id}`,cfg.console_origin).href,
    title:cfg.sessions[1].title,fixture_selector:cfg.fixture.ready_selector,counter_selector:cfg.fixture.counter_selector,counter:0},
    ['authenticated_existing_session','exact_selected_voyage','browser_dock_open','fixture_visible','counter_matches','other_web_tab_retained']);
-  resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'before'],hostRequest()));
+  resources=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'before'],hostRequest()));
   await save(path.join(cfg.output,'owned-resources-private.json'),resources);
   await measure('ab_four_viewers',native,cfg.sessions.map(s=>s.label),cfg.host_observer.ledger_ab);
   stage('native_intent_seen_by_cua_web');await ready(native[0].page);
@@ -521,7 +564,7 @@ export async function runCuaProductionQualification(context,cfg){
   stage('explicit_cua_browser_close');attempted.add(0);await proof('close_browser_once',{label:cfg.sessions[0].label},['close_dispatched_once','browser_stopped','outcome_confirmed']);
   attempted.add(1);await closeBrowser(native[1].page);
   const request=hostRequest();request.proofs=resources.proofs;
-  const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,cfg.host_observer.probe_script,'after'],request));
+  const cleanup=JSON.parse(await sshCommand(cfg,[cfg.host_observer.python,'-I',cfg.host_observer.probe_script,'after'],request));
   assert.equal(cleanup.sessions.length,2);assert.ok(cleanup.sessions.every(s=>s.complete));report.cleanup.host=cleanup;
   await proof('close_fixture_panels',{labels:cfg.sessions.map(s=>s.label)},['only_owned_fixture_tabs_closed','unrelated_tabs_retained']);
   report.native_wire=await saveNativeWire(cfg,report.native_windows);
