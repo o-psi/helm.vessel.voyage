@@ -236,6 +236,10 @@ impl Journey {
         }
     }
     async fn until(&mut self, predicate: impl Fn(&Self) -> bool) {
+        self.until_stage("bounded owned observation stage", predicate)
+            .await;
+    }
+    async fn until_stage(&mut self, stage: &'static str, predicate: impl Fn(&Self) -> bool) {
         tokio::time::timeout(WAIT,async {
             loop {
                 if predicate(self){break;}
@@ -247,7 +251,7 @@ impl Journey {
                     _=tokio::time::sleep(Duration::from_millis(10))=>{},
                 }
             }
-        }).await.expect("bounded owned observation stage");
+        }).await.expect(stage);
     }
     async fn boot(&mut self) {
         self.until(|j| !j.wire.subscriptions().is_empty()).await;
@@ -1293,7 +1297,10 @@ async fn owner_transition_event_retires_old_stream_and_never_relabels_new_owner_
 #[tokio::test]
 async fn event_and_snapshot_recovery_preserve_frozen_pending_receipt_identity_and_unsent_draft() {
     let mut j = Journey::new(1).await;
-    j.boot().await;
+    j.until_stage("pending receipt initial subscription", |j| {
+        !j.wire.subscriptions().is_empty()
+    })
+    .await;
     let p = j.wire.catalogue()[0].clone();
     let id = j.wire.subscriptions()[0].0;
     let command = uuid::Uuid::new_v4();
@@ -1307,7 +1314,7 @@ async fn event_and_snapshot_recovery_preserve_frozen_pending_receipt_identity_an
         receipt_only: true,
     });
     j.wire.event(id,&p,json!({"projection":"public-v2","events":[entry(p.session_id,11,"session",json!({"name":"Read-only metadata"}))]})).await;
-    j.until(|j| {
+    j.until_stage("pending receipt session event acknowledgement", |j| {
         j.app.views[&j.target]
             .snapshot
             .as_ref()
@@ -1316,17 +1323,26 @@ async fn event_and_snapshot_recovery_preserve_frozen_pending_receipt_identity_an
             == Some(11)
     })
     .await;
+    let applied = j.app.views[&j.target].snapshot.as_ref().unwrap();
+    assert_eq!(applied.revision, 18);
+    assert_eq!(applied.name.as_deref(), Some("Read-only metadata"));
     let pending = j.app.views[&j.target].pending.as_ref().unwrap();
     assert_eq!(pending.command_id, command);
     assert_eq!(pending.incarnation, p.incarnation);
     assert_eq!(pending.draft, "exact frozen pending text");
     assert!(pending.preserve_draft && pending.receipt_only);
+    // The accepted event advanced canonical revision to 18. A replay-gap full
+    // snapshot must retain that current revision/name; revision17 is stale and
+    // the production App correctly refuses it without installing its cursor.
+    let mut recovered = snapshot(p.session_id, 21);
+    recovered["revision"] = json!(18);
+    recovered["name"] = json!("Read-only metadata");
     j.wire
         .state
         .lock()
         .unwrap()
         .snapshots
-        .insert(p.session_id, snapshot(p.session_id, 21));
+        .insert(p.session_id, recovered);
     j.wire
         .event(
             id,
@@ -1334,15 +1350,21 @@ async fn event_and_snapshot_recovery_preserve_frozen_pending_receipt_identity_an
             json!({"projection":"public-v2","replay_gap":true,"events":[]}),
         )
         .await;
-    j.until(|j| {
-        j.app.views[&j.target]
-            .snapshot
-            .as_ref()
-            .unwrap()
-            .observation_cursor
-            == Some(21)
-    })
+    j.until_stage(
+        "pending receipt replay-gap current snapshot recovery",
+        |j| {
+            j.app.views[&j.target]
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .observation_cursor
+                == Some(21)
+        },
+    )
     .await;
+    let applied = j.app.views[&j.target].snapshot.as_ref().unwrap();
+    assert_eq!(applied.revision, 18);
+    assert_eq!(applied.name.as_deref(), Some("Read-only metadata"));
     let pending = j.app.views[&j.target].pending.as_ref().unwrap();
     assert_eq!(pending.command_id, command);
     assert_eq!(pending.incarnation, p.incarnation);

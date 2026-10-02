@@ -1,7 +1,8 @@
 # Ordinary Helm observation cohort (#353)
 
-Source preparation only. Eighteen new parents are uncompiled and unrun. This
-independent cohort starts from frozen `4b6b744`; it changes no parent target,
+Eighteen new parent scenarios. The first coordinated gate compiled/executed
+them; the receipt recovery fixture correction below remains uncompiled/unrun.
+This independent cohort starts from frozen `4b6b744`; it changes no parent target,
 profile, environment, credential or running release. The current gate and
 prepared transcript/completion/#401 work remain separate. The input b315144
 address map has 183 observer, 24 catalogue-watch, 75 reducer and 99 update
@@ -88,6 +89,23 @@ only fixture transport/task retirement, not Voyage/browser/native cleanup.
 Canonical histories, drafts, pending receipts and mutable-job absence are
 checked at their actual appropriate boundaries; catalogue projection shedding
 is not mislabelled deletion of authoritative conversation history.
+
+## First coordinated gate fixture correction
+
+The coordinator's frozen `95b6159` full measurement produced a Helm result of
+841 passed and one failed among 842 parents. The failure was the new frozen
+pending-receipt replay-gap stage; the workspace measurement was still running
+when this isolated correction was prepared, so no whole-workspace outcome is
+inferred here. Failed evidence remains in the coordinator's retained report.
+
+The scripted session event used revision 18, while the later cursor-21 full
+snapshot inherited the helper's default revision 17. App correctly refused that
+regressive canonical snapshot; its cursor could not install. The fixture now
+returns the current revision 18 and the same applied name, without changing the
+production guard, cursor-21 assertion, pending identity, draft, canonical history
+or wait deadline. All three waits in this parent have explicit fixed stage names
+so another failure identifies subscription, event ACK or gap recovery. This is a
+fixture correction, not an observed production observation defect.
 
 ## Pending delivery gate
 
