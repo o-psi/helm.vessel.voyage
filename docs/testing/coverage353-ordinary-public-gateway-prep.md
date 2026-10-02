@@ -91,8 +91,8 @@ coverage gate with the complete current-object audit. The maintained optional
 focused entrypoint is `cargo test -p vessel --locked --test ordinary_public_gateway_tests`;
 no separate focused run is claimed for this delivery. The actual instrumented
 Vessel CLI child and this new integration target are included in the audited
-current objects. Normal Main publication and hosted build follow-through remain
-pending at this checkpoint.
+current objects. Normal Main publication and exact hosted artifact verification
+subsequently passed, as recorded below.
 
 No production authority is broadened, no provider is contacted, and no native
 Root/adoption/macOS/Windows or #333 public-browser/TLS/cost acceptance is claimed.
@@ -120,10 +120,40 @@ maximum/union + 2,034 overlap − 27 shadowing. These are accounting categories,
 not a production reachability count or exclusions.
 
 The [compact coverage record](../../coverage/latest.json) belongs to this measured
-source. Full evidence remains ignored and retained by the coordinator. Publication
-and the actual hosted build/archive are pending at this checkpoint; no native
-installation of this newly measured source is claimed. Existing native acceptance
+source. Full evidence remains ignored and retained by the coordinator. Normal
+Main publication and actual hosted build/archive verification subsequently passed
+as recorded below; no native installation of this newly measured source is claimed. Existing native acceptance
 remains bound to its separately recorded qualified source, including `613`.
 The full measured denominator and 100% reachable-production objective stay
 unchanged; [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353) and
 [release #375](https://github.com/o-psi/helm.vessel.voyage/issues/375) remain open.
+
+## Published source and verified hosted artifact
+
+Normal Main publication **`c3f997f8ac1d1d1c821cb7a6a5b05f84f2ca795e`** was verified against
+remote Main with a clean local checkout. It contains the measured clean `1d49636`
+source and its compact coverage/documentation record. Actual
+[run 36999095928](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36999095928)
+terminated **SUCCESS**, performed a new Linux build rather than a skip, and
+identified this exact publication SHA in checkout/source logs, public release
+target and archive `BUILD.txt`. Version **`1.0.3-nightly.20261002.36999095928.1`**.
+The hosted workflow is build-only; the test and coverage evidence above is local.
+
+The public [development prerelease](https://github.com/o-psi/helm.vessel.voyage/releases/tag/nightly-1.0.3-nightly.20261002.36999095928.1)
+contains the [archive](https://github.com/o-psi/helm.vessel.voyage/releases/download/nightly-1.0.3-nightly.20261002.36999095928.1/voyage-1.0.3-nightly.20261002.36999095928.1-x86_64-unknown-linux-gnu.tar.gz)
+and [checksum](https://github.com/o-psi/helm.vessel.voyage/releases/download/nightly-1.0.3-nightly.20261002.36999095928.1/voyage-1.0.3-nightly.20261002.36999095928.1-x86_64-unknown-linux-gnu.tar.gz.sha256).
+Anonymous bounded download and independent verification both passed under 1 GiB
+with zero swap. The **45,663,905-byte** archive SHA-256 is
+**`e38f693c44e1f04984af7e71207e26c24e994bddd20aa7f347e3943a537b3626`**;
+the checksum text and GitHub archive asset digest agree. The checksum asset's
+GitHub digest also agrees with its bytes. Unique bounded relative member names,
+no links/path escape, exact four-binary and 123-browser-asset membership, and
+all manifest hashes passed, including worker and guardian. Manifest SHA-256 is
+`dce1814266a60a81a12e10563b6976471debf4c0086e61ed119560851b76bf0b`.
+
+Durable checkpoints: [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5951154544)
+and [#375](https://github.com/o-psi/helm.vessel.voyage/issues/375#issuecomment-5951154114).
+No native installation or upgrade of this artifact was performed or inferred.
+Existing native evidence remains bound to its separately recorded source.
+This is a development prerelease, not a stable release; #333, #353 and #375
+remain open, and the full 100% reachable-production goal remains unchanged.

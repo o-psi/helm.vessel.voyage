@@ -86,7 +86,8 @@ The newer observation and saved-owner/steering cohorts were independently
 source-reviewed after producer inner-Snapshot SID/cursor and full SQLite
 side-table oracle corrections. They remain **source-only/unrun** at this audit;
 no results are attributed to BEB. Their combined focused/strict/full current-object
-measurement/publication/build gate remains with the parent. This planning note
+measurement/publication/build gate was pending at that historical audit; the
+subsequent verified result is recorded below. This planning note
 implements no runtime, resumes no positive1.1 work and removes no hard lines.
 
 ## Subsequent coordinated execution checkpoint
@@ -98,7 +99,16 @@ subsequently passed formatting, strict Clippy and full workspace coverage:
 All 56 new observation, saved-owner/steering and public-gateway parents passed.
 The exact 18-current-object audit, source totals and accounting are recorded in
 [the observation result](coverage353-helm-observation-prep.md#verified-measurement-and-remaining-delivery).
-Publication and hosted artifact verification remain pending at this checkpoint.
+Normal Main `c3f997f8ac1d1d1c821cb7a6a5b05f84f2ca795e` was subsequently published and
+[run 36999095928](https://github.com/o-psi/helm.vessel.voyage/actions/runs/36999095928)
+terminated SUCCESS. Exact source/BUILD identity, public checksum/digest and
+safe four-binary/123-browser-asset archive verification passed; archive SHA-256
+`e38f693c44e1f04984af7e71207e26c24e994bddd20aa7f347e3943a537b3626`.
+[Full artifact record](coverage353-helm-observation-prep.md#published-source-and-verified-hosted-artifact),
+[#353 checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5951154544)
+and [#375 checkpoint](https://github.com/o-psi/helm.vessel.voyage/issues/375#issuecomment-5951154114)
+preserve the measured-versus-built source distinction and no-native-installation
+limit. #333, #353 and #375 remain open.
 No newer result is attributed to BEB; the 145 sampled spans and nineteen files
 remain a partial planning sample, not a complete reachable-production graph.
 All source, denominator, exclusions, native authority boundaries and the full
