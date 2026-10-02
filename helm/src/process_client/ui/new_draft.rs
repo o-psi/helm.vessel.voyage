@@ -758,3 +758,6 @@ impl App {
 
 #[cfg(test)]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+mod plain_launch_tests;
