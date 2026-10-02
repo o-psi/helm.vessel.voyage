@@ -1,9 +1,10 @@
 # Legacy gateway restoration and original #401 acceptance
 
-Source-only follow-up to the
+Verified local follow-up to the
 [recorded source defect](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5948674655).
-Four new Rust parents (seven service-boundary scenarios) are **uncompiled and
-unrun**. Rustfmt/diff/source checks do not establish execution. This is a
+Four new Rust parents (seven service-boundary scenarios) executed and passed
+at clean `beb0e01be386ae896af74c2ea97f423b24974b13`. Private manager/PID seams are not native
+systemd or full SQLite restoration proof. This is a
 required current-release repair, not a new native fault or broad feature.
 
 ## Narrow production correction
@@ -60,12 +61,13 @@ upstream SQLite/held-guard restoration itself. Existing held-pointer/legacy
 regressions and native startup qualification remain independent. Do not claim a
 new full transaction or native multi-gateway rollback from this fixture.
 
-Pending coordinated gate: `remote::linux::tests::legacy_services`, the existing
-`rollback_gateway_matrix` and legacy service/held-pointer families, then strict
-workspace checks and fresh full workspace coverage/current-object audit after
-all combined source edits. Commit the compact summary, publish normally and own
-the actual hosted artifact before declaring this repair delivered. Source and
-private failed/native records remain independently resumable.
+Clean measured source `beb0e01be386ae896af74c2ea97f423b24974b13` passed final formatting and strict workspace all-target/all-feature Clippy. The complete workspace coverage run passed **2,804 passed/0 failed/8 ignored** across14 Cargo targets. The corrected audit retains17 exact current objects, all542 workspace mappings plus the retained standard-library mapping, and235 preserved foreign profiles. Line coverage is 106617/134951 (79.004231%). This is execution evidence, not full100% reachable-production or native proof. See committed coverage/latest.json and the parent publication/build record.
+
+The four new service parents and existing rollback gateway/service/held-pointer
+families passed in that full run. Normal publication with the compact summary
+and actual hosted build/artifact qualification are still required before
+declaring this repair delivered. Source/private failed/native records remain
+independently resumable; no native operation was replayed.
 
 ## Independent original-acceptance audit
 
@@ -83,7 +85,7 @@ native records. It adds no host action or new test requirement.
 | Helper death at pre-proof boundary | Same record's CT127: exact owned helper/updater retired; old service/schema1/full histories and per-read cleanup qualified. Original proof is absent at that boundary; requiring a fabricated proof/restore marker would be incorrect. Original uncertain receipt remains. |
 | Local updater interruption/missing restore proof | [CT126](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5946815896): supported status strictly after unchanged deadline gives bounded unconfirmed outcome, old schema/pointer/quarantine retained, stopped service, no replay; original target retirement and history/lease observations are separate. This is not successful rollback or independent remote UpdateApply worker death. |
 | Independent namespace/unit/enablement change | [CT129–131](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5948285504): real exact pause/change/continue, original operator changes preserved, unconfirmed receipts, retained proof/backup/quarantine and exact raw histories; no successful reconciliation/rollback claimed. Installed four executables/123 assets verified. |
-| Original independent gateway restoration | **Current source gap above**. New exact regression plus source-final strict/full local coverage and actual hosted build are required before closure. Existing local gateway matrix is not a native gateway fault; CT106 forward recovery cannot be relabelled rollback. |
+| Original independent gateway restoration | **Source repair and local exact regression/strict/full coverage verified above**. Normal publication and actual hosted artifact qualification are the remaining delivery gate before closure. Existing local gateway matrix is not a native gateway fault; CT106 forward recovery cannot be relabelled rollback. |
 
 The changed-context negative cases are not required to become successful
 rollbacks. Neither original #401 nor the runbook requires converting original

@@ -1,6 +1,6 @@
 # Ordinary transcript interaction cohort (#353)
 
-SOURCE preparation at `fa66fd2`, using the exact measured-source `c14fdbf`
+Implemented and verified at `beb0e01be386ae896af74c2ea97f423b24974b13`, initially prepared at `fa66fd2` using the `c14fdbf`
 uncovered-address map. [The objective record](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5947849268)
 selects ordinary Helm transcript `layout.rs` (169 zero addresses), `activity.rs`
 (117) and `input.rs` (89). These **375 candidate addresses** are neither a proven
@@ -54,16 +54,17 @@ fixture; they do not independently attest runtime cleanup.
 
 ## Coordinated gate
 
-Source Rust formatting and diff checks are complete. Compilation/tests are
-**unexecuted**. The parent runs the focused family once all current source cohorts
-are final, in the existing private bounded instrumentation window:
+Clean measured source `beb0e01be386ae896af74c2ea97f423b24974b13` passed final formatting and strict workspace all-target/all-feature Clippy. The complete workspace coverage run passed **2,804 passed/0 failed/8 ignored** across14 Cargo targets. The corrected audit retains17 exact current objects, all542 workspace mappings plus the retained standard-library mapping, and235 preserved foreign profiles. Line coverage is 106617/134951 (79.004231%). This is execution evidence, not full100% reachable-production or native proof. See committed coverage/latest.json and the parent publication/build record.
+
+All13 new transcript parents executed and passed. The following optional focused
+command is a reproducer; its mixed summary is not a publication measurement:
 
 ```sh
 cargo llvm-cov --workspace --no-clean --json --summary-only --output-path target/verification-v103/transcript-focused-summary.json --locked -j1 -- transcript::ordinary_journey_tests
 ```
 
-The focused mixed summary is not published. Follow with required strict checks,
-independent full current workspace coverage/object/profile audit, compact summary
-publication/main integration and actual hosted build/artifact follow-through.
+The full local measurement/audit above is complete. Normal publication with the
+compact summary and actual hosted build/artifact follow-through remain the
+parent-owned delivery stage; update that outcome only after actual qualification.
 Keep prior failure evidence and foreign profiles. Source preparation or improving
 a percentage does not close #353 or any native/browser acceptance obligation.

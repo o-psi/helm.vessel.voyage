@@ -1,8 +1,8 @@
 # Ordinary completion metadata and input cohort (#353)
 
-Actual `4b6b744` execution compiled this **23-parent** cohort: twenty passed and
-three fixture premises failed. The three corrected cases are unrun; this is
-not a passing cohort or coverage record. The five existing
+All23 new metadata parents passed at clean `beb0e01be386ae896af74c2ea97f423b24974b13` after the
+retained failed `4b6b744` run (20 passed/3 failed within this family).
+The five existing
 completion parents remain and retain their identity, unsafe-token, draft and
 render assertions. The current c14 address map has 126 candidate zero addresses
 in this family; this cohort does not claim all 126 are covered or reachable.
@@ -80,7 +80,12 @@ absence. Owned fixture socket termination is observed after explicit disconnect;
 it establishes that transport's retirement, not a Voyage/browser/native cleanup
 claim. No additional binary, paid provider or human clipboard is introduced.
 
-## Coordinated pending gate
+## Verified local gate
+
+Clean measured source `beb0e01be386ae896af74c2ea97f423b24974b13` passed final formatting and strict workspace all-target/all-feature Clippy. The complete workspace coverage run passed **2,804 passed/0 failed/8 ignored** across14 Cargo targets. The corrected audit retains17 exact current objects, all542 workspace mappings plus the retained standard-library mapping, and235 preserved foreign profiles. Line coverage is 106617/134951 (79.004231%). This is execution evidence, not full100% reachable-production or native proof. See committed coverage/latest.json and the parent publication/build record.
+
+The actual ready-transport deadline and strict late original reply case passed;
+this still does not claim execution of the unchanged outer25s timeout branch.
 
 Actual failed `4b6b744` gate retained: full2801 passed/3 failed/8 ignored across
 fourteen Cargo targets; Helm821 passed/3 failed. Three fixture
@@ -91,7 +96,8 @@ late original reply is ignored on that still-owned socket; and the direct
 completion suggestion handler edits the exact draft while full App Tab retains
 the draft under existing pending-decision form ownership. Each decision-kind
 journey has a fresh App, so form focus is not manually erased to force insertion.
-Corrected tests remain unrun; failed logs and all assertions remain retained.
+All23 corrected parents now passed in the source-final full run; failed logs
+and all assertions remain retained.
 
 The first combined `1f6d73f` gate stopped at strict Clippy before tests/profile
 mutation: inline LookupContext made Update 1,336 bytes. The event now boxes that
@@ -99,11 +105,11 @@ context and the consumer moves its unchanged value into the same acceptance
 checks. No lint suppression, weakened fence or passing test claim is introduced.
 The original failed diagnostic remains retained; corrected strict compilation
 passed at4b6b744. Its three runtime fixture failures remain as described above;
-source-final corrected execution and coverage are still pending.
+source-final corrected execution and audited full coverage passed as recorded above.
 
-After parent review and integration with the disjoint transcript cohort, use the
-sole bounded shared-target Cargo window. Focus all existing and new completion
-parents with `process_client::ui::completion::`; the new namespace alone is
+The combined completion/transcript/service cohort was measured in the sole
+bounded shared-target window. Optional focused reproduction selects existing
+and new parents with `process_client::ui::completion::`; the new namespace is
 `process_client::ui::completion::metadata_journey_tests`. Example using the
 current installed coverage command (focused summary is mixed/unpublished):
 
@@ -113,12 +119,13 @@ cargo llvm-cov --workspace --locked --no-clean --json --summary-only \
   -- process_client::ui::completion::
 ```
 
-Then source-final formatting, strict workspace Clippy and fresh full workspace
-coverage/current-object audit/compact history record are required. Normal Main
-publication and actual hosted build follow-through remain parent-owned. Keep
+Source-final formatting, strict Clippy and full current-object coverage audit
+passed above. Normal Main publication, compact history and actual hosted build
+follow-through remain parent-owned. Keep
 failed focused/full logs and do not loosen assertions to obtain a pass.
 See [quality](../quality.md) and
 [the address accounting distinction](coverage353-production-address-map.md).
 The exact function-group reconciliation is a separate prepared cohort recorded
 in [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353#issuecomment-5948146380)
-and awaits parent integration.
+and is now integrated with the maintained accounting guard; refresh its exact
+address/function-group evidence after each new measurement.
