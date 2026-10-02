@@ -546,7 +546,7 @@ async fn journey(mode: &str) {
         if temporary {
             let process = inspect(&client, process.session_id).await;
             assert_eq!(process.state, ProcessState::Stopped);
-            let deletion = process.deletion.unwrap();
+            let deletion = process.deletion.as_ref().unwrap();
             assert_eq!(deletion["deleted"], true);
             assert_eq!(deletion["status"], "applied");
             assert_eq!(deletion["cleanup"], "observed");
