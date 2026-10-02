@@ -213,3 +213,7 @@ async fn confirm(context: &ToolContext, value: &Value) -> Result<()> {
     decision.require_approved()?;
     current(context, true)
 }
+
+#[cfg(test)]
+#[path = "admin_family_tests.rs"]
+mod family_tests;
