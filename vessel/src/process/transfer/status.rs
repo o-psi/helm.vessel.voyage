@@ -19,14 +19,10 @@ pub(super) fn artifact_bytes(root: &Path, id: Uuid, manifest: &TransferManifest)
         leaf.is_file() && !leaf.file_type().is_symlink(),
         "unsafe transfer artifact leaf"
     );
-    let mut file = match std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
-        .open(&path)
-    {
-        Ok(file) => file,
-        Err(error) => return Err(error.into()),
-    };
+        .open(&path)?;
     let before = file.metadata()?;
     ensure!(
         before.is_file()
