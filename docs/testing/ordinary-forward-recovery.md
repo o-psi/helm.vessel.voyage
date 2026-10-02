@@ -21,7 +21,7 @@ actual managed v1.0.2 identity and whose reviewed candidate is the exact running
 release. Both complete installed archives are verified. The current supervisor
 must expose an authenticated ready endpoint, exact owned unit, directory, actual
 kernel executable and account namespace. The one explicit ordinary gateway must
-be the same running release, exact owned fragment with no drop-ins, unchanged
+be the same running release, exact owned fragment with no behavior overrides, unchanged
 enablement, canonical approved HTTPS origin and literal loopback bind. Recovery
 supports only the temporary immutable gateway command (quoted or plain executable,
 optional systemd `:` prefix), with either the known positional origin at the end
@@ -155,3 +155,25 @@ This is prepared source, not a successful native recovery. The refusal from oper
 editing its files. After focused/strict/full source qualification and an actual new
 hosted artifact, use a new distinct owner review from current facts, preserving the
 original uncertain operation and all prior private evidence.
+
+## Existing credential-only gateway override
+
+Actual fresh prepare `51f287d7-01c7-439d-a45e-02f1d6c951af` refused the existing
+credential drop-in before returning a review hash; no apply occurred. Do not
+remove or rewrite that private credential configuration to make recovery pass.
+
+The prepared fix accepts zero overrides or one private owned regular credential
+file in the exact gateway unit's drop-in directory. It reuses the maintained
+supervisor allowlist: a single `[Service]` section and a single literal
+`VOYAGE_CREDENTIAL_KEY_FILE` environment assignment with a normalized absolute path.
+No service behavior directive, environment-file expansion, additional assignment,
+multiple override, symlink, hardlink, unowned or nonprivate file is admitted.
+The review pins path, device/inode, owner/mode, bytes hash and effective environment;
+live gateway and recovery installer credential paths must match that assignment.
+Apply and poststart observation require the same pinned override and context.
+Replacing a file with identical bytes changes its inode and refuses the review.
+The credential bytes are never read, copied or published by this admission.
+Existing unit, drop-in, permissions and credentials are preserved through repair.
+
+This source still requires focused/strict/full measurement, a new hosted archive
+and a new distinct native prepare/apply. The failed operation remains preserved.

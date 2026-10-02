@@ -27,6 +27,10 @@ fn review(f: &Fixture) -> Review {
         gateway_original: "old".into(),
         gateway_repaired: "new".into(),
         gateway_effective: "effective".into(),
+        gateway_credentials: GatewayCredentials {
+            effective_environment: String::new(),
+            drop_in: None,
+        },
         gateway_enablement: "disabled".into(),
         public_origin: "https://helm.invalid".into(),
     }
@@ -397,4 +401,84 @@ fn declared_source_forward_recovery_retains_ordinary_rollback_guard_without_fall
         .formats
         .insert("catalogue_read".into(), vec![1]);
     assert!(forward_formats(&source, &target, &evidence, &executing).is_err());
+}
+
+#[test]
+fn gateway_credential_dropin_is_exact_private_owned_and_context_pinned() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let unit = f.root.join("gateway.service");
+    let directory = f.root.join("gateway.service.d");
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("credentials.conf");
+    let content = "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\n";
+    fs::write(&path, content).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    let paths = path.to_str().unwrap();
+    let env = "VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key";
+    let live = b"HOME=/private\0VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\0";
+    let key = Some(std::ffi::OsStr::new("/run/owned/key"));
+    let pinned = reviewed_gateway_credentials(paths, &unit, env, live, key).unwrap();
+    assert_eq!(
+        pinned,
+        reviewed_gateway_credentials(paths, &unit, env, live, key).unwrap()
+    );
+    assert_eq!(pinned.drop_in.as_ref().unwrap().key_path, "/run/owned/key");
+    assert!(
+        reviewed_gateway_credentials(&format!("{paths} {paths}"), &unit, env, live, key).is_err()
+    );
+    assert!(
+        reviewed_gateway_credentials(paths, &unit, "VOYAGE_CREDENTIAL_KEY_FILE=/other", live, key)
+            .is_err()
+    );
+    assert!(
+        reviewed_gateway_credentials(
+            paths,
+            &unit,
+            env,
+            b"VOYAGE_CREDENTIAL_KEY_FILE=/other\0",
+            key
+        )
+        .is_err()
+    );
+    assert!(reviewed_gateway_credentials(paths, &unit, env, live, None).is_err());
+    assert!(reviewed_gateway_credentials(paths,&unit,env,b"VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\0VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\0",key).is_err());
+    for bad in [
+        "[Service]\nExecStart=/arbitrary\n",
+        "[Service]\nEnvironment=OTHER=secret\n",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\nRestart=always\n",
+        "[Service]\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/run/owned/key\nEnvironment=VOYAGE_CREDENTIAL_KEY_FILE=/other\n",
+    ] {
+        fs::write(&path, bad).unwrap();
+        assert!(reviewed_gateway_credentials(paths, &unit, env, live, key).is_err());
+    }
+    fs::write(&path, content).unwrap();
+    let before = credential_drop_in(&path, &unit).unwrap();
+    assert!(
+        credential_drop_in_for_owner(&path, &unit, unsafe { libc::geteuid() } + 1).is_err(),
+        "unowned override cannot be reviewed"
+    );
+    fs::rename(&path, directory.join("retained.conf")).unwrap();
+    fs::write(&path, content).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_ne!(
+        before,
+        credential_drop_in(&path, &unit).unwrap(),
+        "replacement inode cannot reuse approval"
+    );
+    fs::write(&path, content.replace("/run/owned/key", "/run/owned/new")).unwrap();
+    assert_ne!(
+        pinned.drop_in.unwrap(),
+        credential_drop_in(&path, &unit).unwrap(),
+        "changed bytes and namespace cannot reuse approval"
+    );
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(credential_drop_in(&path, &unit).is_err());
+    fs::remove_file(&path).unwrap();
+    std::os::unix::fs::symlink(directory.join("retained.conf"), &path).unwrap();
+    assert!(credential_drop_in(&path, &unit).is_err());
+    fs::remove_file(&path).unwrap();
+    fs::hard_link(directory.join("retained.conf"), &path).unwrap();
+    assert!(credential_drop_in(&path, &unit).is_err());
+    assert!(credential_drop_in(&path, &f.root.join("other.service")).is_err());
 }

@@ -94,3 +94,8 @@ pub(crate) fn observe_activation(
 ) -> Result<()> {
     systemd::observe_activation(bin, prior, previous)
 }
+
+#[cfg(target_os = "linux")]
+pub(crate) fn credential_key_path(content: &str) -> Option<&str> {
+    unit::credential_key_path(content)
+}

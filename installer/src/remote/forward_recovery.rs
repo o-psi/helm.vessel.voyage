@@ -26,6 +26,7 @@ struct Review {
     gateway_original: String,
     gateway_repaired: String,
     gateway_effective: String,
+    gateway_credentials: GatewayCredentials,
     gateway_enablement: String,
     public_origin: String,
 }
@@ -385,6 +386,131 @@ fn only_reviewed_services(running: &Path, gateway: &str) -> Result<()> {
     }
     Ok(())
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct CredentialDropIn {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    uid: u32,
+    mode: u32,
+    sha256: String,
+    key_path: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct GatewayCredentials {
+    effective_environment: String,
+    drop_in: Option<CredentialDropIn>,
+}
+fn credential_drop_in(path: &Path, gateway_path: &Path) -> Result<CredentialDropIn> {
+    credential_drop_in_for_owner(path, gateway_path, unsafe { libc::geteuid() })
+}
+fn credential_drop_in_for_owner(
+    path: &Path,
+    gateway_path: &Path,
+    owner: u32,
+) -> Result<CredentialDropIn> {
+    ensure!(
+        path.parent() == Some(Path::new(&format!("{}.d", gateway_path.display()))),
+        "Gateway credential override must be in its exact owned unit directory"
+    );
+    files::safe(path)?;
+    let before = fs::symlink_metadata(path)?;
+    ensure!(
+        before.is_file()
+            && before.uid() == owner
+            && before.nlink() == 1
+            && before.mode() & 0o777 == 0o600,
+        "Gateway credential override must be private owned regular file"
+    );
+    let bytes = files::read(path, 4096)?;
+    let content = std::str::from_utf8(&bytes)?;
+    let key_path = service::credential_key_path(content).context("Unsupported gateway override; only maintained credential key-file environment is admitted")?.to_owned();
+    let after = fs::symlink_metadata(path)?;
+    ensure!(
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.uid() == after.uid()
+            && before.mode() == after.mode()
+            && before.nlink() == after.nlink()
+            && before.len() == after.len()
+            && before.mtime() == after.mtime()
+            && before.mtime_nsec() == after.mtime_nsec(),
+        "Gateway credential override changed while reading"
+    );
+    Ok(CredentialDropIn {
+        path: path.into(),
+        device: before.dev(),
+        inode: before.ino(),
+        uid: before.uid(),
+        mode: before.mode(),
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+        key_path,
+    })
+}
+fn reviewed_gateway_credentials(
+    paths: &str,
+    gateway_path: &Path,
+    effective_environment: &str,
+    live_environment: &[u8],
+    recovery_key: Option<&std::ffi::OsStr>,
+) -> Result<GatewayCredentials> {
+    ensure!(
+        paths.len() <= 4096
+            && effective_environment.len() <= 8192
+            && live_environment.len() <= 1024 * 1024,
+        "Gateway credential context exceeds bound"
+    );
+    let paths = paths.split_whitespace().collect::<Vec<_>>();
+    ensure!(
+        paths.len() <= 1,
+        "Multiple gateway overrides require separate explicit support"
+    );
+    let drop_in = paths
+        .first()
+        .map(|path| credential_drop_in(Path::new(path), gateway_path))
+        .transpose()?;
+    if let Some(pin) = &drop_in {
+        ensure!(
+            effective_environment == format!("VOYAGE_CREDENTIAL_KEY_FILE={}", pin.key_path),
+            "Effective gateway credential environment differs from owned override"
+        );
+        let keys = live_environment
+            .split(|b| *b == 0)
+            .filter_map(|entry| entry.strip_prefix(b"VOYAGE_CREDENTIAL_KEY_FILE="))
+            .collect::<Vec<_>>();
+        ensure!(
+            keys.len() == 1 && keys[0] == pin.key_path.as_bytes(),
+            "Live gateway credential namespace differs from owned override"
+        );
+        ensure!(
+            recovery_key == Some(std::ffi::OsStr::new(&pin.key_path)),
+            "Recovery credential namespace differs from gateway"
+        );
+    }
+    Ok(GatewayCredentials {
+        effective_environment: effective_environment.into(),
+        drop_in,
+    })
+}
+fn gateway_credentials(unit: &str, path: &Path, pid: u32) -> Result<GatewayCredentials> {
+    let paths = systemctl(&["show", unit, "--property=DropInPaths", "--value"])?;
+    let environment = systemctl(&["show", unit, "--property=Environment", "--value"])?;
+    #[cfg(not(test))]
+    let live_environment =
+        files::read(&PathBuf::from(format!("/proc/{pid}/environ")), 1024 * 1024)?;
+    #[cfg(test)]
+    let live_environment = files::read(&home()?.join(format!("pid-{pid}-environ")), 1024 * 1024)?;
+    reviewed_gateway_credentials(
+        paths.trim(),
+        path,
+        environment.trim(),
+        &live_environment,
+        std::env::var_os("VOYAGE_CREDENTIAL_KEY_FILE").as_deref(),
+    )
+}
+
 fn gateway_check(review: &Review, running: &Path, repaired: bool) -> Result<()> {
     let expected = if repaired {
         &review.gateway_repaired
@@ -394,17 +520,6 @@ fn gateway_check(review: &Review, running: &Path, repaired: bool) -> Result<()> 
     ensure!(
         String::from_utf8(files::read(&review.gateway_path, 16384)?)? == *expected,
         "Gateway unit changed independently"
-    );
-    ensure!(
-        systemctl(&[
-            "show",
-            &review.gateway_unit,
-            "--property=DropInPaths",
-            "--value"
-        ])?
-        .trim()
-        .is_empty(),
-        "Gateway overrides appeared"
     );
     ensure!(
         systemctl(&[
@@ -438,6 +553,11 @@ fn gateway_check(review: &Review, running: &Path, repaired: bool) -> Result<()> 
     .trim()
     .parse()?;
     owned_process(pid)?;
+    ensure!(
+        gateway_credentials(&review.gateway_unit, &review.gateway_path, pid)?
+            == review.gateway_credentials,
+        "Gateway credential configuration changed since review"
+    );
     let args = process_arguments(pid)?;
     gateway_arguments(&args, &review.activation.state, &review.public_origin)?;
     if repaired {
@@ -708,10 +828,11 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
         accounts,
         source_evidence,
         gateway_unit: gateway_unit.clone(),
-        gateway_path,
+        gateway_path: gateway_path.clone(),
         gateway_original,
         gateway_repaired,
         gateway_effective: unit_definition(&gateway_unit)?,
+        gateway_credentials: gateway_credentials(&gateway_unit, &gateway_path, gateway_pid)?,
         gateway_enablement: systemctl(&[
             "show",
             &gateway_unit,

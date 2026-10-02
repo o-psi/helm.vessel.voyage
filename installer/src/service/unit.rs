@@ -192,8 +192,11 @@ pub(super) fn check_effective(layout: &Layout) -> Result<()> {
 // Preserve this exact narrow form; never allow PATH, loaders, Exec*, stop or kill
 // directives through the installer compatibility exception.
 fn credential_environment(content: &str) -> bool {
+    credential_key_path(content).is_some()
+}
+pub(super) fn credential_key_path(content: &str) -> Option<&str> {
     let mut section = false;
-    let mut environment = false;
+    let mut environment = None;
     for line in content
         .lines()
         .map(str::trim)
@@ -204,28 +207,28 @@ fn credential_environment(content: &str) -> bool {
             continue;
         }
         let Some(value) = line.strip_prefix("Environment=") else {
-            return false;
+            return None;
         };
         let value = value
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
             .unwrap_or(value);
         let Some(path) = value.strip_prefix("VOYAGE_CREDENTIAL_KEY_FILE=") else {
-            return false;
+            return None;
         };
         if !section
-            || environment
+            || environment.is_some()
             || !path.starts_with('/')
             || path.split('/').any(|part| matches!(part, "." | ".."))
             || !path
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || b"/_-.".contains(&c))
         {
-            return false;
+            return None;
         }
-        environment = true;
+        environment = Some(path);
     }
-    section && environment
+    if section { environment } else { None }
 }
 
 #[cfg(test)]

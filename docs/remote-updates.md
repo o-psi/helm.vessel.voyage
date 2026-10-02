@@ -344,3 +344,8 @@ It records observed formats, pins the executing current installer/target contrac
 and retains strict held raw proof. This does not supply absent old rollback readers,
 modify historical manifests, migrate journals, restore data or broaden ordinary
 update/rollback admission. Current native qualification remains a separate gate.
+
+Forward recovery's gateway review preserves an existing credential-only drop-in
+using the maintained supervisor environment allowlist. It pins its owned private
+file identity/hash and exact effective/live/recovery credential namespace; unknown
+or changed overrides refuse. See the [qualification boundary](testing/ordinary-forward-recovery.md#existing-credential-only-gateway-override).
