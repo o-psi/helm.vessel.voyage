@@ -457,10 +457,7 @@ async fn owned_ordinary_public_grant_and_socket_lifecycle() {
                                 error.kind(),
                                 std::io::ErrorKind::ConnectionReset
                                     | std::io::ErrorKind::BrokenPipe
-                            ) =>
-                        {
-                            ()
-                        }
+                            ) => {}
                         Err(error) => panic!("oversize refusal write failed unexpectedly: {error}"),
                     }
                     assert!(
