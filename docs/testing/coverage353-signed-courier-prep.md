@@ -81,6 +81,10 @@ recovery, Receiving/Pending/Complete and unsupported legacy status, malformed
 chunk and status/ACK boundaries, awaited cancellation and observed socket/task/
 listener/lock retirement. Signature envelopes are typed opaque fixtures: no
 cryptographic trust, native ownership or real conversation is inferred.
+Legacy cached unavailable projections now explicitly exercise Pending, missing
+capability, lost/refused status and contradictory Receiving without changing the
+old result/bytes/IDs. Only Complete replaces the projection with the bound
+historical receipt; a missing manifest refuses before any endpoint contact.
 
 The 21 Supervisor parents invoke the actual dispatcher with real local signing
 keys and private SQLite metadata. They compare the entire bounded private graph

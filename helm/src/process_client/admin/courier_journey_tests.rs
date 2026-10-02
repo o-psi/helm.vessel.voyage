@@ -572,28 +572,103 @@ async fn legacy_manifest_receiving_resume_preserves_frozen_ids_and_deadline_with
 #[tokio::test]
 async fn legacy_pending_unsupported_unknown_lost_or_refused_status_retains_original_without_effects()
  {
-    for kind in 0..5 {
+    let old_unavailable =
+        json!({"status":"unavailable", "original_cached":"opaque-old-activation-result"});
+    // Version-zero cached Ok/Unavailable is not a creation receipt. It must
+    // obtain the same readonly proof as an uncached legacy journal, never use
+    // the version-one confirmed-result shortcut.
+    for cached in [false, true] {
+        for kind in 0..if cached { 6 } else { 5 } {
+            let mut j = Journey::new().await;
+            let bytes = b"ambiguous legacy retained artifact";
+            seed(&j, bytes, None, 0, cached.then(|| old_unavailable.clone()));
+            let before = fs::read(&j.args.journal).unwrap();
+            let pinned = ids(&j);
+            let task = j.begin(j.args.clone());
+            j.identities().await;
+            if kind == 1 {
+                let packet = j.destination.next().await;
+                assert!(matches!(packet.command, VesselCommand::Capabilities));
+                packet.ok(json!({"features":[]}));
+            } else {
+                let packet = status_packet(&mut j, bytes).await;
+                match kind {
+                    0 => packet.ok(status_value(&j, bytes, "pending", None, None)),
+                    2 => packet.lose(),
+                    3 => packet.refused(false),
+                    4 => packet.refused(true),
+                    // A well-bound receiving proof contradicts the old cached
+                    // result and cannot overwrite it or admit Accept/Upload.
+                    _ => packet.ok(status_value(&j, bytes, "receiving", Some(0), None)),
+                }
+            }
+            assert!(result(task).await.is_err());
+            assert_eq!(fs::read(&j.args.journal).unwrap(), before);
+            assert_eq!(ids(&j), pinned);
+            if cached {
+                assert_eq!(journal(&j.args)["result"], old_unavailable);
+            }
+            no_mutations(&j);
+            assert_eq!(j.destination.count("capabilities"), 1);
+            assert_eq!(
+                j.destination.count("transfer_status"),
+                usize::from(kind != 1)
+            );
+            j.finish().await;
+        }
+    }
+    {
         let mut j = Journey::new().await;
-        let bytes = b"ambiguous legacy retained artifact";
-        seed(&j, bytes, None, 0, None);
-        let before = fs::read(&j.args.journal).unwrap();
+        let bytes = b"legacy completed artifact";
+        seed(&j, bytes, None, 0, Some(old_unavailable.clone()));
+        let pinned = ids(&j);
+        let incarnation = Uuid::new_v4();
         let task = j.begin(j.args.clone());
         j.identities().await;
-        if kind == 1 {
-            let packet = j.destination.next().await;
-            assert!(matches!(packet.command, VesselCommand::Capabilities));
-            packet.ok(json!({"features":[]}));
-        } else {
-            let packet = status_packet(&mut j, bytes).await;
-            match kind {
-                0 => packet.ok(status_value(&j, bytes, "pending", None, None)),
-                2 => packet.lose(),
-                3 => packet.refused(false),
-                _ => packet.refused(true),
-            }
-        }
-        assert!(result(task).await.is_err());
+        let packet = status_packet(&mut j, bytes).await;
+        packet.ok(status_value(
+            &j,
+            bytes,
+            "complete",
+            None,
+            Some(json!({"session_id":j.args.session,"incarnation":incarnation})),
+        ));
+        // This typed opaque endpoint proof is historical, not live readiness or
+        // a real backend/cryptographic creation-receipt qualification.
+        let expected = json!({"transfer_id":journal(&j.args)["transfer_id"],
+            "activate_command_id":journal(&j.args)["activate_command"],"status":"complete",
+            "session_id":j.args.session,"incarnation":incarnation});
+        assert_eq!(result(task).await.unwrap(), expected);
+        assert_eq!(journal(&j.args)["result"], expected);
+        assert_eq!(ids(&j), pinned);
+        assert_eq!(journal(&j.args)["version"], 0);
+        assert!(journal(&j.args)["phase"].is_null());
+        assert!(journal(&j.args)["result"].get("original_cached").is_none());
+        assert_eq!(j.destination.count("capabilities"), 1);
+        assert_eq!(j.destination.count("transfer_status"), 1);
+        no_mutations(&j);
+        j.finish().await;
+    }
+    {
+        let j = Journey::new().await;
+        seed(
+            &j,
+            b"legacy missing-manifest artifact",
+            None,
+            0,
+            Some(old_unavailable.clone()),
+        );
+        let mut saved = journal(&j.args);
+        saved["manifest"] = Value::Null;
+        write(&j.args.journal, &saved);
+        let before = fs::read(&j.args.journal).unwrap();
+        let pinned = ids(&j);
+        assert!(result(j.begin(j.args.clone())).await.is_err());
         assert_eq!(fs::read(&j.args.journal).unwrap(), before);
+        assert_eq!(ids(&j), pinned);
+        assert_eq!(journal(&j.args)["result"], old_unavailable);
+        assert!(j.source.calls.lock().unwrap().is_empty());
+        assert!(j.destination.calls.lock().unwrap().is_empty());
         no_mutations(&j);
         j.finish().await;
     }
