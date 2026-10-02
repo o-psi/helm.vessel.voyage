@@ -153,3 +153,31 @@ A killed local updater can leave `applying`/`committing` until the implemented
 1,230-second receipt deadline. Status must honor that bound: do not edit receipt
 phase/timestamps, shorten the timeout or infer reconciliation from a signal.
 Retain pending evidence until the actual status path qualifies it.
+
+## Observed old-service readiness race and explicit empty-seed continuation
+
+The first CT119 seed attempt failed before its first HTTP `start_settings` request:
+`process-http.json` had not yet been republished after the real old service restart.
+The install, two private synthetic account operations and one configuration draft
+were already completed and remain retained. Real authenticated catalogue observation
+showed schema1 and zero Voyages; this is a failed seed, not a passing native result.
+The maintained driver now waits for authenticated read-only catalogue access between
+two identical exact service-identity observations after each fixture restart.
+Only those reads are repeated.
+
+For this narrowly proved partial state, `seed-existing --old-archive PATH` continues
+once without reinstalling, deleting private records or replaying the failed request.
+It verifies the independently pinned public old archive and all four installed old
+binary hashes, actual ordinary service identity, schema1 with zero Voyages, no
+session/journal/quarantine/update/recovery evidence, an empty fixture workspace and
+retained synthetic configuration drafts. It saves `seed-existing-attempt.json`
+before effects and refuses any second continuation or already-admitted Voyage.
+The two new Voyages use distinct new identities and new synthetic account bindings;
+partial private records and original failure evidence remain unchanged. Any missing
+proof or later uncertainty refuses; use another fresh fixture for another attempt.
+
+This source correction is not executed native acceptance. Transfer only the reviewed
+exact driver bytes/hash, retain the original failed invocation, and explicitly request
+this one continuation. Native seed success still requires two canonical old histories,
+two observed synthetic responses and suspended cleanup. Subsequent upgrade/rollback
+qualification remains a separate operation.
