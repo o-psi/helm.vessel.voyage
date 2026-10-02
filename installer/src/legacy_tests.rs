@@ -68,11 +68,15 @@ fn exact_quiescent_snapshot_restores_original_file_without_editing_live_schema()
         files::hash(&state.join("catalogue.sqlite3")).unwrap(),
         guard.proof.evidence["backup_sha256"].as_str().unwrap()
     );
+    assert_eq!(guard.proof.evidence["session_count"], 1);
+    assert!(guard.proof.evidence.get("sessions").is_none());
+    // An independent observer cannot borrow the restore helper's guardian lease.
+    // Production also releases these locks before observing restarted old services.
+    assert!(inspect("inspect", &state, &accounts, &stage, None).is_err());
+    drop(guard);
     let restored = inspect("inspect", &state, &accounts, &stage, None).unwrap();
     assert_eq!(restored["canonical_sha256"], original["canonical_sha256"]);
     assert_eq!(restored["session_count"], original["session_count"]);
-    assert_eq!(guard.proof.evidence["session_count"], 1);
-    assert!(guard.proof.evidence.get("sessions").is_none());
 }
 #[test]
 fn changed_canonical_admission_authority_or_private_account_prevents_restore_and_preserves_current_file()
