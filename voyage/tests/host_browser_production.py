@@ -126,7 +126,7 @@ def main():
             config['client_roots'].append({'label':'native-'+item['label'],'pid':client['pid'],
                                            'start_ticks':int(fields[19]),'descendants':True})
         first=config['sessions'][0]
-        reopen=Reopen(config['native_reopen_mailbox'],first['id'],first['label'],config['client_roots'][0],config['native_helm_program'],
+        reopen=Reopen(config['native_reopen_mailbox'],first['id'],first['label'],first['title'],config['client_roots'][0],config['native_helm_program'],
                       clients[0],root/(first['label']+'-launcher'),root,screen,paste,send,wait)
         prepared=root/'private-driver.json';prepared.write_text(json.dumps(config));prepared.chmod(0o600)
         with (output/'driver-private.log').open('xb') as log:

@@ -60,7 +60,7 @@ def process_identity(pid):
 
 
 class Reopen:
-    def __init__(self, directory, session, label, root_client, program, client, capture, owner_root,
+    def __init__(self, directory, session, label, title, root_client, program, client, capture, owner_root,
                  screen, paste, send, wait):
         self.directory = Path(directory)
         self.fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -69,6 +69,8 @@ class Reopen:
         assert meta.st_uid == os.getuid() and not meta.st_mode & 0o077
         self.pin = (meta.st_dev, meta.st_ino)
         self.session, self.label, self.root_client, self.program = session, label, dict(root_client), dict(program)
+        assert isinstance(title, str) and title.startswith('qualification-333-') and len(title) <= 64 and '\n' not in title
+        self.title = title  # Trusted parent catalogue metadata, never child input.
         self.client, self.capture, self.owner_root = client, Path(capture), Path(owner_root)
         self.screen, self.paste, self.send, self.wait = screen, paste, send, wait
         self.attempted = False
@@ -112,11 +114,28 @@ class Reopen:
         assert stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid() and meta.st_nlink == 1 and not meta.st_mode & 0o077 and meta.st_size <= 65536
         return str(path)
 
+    def panel(self):
+        frame = self.screen(self.client)
+        # panels::display removes the Markdown heading prefix in the real TUI.
+        return self.title in frame and 'Host browser' in frame and ('Voyage: '+self.session) in frame
+
+    def conversation(self):
+        frame = self.screen(self.client)
+        return self.title in frame and 'Host browser' not in frame and ('Voyage: '+self.session) not in frame
+
     def poll(self):
         request_path = self.directory/'request.json'
         if not request_path.exists() or self.attempted: return
         raw, request_pin = read_private(request_path)
         value = self.request(decode(raw))
+        deadline = time.monotonic() + (value['expires_at_ms'] - int(time.time()*1000))/1000
+        def remaining():
+            seconds = min(deadline-time.monotonic(), (value['expires_at_ms']-int(time.time()*1000))/1000)
+            assert seconds > 0, 'fixed reopen expiry reached'
+            return seconds
+        def observe(predicate):
+            self.wait(predicate, min(15, remaining()))
+            remaining()
         self.verify()
         old = self.launcher()
         # Durable exclusive pending receipt precedes every possible key effect.
@@ -125,22 +144,33 @@ class Reopen:
         response = {'schema':1,'id':value['id'],'digest':value['digest'],'status':'unknown','outcome_unknown':True}
         try:
             assert read_private(request_path)[1] == request_pin
-            assert ('Voyage: '+self.session) in self.screen(self.client)
+            assert self.panel()
             self.verify()
+            # F6 left the Host browser panel open. It consumes Paste and Enter;
+            # dismiss it once and observe the current frame before fixed input.
+            remaining()
+            self.send(self.client, '\x1b')
+            observe(self.conversation)
+            self.verify()
+            assert read_private(request_path)[1] == request_pin and self.conversation()
+            remaining()
             self.paste(self.client, '/browser detach');self.send(self.client, '\r')
-            self.wait(lambda:'Viewer detached; host browser remains owned by Voyage' in self.screen(self.client), 15)
+            observe(lambda:self.conversation() and 'Viewer detached; host browser remains owned by Voyage' in self.screen(self.client))
             self.verify()
+            assert read_private(request_path)[1] == request_pin and self.conversation()
+            remaining()
             self.send(self.client, '\x1b[17~')  # Actual F6; same TUI and credential.
             def fresh():
                 self.verify()
                 if self.client['process'].poll() is not None: return False
                 try: return self.launcher() != old
                 except (OSError, AssertionError, UnicodeError): return False
-            self.wait(fresh, 15)
+            observe(fresh)
             new = self.launcher();assert new != old
-            assert ('Voyage: '+self.session) in self.screen(self.client)
+            observe(self.panel)
             assert read_private(request_path)[1] == request_pin
             self.verify()
+            remaining()
             response.update(status='observed', outcome_unknown=False, launcher=new, client=self.root_client)
         finally:
             # This action is never retried after an unknown keyboard outcome.

@@ -550,11 +550,16 @@ one source-owned fixture-A reopen, using a new private, inode-pinned mailbox.
 The child can supply only issued UUID/digest, fixed action, fixture A label/
 session, exact original TUI PID/start bootstrap and bounded expiry. It cannot
 supply a command, endpoint, path, credentials, cookies or grants. The parent
-verifies the original live process/executable/hash and writes an exclusive
-pending receipt **before** typing `/browser detach` then Enter. It observes the
+verifies the original live process/executable/hash, the fixture title and exact
+Voyage ID in the current Host browser panel, and writes an exclusive pending
+receipt **before any key**. One Esc dismisses that panel, which otherwise ignores
+Paste and Enter. The parent observes its dismissal with the fixture title and
+owned client unchanged before typing `/browser detach` then Enter. It observes the
 actual Handle.finish status `Viewer detached; host browser remains owned by
 Voyage`, then sends actual F6 once and waits for a different private `open.html`
-launcher produced by the normal TUI opener. Old launchers are one-use and are
+launcher produced by the normal TUI opener and the returned Host browser panel's
+same title and Voyage ID. Every phase shares the original request's maximum
+45-second expiry, fenced by both wall and monotonic clocks. Old launchers are one-use and are
 never reloaded/reused. Any unknown key/cleanup outcome retains pending/unknown
 response and fences another attempt; the action is not automatically retried.
 
@@ -573,6 +578,7 @@ public file/key input remains necessary.
 
 Prepared focused source contracts are `host_browser_native_reopen_tests.py`
 (`python3 -I -B`) and `host_browser_native_reopen.test.mjs` (`node --test`). They
-simulate typed callbacks/private files and test exact identity, one attempt,
-pre-key receipt, unknown result and refusal of arbitrary fields; they establish
+simulate the panel swallowing Paste/Enter until Esc, typed callbacks/private
+files and test exact identity, one attempt, pre-key receipt, failed dismissal,
+unknown result and refusal of arbitrary fields; they establish
 no native/deployed browser behavior.
