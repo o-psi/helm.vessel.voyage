@@ -570,7 +570,8 @@ closes the human's CUA Web tabs. An unresolved Native page cannot pass.
 
 Both direct and CUA routes load that fresh Native viewer and explicitly choose
 Browse privately under the initiating Native process/credential. They require
-the same browser/incarnation, a fresh attachment and advanced controller epoch.
+the same browser/incarnation and authorized private-owner attachment identity,
+a confirmed fresh Attach request and strictly advanced control/capture epochs.
 Web stays excluded before and after the private page is cleared. Native then
 explicitly Continues agent, sends one new benign counter click, and Web observes
 that public result. Native also performs its own final browser close; a different
@@ -628,8 +629,9 @@ observed same native client/socket remain mandatory; Web never borrows this acto
 The ordinary Linux route is not a native macOS/Windows or protected Root claim.
 
 Native graphical metrics separately count UTF8 HTTP request bodies begun and
-decoded response bodies completed inside each observation window. Encoded response
-transfer bytes and requests crossing the window boundary are separate fields.
+decoded response bodies completed inside each observation window. CDP-reported encoded request
+transfer bytes (header/framing inclusion unspecified) and requests crossing the
+window boundary are separate fields.
 Missing bodies, nonboolean/missing response encoding, transport failure,
 requests still in flight at window end, or a selected native source with no
 observed requests/responses produce unknown metrics. Overflow cannot pass. No page/private text,
@@ -639,7 +641,7 @@ CPU/RSS/heap/latency and actual deployed Web public WSS scopes remain distinct.
 
 This mode preserves the full site/media/private/control/reopen/renewal/multi-voyage
 and cleanup programme and all strict Web TLS/CSRF/tenant/principal checks.
-Prepared 2 Rust, 7 Python and 6 Node contract parents have not run. Source checks
+Prepared 2 Rust, 7 Python and 10 Node contract parents have not run. Source checks
 are AST, Rust formatting, Node syntax and diff; Root owns the final focused/full
 coverage/source publication/artifact gate and actual host qualification.
 
@@ -656,3 +658,39 @@ transport tests remain required, then strict checks/full current workspace
 coverage and actual hosted artifact qualification. No client/auth endpoint is
 mocked or rewritten during production execution; pure event-source contracts
 are explicitly separate evidence.
+
+
+## Review corrections before the first NativeLocal gate
+
+[Private reclaim oracle record](https://github.com/o-psi/helm.vessel.voyage/issues/333#issuecomment-5947899607):
+complete valid private binding is pinned before any asynchronous detach. The
+maintained runtime deliberately restores its same private-owner attachment UUID;
+qualification requires that owner, a fresh requested Attach identity/receipt and
+new control/capture fences, rather than inventing a different runtime owner ID.
+Both direct and CUA flows use the new one-use launcher. Direct mode tracks each
+of its at most five created pages before setup, including failed reclaims; any
+unobserved page closure prevents pass. It never enumerates/closes human CUA tabs.
+
+All actual host/client/native-byte/renderer/CUA observation intervals must be
+within one second of the requested start, end and ten-second duration. Samplers
+record their real UTC start/end; no scheduled time is substituted for observation.
+CDP payload counts begin after enablement/baseline: selected socket identity may
+be discovered earlier, but prewindow HTTP requests crossing into the interval
+remain explicitly unknown. A selected silent socket is unqualified. Required
+TaskDuration/heap/Nodes must be finite before/after; missing data cannot pass.
+Native Local/Public socket, graphical body counts and Web WSS remain distinct.
+
+In-flight-at-end native requests currently prevent complete cost qualification.
+This is deliberately conservative: continuous mirror polling can expose boundary
+censoring in a real run. Do not pause/rewrite polling, erase a request or infer its
+body to produce a green window. Retain incomplete cost facts for the owner.
+
+
+Additional prepared metadata/oracle contracts:
+
+```sh
+node --test voyage/tests/host_browser_qualification_windows.test.mjs
+```
+
+All these commands remain unexecuted source preparation. The parent runs them
+with the existing reopen/cost/native transport suite in the single coordinated gate.

@@ -106,7 +106,7 @@ def main():
     report={'schema':1,'status':'pending','cleanup':{},'helm_sha256':hashlib.sha256(helm.read_bytes()).hexdigest(),
             'source_sha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest() for name in
                              ('host_browser_production.py','host_browser_production.mjs','host_browser_cost.py',
-                              'host_browser_client_cost.mjs','host_browser_cua_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py','host_browser_native_reopen.py','host_browser_native_reopen.mjs')}}
+                              'host_browser_client_cost.mjs','host_browser_cua_cost.mjs','host_browser_production_probe.py','host_browser_production_site.py','host_browser_native_reopen.py','host_browser_native_reopen.mjs','host_browser_qualification_windows.mjs')}}
     clients=[]
     reopen=None
     config['native_reopen_mailbox']=str(root/'native-reopen')

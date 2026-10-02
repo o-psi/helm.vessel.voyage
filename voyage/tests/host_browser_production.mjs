@@ -10,6 +10,7 @@ import {execFile} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
 import {browserCost,inputVisibleLatency} from './host_browser_client_cost.mjs';
 import {requestNativeReopen,nativePageOwner} from './host_browser_native_reopen.mjs';
+import {measurementWindowAligned,privateBindingSnapshot,privateReclaimQualified} from './host_browser_qualification_windows.mjs';
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const uuid=value=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
@@ -46,7 +47,7 @@ async function localAuthorityProof(cfg,items,prior=null){
   const row=reply.identities[i];for(const key of ['label','session_id','socket_id'])assert.equal(row[key],sessions[i][key]);
   assert.equal(row.vessel_id,cfg.native_route.expected_vessel_id);assert.ok(uuid(row.principal_id)&&uuid(row.installation_id));
   assert.deepEqual(row.completed_native_receipt_ids,sessions[i].claims.map(c=>c.command_id));
-  if(prior)for(const key of ['session_id','principal_id','installation_id','actor_sha256','vessel_id'])assert.equal(row[key],prior.identities[i][key]);
+  if(prior)for(const key of ['session_id','principal_id','installation_id','actor_sha256','vessel_id','socket_id'])assert.equal(row[key],prior.identities[i][key]);
  }
  return reply;
 }
@@ -350,8 +351,8 @@ async function closeBrowser(page){await ready(page);
 
 // Reattach through the initiating Native principal, regardless of Web's grant.
 // The old one-use launcher is never reused. This emits one fixed parent request.
-async function reclaimNative(context,cfg,old,openPage=()=>context.newPage()){
- const binding={...old.state.status.binding},launcher=await requestNativeReopen(cfg);
+async function reclaimNative(context,cfg,binding,openPage=()=>context.newPage()){
+ const launcher=await requestNativeReopen(cfg);
  const page=await openPage(),state=observation(page,cfg.sessions[0].id,cfg.web_socket,{native:true});
  const fresh={page,state,native:true,sessionId:cfg.sessions[0].id};
  try{
@@ -359,7 +360,7 @@ async function reclaimNative(context,cfg,old,openPage=()=>context.newPage()){
   await until(()=>state.status?.running&&state.status.mode==='private');
   await mode(page,'Browse privately','private');await ready(page);
   assert.equal(state.status.binding.browser_id,binding.browser_id);assert.equal(state.status.binding.incarnation,binding.incarnation);
-  assert.notEqual(state.status.binding.attachment_id,binding.attachment_id);assert.ok(state.status.binding.controller_epoch>binding.controller_epoch);
+  fresh.private_reclaim=privateReclaimQualified(binding,state.status,state.native_claims);
   return fresh;
  }catch(error){await page.close({runBeforeUnload:false}).catch(()=>{});throw error;}
 }
@@ -372,14 +373,15 @@ export async function runProductionQualification(context,cfg){
    'Both TUI clients are connected; fixture B browser is opened only for its own viewer condition.']};
  report.transport_context={native:nativeMode(cfg),web:'deployed HTTPS/browser WSS',native_public_tls_requested:nativeMode(cfg)==='public'};
  const pages=[],states=[],closeAttempts=new Set();let resources=null;
+ const openOwnedPage=async()=>{assert.ok(pages.length<5,'qualification page bound reached');const page=await context.newPage();pages.push(page);return page;};
  const stage=value=>{report.stage=value;report.stages.push(value);};
  const hostRequest=()=>({schema:1,capacity:cfg.host_observer.capacity,sessions:cfg.sessions.map((s,i)=>({
   label:s.label,session_id:s.id,browser_id:states[i*2].status.binding.browser_id,root:s.host_browser_root}))});
- async function newNative(item){const page=await context.newPage();pages.push(page);
+ async function newNative(item){const page=await openOwnedPage();
   const state=observation(page,item.id,cfg.web_socket,{native:true});await page.goto(pathToFileURL(item.native_launcher).href);
   await viewer(page).waitFor();await until(()=>state.status?.running);await ready(page);
   assert.equal(new URL(page.url()).hostname,'127.0.0.1');assert.equal(new URL(page.url()).hash,'');return {page,state};}
- async function newWeb(item){const page=await context.newPage();pages.push(page);
+ async function newWeb(item){const page=await openOwnedPage();
   const state=observation(page,item.id,cfg.web_socket);await page.goto(new URL(`/voyages/${cfg.web_connection}/${item.id}`,cfg.console_origin).href);
   await until(()=>state.snapshot?.empty&&state.snapshot?.no_run&&state.snapshot?.no_pending);
   assert.ok(await page.locator('.voyage-card[aria-current="true"] .card-title').filter({hasText:item.title}).count()===1);
@@ -402,11 +404,16 @@ export async function runProductionQualification(context,cfg){
     '-I',path.join(path.dirname(new URL(import.meta.url).pathname),'host_browser_cost.py'),'--ledger',cfg.client_ledger,
     '--seconds','10','--interval','0.25','--output','-'],{timeout:20000,maxBuffer:256*1024},(error,stdout)=>error?reject(Error('owned client measurement failed')):resolve(stdout)));
    const [hostRaw,clientRaw,trafficEnd,nativeEnd]=await Promise.all([hostPromise,localPromise,trafficAfter,nativeAfter]);
+   for(let i=0;i<active.length;i++)if(!active[i].native)assert.ok(trafficEnd[i].received_bytes>trafficBefore[i].received_bytes&&active[i].state.connections>0,'actual selected Web payload unavailable');
    const measurements=await Promise.all(costs.map(cost=>cost.stop()));assert.ok(measurements.every(m=>m.status==='observed'));
    report.native_windows.push(nativeWindow(condition,index,nativeBefore,nativeEnd));
    const host=JSON.parse(hostRaw),client=JSON.parse(clientRaw);assert.equal(host.status,'observed');assert.equal(client.status,'observed');
    assert.ok(host.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));assert.ok(client.samples.every(s=>s.memory_unavailable===0&&s.zombies===0));
-   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
+   const all_window_aligned=measurementWindowAligned(Date.parse(started),[
+    {start:host.window_started_at_ms,end:host.window_ended_at_ms},{start:client.window_started_at_ms,end:client.window_ended_at_ms},
+    ...report.native_windows.at(-1).clients.map(c=>({start:c.started_at_ms,end:c.ended_at_ms})),
+    ...measurements.map(m=>({start:m.started_at_ms,end:m.ended_at_ms}))]);
+   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,all_window_aligned,host_window_aligned:all_window_aligned,
     viewers:measurements.map((value,i)=>({
     kind:active[i].native?'native':'deployed_react',renderer:value,
     actual_web_application_payload:active[i].native?null:Object.fromEntries(Object.keys(trafficBefore[i]).map(k=>[k,trafficEnd[i][k]-trafficBefore[i][k]]))}))});
@@ -456,10 +463,11 @@ export async function runProductionQualification(context,cfg){
   await nativeA.page.getByRole('textbox',{name:'Text for browser',exact:true}).fill('SYNTHETIC_PRODUCTION_PRIVATE_333');
   await nativeA.page.getByRole('button',{name:'Send text to browser',exact:true}).click();
   await until(async()=>await mirror(nativeA.page).getByLabel(cfg.fixture.private.input_label,{exact:true}).inputValue()==='SYNTHETIC_PRODUCTION_PRIVATE_333');
-  await excluded(webA.page);await nativeA.page.getByRole('button',{name:'Close viewer',exact:true}).click();
+  await excluded(webA.page);const privateBefore=privateBindingSnapshot(nativeA.state.status);
+  await nativeA.page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await excluded(webA.page);assert.equal(webA.state.status.mode,'private');
   stage('initiating_native_private_reclaim');
-  const freshA=await reclaimNative(context,cfg,nativeA);pages.push(freshA.page);states.push(freshA.state);
+  const freshA=await reclaimNative(context,cfg,privateBefore,openOwnedPage);states.push(freshA.state);
   await excluded(webA.page);
   // Clear under Native private control. Web must remain excluded until return.
   await navigate(freshA.page,cfg.fixture.url,cfg.fixture.ready_selector);await excluded(webA.page);
@@ -467,7 +475,7 @@ export async function runProductionQualification(context,cfg){
   await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();
   await Promise.all([count(freshA.page,cfg.fixture.counter_selector,1),count(webA.page,cfg.fixture.counter_selector,1)]);
   report.native_authority_after_reclaim=await localAuthorityProof(cfg,[freshA,nativeB],report.native_authority);
-  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
+  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,...freshA.private_reclaim,explicit_return:true};
   stage('actual_ticket_renewal');await until(()=>webA.state.hellos>=2&&webB.state.hellos>=2,140000);
   await count(webA.page,cfg.fixture.counter_selector,1);assert.equal(webA.state.status.binding.browser_id,old.browser_id);
   assert.equal(webB.state.status.binding.browser_id,nativeB.state.status.binding.browser_id);
@@ -486,7 +494,9 @@ export async function runProductionQualification(context,cfg){
   // Unknown close receipts are never replayed. On other failures retain exact
   // owned resource obligations for the operator; closing a page is only detach.
   report.cleanup.close_attempted=[...closeAttempts];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;
-  for(const page of pages)await page.close({runBeforeUnload:false}).catch(()=>{});
+  let closed=0;for(const page of pages){if(!page.isClosed())await page.close({runBeforeUnload:false}).catch(()=>{});if(page.isClosed())closed++;}
+  report.cleanup.owned_pages={created:pages.length,closed,unresolved:pages.length-closed};
+  if(closed!==pages.length)report.status='failed_or_incomplete';
   await save(path.join(cfg.output,'production-report.json'),report);
  }
  return report;
@@ -551,8 +561,14 @@ export async function runCuaProductionQualification(context,cfg){
      nodes:v.nodes,node_delta:v.node_delta,metric_scope:v.metric_scope,sent_bytes:v.sent_bytes,received_bytes:v.received_bytes,scope:v.scope,
      window_aligned:Number.isFinite(v.captured_at_ms)&&Math.abs(v.captured_at_ms-Date.parse(started))<1000&&Math.abs(v.elapsed_ms-10000)<1000};
    });
-   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,host_window_aligned:Math.abs(Date.parse(host.captured_at)-Date.parse(started))<1000,
-    cua_web:summaries,native:await Promise.all(nativeCosts.map(c=>c.stop())).then(values=>{assert.ok(values.every(v=>v.status==='observed'));return values;})});
+   const nativeRenderer=await Promise.all(nativeCosts.map(c=>c.stop()));assert.ok(nativeRenderer.every(v=>v.status==='observed'));
+   const all_window_aligned=measurementWindowAligned(Date.parse(started),[
+    {start:host.window_started_at_ms,end:host.window_ended_at_ms},{start:client.window_started_at_ms,end:client.window_ended_at_ms},
+    ...report.native_windows.at(-1).clients.map(c=>({start:c.started_at_ms,end:c.ended_at_ms})),
+    ...nativeRenderer.map(m=>({start:m.started_at_ms,end:m.ended_at_ms})),
+    ...cua.viewers.map(v=>({start:v.captured_at_ms,end:v.captured_at_ms+v.elapsed_ms}))]);
+   report.matrix.push({condition,index,started,host,client,host_ledger_scope:ledgerEvidence.scope,all_window_aligned,host_window_aligned:all_window_aligned,
+    cua_web:summaries,native:nativeRenderer});
   }
  }
  try{
@@ -615,10 +631,11 @@ export async function runCuaProductionQualification(context,cfg){
   await native[0].page.getByRole('button',{name:'Send text to browser',exact:true}).click();
   await until(async()=>await mirror(native[0].page).getByLabel(cfg.fixture.private.input_label,{exact:true}).inputValue()==='SYNTHETIC_PRODUCTION_PRIVATE_333');
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
+  const privateBefore=privateBindingSnapshot(native[0].state.status);
   await native[0].page.getByRole('button',{name:'Close viewer',exact:true}).click();
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
   stage('initiating_native_private_reclaim');
-  const freshA=await reclaimNative(context,cfg,native[0],ownedNative.open);nativeStates.push(freshA.state);native[0]=freshA;
+  const freshA=await reclaimNative(context,cfg,privateBefore,ownedNative.open);nativeStates.push(freshA.state);native[0]=freshA;
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
   await navigate(freshA.page,cfg.fixture.url,cfg.fixture.ready_selector);
   await proof('observe_private_exclusion',{label:cfg.sessions[0].label},['no_replay_iframe','address_blank','watching_private','no_input_sent']);
@@ -626,7 +643,7 @@ export async function runCuaProductionQualification(context,cfg){
   await mirror(freshA.page).getByRole('button',{name:cfg.fixture.click_name,exact:true}).click();await count(freshA.page,cfg.fixture.counter_selector,1);
   await proof('observe_counter',{label:cfg.sessions[0].label,selector:cfg.fixture.counter_selector,value:1},['counter_matches','no_input_sent']);
   report.native_authority_after_reclaim=await localAuthorityProof(cfg,native,report.native_authority);
-  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,fresh_attachment:true,explicit_return:true};
+  report.private={other_client_excluded:true,disconnect_retained_private:true,initiating_native_principal_reclaimed:true,...freshA.private_reclaim,explicit_return:true};
   stage('actual_cua_renewal');await proof('observe_real_renewal',{labels:cfg.sessions.map(s=>s.label)},
    ['both_actual_connections_renewed','browser_identity_retained','no_effect_replay','no_transport_rewrite']);
   stage('explicit_owned_browser_close');attempted.add(0);await closeBrowser(native[0].page);

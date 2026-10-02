@@ -107,6 +107,7 @@ def main():
     if str(args.output) != '-':
         args.output.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
+    window_started_at_ms = int(time.time()*1000)
     initial, last = {}, {}
     samples = []
     result = {'schema': 1, 'captured_at': datetime.now(timezone.utc).isoformat(),
@@ -138,6 +139,7 @@ def main():
                 break
             time.sleep(min(args.interval, args.seconds-sample['elapsed_seconds']))
         result.update(status='observed', elapsed_seconds=time.monotonic()-started,
+                      window_started_at_ms=window_started_at_ms,window_ended_at_ms=int(time.time()*1000),
                       observed_cpu_seconds=sum(max(0, last[k]-first) for k, first in initial.items())/result['clock_ticks_per_second'],
                       observed_process_identities=len(initial), samples=samples)
     except Exception as error:

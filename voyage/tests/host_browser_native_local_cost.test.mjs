@@ -3,7 +3,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {Eve
 import {browserCost} from './host_browser_client_cost.mjs';
 function fixture(body='private fixture 日本語'){
  const cdp=new EventEmitter();let reads=0;cdp.detached=false;
- cdp.send=async(name)=>{if(name==='Performance.getMetrics')return{metrics:[{name:'TaskDuration',value:++reads},{name:'JSHeapUsedSize',value:123}]};if(name==='Network.getResponseBody')return{body,base64Encoded:false};return{};};
+ cdp.send=async(name)=>{if(name==='Performance.getMetrics')return{metrics:[{name:'TaskDuration',value:++reads},{name:'JSHeapUsedSize',value:123},{name:'Nodes',value:12}]};if(name==='Network.getResponseBody')return{body,base64Encoded:false};return{};};
  cdp.detach=async()=>{cdp.detached=true;};return{cdp,context:{newCDPSession:async()=>cdp}};
 }
 test('selected native requests and decoded response bodies counted without content or ambient traffic',async()=>{
@@ -51,9 +51,18 @@ test('empty selected native source and missing/nonboolean encoding stay unknown'
 });
 
 test('missing essential actual renderer task or heap measurement cannot pass',async()=>{
- for(const missing of ['TaskDuration','JSHeapUsedSize']){
+ for(const missing of ['TaskDuration','JSHeapUsedSize','Nodes']){
   const f=fixture();const original=f.cdp.send;f.cdp.send=async(name)=>{const result=await original(name);if(name==='Performance.getMetrics')result.metrics=result.metrics.filter(metric=>metric.name!==missing);return result;};
   const meter=await browserCost(f.context,{}, {maxMilliseconds:1000});const value=await meter.stop();
   assert.equal(value.status,'unknown');assert.equal(value.renderer_metrics_qualified,false);assert.equal(value.after[missing],null);
  }
+});
+
+test('prewindow request crossing and selected silent websocket source are unknown',async()=>{
+ const f=fixture();const original=f.cdp.send;f.cdp.send=async(name)=>{if(name==='Network.enable')f.cdp.emit('Network.requestWillBeSent',{requestId:'early',request:{url:'http://127.0.0.1:1/operation',postData:'prewindow fixture'}});return original(name);};
+ const meter=await browserCost(f.context,{}, {nativeOperationUrls:['http://127.0.0.1:1/operation'],maxMilliseconds:1000});
+ f.cdp.emit('Network.loadingFinished',{requestId:'early',encodedDataLength:5});const value=await meter.stop();
+ assert.equal(value.status,'unknown');assert.ok(value.prewindow_requests_crossing>0);assert.equal(value.traffic.http_operation_request_payload_bytes,0);assert.equal(value.traffic.http_operation_response_payload_bytes,0);
+ const w=fixture();const silent=await browserCost(w.context,{}, {webSocketUrls:['wss://fixture.invalid/socket'],maxMilliseconds:1000});
+ const missing=await silent.stop();assert.equal(missing.status,'unknown');assert.equal(missing.websocket_traffic_qualified,false);
 });
