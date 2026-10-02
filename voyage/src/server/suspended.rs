@@ -426,3 +426,7 @@ async fn observe(_: &std::path::Path, _: &RuntimeRequest) -> Result<Value> {
 
 #[cfg(all(test, unix))]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "suspended/saved_owner_journey_tests.rs"]
+mod saved_owner_journey_tests;

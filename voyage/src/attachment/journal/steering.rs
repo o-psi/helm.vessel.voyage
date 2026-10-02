@@ -563,3 +563,7 @@ pub(super) fn settle(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "steering_owned_journey_tests.rs"]
+mod steering_owned_journey_tests;
