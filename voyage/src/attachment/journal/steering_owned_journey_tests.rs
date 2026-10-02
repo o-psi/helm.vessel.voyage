@@ -71,14 +71,24 @@ impl Fixture {
         }
     }
     fn persisted(&self) -> String {
-        // Include indexed provenance and revision columns as well as JSON records.
-        // Failed transactions must not mutate only an index while preserving JSON.
+        // Include the full private graph: indexed provenance, revisions, events,
+        // observations, scheduling and command receipts, not only JSON records.
+        let tables = self
+            .journal
+            .connection
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
         let mut data = Vec::new();
-        for table in ["sessions", "runs", "steering"] {
+        for table in tables {
+            assert!(table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
             let mut query = self
                 .journal
                 .connection
-                .prepare(&format!("SELECT * FROM {table}"))
+                .prepare(&format!("SELECT * FROM \"{table}\""))
                 .unwrap();
             let columns = query.column_count();
             let mut rows = query

@@ -19,7 +19,11 @@ Only two production files gain test declarations. Ten Unix saved-owner parent
 cases call the complete production `observe` function against a private, real
 SQLite canonical history and actual startup/execution leases. Eight steering
 parents operate real SQLite transactions, immutable image storage and journal
-reopen. Both use synthetic local input and existing workspace objects. They do
+reopen. Failed/duplicate/collision operations compare every private SQLite table
+and column, including typed BLOB storage values, indexed provenance/revisions,
+durable events, process observations, goal scheduling and command receipts. No
+observable side-table mutation is excluded. Both use synthetic local input and
+existing workspace objects. They do
 not launch an agent, provider, executor, service manager or OS helper process.
 
 The fixture writes `stopped.json` explicitly to test protocol evidence. Its
