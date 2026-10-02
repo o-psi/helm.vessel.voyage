@@ -158,6 +158,9 @@ fn owned_pty_restores_terminal_after_detach_and_initialization_error() {
         if mode != "initialization-error" {
             until_output(&receiver, &mut output, "\u{1b}[?1049h");
             entered = true;
+            // Raw-mode/alternate-screen entry precedes initialization and the
+            // first frame. Geometry intentionally fences input until that frame.
+            until_output(&receiver, &mut output, "+ New");
             writer.write_all(b"\x10").unwrap(); // Actual Ctrl+P menu input.
             writer.flush().unwrap();
             until_output(&receiver, &mut output, "Leave Helm");
