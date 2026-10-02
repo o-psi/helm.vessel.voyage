@@ -291,3 +291,7 @@ pub(super) async fn submit(
     }
     voyage(t, session, None, command).await
 }
+
+#[cfg(all(test, unix))]
+#[path = "goal_budget/owned_delegation_journey_standard_tests.rs"]
+mod owned_delegation_journey_standard_tests;
