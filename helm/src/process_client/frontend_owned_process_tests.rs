@@ -550,8 +550,7 @@ async fn journey(mode: &str) {
         if mode == "temporary-failure" {
             assert!(
                 result
-                    .err()
-                    .expect("owned failed run")
+                    .expect_err("owned failed run")
                     .to_string()
                     .contains("state failed")
             );
