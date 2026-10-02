@@ -461,14 +461,20 @@ async fn private_account_setup_does_not_cancel_or_reconfigure_an_already_running
         .unwrap()
         .run =
         Some(serde_json::from_value(serde_json::json!({"run_id":run,"state":"running"})).unwrap());
-    let before =
-        serde_json::to_value(&peer.app.views[&peer.target].snapshot.as_ref().unwrap().run).unwrap();
+    let before = peer.app.views[&peer.target]
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .run
+        .clone();
     open(&mut peer).await;
     sign_in(&mut peer).await;
     input(&mut peer, KeyCode::Esc);
-    let after =
-        serde_json::to_value(&peer.app.views[&peer.target].snapshot.as_ref().unwrap().run).unwrap();
-    assert_eq!(after, before);
+    let after = &peer.app.views[&peer.target].snapshot.as_ref().unwrap().run;
+    assert!(
+        *after == before,
+        "account setup must retain every active run field"
+    );
     assert_eq!(calls(&peer, |c| matches!(c, VesselCommand::Voyage(_))), 0);
     assert_eq!(
         calls(&peer, |c| matches!(
