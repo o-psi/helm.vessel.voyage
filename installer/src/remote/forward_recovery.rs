@@ -68,6 +68,165 @@ fn release(identity: &str) -> Result<PathBuf> {
     manifest.verify(&root)?;
     Ok(root)
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObservedFormats {
+    catalogue_schema: u32,
+    journal_schemas: Vec<u32>,
+    process_protocols: Vec<u32>,
+}
+
+/// Current source-owned formats, never guessed readers for an undeclared source.
+fn current_forward_formats() -> Result<std::collections::BTreeMap<String, Vec<u32>>> {
+    fn normalized(source: &str) -> String {
+        source.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+    fn source_constant(source: &str, name: &str) -> Result<u32> {
+        let source = normalized(source);
+        let marker = format!("const{name}:i64=");
+        ensure!(
+            source.matches(&marker).count() == 1,
+            "Recovery writer source contract changed"
+        );
+        Ok(source
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split(';')
+            .next()
+            .unwrap()
+            .parse()?)
+    }
+    fn catalogue_values(name: &str) -> Result<Vec<u32>> {
+        let source = normalized(include_str!("../../../vessel/src/process/database.rs"));
+        let marker = format!("const{name}:&[i64]=&[");
+        ensure!(
+            source.matches(&marker).count() == 1,
+            "Recovery catalogue source contract changed"
+        );
+        source
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split("];")
+            .next()
+            .unwrap()
+            .split(',')
+            .filter(|value| !value.is_empty())
+            .map(|value| value.parse().map_err(Into::into))
+            .collect()
+    }
+    let journal = include_str!("../../../voyage/src/attachment/journal.rs");
+    let writer = source_constant(journal, "SCHEMA_VERSION")?;
+    let source = normalized(journal);
+    let marker = "matches!(version,";
+    ensure!(
+        source.matches(marker).count() == 1,
+        "Recovery journal reader source contract changed"
+    );
+    let read = source
+        .split_once(marker)
+        .unwrap()
+        .1
+        .split(')')
+        .next()
+        .unwrap()
+        .split('|')
+        .map(|value| {
+            if value == "SCHEMA_VERSION" {
+                Ok(writer)
+            } else {
+                value.parse().map_err(Into::into)
+            }
+        })
+        .collect::<Result<Vec<u32>>>()?;
+    Ok(std::collections::BTreeMap::from([
+        (
+            "catalogue_read".into(),
+            catalogue_values("CATALOGUE_READ_SCHEMAS")?,
+        ),
+        (
+            "catalogue_write".into(),
+            catalogue_values("CATALOGUE_WRITE_SCHEMAS")?,
+        ),
+        ("journal_read".into(), read),
+        ("journal_write".into(), vec![writer]),
+        (
+            "process_protocol".into(),
+            vec![voyage_protocol::process::PROCESS_PROTOCOL],
+        ),
+        (
+            "vessel_protocol".into(),
+            vec![voyage_protocol::vessel::VESSEL_API_VERSION],
+        ),
+        (
+            "execution_identity".into(),
+            vec![voyage_protocol::execution_identity::EXECUTION_SCHEMA],
+        ),
+    ]))
+}
+
+fn forward_formats(
+    installed: &Manifest,
+    candidate: &Manifest,
+    evidence: &serde_json::Value,
+    executing_installer_sha256: &str,
+) -> Result<()> {
+    installed.validate()?;
+    candidate.validate()?;
+    if installed.update_compatibility.is_some() {
+        return rollback_formats(installed, candidate);
+    }
+    let next = candidate
+        .update_compatibility
+        .as_ref()
+        .context("Forward target format declaration missing")?;
+    ensure!(
+        candidate.binaries["voyage-installer"].sha256 == executing_installer_sha256,
+        "Undeclared-source forward recovery requires the exact current target installer"
+    );
+    ensure!(
+        evidence["recovery_mode"] == "forward-existing-schema2",
+        "Exact forward-only evidence required"
+    );
+    let observed: ObservedFormats = serde_json::from_value(evidence["observed_formats"].clone())?;
+    let sessions = evidence["session_count"]
+        .as_u64()
+        .context("Observed session count missing")?;
+    ensure!(
+        sessions <= 4096
+            && observed.catalogue_schema == 2
+            && observed.journal_schemas.len() <= 64
+            && observed
+                .journal_schemas
+                .windows(2)
+                .all(|values| values[0] < values[1])
+            && observed.journal_schemas.iter().all(|value| *value >= 2)
+            && if sessions == 0 {
+                observed.journal_schemas.is_empty() && observed.process_protocols.is_empty()
+            } else {
+                !observed.journal_schemas.is_empty()
+                    && observed.process_protocols == [voyage_protocol::process::PROCESS_PROTOCOL]
+            },
+        "Observed ordinary forward formats are unsupported or malformed"
+    );
+    let current = current_forward_formats()?;
+    ensure!(
+        next.formats == current,
+        "Forward target differs from the current recovery writer/read contract"
+    );
+    ensure!(
+        next.formats["catalogue_read"].contains(&observed.catalogue_schema)
+            && next.formats["catalogue_write"].contains(&observed.catalogue_schema)
+            && observed
+                .journal_schemas
+                .iter()
+                .all(|version| next.formats["journal_read"].contains(version)),
+        "Forward target cannot read the exact observed formats"
+    );
+    Ok(())
+}
+
 fn original_unchanged(review: &Review) -> Result<()> {
     ensure!(
         bounded_hash(&path(&review.original_operation)?, 65536)? == review.original_sha256,
@@ -469,7 +628,6 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
         target_id != old && target_id != running_id,
         "Recovery target must be a distinct qualified release"
     );
-    rollback_formats(&installed_manifest(&running_id)?, &target)?;
     let activation = service::review_activation(&running.join("bin"))?;
     ensure!(activation.active, "Known running supervisor must be active");
     service::observe_activation(&running.join("bin"), &activation, true)?;
@@ -494,6 +652,12 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
     );
     let source_evidence =
         crate::legacy::forward_evidence(&activation.state, &accounts, &installation_root()?)?;
+    forward_formats(
+        &installed_manifest(&running_id)?,
+        &target,
+        &source_evidence,
+        &files::hash(&std::env::current_exe()?)?,
+    )?;
     let gateway_unit = option("--gateway-unit")?.to_owned();
     ensure!(
         gateway_unit.ends_with(".service")
@@ -670,7 +834,6 @@ fn apply(record: &mut Recovery, approved: &str) -> Result<()> {
             )? == review.target_manifest_sha256,
         "Reviewed target changed"
     );
-    rollback_formats(&installed_manifest(&review.running_release)?, &target)?;
     service::observe_activation(&running.join("bin"), &review.activation, true)?;
     gateway_check(review, &running, false)?;
     only_reviewed_services(&running, &review.gateway_unit)?;
@@ -690,14 +853,17 @@ fn apply(record: &mut Recovery, approved: &str) -> Result<()> {
         crate::legacy::accounts_for_process(pid)? == review.accounts,
         "Account namespace changed since owner review"
     );
-    ensure_reviewed_source(
-        &review.source_evidence,
-        &crate::legacy::forward_evidence(
-            &review.activation.state,
-            &review.accounts,
-            &installation_root()?,
-        )?,
-        false,
+    let observed_source = crate::legacy::forward_evidence(
+        &review.activation.state,
+        &review.accounts,
+        &installation_root()?,
+    )?;
+    ensure_reviewed_source(&review.source_evidence, &observed_source, false)?;
+    forward_formats(
+        &installed_manifest(&review.running_release)?,
+        &target,
+        &observed_source,
+        &files::hash(&std::env::current_exe()?)?,
     )?;
     for entry in fs::read_dir(root()?)? {
         let path = entry?.path();

@@ -301,3 +301,100 @@ fn semantic_review_refuses_logical_clock_schema_accounts_context_and_missing_cla
         .remove("review_state_sha256");
     assert!(ensure_reviewed_source(&old_review, &approved, false).is_err());
 }
+
+fn observed_format_fixture(f: &Fixture) -> (Manifest, Manifest, serde_json::Value, String) {
+    let source = Manifest::inspect(&crate::fixture_tests::release(f, "source", "1.0.3")).unwrap();
+    let mut target =
+        Manifest::inspect(&crate::fixture_tests::release(f, "target", "1.0.3")).unwrap();
+    target.update_compatibility = Some(crate::install::release::UpdateCompatibility {
+        schema_version: 1,
+        formats: current_forward_formats().unwrap(),
+        implementation_sha256: "a".repeat(64),
+        build_inputs_sha256: "b".repeat(64),
+    });
+    let executing = target.binaries["voyage-installer"].sha256.clone();
+    let evidence = serde_json::json!({"recovery_mode":"forward-existing-schema2", "session_count":2,
+        "observed_formats":{"catalogue_schema":2,"journal_schemas":[12,20],"process_protocols":[1]}});
+    (source, target, evidence, executing)
+}
+
+#[test]
+fn undeclared_source_forward_admission_preserves_manifest_and_never_supplies_rollback_readers() {
+    let f = Fixture::new();
+    let (source, target, evidence, executing) = observed_format_fixture(&f);
+    let original = serde_json::to_vec(&source).unwrap();
+    forward_formats(&source, &target, &evidence, &executing).unwrap();
+    assert_eq!(serde_json::to_vec(&source).unwrap(), original);
+    assert!(source.update_compatibility.is_none());
+    assert!(rollback_formats(&source, &target).is_err());
+}
+
+#[test]
+fn undeclared_forward_admission_refuses_a_different_installer_and_every_changed_current_contract() {
+    let f = Fixture::new();
+    let (source, target, evidence, executing) = observed_format_fixture(&f);
+    assert!(forward_formats(&source, &target, &evidence, &"0".repeat(64)).is_err());
+    for name in [
+        "catalogue_read",
+        "catalogue_write",
+        "journal_read",
+        "journal_write",
+        "process_protocol",
+        "vessel_protocol",
+        "execution_identity",
+    ] {
+        let mut changed = target.clone();
+        changed
+            .update_compatibility
+            .as_mut()
+            .unwrap()
+            .formats
+            .insert(name.into(), vec![999]);
+        assert!(
+            forward_formats(&source, &changed, &evidence, &executing).is_err(),
+            "{name}"
+        );
+    }
+    let mut missing = target;
+    missing.update_compatibility = None;
+    assert!(forward_formats(&source, &missing, &evidence, &executing).is_err());
+}
+
+#[test]
+fn undeclared_forward_admission_requires_complete_actual_formats_and_exact_forward_mode() {
+    let f = Fixture::new();
+    let (source, target, evidence, executing) = observed_format_fixture(&f);
+    for observed in [
+        serde_json::Value::Null,
+        serde_json::json!({"catalogue_schema":1,"journal_schemas":[12,20],"process_protocols":[1]}),
+        serde_json::json!({"catalogue_schema":3,"journal_schemas":[12,20],"process_protocols":[1]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[12,21],"process_protocols":[1]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[12,12],"process_protocols":[1]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[],"process_protocols":[1]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[12],"process_protocols":[]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[12],"process_protocols":[2]}),
+        serde_json::json!({"catalogue_schema":2,"journal_schemas":[12],"process_protocols":[1],"extra":true}),
+    ] {
+        let mut changed = evidence.clone();
+        changed["observed_formats"] = observed;
+        assert!(forward_formats(&source, &target, &changed, &executing).is_err());
+    }
+    let mut wrong_mode = evidence;
+    wrong_mode["recovery_mode"] = serde_json::json!("restore");
+    assert!(forward_formats(&source, &target, &wrong_mode, &executing).is_err());
+}
+
+#[test]
+fn declared_source_forward_recovery_retains_ordinary_rollback_guard_without_fallback() {
+    let f = Fixture::new();
+    let (mut source, target, evidence, executing) = observed_format_fixture(&f);
+    source.update_compatibility = target.update_compatibility.clone();
+    forward_formats(&source, &target, &serde_json::Value::Null, "unneeded").unwrap();
+    source
+        .update_compatibility
+        .as_mut()
+        .unwrap()
+        .formats
+        .insert("catalogue_read".into(), vec![1]);
+    assert!(forward_formats(&source, &target, &evidence, &executing).is_err());
+}

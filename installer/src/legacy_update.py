@@ -67,7 +67,7 @@ def guardian_idle(directory):
     try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     finally:os.close(fd)
 
-def inventory(state, db, journal_ceiling=12):
+def inventory(state, db, journal_ceiling=12, formats=None):
     rows = db.execute('SELECT session_id,registration FROM voyages ORDER BY session_id').fetchall()
     if len(rows) > 4096: raise ValueError('ordinary voyage bound exceeded')
     sessions = []
@@ -99,6 +99,12 @@ def inventory(state, db, journal_ceiling=12):
                 raise ValueError('legacy journal session identity missing')
         if not 2 <= version <= journal_ceiling or journal.execute('SELECT count(*) FROM runs WHERE active=1').fetchone()[0]:
             raise ValueError('legacy journal or active run prevents update')
+        if formats is not None:
+            protocol=registration.get('protocol')
+            if type(protocol) is not int or protocol!=1:
+                raise ValueError('ordinary process protocol is unknown')
+            formats['journal_schemas'].add(version)
+            formats['process_protocols'].add(protocol)
         journal.close()
         sessions.append(session)
     return sessions
@@ -252,10 +258,15 @@ def projection_matches(state, db):
         if normalized(saved) != normalized(projected):
             raise ValueError('ordinary registration projection changed')
 
-def evidence(state, accounts, db, journal_ceiling=12):
-    sessions=inventory(state,db,journal_ceiling)
-    return dict(canonical_sha256=canonical(db), state_sha256=tree_digest(state,True),
+def evidence(state, accounts, db, journal_ceiling=12, observe_formats=False):
+    formats={'journal_schemas':set(), 'process_protocols':set()} if observe_formats else None
+    sessions=inventory(state,db,journal_ceiling,formats)
+    result=dict(canonical_sha256=canonical(db), state_sha256=tree_digest(state,True),
                 accounts_sha256=tree_digest(accounts), sessions=sessions, session_count=len(sessions))
+    if formats is not None:
+        result['observed_formats']={'catalogue_schema':db.execute('SELECT version FROM schema_version WHERE id=1').fetchone()[0],
+            'journal_schemas':sorted(formats['journal_schemas']), 'process_protocols':sorted(formats['process_protocols'])}
+    return result
 
 def run(action,state,accounts,stage):
     state,accounts,stage=map(pathlib.Path,(state,accounts,stage))
@@ -266,7 +277,7 @@ def run(action,state,accounts,stage):
     if version not in (1,2): raise ValueError('unsupported legacy catalogue source')
     forward=action.startswith('forward-')
     if forward and version!=2:raise ValueError('forward recovery requires existing schema 2')
-    current=evidence(state,accounts,db,20 if forward else 12)
+    current=evidence(state,accounts,db,20 if forward else 12,forward)
     if forward:
         current['recovery_mode']='forward-existing-schema2'
         current['review_state_sha256']=notification_review_tree(state)

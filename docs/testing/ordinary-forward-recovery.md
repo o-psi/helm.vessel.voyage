@@ -121,3 +121,37 @@ known live-source physical drift; it does not relax the pending activation proof
 or silently discard notification state. Old reviews lacking full semantic evidence
 refuse and need a separate fresh reviewed operation, never an altered approval or
 replayed unknown mutation. Native qualification of this boundary remains pending.
+
+## Approved running source without an older format declaration
+
+A known mixed installation can have an approved, authenticated schema2 running
+candidate published before `update_compatibility` was added. Actual CT106 source76
+has this shape: old v1.0.2 managed metadata, actual catalogue2 and two observed
+journal12 conversations. Its immutable manifest remains unchanged. Ordinary
+update/rollback still refuses absent previous-reader declarations.
+
+The separate forward-only path records the actual catalogue schema, every unique
+journal schema found across the complete session inventory and registration process
+protocols in its review and held evidence. For an undeclared running source it
+requires the target installer hash to equal the executing recovery binary and the
+target's entire declared format vectors to equal this recovery binary's embedded
+source-derived current catalogue/journal/protocol contract. Every observed schema
+must be admitted by those target readers. Unknown, changed, duplicate, missing or
+malformed formats, different installer bytes or a changed target contract refuse.
+The installer derives these values from its compiled source inputs; it does not
+invent a prior release's readers or modify the old manifest.
+
+Actual ordinary schema2 and raw canonical/account/state/session ownership proof
+remain required. The global current catalogue declaration also includes separately
+gated bound-layout formats; this ordinary operation does not admit that layout.
+Poststart verification requires the same ordinary schema2 and every held raw claim.
+Recovery never calls journal upgrade or database restore and never promises binary
+rollback to the undeclared source. Future explicit runtime work remains subject to
+its own normal format/authority checks. Declared sources retain the existing
+rollback-format guard without this exception.
+
+This is prepared source, not a successful native recovery. The refusal from operation
+`6183c0a9-97d9-48c7-baa6-e538029ccda7` cannot be turned into an approved review by
+editing its files. After focused/strict/full source qualification and an actual new
+hosted artifact, use a new distinct owner review from current facts, preserving the
+original uncertain operation and all prior private evidence.

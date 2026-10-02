@@ -336,3 +336,11 @@ review interval. Only cold notification physical layout can drift before source
 quiescence; every file is still accounted for. The subsequently held snapshot and
 pending activation proof remain strictly raw-byte fenced. See the forward recovery
 runbook for refusal cases and native qualification limits.
+
+The explicit ordinary forward-recovery entry also handles an approved running
+schema2 candidate that predates format declarations, under the narrow
+[source-derived current-target admission](testing/ordinary-forward-recovery.md#approved-running-source-without-an-older-format-declaration).
+It records observed formats, pins the executing current installer/target contract
+and retains strict held raw proof. This does not supply absent old rollback readers,
+modify historical manifests, migrate journals, restore data or broaden ordinary
+update/rollback admission. Current native qualification remains a separate gate.

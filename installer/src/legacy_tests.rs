@@ -411,3 +411,32 @@ fn notification_review_refuses_changed_schema_hot_missing_or_nonprivate_pairs() 
         );
     }
 }
+
+#[test]
+fn forward_evidence_pins_actual_catalogue_journal_and_registration_protocol_formats() {
+    let f = Fixture::new();
+    let (state, accounts, stage) = setup(&f);
+    sql(
+        &state,
+        include_str!("../../vessel/src/process/database_v2_migration.sql"),
+    );
+    let evidence = forward_evidence(&state, &accounts, &stage).unwrap();
+    assert_eq!(
+        evidence["observed_formats"],
+        serde_json::json!({"catalogue_schema":2,
+        "journal_schemas":[12],"process_protocols":[1]})
+    );
+    let guard = begin_forward(&state, &accounts, &stage).unwrap();
+    assert_eq!(
+        guard.proof.evidence["observed_formats"],
+        evidence["observed_formats"]
+    );
+    guard.verify().unwrap();
+    let journal =
+        state.join("sessions/11111111-1111-4111-8111-111111111111/journal/journal.sqlite3");
+    crate::service::command::run(Path::new("/usr/bin/python3"), &["-I","-c",
+        "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute('UPDATE attachment_schema SET version=21 WHERE id=1');c.commit()",
+        journal.to_str().unwrap()],None).unwrap();
+    assert!(guard.verify().is_err());
+    assert!(forward_evidence(&state, &accounts, &stage).is_err());
+}
