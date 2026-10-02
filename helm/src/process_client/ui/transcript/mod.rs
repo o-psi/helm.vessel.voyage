@@ -212,3 +212,7 @@ mod attachment_tests {
         assert!(!delivery.matches(&message));
     }
 }
+
+#[cfg(test)]
+#[path = "ordinary_journey_tests.rs"]
+mod ordinary_journey_tests;
