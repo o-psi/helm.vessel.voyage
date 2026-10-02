@@ -912,5 +912,5 @@ mod acceptance_tests;
 mod boundary_tests;
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
-#[path = "runtime_owned_registry_journeys.rs"]
+#[path = "runtime_owned_registry_journey_tests.rs"]
 mod owned_registry_journeys;

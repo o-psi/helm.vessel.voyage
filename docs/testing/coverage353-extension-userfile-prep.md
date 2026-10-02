@@ -24,8 +24,8 @@ are two additional child entry tests which are inert without their explicit
 fixture marker. They are not additional independent scenarios.
 
 Only the two production files gain test declarations. New test files are
-`extensions/runtime_owned_registry_journeys.rs` and
-`server/authorization/owned_userfile_journeys.rs`.
+`extensions/runtime_owned_registry_journey_tests.rs` and
+`server/authorization/owned_userfile_journey_tests.rs`.
 
 ## Actual behavior and oracles
 

@@ -482,5 +482,5 @@ pub(super) fn bind_config(
 mod tests;
 
 #[cfg(all(test, unix))]
-#[path = "authorization/owned_userfile_journeys.rs"]
+#[path = "authorization/owned_userfile_journey_tests.rs"]
 mod owned_userfile_journeys;
