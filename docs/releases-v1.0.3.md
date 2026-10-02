@@ -25,19 +25,24 @@ Reliable Vessels** (#344/#346/#380), following the latest release planning. Thei
 staged source is present but is not supported production deployment in v1.0.3.
 Root metadata helpers do not execute agent loops or centralize credentials.
 
-Remaining v1.0.3 gates include deployed browser TLS/client acceptance, complete
-reachable-production coverage, native legacy rollback/interruption qualification
-(#401) and stable artifact publication. Account route fencing (#400) and unchanged
-legacy owner admission (#402) are delivered and closed. Ordered live-event and UX
-acceptance are recorded in closed #366/#372 and #377, respectively.
-The authoritative full-scope measurement is [coverage/latest.json](../coverage/latest.json).
-Use that record and #353's linked source/object audit for the current measured
-commit, counts, exclusions and remaining gaps. A source batch awaiting its
-coordinated measurement does not inherit an older result. The fresh
-80-turn journey also passed: 160 messages, 2,720 ordered events, retention-gap
-recovery and lossless 17-message paging without repeated inference, with observed
-cleanup. The unchanged reachable-production objective remains tracked by #353;
-passing tests do not imply that objective is met.
+Remaining v1.0.3 gates are complete deployed browser acceptance (#333) and
+stable artifact publication/installation (#375). The user moved the remaining
+reachable-production coverage objective [#353](https://github.com/o-psi/helm.vessel.voyage/issues/353)
+to **v1.1.1 — Efficient Agents and Better Composers**. Its gaps remain open there;
+this scope change does not claim 100% coverage or change measurement exclusions.
+Applicable local tests and source-matched coverage remain required for delivered
+Rust changes. The authoritative measurement is
+[coverage/latest.json](../coverage/latest.json), with #353's linked source/object
+audit. A source batch awaiting its coordinated measurement does not inherit an
+older result.
+
+The legacy updater repair [#401](https://github.com/o-psi/helm.vessel.voyage/issues/401#issuecomment-5949504704)
+is delivered and closed with exact source, local checks, hosted archive and scoped
+native evidence. Account route fencing (#400) and unchanged legacy owner admission
+(#402) are also delivered and closed. Ordered live-event and UX acceptance are
+recorded in closed #366/#372 and #377, respectively. The fresh 80-turn journey
+passed: 160 messages, 2,720 ordered events, retention-gap recovery and lossless
+17-message paging without repeated inference, with observed cleanup.
 
 Helm Web `4bb4ae03709d2a3eac5e299df729cab1f4d374a7` is deployed through the
 existing scoped updater in CT 106.
@@ -56,14 +61,19 @@ were verified unchanged. The original saved Web connection now authenticates wit
 its exact twelve v1.0.2 owner rights; WorkspaceRead remains absent and its command
 was definitely refused before effects. See closed #402 and #401's delivery record.
 
-Ordinary native qualification passed normal upgrades and live-owner refusal with
-observed cleanup. A controlled candidate-death case exposed a rollback service
-transition refusal and remains unconfirmed with its snapshot/quarantine retained.
-The correction must also preserve the restore guard's continuously held ownership
-leases while selecting the old reader. Source tests alone do not establish native
-rollback: fresh qualification and the remaining interruption/context cases stay
-open in #401. Complete deployed browser acceptance stays open in #333; the
-qualification route is disabled until its explicit bounded job is provisioned.
+The closed #401 record distinguishes normal upgrades and live-owner refusal,
+CT128 startup rollback/old-reader qualification, and CT127 helper-boundary
+retirement evidence from synthetic manager/PID tests. Original uncertain updates,
+failed attempts, snapshots, quarantine and changed-context refusals remain
+preserved; they are not relabelled successful rollback. CT129's unresolved
+supervisor lifetime remains an explicit owned-fixture disposition in #375. Closing
+#401's repair scope does not establish native system installation, every possible
+rollback fault or complete browser acceptance.
+
+Complete deployed browser/site/privacy/cost/cleanup acceptance stays open in
+[#333](https://github.com/o-psi/helm.vessel.voyage/issues/333). Its explicit bounded
+qualification and observed cleanup must finish before stable publication; current
+job and route state are tracked in that delivery record.
 
 ## Planned assets and installation
 
