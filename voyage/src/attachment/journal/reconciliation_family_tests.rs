@@ -17,6 +17,7 @@ impl Fixture {
         journal.create_session(&session).unwrap();
         let guard = journal.acquire_execution(session.id).unwrap();
         journal.initialize_process_commands(&guard).unwrap();
+        journal.initialize_observations(&guard).unwrap();
         journal.initialize_lifecycle(&guard).unwrap();
         journal.initialize_session_resources(&guard).unwrap();
         journal.initialize_cleanup_progress(&guard).unwrap();

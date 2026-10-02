@@ -169,8 +169,13 @@ async fn assignment_terminal_result_never_establishes_cleanup_until_exact_observ
     assert_eq!(pending["state"], "cleanup_unknown");
     assert_eq!(pending["cleanup_observed"], false);
     ended(&mut run).await;
-    run.confirm_local_cleanup_observed().await.unwrap();
-    assert!(!f.owner.process_snapshot().await.unwrap()["pending_cleanup_run"].is_null());
+    // Local cleanup is retained, but the API refuses overall confirmation while
+    // this exact participant obligation remains unresolved.
+    assert!(run.confirm_local_cleanup_observed().await.is_err());
+    assert_eq!(
+        f.owner.process_snapshot().await.unwrap()["pending_cleanup_run"],
+        json!(id)
+    );
     event.cleanup_observed = true;
     let settled = f.owner.update_assignment(event.clone()).await.unwrap();
     assert_eq!(settled["state"], "completed");

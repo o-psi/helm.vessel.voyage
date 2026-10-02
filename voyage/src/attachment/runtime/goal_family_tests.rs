@@ -203,13 +203,22 @@ async fn observed_usage_settles_once_without_declaring_the_objective_complete() 
         .await
         .unwrap()
         .unwrap();
-    let request = RequestObservation {
+    let pending = RequestObservation {
         request_id: Uuid::new_v4(),
         revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    let request = RequestObservation {
+        revision: 1,
         input_tokens: Some(3),
         output_tokens: Some(2),
         complete: true,
+        ..pending.clone()
     };
+    assert!(observer.record(request.clone()).await.is_err());
+    observer.record(pending).await.unwrap();
     observer.record(request.clone()).await.unwrap();
     observer.record(request).await.unwrap();
     run.finish_operator(Ok("one reserved step complete".into()), false)
@@ -257,13 +266,19 @@ async fn incomplete_usage_and_unobserved_cleanup_fence_automatic_continuation_wi
         .await
         .unwrap()
         .unwrap();
+    let pending = RequestObservation {
+        request_id: Uuid::new_v4(),
+        revision: 0,
+        input_tokens: None,
+        output_tokens: None,
+        complete: false,
+    };
+    observer.record(pending.clone()).await.unwrap();
     observer
         .record(RequestObservation {
-            request_id: Uuid::new_v4(),
-            revision: 0,
+            revision: 1,
             input_tokens: Some(4),
-            output_tokens: None,
-            complete: false,
+            ..pending
         })
         .await
         .unwrap();
@@ -299,7 +314,9 @@ async fn allocation_and_nonadmission_close_are_exact_destination_and_receipt_bou
     let request = allocation();
     let budget = observer.allocate(request.clone()).await.unwrap();
     assert_eq!(budget.command_id, request.command_id);
-    assert_eq!(observer.allocate(request.clone()).await.unwrap(), budget);
+    // The durable observer inserts once. The process meter reuses an exact
+    // allocation; replaying its lower-level insertion is refused atomically.
+    assert!(observer.allocate(request.clone()).await.is_err());
     let mut changed = request.clone();
     changed.tokens += 1;
     assert!(observer.allocate(changed).await.is_err());
@@ -346,6 +363,7 @@ async fn allocation_and_nonadmission_close_are_exact_destination_and_receipt_bou
     let rows = f.owner.goal_allocations(0, 128).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert!(rows[0].closed);
+    assert_eq!(rows[0].budget, budget);
     assert!(rows[0].dispatch.is_none());
 }
 
@@ -484,11 +502,16 @@ async fn offline_goal_fence_and_explicit_stop_preserve_objective_and_never_enabl
     let fenced = f.owner.goal().await.unwrap().goal.unwrap();
     assert_eq!(fenced.objective, before.objective);
     assert!(!fenced.continuation_authorized);
-    assert!(
-        f.owner
-            .stop_goal(0, GoalStopReason::ProviderFailure)
-            .await
-            .is_err()
+    let pinned = f.owner.goal().await.unwrap();
+    f.owner
+        .stop_goal(0, GoalStopReason::ProviderFailure)
+        .await
+        .unwrap();
+    // A stale asynchronous failure is an explicit unchanged no-op, never
+    // authority to stop a newer Goal or override the offline fence.
+    assert_eq!(
+        serde_json::to_value(f.owner.goal().await.unwrap()).unwrap(),
+        serde_json::to_value(pinned).unwrap()
     );
     f.owner
         .stop_goal(
