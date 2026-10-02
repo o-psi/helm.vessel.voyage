@@ -910,3 +910,7 @@ mod acceptance_tests;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "runtime_boundary_tests.rs"]
 mod boundary_tests;
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+#[path = "runtime_owned_registry_journeys.rs"]
+mod owned_registry_journeys;
