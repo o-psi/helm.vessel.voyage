@@ -86,3 +86,42 @@ workspace coverage after the final relevant edit. Retain preceding and foreign
 evidence, audit all current source/objects, publish compact coverage/main source
 and own actual hosted archive follow-through. Source prep does not close353 or
 any full milestone/native/browser/platform/provider acceptance.
+
+## Integrated public and goal source-final measurement
+
+Clean measured source `2802782e6f9d438145c01328a57d16cc0f014d23` passed the full
+workspace gate: **2971 passed, 0 failed, 8 ignored**, across 15 parent Cargo
+targets, including all 35 new public/goal cases. Nested child summaries are
+excluded. Formatting and strict all-target/all-feature Clippy passed.
+
+The prior `100970f` run failed only the existing SSE capacity teardown fixture
+with BrokenPipe (2970 passed, one failed, eight ignored). Its logs remain retained.
+The reviewed correction records only identity-validated empty consumed Events
+write disconnects during deliberate body drops; saturation, command admission,
+capacity recovery, successful child joins, exact retirement and no-effects
+checks remain strict. No production behavior/deadline change was required.
+
+Audited 18 objects (15 test targets and three actual entrypoints), 512 own raw
+profiles and 235 unchanged foreign profiles retain all 543 workspace mappings,
+plus the previously retained standard-library mapping. Summary/detail/HTML and
+archived-object LCOV agree. Lines **108772/135727 = 80.14028159467166%**, functions
+9827/12366, regions171596/224912. Compared with e106038, 96 more covered lines,
+unchanged denominator and +0.070730 percentage points. Standard exclusions remain
+unchanged; **100% reachable-production coverage remains unfinished**.
+
+All 544 files/12366 groups/every JSON and LCOV line counter reconcile:
+26955 aggregate gaps versus24846 unique zero addresses; difference2109 equals
+126 maximum/union +2010 overlapping groups -27 counter shadowing. This is
+counting evidence, not a complete reachability classification.
+
+Gate invocation `80257fa8e9364572bfda3276631ac438` exited0,302seconds,
+7236538368B peak; export `40cf2402d76e462dbde1d1a750a6b1ee` exited0,25seconds,
+10648100864B peak; accounting `43462702615a4c428899365adc56f245` exited0,
+310243328B peak. All bounded units had zero swap and retained terminal evidence.
+Ignored raw/log/detail/HTML/object evidence is kept under
+`target/coverage-report/v103-public-delegation-sse-final/`. The compact record
+is `coverage/latest.json`, explicitly bound to clean source2802782.
+
+Publication and the exact hosted build/archive/checksum follow-through remain
+pending when this record is written. Native browser qualification and the stable
+release remain open; this measurement does not close #333/#353/#375.
