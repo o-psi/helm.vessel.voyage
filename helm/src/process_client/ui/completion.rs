@@ -20,11 +20,20 @@ pub(super) struct Completion {
     metadata: Option<Metadata>,
 }
 struct Metadata {
+    request_id: Uuid,
     target: Target,
     incarnation: Uuid,
     section: &'static str,
+    context: LookupContext,
     value: Option<serde_json::Value>,
     failed: bool,
+}
+#[derive(Clone, PartialEq)]
+pub(super) struct LookupContext {
+    run_id: Option<Uuid>,
+    model: Option<String>,
+    inference: Option<super::inference::Settings>,
+    inference_current: Option<super::inference::Settings>,
 }
 struct Menu {
     entries: Vec<(String, String)>,
@@ -32,9 +41,27 @@ struct Menu {
 }
 
 impl App {
+    fn completion_context(&self, target: Target) -> Option<LookupContext> {
+        if self.selected != Some(target) || !self.clients.available(target.route) {
+            return None;
+        }
+        let snapshot = self.views.get(&target)?.snapshot.as_ref();
+        Some(LookupContext {
+            run_id: snapshot
+                .and_then(|s| s.run.as_ref())
+                .filter(|r| r.active())
+                .map(|r| r.run_id),
+            model: snapshot.map(|s| s.model.clone()),
+            inference: snapshot.and_then(|s| s.inference.clone()),
+            inference_current: snapshot.and_then(|s| s.inference_current.clone()),
+        })
+    }
     fn completion_text(&self) -> Option<&str> {
         let view = self.views.get(&self.selected?)?;
-        if self.sidebar.menu.is_some()
+        if self.active_draft.is_some()
+            || self.accounts.open()
+            || self.inference_picker_open()
+            || self.sidebar.menu.is_some()
             || self.sidebar.focus != super::sidebar::Focus::Composer
             || self.help
             || self.explore.is_some()
@@ -73,29 +100,31 @@ impl App {
         let Some(target) = self.selected else {
             return;
         };
-        if !self.clients.available(target.route) {
+        let Some(context) = self.completion_context(target) else {
+            self.completion.metadata = None;
             return;
-        }
+        };
         let view = &self.views[&target];
         let incarnation = view.process.incarnation;
         if self.completion.metadata.as_ref().is_some_and(|m| {
-            m.target == target && m.incarnation == incarnation && m.section == section
+            m.target == target
+                && m.incarnation == incarnation
+                && m.section == section
+                && m.context == context
         }) {
             return;
         }
+        let request_id = Uuid::new_v4();
         self.completion.metadata = Some(Metadata {
+            request_id,
             target,
             incarnation,
             section,
+            context: context.clone(),
             value: None,
             failed: false,
         });
-        let run_id = view
-            .snapshot
-            .as_ref()
-            .and_then(|s| s.run.as_ref())
-            .filter(|r| r.active())
-            .map(|r| r.run_id);
+        let run_id = context.run_id;
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         tokio::spawn(async move {
@@ -114,9 +143,11 @@ impl App {
             let value = result.ok().and_then(Result::ok);
             let _ = sender
                 .send(Update::Completion {
+                    request_id,
                     target,
                     incarnation,
                     section,
+                    context,
                     value,
                 })
                 .await;
@@ -125,16 +156,38 @@ impl App {
 
     pub(super) fn completion_update(
         &mut self,
+        request_id: Uuid,
         target: Target,
         incarnation: Uuid,
         section: &str,
+        context: LookupContext,
         value: Option<serde_json::Value>,
     ) {
-        if let Some(metadata) =
-            self.completion.metadata.as_mut().filter(|m| {
-                m.target == target && m.incarnation == incarnation && m.section == section
-            })
+        if self.completion_context(target).as_ref() != Some(&context)
+            || self
+                .views
+                .get(&target)
+                .is_none_or(|v| v.process.incarnation != incarnation)
+            || self
+                .completion_text()
+                .and_then(|t| t.split_once(' '))
+                .map(|(command, _)| command)
+                != Some(match section {
+                    "models" => "model",
+                    "tools" => "tool",
+                    "terminals" => "terminal",
+                    _ => return,
+                })
         {
+            return;
+        }
+        if let Some(metadata) = self.completion.metadata.as_mut().filter(|m| {
+            m.request_id == request_id
+                && m.target == target
+                && m.incarnation == incarnation
+                && m.section == section
+                && m.context == context
+        }) {
             metadata.failed = value.is_none();
             metadata.value = value;
         }
@@ -267,12 +320,17 @@ impl App {
                 }
             }
             "model" | "tool" | "terminal" => {
-                if let Some(metadata) = self
-                    .completion
-                    .metadata
-                    .as_ref()
-                    .filter(|m| m.target == target && m.incarnation == view.process.incarnation)
-                {
+                if let Some(metadata) = self.completion.metadata.as_ref().filter(|m| {
+                    m.target == target
+                        && m.incarnation == view.process.incarnation
+                        && m.section
+                            == match command {
+                                "model" => "models",
+                                "tool" => "tools",
+                                _ => "terminals",
+                            }
+                        && self.completion_context(target).as_ref() == Some(&m.context)
+                }) {
                     if let Some(value) = &metadata.value {
                         let value = value.get("value").unwrap_or(value);
                         let value = value.get("inventory").unwrap_or(value);
@@ -474,3 +532,7 @@ fn path_options(argument: &str, directories_only: bool, absolute: bool) -> Vec<(
 #[cfg(test)]
 #[path = "completion_coverage_tests.rs"]
 mod coverage_tests;
+
+#[cfg(all(test, unix))]
+#[path = "completion_metadata_journey_tests.rs"]
+mod metadata_journey_tests;

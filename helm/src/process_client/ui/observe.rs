@@ -69,9 +69,11 @@ pub enum Update {
         result: Result<Vec<super::state::Message>, String>,
     },
     Completion {
+        request_id: uuid::Uuid,
         target: Target,
         incarnation: uuid::Uuid,
         section: &'static str,
+        context: super::completion::LookupContext,
         value: Option<serde_json::Value>,
     },
     Terminals {

@@ -89,23 +89,48 @@ fn metadata_completion_filters_unsafe_tokens_and_fences_identity() {
         ),
     ] {
         draft(&mut app, target, &format!("/{command} "));
+        let request_id = Uuid::new_v4();
+        let context = app.completion_context(target).unwrap();
         app.completion.metadata = Some(Metadata {
+            request_id,
             target,
             incarnation,
             section,
+            context: context.clone(),
             value: None,
             failed: false,
         });
         assert!(app.completion_menu().unwrap().hint.starts_with("Loading "));
-        app.completion_update(target, Uuid::new_v4(), section, Some(value.clone()));
+        app.completion_update(
+            request_id,
+            target,
+            Uuid::new_v4(),
+            section,
+            context.clone(),
+            Some(value.clone()),
+        );
         assert!(app.completion.metadata.as_ref().unwrap().value.is_none());
-        app.completion_update(target, incarnation, "wrong-section", Some(value.clone()));
+        app.completion_update(
+            request_id,
+            target,
+            incarnation,
+            "wrong-section",
+            context.clone(),
+            Some(value.clone()),
+        );
         assert!(app.completion.metadata.as_ref().unwrap().value.is_none());
-        app.completion_update(target, incarnation, section, Some(value));
+        app.completion_update(
+            request_id,
+            target,
+            incarnation,
+            section,
+            context.clone(),
+            Some(value),
+        );
         let entries = app.completion_menu().unwrap().entries;
         assert_eq!(entries.len(), if command == "model" { 2 } else { 1 });
         assert_eq!(entries[0].0, expected);
-        app.completion_update(target, incarnation, section, None);
+        app.completion_update(request_id, target, incarnation, section, context, None);
         assert!(app.completion_menu().unwrap().hint.contains("unavailable"));
     }
 }
