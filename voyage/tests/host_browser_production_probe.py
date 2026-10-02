@@ -16,6 +16,7 @@ import stat
 import sys
 import uuid
 import sqlite3
+import base64
 
 # Explicit maintained sibling import supports isolated Python (-I), without
 # user-site startup or adding a caller-controlled module directory.
@@ -257,6 +258,10 @@ def local_authority(request):
     assert set(request) == {'schema','directory','vessel_id','sessions'} and type(request['schema']) is int and request['schema'] == 1
     base = directory(request['directory'])
     vessel = str(uuid.UUID(request['vessel_id']));assert vessel == request['vessel_id'] and uuid.UUID(vessel).int
+    public_raw, public_pin = private(base/'identity/public.json',4096,True)
+    public = json.loads(public_raw)
+    assert set(public) == {'vessel_id','public_key'} and public['vessel_id'] == vessel
+    assert isinstance(public['public_key'],str) and len(base64.b64decode(public['public_key'],validate=True)) == 32
     assert isinstance(request['sessions'],list) and len(request['sessions']) == 2
     identities = []
     assert len({item['label'] for item in request['sessions']}) == 2
@@ -303,7 +308,10 @@ def local_authority(request):
             'completed_native_receipt_ids':ids,'authority':'existing local account owner',
             'scope':'exact local runtime principal and socket-bound completed native receipt; identifiers do not grant authority'})
     assert len({item['session_id'] for item in identities}) == 2
-    return {'schema':1,'mode':'local','identities':identities,'no_effects':True}
+    public_after, after_pin = private(base/'identity/public.json',4096,True)
+    assert public_after == public_raw and after_pin == public_pin
+    return {'schema':1,'mode':'local','identities':identities,'no_effects':True,
+            'physical_vessel_identity_sha256':hashlib.sha256(public_raw).hexdigest()}
 
 
 def main():

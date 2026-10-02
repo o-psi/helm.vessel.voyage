@@ -49,3 +49,11 @@ test('empty selected native source and missing/nonboolean encoding stay unknown'
   assert.equal(value.traffic.http_operation_response_payload_bytes,0);assert.ok(!JSON.stringify(value).includes('private encoding fixture'));
  }
 });
+
+test('missing essential actual renderer task or heap measurement cannot pass',async()=>{
+ for(const missing of ['TaskDuration','JSHeapUsedSize']){
+  const f=fixture();const original=f.cdp.send;f.cdp.send=async(name)=>{const result=await original(name);if(name==='Performance.getMetrics')result.metrics=result.metrics.filter(metric=>metric.name!==missing);return result;};
+  const meter=await browserCost(f.context,{}, {maxMilliseconds:1000});const value=await meter.stop();
+  assert.equal(value.status,'unknown');assert.equal(value.renderer_metrics_qualified,false);assert.equal(value.after[missing],null);
+ }
+});

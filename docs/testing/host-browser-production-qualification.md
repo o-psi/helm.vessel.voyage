@@ -419,7 +419,7 @@ historical single-viewer comparison and explicitly limit cross-run comparisons.
 | Host CPU/RSS/PSS | `voyage/tests/host_browser_cost.py` on the executing host with explicit PID/starttime ledger | Observe each fixture Voyage/worker/browser tree; gateway/supervisor leaf PID separately. Never include unrelated production descendant trees. RSS sums double-count shared pages; PSS apportions them. Missing permissions are unavailable, not zero. |
 | Client renderer CPU/heap/DOM | `host_browser_client_cost.mjs` Performance metrics on each qualification-owned Chromium page | Task/Script/Layout durations and JS heap/DOM counts; renderer task time is not whole-browser OS CPU. Measure the isolated qualification browser process tree with the PID ledger for OS CPU/RSS/PSS. |
 | Web payload | Passive CDP counters for the exact actual browser-socket URL | Application frame bytes including auth/renewal, without retaining contents; excludes TLS/TCP framing/compression overhead. Attach before socket creation/renewal; zero selected connections seen means unqualified traffic, not zero cost. |
-| Native viewer payload | Passive CDP counters for that owned localhost `/operation` URL | CDP encoded HTTP response bytes. Native Helm's public WSS traffic is outside the viewer page; these bytes must not be represented as its wire cost. Actual native wire bytes require an already-authorized per-socket/proxy counter or a dedicated owned traffic fixture. |
+| Native viewer payload | Passive CDP counters for that owned localhost `/operation` URL | UTF8 request and decoded response application bodies; encoded response transfer bytes and in-flight edges separate. This is not the Native–Vessel socket or total TCP/TLS cost. Native local/public socket bytes use the separately labelled passive native meter. Missing task-time/heap/body/encoding, empty selected source or in-flight requests cannot pass. |
 | Latency/fidelity | One explicit benign input and observed replay marker in both clients | Record sample count/median/p95/max plus action/refusal/recovery counts and unsupported classes. Time only the single confirmed intent; never retry an unknown effect to get a number. |
 
 The passive client helper requests no response bodies, parses no private messages
@@ -617,7 +617,9 @@ overhead. Local counts never qualify Native public WSS or TLS.
 
 Read-only `local-authority` proof binds each actual runtime's existing
 `identity/actor.json` principal/installation to exact completed Attach/Control/Detach receipt claims observed from that Native
-viewer. The unchanged operation digest includes its actual native socket and
+viewer. The independently checked nonsecret Vessel `identity/public.json` must match the
+validated native greeting and remain byte/inode pinned. No signing key is read.
+The unchanged operation digest includes its actual native socket and
 runtime actor principal; mismatched sockets/bindings fail. Claims contain only
 typed IDs/epochs/mode, never human input. IDs are attribution, not credentials. The
 initial and explicit fresh private-reclaim proofs must retain the same actor and
@@ -637,7 +639,7 @@ CPU/RSS/heap/latency and actual deployed Web public WSS scopes remain distinct.
 
 This mode preserves the full site/media/private/control/reopen/renewal/multi-voyage
 and cleanup programme and all strict Web TLS/CSRF/tenant/principal checks.
-Prepared 2 Rust, 6 Python and 5 Node contract parents have not run. Source checks
+Prepared 2 Rust, 7 Python and 6 Node contract parents have not run. Source checks
 are AST, Rust formatting, Node syntax and diff; Root owns the final focused/full
 coverage/source publication/artifact gate and actual host qualification.
 

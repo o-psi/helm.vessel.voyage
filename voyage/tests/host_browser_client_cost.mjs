@@ -60,8 +60,10 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
     for(const [name,handler] of handlers)cdp.off(name,handler);
     traffic.http_operation_inflight_at_window_end=requests.size;
     await Promise.race([Promise.all([...bodyReads]),new Promise(resolve=>setTimeout(()=>{if(bodyReads.size)traffic.http_operation_body_unavailable+=bodyReads.size;resolve();},1000))]);
-    return {elapsed_ms:performance.now()-started,before,after:await read(),traffic:{...traffic},
-    status:overflow?'scope_overflow':traffic.http_operation_failures||traffic.http_operation_body_unavailable||traffic.http_operation_inflight_at_window_end||(httpSelected.size>0&&(traffic.http_operation_requests===0||traffic.http_operation_responses===0))?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&traffic.selected_ws_connections_seen>0,
+    const after=await read(),essential=['TaskDuration','JSHeapUsedSize'];
+    const rendererComplete=essential.every(name=>[before[name],after[name]].every(value=>Number.isFinite(value)&&value>=0))&&after.TaskDuration>=before.TaskDuration;
+    return {elapsed_ms:performance.now()-started,before,after,renderer_metrics_qualified:rendererComplete,traffic:{...traffic},
+    status:overflow?'scope_overflow':!rendererComplete||traffic.http_operation_failures||traffic.http_operation_body_unavailable||traffic.http_operation_inflight_at_window_end||(httpSelected.size>0&&(traffic.http_operation_requests===0||traffic.http_operation_responses===0))?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&traffic.selected_ws_connections_seen>0,
     cpu_scope:'renderer task time; whole-browser OS CPU/RSS require the owned PID ledger',
     traffic_scope:'selected WebSocket payload and native HTTP requests begun/responses completed in observation window (inflight-at-end counted separately); UTF8 request/decoded response application bytes; encoded response transfer bytes separate; excludes headers/TCP/TLS and native Helm Vessel socket bytes'};}
    finally{for(const [name,handler] of handlers)cdp.off(name,handler);await cdp.detach();}

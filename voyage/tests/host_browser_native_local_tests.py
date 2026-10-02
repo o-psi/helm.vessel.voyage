@@ -60,7 +60,9 @@ class NativeLocalContracts(unittest.TestCase):
             db.execute('CREATE TABLE receipts(id TEXT PRIMARY KEY,principal TEXT,digest TEXT,state TEXT)')
             db.execute('INSERT INTO receipts VALUES(?,?,?,?)',(receipt,actor['actor']['principal_id'],digest,'completed'));db.commit();db.close();(root/'receipts.sqlite3').chmod(0o600)
             sessions.append({'label':label,'session_id':sid,'socket_id':socket,'root':str(root),'claims':[claim]})
-        return {'schema':1,'directory':str(directory),'vessel_id':str(uuid.uuid4()),'sessions':sessions}
+        vessel=str(uuid.uuid4());public_dir=directory/'identity';public_dir.mkdir(mode=0o700)
+        public=public_dir/'public.json';public.write_text(json.dumps({'vessel_id':vessel,'public_key':__import__('base64').b64encode(b'p'*32).decode()}));public.chmod(0o600)
+        return {'schema':1,'directory':str(directory),'vessel_id':vessel,'sessions':sessions}
 
     def test_actual_private_sqlite_completed_receipts_match_existing_runtime_actor(self):
         request=self.authority();before=[Path(item['root']).joinpath('receipts.sqlite3').read_bytes() for item in request['sessions']]
@@ -88,6 +90,10 @@ class NativeLocalContracts(unittest.TestCase):
             if field=='socket':item['socket_id']=str(uuid.uuid4())
             else:item['claims'][0]['binding']['controller_epoch']+=1
             with self.subTest(field=field),self.assertRaises(AssertionError):probe.local_authority(request)
+
+    def test_actor_proof_independently_refuses_wrong_physical_public_vessel_identity(self):
+        request=self.authority();request['vessel_id']=str(uuid.uuid4())
+        with self.assertRaises(AssertionError):probe.local_authority(request)
 
 
 if __name__=='__main__':unittest.main()

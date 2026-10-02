@@ -40,7 +40,8 @@ async function localAuthorityProof(cfg,items,prior=null){
  assert.ok(sessions.every(s=>s.claims.length>0&&s.claims.length<=32),'completed native noninput receipt required');
  const h=cfg.host_observer;const reply=JSON.parse(await sshCommand(cfg,[h.python,'-I',h.probe_script,'local-authority'],
   {schema:1,directory:cfg.native_route.directory,vessel_id:cfg.native_route.expected_vessel_id,sessions}));
- assert.equal(reply.mode,'local');assert.equal(reply.no_effects,true);assert.equal(reply.identities.length,2);
+ assert.equal(reply.mode,'local');assert.equal(reply.no_effects,true);assert.equal(reply.identities.length,2);assert.ok(/^[a-f0-9]{64}$/.test(reply.physical_vessel_identity_sha256));
+ if(prior)assert.equal(reply.physical_vessel_identity_sha256,prior.physical_vessel_identity_sha256);
  for(let i=0;i<2;i++){
   const row=reply.identities[i];for(const key of ['label','session_id','socket_id'])assert.equal(row[key],sessions[i][key]);
   assert.equal(row.vessel_id,cfg.native_route.expected_vessel_id);assert.ok(uuid(row.principal_id)&&uuid(row.installation_id));
