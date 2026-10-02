@@ -609,6 +609,24 @@ async fn journey(mode: &str) {
             .unwrap();
         let before = snapshot(&client, &parent).await;
         assert!(before["messages"].as_array().unwrap().is_empty());
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let ready = catalogue(&client)
+                    .await
+                    .into_iter()
+                    .find(|info| info.session_id == parent.session_id);
+                if let Some(info) = ready {
+                    assert_eq!(info.incarnation, parent.incarnation);
+                    assert_eq!(info.workspace, parent.workspace);
+                    if matches!(info.state, ProcessState::Live | ProcessState::Suspended) {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("actual parent catalogue readiness before the separate resume/branch flow");
         let mut selected = config.clone();
         selected.model = "owned-explicit-branch-model".into();
         let reference = parent.session_id.to_string();
