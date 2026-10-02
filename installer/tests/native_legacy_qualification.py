@@ -678,7 +678,9 @@ def main():
     commands.add_parser('observe')
     commands.add_parser('fail-startup')
     fault = commands.add_parser('kill-at')
-    fault.add_argument('--installer-pid', type=int, required=True)
+    selection = fault.add_mutually_exclusive_group(required=True)
+    selection.add_argument('--installer-pid', type=int)
+    selection.add_argument('--auto-local-owner', action='store_true')
     fault.add_argument('--boundary', choices=['snapshot','restored','committing','helper-snapshot','helper-restore','helper-verify'], required=True)
     context = commands.add_parser('change-at')
     context.add_argument('--installer-pid',type=int,required=True)
@@ -690,7 +692,10 @@ def main():
     elif args.action == 'upgrade': upgrade(args)
     elif args.action == 'live-owner': live_owner(args)
     elif args.action == 'observe': print(json.dumps(observation(), indent=2))
-    elif args.action in ('kill-at','change-at'): kill_at(args)
+    elif args.action == 'kill-at':
+        from native_legacy_faults import run
+        run(sys.modules[__name__], args)
+    elif args.action == 'change-at': kill_at(args)
     elif args.action == 'fail-startup': fail_startup()
     else: print('Native prerequisites observed; no release qualification claimed.')
 

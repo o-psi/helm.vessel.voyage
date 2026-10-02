@@ -64,5 +64,8 @@ all state for read-only `remote-update status UUID` observation; no effect repla
 Death observation alone is not rollback, lease cleanup, canonical preservation
 or install acceptance. Those existing native acceptance checks remain required.
 
-The local-owner role correction must be coordinated before implementation. No
-production/Rust/Cargo/main/host change was made by this audit.
+The parent accepted the local-owner role correction. The maintained fixture now
+provides bounded `--auto-local-owner` arming and separate retirement observations;
+this changes no production/Rust/Cargo/main/host behavior. Ten new offline contracts plus four existing monitor contracts passed under a bounded 1 GiB/no-swap user unit (186 ms, 20.3 MiB peak), including actual owned Python
+children with full argv/parent/pidfd/signal/exit/reaping. They establish fixture
+contracts, not native updater/helper death or rollback acceptance.

@@ -1512,3 +1512,28 @@ retired. The systemd unit used256MiB/no swap/20seconds and terminated0 in113ms,
 18.9MiB peak/no swap. This proves the witness primitive and failure handling;
 it is not the fresh CT native installer rollback result. Cargo, providers and
 production services were not involved in that focused run.
+
+
+### Exact local-owner native fault monitor
+
+`installer/tests/native_legacy_faults.py` supplies maintained
+`native_legacy_qualification.py kill-at --auto-local-owner` arming. Review the
+[execution-role source audit](testing/native-legacy-fault-arming-source-audit.md)
+and [native runbook](testing/ordinary-legacy-update-ct119.md) before actual effects.
+It selects one fresh exact local-owner operation/updater or direct qualified
+helper, retains pidfds, and reports signal delivery separately from positive
+retirement. It does not invoke installation, pause a process, replay an effect or
+prove rollback/cleanup. The independent remote UpdateApply worker is a different
+route and is not qualified by this local bootstrap monitor.
+
+Local fixture contracts, separate from Rust coverage/native acceptance:
+
+```sh
+python3 -I -B installer/tests/native_legacy_fault_tests.py
+python3 -I -B installer/tests/native_legacy_monitor_tests.py
+```
+
+These checks use mocks and explicitly owned Python children. No service manager,
+provider, host upgrade or human clipboard/input is reachable. They must pass in
+a bounded ordinary user unit before publication. Preserve the full Rust
+measurement when combining this Python source with any Rust/test cohort.

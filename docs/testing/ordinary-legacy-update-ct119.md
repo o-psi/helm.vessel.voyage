@@ -77,18 +77,36 @@ Retain the original durable update operation; do not retry it.
 
 ## Worker and owned helper death
 
-On separate seeded cases arm `kill-at` against the **actual current installer PID**
-(the driver pins UID/executable). `candidate-bin.json` is created before launch;
-use `/proc` to identify the exact current installer, not a shell or guessed PID.
+On separate seeded cases arm `kill-at --auto-local-owner` **before** one explicit
+upgrade. The maintained `install.sh upgrade --no-start` route executes legacy
+handover directly in the actual bootstrap installer; it does not launch the
+independent remote UpdateApply worker unit. The monitor accepts one fresh
+canonical `local-owner` record and exact candidate installer argv, qualified
+image hash, UID, PID/start and retained pidfd. It refuses shell/remote-worker
+roles, changed namespaces and ambiguous operations. No pause manufactures a window.
 
 ```sh
-python3 installer/tests/native_legacy_qualification.py --ack-disposable-ct119 kill-at --installer-pid EXACT_PID --boundary snapshot
+python3 installer/tests/native_legacy_qualification.py --ack-disposable-ct119 kill-at --auto-local-owner --boundary snapshot
 ```
+
+Transfer `native_legacy_faults.py` beside the maintained qualification driver.
+Its embedded-helper SHA must match the qualified installer source; local contract
+checks enforce this. Keep the one original operation and private monitor evidence.
+The monitor deadline is 1230 seconds; run it under a bounded independent ordinary
+user unit with an outer deadline greater than 1230 seconds. Arm admission happens
+before the single separate upgrade invocation. `--installer-pid` remains a manual
+exact-role selector subject to the same fresh-record and lifetime checks; it does
+not permit selecting an already-existing operation.
 
 Boundaries: `snapshot` (pinned proof persisted), `restored` (positive restored
 marker), `committing` (durable commit edge), and actual direct helper invocations
 `helper-snapshot`, `helper-restore`, `helper-verify`. Helper matching pins direct
-parent, UID and the embedded quiescent-helper program/action before signaling.
+parent PID/start, UID, Python image hash, the complete isolated embedded program
+hash, action and exact state/accounts/stage tuple before signaling. Retained pidfds
+separately observe exit and positive PID/start retirement. `fault_target_retired`
+only describes that fault target; it does not establish rollback, all helper/lease
+cleanup or native install acceptance. The result retains separate updater/helper
+observations, including unknown/unreaped outcomes.
 A requested signal is **not** observed retirement: retain `/proc` PID/start-time
 and pidfd exit evidence, inspect every inherited ownership lease, verify no live
 helper remains, then use current `voyage-installer remote-update status OP`
