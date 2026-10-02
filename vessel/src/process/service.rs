@@ -1054,6 +1054,10 @@ mod subscriptions_final_tests;
 #[path = "service_tests.rs"]
 mod tests;
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "owned_service_courier_tests.rs"]
+mod owned_service_courier_tests;
+
 #[cfg(test)]
 mod local_browser_routing_tests {
     use super::*;

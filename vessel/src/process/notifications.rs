@@ -1099,3 +1099,7 @@ mod delivery_tests;
 
 #[cfg(test)]
 mod notifications_final_tests;
+
+#[cfg(test)]
+#[path = "notifications_owned_context_tests.rs"]
+mod owned_context_tests;
