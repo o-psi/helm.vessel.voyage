@@ -552,3 +552,7 @@ mod tests {
         assert!(!full_identity_map("0 0 4294967295\n1 1 1\n"));
     }
 }
+
+#[cfg(test)]
+#[path = "system_preflight_owned_assessment_tests.rs"]
+mod owned_assessment_tests;
