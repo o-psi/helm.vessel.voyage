@@ -238,6 +238,9 @@ impl Wire {
         self.frame(1, &serde_json::to_vec(frame).unwrap()).await;
     }
     async fn next(&mut self) -> Option<ServerFrame> {
+        self.next_with_ping_reply(true).await
+    }
+    async fn next_with_ping_reply(&mut self, reply_ping: bool) -> Option<ServerFrame> {
         tokio::time::timeout(Duration::from_secs(8), async {
             loop {
                 let first = match self.0.read_u8().await {
@@ -265,7 +268,8 @@ impl Wire {
                 match first & 15 {
                     1 => return Some(serde_json::from_slice(&bytes).unwrap()),
                     8 => return None,
-                    9 => self.frame(10, &bytes).await,
+                    9 if reply_ping => self.frame(10, &bytes).await,
+                    9 => (),
                     10 => {}
                     _ => panic!("unsupported private frame"),
                 }
@@ -552,7 +556,11 @@ async fn owned_ordinary_public_grant_and_socket_lifecycle() {
                     ))
                     .await;
                     assert!(
-                        wire.next().await.is_none(),
+                        // This case intentionally sent no liveness traffic for
+                        // the entire expiry interval. Drain already queued pings
+                        // without responding on a socket the server has retired;
+                        // all ordinary receive paths keep strict pong writes.
+                        wire.next_with_ping_reply(false).await.is_none(),
                         "application liveness expires without incoming control traffic"
                     );
                 }
