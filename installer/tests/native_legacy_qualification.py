@@ -173,8 +173,19 @@ def empty_old_seed(old_archive):
         require(not directory.exists() or not any(directory.iterdir()), 'update/recovery evidence retained; seed refused')
     require(sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT version FROM schema_version WHERE id=1') == [(1,)],
             'requires actual old schema1')
-    require(sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT COUNT(*) FROM voyages') == [(0,)],
-            'any accepted voyage makes seed continuation unsafe')
+    for table in ('voyages', 'incarnations', 'lifecycle_commands', 'creation_receipts',
+                  'catalogue', 'catalogue_events'):
+        require(sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT COUNT(*) FROM '+table) == [(0,)],
+                'accepted or uncertain canonical creation evidence refuses seed continuation')
+    imports = sqlite_observe(STATE/'catalogue.sqlite3', 'SELECT source,digest FROM legacy_imports ORDER BY source')
+    # Published v1.0.2 initialization always records this all-zero completion sentinel,
+    # even in an empty catalogue. It is not an imported registration or command.
+    require(imports in ([], [('complete-v1', bytes(32))]),
+            'any actual legacy import evidence refuses seed continuation')
+    for relative in ('commands', 'start-resolution/intent/commands', 'start-resolution/not-admitted/commands'):
+        directory = STATE/relative
+        require(not directory.exists() or not any(directory.iterdir()),
+                'retained original command evidence refuses seed continuation')
     sessions = STATE/'sessions'
     require(not sessions.exists() or not any(sessions.iterdir()), 'retained session evidence refuses continuation')
     expected = {

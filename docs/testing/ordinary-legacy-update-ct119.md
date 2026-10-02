@@ -168,8 +168,9 @@ Only those reads are repeated.
 For this narrowly proved partial state, `seed-existing --old-archive PATH` continues
 once without reinstalling, deleting private records or replaying the failed request.
 It verifies the independently pinned public old archive and all four installed old
-binary hashes, actual ordinary service identity, schema1 with zero Voyages, no
-session/journal/quarantine/update/recovery evidence, an empty fixture workspace and
+binary hashes, actual ordinary service identity, schema1 with zero Voyages, incarnations,
+lifecycle/creation receipts, catalogue rows/events and imported registration/command
+evidence, no session/journal/quarantine/update/recovery evidence, an empty fixture workspace and
 retained synthetic configuration drafts. It saves `seed-existing-attempt.json`
 before effects and refuses any second continuation or already-admitted Voyage.
 The two new Voyages use distinct new identities and new synthetic account bindings;
@@ -181,3 +182,8 @@ exact driver bytes/hash, retain the original failed invocation, and explicitly r
 this one continuation. Native seed success still requires two canonical old histories,
 two observed synthetic responses and suspended cleanup. Subsequent upgrade/rollback
 qualification remains a separate operation.
+
+The sole allowed legacy-import row is the published v1.0.2 initializer's exact
+`complete-v1` sentinel with an all-zero 32-byte digest. It is emitted even for an
+empty catalogue; any actual imported registration or command refuses continuation.
+See the [published initializer](https://github.com/o-psi/helm.vessel.voyage/blob/v1.0.2/vessel/src/process/database.rs#L297).
