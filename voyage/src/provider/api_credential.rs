@@ -5,6 +5,12 @@ use voyage_protocol::accounts::AccountBinding;
 
 pub(super) enum ApiCredential {
     Legacy(String),
+    XaiAccount {
+        registry: crate::accounts::Registry,
+        binding: AccountBinding,
+        authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
+        redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+    },
     Account {
         binding: AccountBinding,
         authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
@@ -15,6 +21,37 @@ impl ApiCredential {
     pub(super) fn resolve(&self) -> Result<String, ProviderError> {
         match self {
             Self::Legacy(value) => Ok(value.clone()),
+            Self::XaiAccount {
+                registry,
+                binding,
+                authority,
+                redactor,
+            } => {
+                super::check_provider_authority(authority)?;
+                let tokens = registry.xai_load(binding).map_err(|_| {
+                    ProviderError::Authentication(
+                        "SuperGrok account unavailable or refresh pending".into(),
+                    )
+                })?;
+                super::xai_oauth::validate_tokens(&tokens)?;
+                if let Some(redactor) = redactor {
+                    for value in [
+                        &tokens.access_token,
+                        &tokens.refresh_token,
+                        &tokens.identity,
+                    ]
+                    .into_iter()
+                    .chain(tokens.id_token.iter())
+                    {
+                        redactor.remember_credential(value).map_err(|_| {
+                            ProviderError::Authentication(
+                                "SuperGrok credential redaction unavailable".into(),
+                            )
+                        })?;
+                    }
+                }
+                Ok(tokens.access_token)
+            }
             Self::Account {
                 binding,
                 authority,

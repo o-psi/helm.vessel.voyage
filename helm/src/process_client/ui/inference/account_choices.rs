@@ -54,6 +54,7 @@ impl Catalogue {
                         binding,
                         provider: match t {
                             voyage_protocol::accounts::Transport::ChatgptOauth => "chatgpt-oauth",
+                            voyage_protocol::accounts::Transport::XaiOauth => "xai-oauth",
                             voyage_protocol::accounts::Transport::OpenaiResponses => {
                                 "openai-responses"
                             }
@@ -62,7 +63,9 @@ impl Catalogue {
                         }
                         .into(),
                         ready: a.state == AccountState::Ready
-                            && a.availability == CredentialAvailability::Available,
+                            && (a.availability == CredentialAvailability::Available
+                                || (*t == voyage_protocol::accounts::Transport::XaiOauth
+                                    && a.availability == CredentialAvailability::Expired)),
                     });
                 }
             }
@@ -399,6 +402,7 @@ impl App {
             binding: binding.clone(),
             provider: match binding.transport {
                 voyage_protocol::accounts::Transport::ChatgptOauth => "chatgpt-oauth",
+                voyage_protocol::accounts::Transport::XaiOauth => "xai-oauth",
                 voyage_protocol::accounts::Transport::OpenaiResponses => "openai-responses",
                 voyage_protocol::accounts::Transport::OpenaiChat => "openai-chat",
                 voyage_protocol::accounts::Transport::Anthropic => "anthropic",

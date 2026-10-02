@@ -64,6 +64,8 @@ pub(crate) enum ProviderArg {
     OpenaiChat,
     #[value(name = "chatgpt-oauth")]
     ChatGptOauth,
+    #[value(name = "xai-oauth")]
+    XaiOauth,
     Anthropic,
 }
 
@@ -73,6 +75,7 @@ impl From<ProviderArg> for helm::ProviderKind {
             ProviderArg::OpenaiResponses => Self::OpenaiResponses,
             ProviderArg::OpenaiChat => Self::OpenaiChat,
             ProviderArg::ChatGptOauth => Self::ChatGptOauth,
+            ProviderArg::XaiOauth => Self::XaiOauth,
             ProviderArg::Anthropic => Self::Anthropic,
         }
     }
@@ -160,5 +163,19 @@ pub(crate) struct GithubArgs {
 fn removed_local_allowance_commands_are_not_available() {
     for command in ["configure", "inspect", "audit", "history"] {
         assert!(Cli::try_parse_from(["helm", "inference", command]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod xai_arg_tests {
+    use super::*;
+    #[test]
+    fn native_supergrok_argument_is_distinct_from_api_providers() {
+        use clap::ValueEnum;
+        let kind: helm::ProviderKind = ProviderArg::from_str("xai-oauth", false)
+            .ok()
+            .unwrap()
+            .into();
+        assert_eq!(kind, helm::ProviderKind::XaiOauth);
     }
 }

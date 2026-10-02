@@ -15,6 +15,7 @@ fn transport_options(
 ) -> (&'static [&'static str], &'static [&'static str]) {
     match provider {
         ProviderKind::OpenaiResponses | ProviderKind::OpenaiChat => (EFFORTS, TIERS),
+        ProviderKind::XaiOauth => (&["none", "low", "medium", "high", "xhigh"], &[]),
         ProviderKind::ChatGptOauth => (EFFORTS, &["default", "flex", "priority"]),
         // These adapters do not encode explicit overrides. Catalog metadata cannot
         // broaden adapter support (Anthropic's thinking semantics are different).

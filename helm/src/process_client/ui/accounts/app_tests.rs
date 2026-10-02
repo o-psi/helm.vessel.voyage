@@ -1361,3 +1361,38 @@ fn copy_catalogue(c: &Catalogue) -> Catalogue {
         can_set_default: c.can_set_default,
     }
 }
+
+#[tokio::test]
+async fn supergrok_private_view_opens_only_its_verification_site_and_keeps_code_out_of_history() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    material(&mut app);
+    app.accounts
+        .picker
+        .as_mut()
+        .unwrap()
+        .private
+        .as_mut()
+        .unwrap()
+        .verification_uri = Some("https://accounts.x.ai/oauth2/device".into());
+    assert!(draw(&app, 110, 32).contains("accounts.x.ai"));
+    key(&mut app, KeyCode::Char('o'));
+    assert_eq!(
+        support::browsers(),
+        vec!["https://accounts.x.ai/oauth2/device"]
+    );
+    assert_clean(&app, t, fixture.0.path());
+    app.accounts
+        .picker
+        .as_mut()
+        .unwrap()
+        .private
+        .as_mut()
+        .unwrap()
+        .verification_uri = Some("https://accounts.x.ai.attacker.invalid/oauth2/device".into());
+    key(&mut app, KeyCode::Char('o'));
+    assert_eq!(support::browsers().len(), 1);
+    key(&mut app, KeyCode::Esc);
+}

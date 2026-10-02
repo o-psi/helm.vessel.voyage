@@ -28,6 +28,7 @@ enum Credential {
     Stored(String),
     Environment { name: String, digest: String },
     OAuth(OAuthTokens),
+    XaiOAuth(crate::provider::xai_oauth::Tokens),
     None,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -248,6 +249,101 @@ impl Registry {
             Ok(connection)
         })
     }
+    pub fn ensure_xai_connection(&self) -> Result<ConnectionDescriptor> {
+        self.transaction(|db| {
+            let id = Uuid::from_u128(0x6b8a43c98b3d4d178f00798f37f66216);
+            if let Some(c) = db.connections.iter().find(|c| c.id == id) {
+                ensure!(
+                    c.endpoint == crate::provider::xai_oauth::ENDPOINT
+                        && c.transports == [Transport::XaiOauth],
+                    "built-in connection conflict"
+                );
+                return Ok(c.clone());
+            }
+            ensure!(db.connections.len() < 32, "connection capacity reached");
+            let c = ConnectionDescriptor {
+                id,
+                revision: 1,
+                label: "SuperGrok".into(),
+                endpoint: crate::provider::xai_oauth::ENDPOINT.into(),
+                transports: vec![Transport::XaiOauth],
+            };
+            db.connections.push(c.clone());
+            Ok(c)
+        })
+    }
+    pub fn xai_provider(
+        &self,
+        binding: &AccountBinding,
+    ) -> Result<crate::provider::XaiOauthProvider> {
+        self.validate_binding(binding)?;
+        ensure!(
+            binding.transport == Transport::XaiOauth
+                && self
+                    .connection(binding.connection_id)?
+                    .supports_device_sign_in(),
+            "unsupported SuperGrok binding"
+        );
+        Ok(crate::provider::XaiOauthProvider::new(
+            self.clone(),
+            binding.clone(),
+        ))
+    }
+    pub(crate) fn xai_load(
+        &self,
+        binding: &AccountBinding,
+    ) -> Result<crate::provider::xai_oauth::Tokens> {
+        self.transaction(|db| {
+            let a = checked(db, binding)?;
+            ensure!(
+                binding.transport == Transport::XaiOauth && a.refresh.is_none(),
+                "SuperGrok refresh pending or uncertain"
+            );
+            match &a.credential {
+                Credential::XaiOAuth(t) => Ok(t.clone()),
+                _ => bail!("SuperGrok sign-in required"),
+            }
+        })
+    }
+    pub(crate) fn xai_refresh_begin(
+        &self,
+        binding: &AccountBinding,
+        expected: &crate::provider::xai_oauth::Tokens,
+    ) -> Result<Uuid> {
+        self.transaction(|db| {
+            let a = checked(db, binding)?;
+            ensure!(
+                binding.transport == Transport::XaiOauth
+                    && a.refresh.is_none()
+                    && matches!(&a.credential, Credential::XaiOAuth(t) if t == expected),
+                "SuperGrok refresh busy or changed"
+            );
+            let fence = Uuid::new_v4();
+            a.refresh = Some(fence);
+            Ok(fence)
+        })
+    }
+    pub(crate) fn xai_save(
+        &self,
+        binding: &AccountBinding,
+        tokens: &crate::provider::xai_oauth::Tokens,
+        fence: Uuid,
+    ) -> Result<()> {
+        crate::provider::xai_oauth::validate_tokens(tokens)?;
+        self.transaction(|db| {
+            let a = checked(db, binding)?;
+            ensure!(
+                binding.transport == Transport::XaiOauth
+                    && a.refresh == Some(fence)
+                    && a.provider_identity.as_deref() == Some(&tokens.identity),
+                "SuperGrok refresh identity or fence changed"
+            );
+            a.credential = Credential::XaiOAuth(tokens.clone());
+            a.refresh = None;
+            a.descriptor.credential_revision += 1;
+            Ok(())
+        })
+    }
     /// Stable official API destinations for private first-use enrollment.
     /// This writes metadata only, never credentials or an implicit host default.
     pub fn ensure_api_connection(&self, provider: &str) -> Result<ConnectionDescriptor> {
@@ -448,7 +544,7 @@ impl Registry {
                 .find(|c| c.id == connection)
                 .ok_or_else(|| anyhow::anyhow!("unknown connection"))?;
             ensure!(
-                !c.transports.contains(&Transport::ChatgptOauth),
+                !c.transports.iter().any(|t| t.is_subscription()),
                 "OAuth connection cannot accept API credentials"
             );
             insert(db, connection, alias, label, credential, None)
@@ -521,7 +617,7 @@ impl Registry {
                 db.connections
                     .iter()
                     .any(|c| c.id == a.descriptor.connection_id
-                        && !c.transports.contains(&Transport::ChatgptOauth)),
+                        && !c.transports.iter().any(|t| t.is_subscription())),
                 "not an API account"
             );
             if !owner_attests_same_identity {
@@ -660,7 +756,7 @@ impl Registry {
         environment: String,
     ) -> Result<AccountBinding> {
         ensure!(
-            transport != Transport::ChatgptOauth,
+            !transport.is_subscription(),
             "OAuth is not an API-key migration"
         );
         ensure!(
@@ -858,6 +954,10 @@ fn insert(
     };
     let provider_identity = match &credential {
         Credential::OAuth(t) => crate::provider::chatgpt_oauth::login_identity(t)?,
+        Credential::XaiOAuth(t) => {
+            crate::provider::xai_oauth::validate_tokens(t)?;
+            Some(t.identity.clone())
+        }
         _ => None,
     };
     let account = Account {
@@ -890,6 +990,18 @@ fn describe(a: &Account) -> AccountDescriptor {
                 }
                 Ok(_) => CredentialAvailability::Available,
             },
+            Credential::XaiOAuth(tokens) => {
+                if tokens.expires_at
+                    <= std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                {
+                    CredentialAvailability::Expired
+                } else {
+                    CredentialAvailability::Available
+                }
+            }
             Credential::OAuth(tokens) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -912,3 +1024,24 @@ mod tests;
 #[cfg(test)]
 #[path = "accounts/lifecycle_boundary_tests.rs"]
 mod lifecycle_boundary_tests;
+
+#[cfg(test)]
+impl Registry {
+    pub(crate) fn xai_fixture(
+        &self,
+        tokens: crate::provider::xai_oauth::Tokens,
+    ) -> Result<AccountBinding> {
+        let c = self.ensure_xai_connection()?;
+        let a = self.transaction(|db| {
+            insert(
+                db,
+                c.id,
+                "supergrok-fixture".into(),
+                "SuperGrok fixture".into(),
+                Credential::XaiOAuth(tokens),
+                None,
+            )
+        })?;
+        self.freeze(a.id, Transport::XaiOauth)
+    }
+}

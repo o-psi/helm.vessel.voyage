@@ -17,6 +17,8 @@ pub enum ProviderKind {
     OpenaiChat,
     #[serde(rename = "chatgpt-oauth")]
     ChatGptOauth,
+    #[serde(rename = "xai-oauth")]
+    XaiOauth,
     #[serde(rename = "anthropic")]
     Anthropic,
 }
@@ -26,6 +28,7 @@ pub enum ProviderKind {
 pub enum ProviderAccess {
     NativePublicApi,
     NativeChatgptOauth,
+    NativeXaiOauth,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -56,6 +59,12 @@ impl ProviderKind {
                 access: ProviderAccess::NativeChatgptOauth,
                 credential: "Vessel-managed ChatGPT OAuth tokens; run `vessel auth login`",
                 billing: "Uses the authenticated ChatGPT subscription and its plan limits",
+            },
+            Self::XaiOauth => ProviderProfile {
+                id: "xai-oauth",
+                access: ProviderAccess::NativeXaiOauth,
+                credential: "Vessel-managed xAI OAuth tokens; sign in with SuperGrok",
+                billing: "Uses the authenticated SuperGrok subscription and its plan limits; no API-key fallback",
             },
             Self::Anthropic => ProviderProfile {
                 id: "anthropic",
@@ -629,6 +638,7 @@ impl Config {
         }
         use voyage_protocol::accounts::Transport;
         let binding = match self.provider {
+            ProviderKind::XaiOauth => anyhow::bail!("Select a named SuperGrok account through device sign-in"),
             ProviderKind::ChatGptOauth => Some(crate::accounts::Registry::legacy_store_binding()?
                 .map(|(_, binding)| binding)
                 .ok_or_else(|| anyhow::anyhow!("Select a named ChatGPT account, or explicitly migrate the retained legacy login after stopping old credential writers: vessel auth accounts migrate-legacy --old-writers-stopped"))?),
@@ -644,7 +654,7 @@ impl Config {
                     ProviderKind::Anthropic => {
                         (Transport::Anthropic, "https://api.anthropic.com/v1")
                     }
-                    ProviderKind::ChatGptOauth => unreachable!(),
+                    ProviderKind::ChatGptOauth | ProviderKind::XaiOauth => unreachable!(),
                 };
                 Some(
                     crate::accounts::Registry::default_host()?.migrate_legacy_api(
@@ -671,6 +681,7 @@ impl Config {
             Transport::OpenaiResponses => ProviderKind::OpenaiResponses,
             Transport::OpenaiChat => ProviderKind::OpenaiChat,
             Transport::ChatgptOauth => ProviderKind::ChatGptOauth,
+            Transport::XaiOauth => ProviderKind::XaiOauth,
             Transport::Anthropic => ProviderKind::Anthropic,
         };
         if self.provider == ProviderKind::ChatGptOauth {
@@ -684,12 +695,17 @@ impl Config {
         self.validate_account()
     }
     pub fn validate_account(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.provider != ProviderKind::XaiOauth || self.account.is_some(),
+            "Select a named SuperGrok account through device sign-in"
+        );
         if let Some(binding) = &self.account {
             use voyage_protocol::accounts::Transport;
             let transport = match self.provider {
                 ProviderKind::OpenaiResponses => Transport::OpenaiResponses,
                 ProviderKind::OpenaiChat => Transport::OpenaiChat,
                 ProviderKind::ChatGptOauth => Transport::ChatgptOauth,
+                ProviderKind::XaiOauth => Transport::XaiOauth,
                 ProviderKind::Anthropic => Transport::Anthropic,
             };
             anyhow::ensure!(binding.transport == transport, "account transport mismatch");
@@ -701,6 +717,10 @@ impl Config {
                     .chatgpt_base_url
                     .as_deref()
                     .unwrap_or("https://chatgpt.com/backend-api/codex"),
+                ProviderKind::XaiOauth => self
+                    .base_url
+                    .as_deref()
+                    .unwrap_or(crate::provider::xai_oauth::ENDPOINT),
                 ProviderKind::Anthropic => self
                     .base_url
                     .as_deref()
@@ -734,9 +754,13 @@ impl Config {
 
     /// Returns a secret only for transports whose authentication the native runtime owns.
     pub fn api_key_for_redaction(&self) -> Option<String> {
-        (self.api_key_required && !matches!(self.provider, ProviderKind::ChatGptOauth))
-            .then(|| self.api_key().ok())
-            .flatten()
+        (self.api_key_required
+            && !matches!(
+                self.provider,
+                ProviderKind::ChatGptOauth | ProviderKind::XaiOauth
+            ))
+        .then(|| self.api_key().ok())
+        .flatten()
     }
 
     pub fn timeout(&self) -> Duration {
@@ -782,7 +806,7 @@ impl Config {
                     }
                 }
                 ProviderKind::Anthropic => {}
-                ProviderKind::ChatGptOauth => {}
+                ProviderKind::ChatGptOauth | ProviderKind::XaiOauth => {}
             }
         }
         self.apply_provider_defaults();

@@ -247,6 +247,7 @@ async fn account_operation(
                 "account observation denied"
             );
             registry.ensure_chatgpt_connection()?;
+            registry.ensure_xai_connection()?;
             let (revision, all) = registry.list(|_| scope.can_use)?;
             let accounts: Vec<_> = all
                 .into_iter()
@@ -460,6 +461,7 @@ async fn network_operation(
                 "enrollment scope refused"
             );
             registry.ensure_chatgpt_connection()?;
+            registry.ensure_xai_connection()?;
             let current = scope.clone();
             let peer = pipe.clone();
             let service = crate::accounts::device::DeviceService::new(
@@ -512,6 +514,29 @@ async fn network_operation(
             });
             authority.check()?;
             let mut observation = registry.usage_cached(&account)?;
+            if refresh && account.transport == Transport::XaiOauth {
+                let provider = registry
+                    .xai_provider(&account)?
+                    .with_authority(Some(authority.clone()));
+                observation.attempted_at = Some(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs() as i64,
+                );
+                observation.refresh_status = match tokio::time::timeout(
+                    std::time::Duration::from_secs(30),
+                    provider.refresh_sign_in(),
+                )
+                .await
+                {
+                    Ok(Ok(())) => AccountUsageRefreshStatus::Unsupported,
+                    Ok(Err(error)) if error.category() == "authentication" => {
+                        AccountUsageRefreshStatus::SignInRequired
+                    }
+                    _ => AccountUsageRefreshStatus::Unavailable,
+                };
+                registry.publish_usage(observation.clone())?;
+            }
             if refresh && account.transport == Transport::ChatgptOauth {
                 let mut config = select(&scope, workspace, Some(account.clone()), None)?;
                 config.select_account(account.clone())?;
