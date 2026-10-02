@@ -370,3 +370,7 @@ pub fn persist_launch(
 mod coverage_tests;
 #[cfg(all(test, unix))]
 mod frontend_final_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "frontend_owned_process_tests.rs"]
+mod owned_process_tests;
