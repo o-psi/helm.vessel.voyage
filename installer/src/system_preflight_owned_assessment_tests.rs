@@ -160,12 +160,12 @@ fn owned_assessment_child() {
 #[test]
 fn whole_cli_dispatch_emits_closed_json_and_preserves_owned_install_inventory_without_wizard() {
     ordinary_name();
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::fixture_tests::Fixture::new();
     let log = fs::OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(root.path().join("child.log"))
+        .open(root.root.as_path().join("child.log"))
         .unwrap();
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
@@ -175,11 +175,11 @@ fn whole_cli_dispatch_emits_closed_json_and_preserves_owned_install_inventory_wi
             "system_preflight::owned_assessment_tests::owned_assessment_child",
             "--nocapture",
         ])
-        .env(CHILD, root.path())
-        .env("HOME", root.path())
-        .env("XDG_DATA_HOME", root.path().join("data"))
-        .env("XDG_CONFIG_HOME", root.path().join("config"))
-        .env("XDG_STATE_HOME", root.path().join("state"))
+        .env(CHILD, root.root.as_path())
+        .env("HOME", root.root.as_path())
+        .env("XDG_DATA_HOME", root.root.as_path().join("data"))
+        .env("XDG_CONFIG_HOME", root.root.as_path().join("config"))
+        .env("XDG_STATE_HOME", root.root.as_path().join("state"))
         .env("PATH", "/usr/bin:/bin")
         .stdin(std::process::Stdio::null())
         .stdout(log.try_clone().unwrap())
@@ -194,7 +194,7 @@ fn whole_cli_dispatch_emits_closed_json_and_preserves_owned_install_inventory_wi
             assert!(
                 status.success(),
                 "owned assessment child failed: {}",
-                fs::read_to_string(root.path().join("child.log")).unwrap()
+                fs::read_to_string(root.root.as_path().join("child.log")).unwrap()
             );
             break;
         }
@@ -205,7 +205,7 @@ fn whole_cli_dispatch_emits_closed_json_and_preserves_owned_install_inventory_wi
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let log = fs::read_to_string(root.path().join("child.log")).unwrap();
+    let log = fs::read_to_string(root.root.as_path().join("child.log")).unwrap();
     let begin = log.find('{').unwrap();
     let report = serde_json::Deserializer::from_str(&log[begin..])
         .into_iter::<Value>()
@@ -225,9 +225,10 @@ fn whole_cli_dispatch_emits_closed_json_and_preserves_owned_install_inventory_wi
             .any(|v| v.as_str().unwrap().contains("before mutation"))
     );
     assert_eq!(
-        fs::read(root.path().join("completed")).unwrap(),
+        fs::read(root.root.as_path().join("completed")).unwrap(),
         b"ordinary-dispatch-returned-no-wizard"
     );
+    root.done();
 }
 #[test]
 fn whole_assessment_retains_root_account_refusal_and_each_unavailable_probe_as_blocker() {
