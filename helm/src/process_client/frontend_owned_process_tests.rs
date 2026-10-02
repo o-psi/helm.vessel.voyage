@@ -447,7 +447,7 @@ async fn journey(mode: &str) {
         let selected = config.clone();
         let root = workspace.clone();
         let temporary = mode != "saved";
-        let running = tokio::task::spawn_local(async move {
+        let mut running = tokio::task::spawn_local(async move {
             run(
                 selected,
                 Some(root),
@@ -459,7 +459,10 @@ async fn journey(mode: &str) {
             )
             .await
         });
-        provider.wait(1).await;
+        tokio::select! {
+            _ = provider.wait(1) => {},
+            result = &mut running => panic!("frontend returned before the held provider request: {result:?}"),
+        }
         let processes = catalogue(&client).await;
         assert_eq!(processes.len(), 1);
         let process = &processes[0];
@@ -547,7 +550,7 @@ async fn journey(mode: &str) {
         let mut selected = config.clone();
         selected.model = "owned-explicit-branch-model".into();
         let reference = parent.session_id.to_string();
-        let running = tokio::task::spawn_local(async move {
+        let mut running = tokio::task::spawn_local(async move {
             run(
                 selected,
                 None,
@@ -559,7 +562,10 @@ async fn journey(mode: &str) {
             )
             .await
         });
-        provider.wait(1).await;
+        tokio::select! {
+            _ = provider.wait(1) => {},
+            result = &mut running => panic!("frontend returned before the held provider request: {result:?}"),
+        }
         let processes = catalogue(&client).await;
         assert_eq!(processes.len(), 2);
         let branch_id = processes
