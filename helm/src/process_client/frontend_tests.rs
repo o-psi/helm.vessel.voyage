@@ -518,3 +518,109 @@ async fn connected_resume_without_overrides_preserves_live_process_and_does_not_
     assert_eq!(process.incarnation, inc);
     assert!(!root.path().join("launch").exists());
 }
+
+#[tokio::test]
+async fn no_save_cleanup_wait_observes_same_terminal_run_without_mutations() {
+    let mut peer = Peer::open().await;
+    let process = process();
+    let run_id = Uuid::new_v4();
+    let c = peer.client.clone();
+    let p = process.clone();
+    let task = tokio::spawn(async move { wait_temporary_cleanup(&c, &p, run_id).await });
+    for pending in [json!(run_id), Value::Null] {
+        let (id, command) = peer.command().await;
+        assert!(matches!(
+            command,
+            VesselCommand::Voyage(VoyageRequest {
+                command: VoyageCommand::Snapshot,
+                ..
+            })
+        ));
+        peer.voyage_reply(
+            id,
+            process.session_id,
+            process.incarnation,
+            json!({"run":{"run_id":run_id,"state":"completed"},"pending_cleanup_run":pending}),
+        )
+        .await;
+    }
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn no_save_cleanup_wait_refuses_active_changed_missing_and_foreign_state() {
+    let run_id = Uuid::new_v4();
+    for snapshot in [
+        json!({"run":{"run_id":run_id,"state":"running"},"pending_cleanup_run":null}),
+        json!({"run":{"run_id":Uuid::new_v4(),"state":"completed"},"pending_cleanup_run":null}),
+        json!({"run":{"run_id":run_id,"state":"completed"}}),
+        json!({"run":{"run_id":run_id,"state":"completed"},"pending_cleanup_run":Uuid::new_v4()}),
+        json!({"run":{"state":"completed"},"pending_cleanup_run":null}),
+    ] {
+        let mut peer = Peer::open().await;
+        let process = process();
+        let c = peer.client.clone();
+        let p = process.clone();
+        let task = tokio::spawn(async move { wait_temporary_cleanup(&c, &p, run_id).await });
+        let (id, command) = peer.command().await;
+        assert!(matches!(
+            command,
+            VesselCommand::Voyage(VoyageRequest {
+                command: VoyageCommand::Snapshot,
+                ..
+            })
+        ));
+        peer.voyage_reply(id, process.session_id, process.incarnation, snapshot)
+            .await;
+        assert!(task.await.unwrap().is_err());
+    }
+}
+
+#[tokio::test]
+async fn no_save_cleanup_wait_refuses_run_change_after_pending_observation() {
+    let mut peer = Peer::open().await;
+    let process = process();
+    let run_id = Uuid::new_v4();
+    let c = peer.client.clone();
+    let p = process.clone();
+    let task = tokio::spawn(async move { wait_temporary_cleanup(&c, &p, run_id).await });
+    for (observed, pending) in [(run_id, json!(run_id)), (Uuid::new_v4(), Value::Null)] {
+        let (id, command) = peer.command().await;
+        assert!(matches!(
+            command,
+            VesselCommand::Voyage(VoyageRequest {
+                command: VoyageCommand::Snapshot,
+                ..
+            })
+        ));
+        peer.voyage_reply(
+            id,
+            process.session_id,
+            process.incarnation,
+            json!({"run":{"run_id":observed,"state":"failed"},"pending_cleanup_run":pending}),
+        )
+        .await;
+    }
+    assert!(task.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn no_save_deletion_rechecks_accepted_run_identity_after_cleanup() {
+    let mut peer = Peer::open().await;
+    let process = process();
+    let run_id = Uuid::new_v4();
+    let c = peer.client.clone();
+    let p = process.clone();
+    let task = tokio::spawn(async move { discard_for_run(&c, &p, Some(run_id)).await });
+    let (id, command) = peer.command().await;
+    assert!(matches!(
+        command,
+        VesselCommand::Voyage(VoyageRequest {
+            command: VoyageCommand::Snapshot,
+            ..
+        })
+    ));
+    peer.voyage_reply(id, process.session_id, process.incarnation,
+        json!({"run":{"run_id":Uuid::new_v4(),"state":"completed"},"pending_cleanup_run":null,"revision":9})).await;
+    assert!(task.await.unwrap().is_err());
+}

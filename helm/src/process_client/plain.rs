@@ -17,15 +17,26 @@ pub async fn run(
     command: Option<Uuid>,
     prompt: String,
 ) -> Result<()> {
+    run_identified(client, session, command, prompt).await?.1
+}
+
+/// Keep the positively accepted run identity even when following reports failure.
+pub(super) async fn run_identified(
+    client: &Client,
+    session: Uuid,
+    command: Option<Uuid>,
+    prompt: String,
+) -> Result<(Uuid, Result<()>)> {
     let connection = session::Connection::open(client, session).await?;
     let run = connection.submit(command, prompt).await?;
-    tokio::select! {
+    let result = tokio::select! {
         result = follow_connection(&connection, run) => result,
         _ = tokio::signal::ctrl_c() => {
             eprintln!("Detached from voyage {session}, run {run}; accepted work continues.");
             Ok(())
         }
-    }
+    };
+    Ok((run, result))
 }
 
 pub async fn follow(client: &Client, session: Uuid, run: Uuid) -> Result<()> {

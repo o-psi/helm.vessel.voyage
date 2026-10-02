@@ -210,11 +210,14 @@ pub async fn run(
                 )
                 .await?;
         }
-        super::plain::run(&client, process.session_id, None, prompt).await
+        super::plain::run_identified(&client, process.session_id, None, prompt).await
     }
     .await;
+    // Unknown submission has no positively accepted run to clean up. Retain it.
+    let (run_id, result) = result?;
     if no_save {
-        discard(&client, &process).await?;
+        wait_temporary_cleanup(&client, &process, run_id).await?;
+        discard_for_run(&client, &process, Some(run_id)).await?;
     }
     result
 }
@@ -280,7 +283,63 @@ pub(super) fn deadline() -> Result<u64> {
     Ok(now + 60000)
 }
 
+async fn wait_temporary_cleanup(
+    client: &Client,
+    process: &ProcessInfo,
+    run_id: Uuid,
+) -> Result<()> {
+    let observed = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        loop {
+            let snapshot = client
+                .voyage(
+                    process.session_id,
+                    process.incarnation,
+                    VoyageCommand::Snapshot,
+                )
+                .await?;
+            ensure!(
+                serde_json::from_value::<Uuid>(snapshot["run"]["run_id"].clone())? == run_id,
+                "Temporary voyage run changed; cleanup remains pending"
+            );
+            ensure!(
+                matches!(
+                    snapshot["run"]["state"].as_str(),
+                    Some("completed" | "failed" | "cancelled")
+                ),
+                "Temporary voyage remains active or unknown; cleanup remains pending"
+            );
+            let pending = snapshot.get("pending_cleanup_run").ok_or_else(|| {
+                anyhow::anyhow!("Temporary voyage cleanup status missing; retained")
+            })?;
+            if pending.is_null() {
+                return Ok(());
+            }
+            ensure!(
+                serde_json::from_value::<Uuid>(pending.clone())? == run_id,
+                "Temporary voyage cleanup identity changed; cleanup remains pending"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    match observed {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!(
+            "Temporary voyage cleanup deadline elapsed; retained without deleting or replaying"
+        ),
+    }
+}
+
+#[cfg(test)]
 async fn discard(client: &Client, process: &ProcessInfo) -> Result<()> {
+    discard_for_run(client, process, None).await
+}
+
+async fn discard_for_run(
+    client: &Client,
+    process: &ProcessInfo,
+    expected_run: Option<Uuid>,
+) -> Result<()> {
     let snapshot = client
         .voyage(
             process.session_id,
@@ -288,6 +347,21 @@ async fn discard(client: &Client, process: &ProcessInfo) -> Result<()> {
             VoyageCommand::Snapshot,
         )
         .await?;
+    if let Some(run_id) = expected_run {
+        ensure!(
+            serde_json::from_value::<Uuid>(snapshot["run"]["run_id"].clone())? == run_id,
+            "Temporary voyage run changed before deletion; retained without replaying"
+        );
+        ensure!(
+            matches!(
+                snapshot["run"]["state"].as_str(),
+                Some("completed" | "failed" | "cancelled")
+            ) && snapshot
+                .get("pending_cleanup_run")
+                .is_some_and(serde_json::Value::is_null),
+            "Temporary voyage completion or cleanup changed before deletion; retained"
+        );
+    }
     let active = matches!(
         snapshot["run"]["state"].as_str(),
         Some("accepted" | "running" | "awaiting_decision" | "cancel_requested")

@@ -109,3 +109,22 @@ Tokio LocalSet and spawn_local; production synchronization is unchanged. A run
 that returns before the held request is diagnosed directly. Failed fixture state
 and daemon diagnostics remain private for inspection; unknown creation is never
 replayed. This correction is prepared source until focused/full verification passes.
+
+## Observed no-save cleanup race (#403)
+
+The real temporary journey completed one inference but plain terminal observation
+returned before `pending_cleanup_run` settled. The existing discard fence correctly
+retained the voyage. [Issue #403](https://github.com/o-psi/helm.vessel.voyage/issues/403)
+tracks the resulting production correction: keep the positively accepted run UUID
+through plain following, wait at most 20 seconds using only exact snapshot reads,
+and require that same terminal run's cleanup to clear before the existing deletion.
+The deletion snapshot rechecks the run UUID and terminal/cleanup fields. Active,
+changed, malformed, unavailable or timed-out state retains data; unknown submission
+has no accepted identity and is retained. No cancellation or command replay occurs.
+Direct discard's prior pending/active refusal contract is unchanged.
+
+Four additional transport contracts exercise delayed cleanup, active/changed/missing/
+foreign cleanup refusal, identity change during observation and a changed run before
+deletion. The real temporary-success/provider-failure/branch journeys must still
+pass after this correction, followed by strict checks, full coverage and hosted
+follow-through. This preparation is not a passing result or issue closure.
