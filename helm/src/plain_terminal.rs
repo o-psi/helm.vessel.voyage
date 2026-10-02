@@ -658,3 +658,7 @@ mod coverage_tests;
 #[cfg(test)]
 #[path = "plain_terminal_final_tests.rs"]
 mod plain_terminal_final_tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "plain_terminal_native_tests.rs"]
+mod native_tests;
