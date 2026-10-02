@@ -27,7 +27,7 @@ and an inventory type alias required by Clippy. Assertions and production
 refusal behavior were preserved.
 
 This is locally verified source. Normal Main publication and an actual hosted
-build/archive remain pending application network access. It establishes none of
+build/archive follow-through remain pending. It establishes none of
 the separate browser, native platform, Root installation or stable release gates.
 
 This cohort was originally prepared without compilation or execution on
