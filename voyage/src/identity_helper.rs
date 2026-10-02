@@ -10,6 +10,8 @@ mod authority;
 #[cfg(all(test, unix))]
 mod coverage_tests;
 mod initialization;
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod ordinary_boundary_tests;
 mod recovery;
 
 fn digest(domain: &[u8], bytes: &[u8]) -> String {

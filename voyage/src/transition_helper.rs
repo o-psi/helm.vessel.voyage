@@ -5,6 +5,8 @@ use voyage_protocol::execution_transition::*;
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    #[cfg(test)]
+    mod ordinary_boundary_tests;
     use std::{
         fs::File,
         io::{Read, Write},
