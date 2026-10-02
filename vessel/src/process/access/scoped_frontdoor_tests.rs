@@ -2,6 +2,7 @@
 //! owner is created; each refused path must preserve its exact durable metadata.
 use super::*;
 use crate::process::{database, test_support::Fixture};
+use std::path::PathBuf;
 use voyage_protocol::vessel::{VoyageCommand, VoyageRequest};
 const TOKEN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 fn seed(f: &Fixture) -> ConnectionGrant {
@@ -120,7 +121,7 @@ async fn connection_intent_binds_exact_command_principal_revision_and_payload_wi
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
-    assert!(s.registrations.read().await.unwrap().is_empty());
+    assert!(s.registrations.lock().await.unwrap().is_empty());
     assert!(!f.0.join("sessions").join(session.to_string()).exists());
 }
 #[tokio::test]
@@ -333,7 +334,7 @@ async fn frozen_saved_authority_is_checked_on_same_authenticated_grant_before_du
                 .exists()
         );
         assert!(!f.0.join("sessions").join(sid.to_string()).exists());
-        assert!(s.registrations.read().await.unwrap().is_empty());
+        assert!(s.registrations.lock().await.unwrap().is_empty());
     }
 }
 #[tokio::test]
@@ -448,7 +449,7 @@ async fn already_loaded_connection_and_session_rechecks_refuse_same_revision_tok
             .check(&f.0, &f.0, ProcessRight::AccountUse)
             .is_err()
     );
-    assert!(s.registrations.read().await.unwrap().is_empty());
+    assert!(s.registrations.lock().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -557,7 +558,7 @@ async fn accepted_private_notification_then_late_grant_drift_is_unknown_and_reta
         );
         assert!(
             s.registrations
-                .read()
+                .lock()
                 .await
                 .unwrap()
                 .contains_key(&r.session_id)
@@ -614,7 +615,7 @@ async fn readonly_success_stays_redacted_and_preflight_saved_pin_refusal_is_defi
             .exists()
     );
     assert!(!f.0.join("sessions").join(session.to_string()).exists());
-    assert!(s.registrations.read().await.unwrap().is_empty());
+    assert!(s.registrations.lock().await.unwrap().is_empty());
     // With no complete Vessel effect classifier, an authority failure AFTER a
     // successful read is also conservatively unknown; it never releases data.
     let late_read = super::super::super::api::response(s.finish_connected_reply(

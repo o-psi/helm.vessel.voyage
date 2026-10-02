@@ -172,7 +172,7 @@ async fn session_read_success_redaction_and_preflight_refusal_keep_their_outcome
     assert!(refused.error.is_some());
     assert!(!refused.outcome_unknown);
     assert!(refused.result.is_null());
-    assert!(s.registrations.read().await.unwrap().is_empty());
+    assert!(s.registrations.lock().await.unwrap().is_empty());
     assert!(!f.0.join("notifications").exists());
     let held = g.clone();
     g.accounts.push(Uuid::new_v4());
