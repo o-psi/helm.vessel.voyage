@@ -106,6 +106,15 @@ async function privateJson(file,limit=1024*1024,withIdentity=false){
 }
 async function save(file,value){await fs.writeFile(file,JSON.stringify(value,null,2),{mode:0o600,flag:'wx'});}
 async function until(predicate,ms=30000){const deadline=performance.now()+ms;while(!await predicate()){assert.ok(performance.now()<deadline,'bounded observation expired');await sleep(50);}}
+function failureLocations(error){
+ // Retain only coordinates in this reviewed source, never error messages,
+ // assertion operands, URLs, launcher paths or other stack-frame contents.
+ const source=import.meta.url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const frame=new RegExp('^\\s+at (?:[^\\n]*\\()?'+source+':([0-9]+):([0-9]+)\\)?$');
+ return typeof error?.stack==='string'?error.stack.split('\n').slice(1).flatMap(line=>{
+  const match=frame.exec(line);return match?[{source:'host_browser_production.mjs',line:Number(match[1]),column:Number(match[2])}]:[];
+ }).slice(0,3):[];
+}
 function validate(cfg,{launchers=true}={}){
  assert.equal(cfg.schema,1);
  const native=cfg.native_route||{mode:'public'};assert.ok(['public','local'].includes(native.mode));
@@ -666,18 +675,29 @@ export async function runCuaProductionQualification(context,cfg){
   stage('pin_read_only_host_helpers');await pinHostHelpers(cfg);
   // Both TUI clients opened their exact fixture browser. Load only A's one-use
   // launcher first; B is excluded from the first two host-ledger conditions.
+  stage('native_a_page_create');
   const first=await ownedNative.open(),firstState=observation(first,cfg.sessions[0].id,cfg.web_socket,{native:true});native.push({page:first,state:firstState});nativeStates.push(firstState);
-  await first.goto(pathToFileURL(cfg.sessions[0].native_launcher).href);await viewer(first).waitFor();await until(()=>firstState.status?.running);await ready(first);
-  await navigate(native[0].page,cfg.fixture.url,cfg.fixture.ready_selector);await count(native[0].page,cfg.fixture.counter_selector,0);
+  stage('native_a_launcher_load');await first.goto(pathToFileURL(cfg.sessions[0].native_launcher).href);
+  stage('native_a_viewer_visible');await viewer(first).waitFor();
+  stage('native_a_running');await until(()=>firstState.status?.running);
+  stage('native_a_control_ready');await ready(first);
+  stage('native_a_fixture_navigate');await navigate(native[0].page,cfg.fixture.url,cfg.fixture.ready_selector);
+  stage('native_a_counter_ready');await count(native[0].page,cfg.fixture.counter_selector,0);
   await measure('a_one_viewer',[native[0]],[],cfg.host_observer.ledger_a);
   stage('cua_web_a_admission');await proof('open_fixture',{label:cfg.sessions[0].label,
    url:new URL(`/voyages/${cfg.web_connection}/${cfg.sessions[0].id}`,cfg.console_origin).href,
    title:cfg.sessions[0].title,fixture_selector:cfg.fixture.ready_selector,counter_selector:cfg.fixture.counter_selector,counter:0},
    ['authenticated_existing_session','exact_selected_voyage','browser_dock_open','fixture_visible','counter_matches']);
   await measure('a_two_viewers',[native[0]],[cfg.sessions[0].label],cfg.host_observer.ledger_a);
+  stage('native_b_page_create');
   const page=await ownedNative.open(),state=observation(page,cfg.sessions[1].id,cfg.web_socket,{native:true});native.push({page,state});nativeStates.push(state);
-  await page.goto(pathToFileURL(cfg.sessions[1].native_launcher).href);await viewer(page).waitFor();await until(()=>state.status?.running);await ready(page);
-  await navigate(page,cfg.fixture.url,cfg.fixture.ready_selector);await count(page,cfg.fixture.counter_selector,0);
+  stage('native_b_launcher_load');await page.goto(pathToFileURL(cfg.sessions[1].native_launcher).href);
+  stage('native_b_viewer_visible');await viewer(page).waitFor();
+  stage('native_b_running');await until(()=>state.status?.running);
+  stage('native_b_control_ready');await ready(page);
+  stage('native_b_fixture_navigate');await navigate(page,cfg.fixture.url,cfg.fixture.ready_selector);
+  stage('native_b_counter_ready');await count(page,cfg.fixture.counter_selector,0);
+  stage('native_b_distinct_browser');
   assert.notEqual(state.status.binding.browser_id,native[0].state.status.binding.browser_id);
   stage('cua_web_b_admission');await proof('open_fixture',{label:cfg.sessions[1].label,
    url:new URL(`/voyages/${cfg.web_connection}/${cfg.sessions[1].id}`,cfg.console_origin).href,
@@ -787,6 +807,7 @@ report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,host_l
   const measurementsComplete=report.matrix.every(w=>w.host_window_aligned&&w.cua_web.every(v=>v.status!=='unavailable'&&v.window_aligned));
   report.status=measurementsComplete&&report.zero_viewer_idle?.observed===true?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
+  report.failure_locations=failureLocations(error);
  }finally{
   report.cleanup.close_attempted=[...attempted];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;
   report.cleanup.native_pages=await ownedNative.close();

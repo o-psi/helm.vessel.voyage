@@ -9,9 +9,11 @@ remain open in #333.
 The remaining production route is prepared in
 [the separate executable qualification guide](host-browser-production-qualification.md).
 It supports two actual TUI launchers and two authenticated React dock viewers,
-including CUA/authorized-host orchestration without login export. That new driver
-and its measurement/site helpers are source-only and unexecuted; they do not add
-passing evidence to this record.
+including CUA/authorized-host orchestration without login export. Production
+acceptance remains incomplete; attempted runs do not add passing evidence to
+this record. Failed native bootstrap now reports the fixed step that was in
+progress and up to three line/column coordinates in the driver source. These
+diagnostics omit error messages, assertion values, private content and raw stacks.
 
 ## Current archive and observed four-phase result
 
