@@ -20,6 +20,10 @@ impl Peer {
     // The handshake callback error type is fixed by tungstenite.
     #[allow(clippy::result_large_err)]
     pub async fn open() -> Self {
+        Self::open_with_greeting_controls(false).await
+    }
+    #[allow(clippy::result_large_err)]
+    pub async fn open_with_greeting_controls(controls: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -37,6 +41,19 @@ impl Peer {
             response.headers_mut().insert("sec-websocket-protocol", SUBPROTOCOL.parse().unwrap());
             Ok(response)
         }).await.unwrap();
+        if controls {
+            socket.send(Message::Pong(vec![7].into())).await.unwrap();
+            socket
+                .send(Message::Ping(vec![1, 2, 3].into()))
+                .await
+                .unwrap();
+            let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(pong, Message::Pong(vec![1, 2, 3].into()));
+        }
         send(
             &mut socket,
             ServerFrame::Hello {

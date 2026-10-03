@@ -46,6 +46,38 @@ mod qualification {
     }
 }
 
+// Control frames can precede Hello: Vessel's heartbeat and Hello use separate
+// writer queues. Keep one absolute deadline for reads and automatic Pong flushes.
+async fn greeting<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    deadline: tokio::time::Instant,
+) -> Result<String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    tokio::time::timeout_at(deadline, async {
+        loop {
+            let message = socket
+                .next()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Vessel socket closed before greeting"))?
+                .map_err(|_| anyhow::anyhow!("invalid Vessel socket greeting"))?;
+            match message {
+                Message::Text(text) => return Ok(text.to_string()),
+                // Tungstenite queued the matching Pong while reading the Ping.
+                Message::Ping(_) => socket
+                    .flush()
+                    .await
+                    .map_err(|_| anyhow::anyhow!("invalid Vessel socket greeting"))?,
+                Message::Pong(_) => {}
+                _ => anyhow::bail!("expected Vessel socket greeting"),
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Vessel socket greeting timed out"))?
+}
+
 /// Monotonic loss counter cannot hide a disconnect behind a coalesced reconnect.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ConnectionState {
@@ -256,14 +288,11 @@ impl Slot {
                 == Some(SUBPROTOCOL),
             "unsupported Vessel socket protocol"
         );
-        let message = tokio::time::timeout(Duration::from_secs(8), socket.next())
-            .await
-            .map_err(|_| anyhow::anyhow!("Vessel socket greeting timed out"))?
-            .ok_or_else(|| anyhow::anyhow!("Vessel socket closed before greeting"))?
-            .map_err(|_| anyhow::anyhow!("invalid Vessel socket greeting"))?;
-        let Message::Text(text) = message else {
-            anyhow::bail!("expected Vessel socket greeting");
-        };
+        let text = greeting(
+            &mut socket,
+            tokio::time::Instant::now() + Duration::from_secs(8),
+        )
+        .await?;
         let ServerFrame::Hello {
             protocol,
             socket_id,
@@ -865,3 +894,67 @@ mod subscription_tests {
 #[cfg(test)]
 #[path = "duplex_tests.rs"]
 mod coverage_tests;
+
+#[cfg(test)]
+mod greeting_tests {
+    use super::*;
+    async fn pair() -> (
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            tokio_tungstenite::accept_async(listener.accept().await.unwrap().0)
+                .await
+                .unwrap()
+        });
+        let (socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+        (socket, server.await.unwrap())
+    }
+    #[tokio::test]
+    async fn greeting_refuses_binary_and_close_after_controls() {
+        for invalid in [Message::Binary(vec![1].into()), Message::Close(None)] {
+            let (mut socket, mut peer) = pair().await;
+            peer.send(Message::Pong(vec![7].into())).await.unwrap();
+            peer.send(invalid).await.unwrap();
+            assert_eq!(
+                greeting(
+                    &mut socket,
+                    tokio::time::Instant::now() + Duration::from_secs(1)
+                )
+                .await
+                .unwrap_err()
+                .to_string(),
+                "expected Vessel socket greeting"
+            );
+        }
+    }
+    #[tokio::test]
+    async fn greeting_control_stream_does_not_renew_absolute_deadline() {
+        let (mut socket, mut peer) = pair().await;
+        let sender = tokio::spawn(async move {
+            loop {
+                if peer.send(Message::Pong(vec![7].into())).await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            greeting(&mut socket, started + Duration::from_millis(100)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Vessel socket greeting timed out"
+        );
+        assert!(started.elapsed() < Duration::from_millis(500));
+        sender.abort();
+    }
+}

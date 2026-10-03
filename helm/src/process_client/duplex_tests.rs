@@ -306,3 +306,16 @@ async fn slot_pool_generation_and_disconnect_are_monotonic() {
 fn server_message(frame: &ServerFrame) -> Result<Message> {
     Ok(Message::Text(serde_json::to_string(frame)?.into()))
 }
+
+#[tokio::test]
+async fn greeting_controls_before_hello_complete_real_authenticated_command() {
+    let mut peer = Peer::open_with_greeting_controls(true).await;
+    let client = peer.client.clone();
+    let pending = tokio::spawn(async move { client.request(VesselCommand::Capabilities).await });
+    let (id, _) = peer.command().await;
+    peer.reply(id, json!({"after_controls":true})).await;
+    assert_eq!(
+        pending.await.unwrap().unwrap(),
+        json!({"after_controls":true})
+    );
+}
