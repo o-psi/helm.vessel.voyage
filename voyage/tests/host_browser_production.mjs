@@ -351,7 +351,7 @@ const viewer=page=>page.locator('.host-browser-viewer');
 const mirror=page=>page.frameLocator('.browser-next-mirror iframe');
 async function ready(page){await until(async()=>!tracked.get(page)?.pending_effects&&
  await page.locator('.browser-next-frames').getAttribute('data-control')==='true');}
-async function loaded(page,site){await mirror(page).locator(site.ready_selector).waitFor({state:'visible'});}
+export async function loaded(page,site){await mirror(page).locator(site.ready_selector).filter({visible:true}).first().waitFor({state:'visible'});}
 async function navigate(page,url,marker){await ready(page);const old=tracked.get(page).status.binding.document_epoch;
  await page.getByRole('textbox',{name:'Website address',exact:true}).fill(url);
  await page.getByRole('button',{name:'Go to address',exact:true}).click();
