@@ -115,6 +115,22 @@ function failureLocations(error){
   const match=frame.exec(line);return match?[{source:'host_browser_production.mjs',line:Number(match[1]),column:Number(match[2])}]:[];
  }).slice(0,3):[];
 }
+async function nativeFailureDiagnostics(items,states){
+ return Promise.all(states.slice(0,3).map(async(state,index)=>{
+  const value={index,running:typeof state.status?.running==='boolean'?state.status.running:null,
+   mode:['agent','human','private'].includes(state.status?.mode)?state.status.mode:null,
+   overflow:state.overflow===true,operations:state.native_operations.map(operation=>({...operation})),
+   operations_truncated:state.native_operations_truncated,viewer_state:null};
+  for(const key of ['browser_starts','browser_closes','pending_effects','unknown','refused','confirmed'])
+   value[key]=Number.isSafeInteger(state[key])&&state[key]>=0?state[key]:null;
+  const item=items.find(item=>item.state===state);
+  if(item&&!item.page.isClosed()){
+   const phase=await viewer(item.page).getAttribute('data-state',{timeout:1000}).catch(()=>null);
+   if(['idle','agent','human','private','watching','connecting','recovering','waiting-page','needs-review','switching','stopped','unavailable','disconnected','error'].includes(phase))value.viewer_state=phase;
+  }
+  return value;
+ }));
+}
 function validate(cfg,{launchers=true}={}){
  assert.equal(cfg.schema,1);
  const native=cfg.native_route||{mode:'public'};assert.ok(['public','local'].includes(native.mode));
@@ -187,7 +203,7 @@ function nativeReceiptClaim(operation){
 }
 function observation(page,session,socketUrl,{native=false}={}){
  const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),native_claims:new Map(),browser_starts:0,browser_closes:0,pending_effects:0,confirmed:0,unknown:0,refused:0,
-  connections:0,hellos:0,duplicate_effect:false,overflow:false,
+  connections:0,hellos:0,duplicate_effect:false,overflow:false,native_operations:[],native_operations_truncated:false,
   traffic:{sent_bytes:0,received_bytes:0,sent_frames:0,received_frames:0}};
  tracked.set(page,state);
  const accept=(operation,reply)=>{
@@ -208,13 +224,21 @@ function observation(page,session,socketUrl,{native=false}={}){
   }
  };
  if(native){
+  const operationDiagnostics=new WeakMap();
   page.on('request',request=>{
    const url=new URL(request.url());if(url.pathname!=='/operation'||url.hostname!=='127.0.0.1')return;
    const body=request.postData();if(!body||body.length>256*1024){state.overflow=true;return;}
-   try{const op=JSON.parse(body);if(op.action==='start')state.browser_starts++;if(op.action==='close')state.browser_closes++;sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
+   try{const op=JSON.parse(body);
+    if(state.native_operations.length<16){
+     const diagnostic={action:['status','start','attach','control','detach','close','mirror','input','receipt','dialog'].includes(op.action)?op.action:'other',http_status:null};
+     state.native_operations.push(diagnostic);operationDiagnostics.set(request,diagnostic);
+    }else state.native_operations_truncated=true;
+    if(op.action==='start')state.browser_starts++;if(op.action==='close')state.browser_closes++;sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
   });
   page.on('requestfailed',request=>{const op=state.pending.get(request);if(op&&effect(op.action)){state.unknown++;state.pending_effects--;}state.pending.delete(request);});
   page.on('response',async response=>{
+   const diagnostic=operationDiagnostics.get(response.request()),status=response.status();
+   if(diagnostic&&Number.isInteger(status)&&status>=100&&status<=599)diagnostic.http_status=status;
    const op=state.pending.get(response.request());if(!op)return;
    try{if(!response.ok()){if(effect(op.action))state.unknown++;return;}
     const body=await response.body();if(body.length>4*1024*1024){state.overflow=true;return;}
@@ -808,6 +832,7 @@ report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,host_l
   report.status=measurementsComplete&&report.zero_viewer_idle?.observed===true?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
   report.failure_locations=failureLocations(error);
+  report.native_failure_diagnostics=await nativeFailureDiagnostics(native,nativeStates);
  }finally{
   report.cleanup.close_attempted=[...attempted];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;
   report.cleanup.native_pages=await ownedNative.close();
