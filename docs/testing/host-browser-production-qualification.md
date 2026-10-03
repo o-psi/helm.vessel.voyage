@@ -256,6 +256,7 @@ const observer = await cuaBrowserCost(fixtureTab, {
   label: 'a', tabId: EXACT_OWNED_TAB_ID,
   socketUrl: EXACT_PINNED_BROWSER_SOCKET,
   connectionId: EXACT_SAVED_CONNECTION_ID,
+  vesselId: EXACT_EXPECTED_VESSEL_ID,
   sessionIds: [OWNED_SESSION_A, OWNED_SESSION_B],
 });
 // Root performs a normal same-origin reload, then opens Browser.
@@ -263,9 +264,28 @@ await observer.poll();
 await observer.begin();
 // Observe the actual coordinated ten-second window without repeating input.
 const counts = await observer.finish();
-// Put only counts in the exact private response; never emit raw CDP events.
+// Retain counts.transport_at_start/end in local reduced evidence.
+// Project only existing helper-schema fields into the private response;
+// never submit these extra diagnostics or emit raw CDP events.
 await observer.stop();
 ```
+
+The collector follows Fleet's authenticated renewal lifecycle. Each selected socket
+must have its own observed authenticate frame, protocol-1 hello for the pinned
+physical Vessel, unique server socket identity and the selected connection's
+production acknowledgement. One authenticated predecessor may drain while its
+replacement is active, for Fleet's existing 30-second drain bound. A single
+opening replacement may span a boundary only with an observed authenticate,
+within Fleet's existing 10-second handshake bound, and while an authenticated
+active socket remains. Reduced `transport_at_start` and `transport_at_end` report
+these states explicitly; preserve them in local evidence before projecting the
+fixed Web-helper fields. They do not claim that a pending handshake completed.
+Socket loss without an authenticated replacement, pending effect loss, wrong
+Vessel, duplicate acknowledgement, socket errors, expired bounds or missing tab
+capability fail closed and poison the collector. Closed/missing tabs cannot borrow
+previous authentication. Request/reply identities remain socket-bound, while
+command replay accounting remains shared across renewals. No effect is replayed.
+All original window, lifetime, cursor, source/tab and truncation checks remain.
 
 Exact API calls are `tab.capabilities.get('cdp')`, scoped `cap.send` and
 `cap.readEvents({afterSequence,limit:1000,methods,timeoutMs:0})`. These calls
