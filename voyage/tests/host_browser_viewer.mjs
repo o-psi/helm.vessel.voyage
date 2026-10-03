@@ -533,7 +533,7 @@ async function suspendedNative(item){
    }return response;
   };
  });
- let closed=false;
+ let closed=false,primaryFailure=null;
  try{
   await page.goto(new URL('file://'+item.launcher).href);
   await page.waitForFunction(()=>window.operations.some(o=>o.action==='start'&&o.running===true));
@@ -547,10 +547,23 @@ async function suspendedNative(item){
   await mode(page,'Browse privately','private',false);
   await navigate(page,cfg.site+'/suspended-native-'+item.native_route);
   await decoded(page,'suspended native '+item.native_route);
+ }catch(error){
+  primaryFailure=error;
+  evidence.suspendedNativeFailure={session:item.session,native_route:item.native_route,
+   name:error.name,message:String(error.message).slice(0,2048),
+   operations:await page.evaluate(()=>window.operations?.slice(-12)||[]).catch(()=>[])};
+  save();throw error;
  }finally{
-  await more(page,'Close browser');
-  await page.waitForFunction(()=>window.operations.some(o=>o.action==='close'&&o.running===false));
-  closed=true;evidence.cleanup[item.session]={closed};save();await page.close();
+  try{
+   if(!await page.getByRole('button',{name:'Close browser',exact:true}).isEnabled())
+    throw Error('close_control_unavailable; browser cleanup remains unconfirmed');
+   await more(page,'Close browser');
+   await page.waitForFunction(()=>window.operations.some(o=>o.action==='close'&&o.running===false));
+   closed=true;evidence.cleanup[item.session]={closed};save();
+  }catch(error){
+   evidence.cleanup[item.session]={closed:false,name:error.name,message:String(error.message).slice(0,2048)};
+   save();if(!primaryFailure)throw error;
+  }finally{await page.close();}
  }
 }
 async function suspendedWeb(item){

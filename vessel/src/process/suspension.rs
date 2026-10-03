@@ -198,9 +198,7 @@ impl Supervisor {
                         .is_none_or(|expected| expected == registration.incarnation),
                     "stale runtime incarnation"
                 );
-                return self
-                    .dispatch_bound(registration, command, authorization)
-                    .await;
+                return Box::pin(self.dispatch_bound(registration, command, authorization)).await;
             }
         }
         // Browser effects and transport cleanup must not queue behind a long
@@ -230,7 +228,7 @@ impl Supervisor {
                 // without replaying or rewriting the original command envelope.
                 // The caller retries Status/Start with this incarnation and the
                 // SAME command ID after observing this not-dispatched result.
-                let mut response = Box::pin(self.dispatch_session(
+                let mut response = Box::pin(self.dispatch_lifecycle(
                     session,
                     expected_incarnation,
                     RuntimeCommand::PrepareBrowser,
@@ -315,6 +313,20 @@ impl Supervisor {
                 )
                 .await;
         }
+        Box::pin(self.dispatch_lifecycle(session, expected_incarnation, command, authorization))
+            .await
+    }
+
+    // Browser preparation enters the same locked lifecycle path directly,
+    // rather than nesting a second complete dispatcher on the Tokio stack.
+    // Its lock and incarnation check still precede every owner transition.
+    async fn dispatch_lifecycle(
+        &self,
+        session: Uuid,
+        expected_incarnation: Option<Uuid>,
+        command: RuntimeCommand,
+        authorization: Option<GrantBinding>,
+    ) -> Result<RuntimeResponse> {
         let lock = self.lifecycle_lock(session).await?;
         let _guard = lock.lock().await;
         let mut registration = self.registration(session).await?;
@@ -624,6 +636,30 @@ mod tests;
 mod browser_route_tests {
     use super::*;
     use voyage_protocol::host_browser::{HostBrowserOperation, HostBrowserSocket};
+
+    #[tokio::test]
+    async fn browser_dispatch_future_keeps_lifecycle_state_off_the_route_stack() {
+        let fixture = super::super::test_support::Fixture::new();
+        let supervisor = fixture.supervisor().await;
+        let future = supervisor.dispatch_session(
+            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
+            RuntimeCommand::HostBrowser {
+                socket: HostBrowserSocket {
+                    socket_id: Uuid::new_v4(),
+                },
+                operation: HostBrowserOperation::Status {},
+            },
+            None,
+        );
+        // Bound the actual future embedded by authenticated socket dispatch,
+        // not a pointer wrapper or an enlarged runtime/test thread stack.
+        assert!(
+            std::mem::size_of_val(&future) <= 32 * 1024,
+            "browser dispatcher future exceeds 32 KiB: {}",
+            std::mem::size_of_val(&future)
+        );
+    }
 
     #[test]
     fn cleanup_and_receipts_never_prepare_a_replacement_owner() {
