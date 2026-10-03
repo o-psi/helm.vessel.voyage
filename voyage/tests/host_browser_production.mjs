@@ -465,7 +465,7 @@ async function classFacts(page,classes){
  for(const text of classes.frame_texts)await until(async()=>!!await frameContaining(page,text));
  return {external_css:true,open_shadow:true,authenticated_image:true,cross_origin_child:true,nested_child:true};
 }
-async function closeBrowser(page){await ready(page);
+export async function closeBrowser(page){await ready(page);
  if(await viewer(page).getAttribute('data-state')==='agent'){
   await page.getByLabel('More browser options',{exact:true}).click();await mode(page,'Use browser','human');await ready(page);
  }
@@ -474,16 +474,22 @@ async function closeBrowser(page){await ready(page);
 
 // Reattach through the initiating Native principal, regardless of Web's grant.
 // The old one-use launcher is never reused. This emits one fixed parent request.
+export async function confirmPrivateReclaim(page,state,binding){
+ await until(()=>state.status?.running&&state.status.mode==='private'&&[...state.native_claims.values()].some(claim=>
+  claim.action==='attach'&&claim.binding.browser_id===binding.browser_id&&claim.binding.incarnation===binding.incarnation&&claim.binding.attachment_id!==binding.attachment_id));
+ assert.equal(state.status.binding.browser_id,binding.browser_id);assert.equal(state.status.binding.incarnation,binding.incarnation);
+ // A same-principal Attach can already restore the retained private controller.
+ // Do not click its now-labelled Finish private browsing control.
+ if(state.status.controller!==state.status.binding.attachment_id)await mode(page,'Browse privately','private');
+ await ready(page);return privateReclaimQualified(binding,state.status,state.native_claims);
+}
 async function reclaimNative(context,cfg,binding,openPage=()=>context.newPage()){
  const launcher=await requestNativeReopen(cfg);
  const page=await openPage(),state=observation(page,cfg.sessions[0].id,cfg.web_socket,{native:true});
  const fresh={page,state,native:true,sessionId:cfg.sessions[0].id};
  try{
   await page.goto(pathToFileURL(launcher).href);await viewer(page).waitFor();
-  await until(()=>state.status?.running&&state.status.mode==='private');
-  await mode(page,'Browse privately','private');await ready(page);
-  assert.equal(state.status.binding.browser_id,binding.browser_id);assert.equal(state.status.binding.incarnation,binding.incarnation);
-  fresh.private_reclaim=privateReclaimQualified(binding,state.status,state.native_claims);
+  fresh.private_reclaim=await confirmPrivateReclaim(page,state,binding);
   return fresh;
  }catch(error){await page.close({runBeforeUnload:false}).catch(()=>{});throw error;}
 }

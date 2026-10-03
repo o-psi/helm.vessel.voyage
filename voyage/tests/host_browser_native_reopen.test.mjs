@@ -4,6 +4,7 @@ import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {requestNativeReopen,validateNativeReopenReply,nativePageOwner} from './host_browser_native_reopen.mjs';
+import {confirmPrivateReclaim,closeBrowser} from './host_browser_production.mjs';
 const client={label:'native-a',pid:901,start_ticks:500,descendants:true};
 const request={id:'exact-id',digest:'a'.repeat(64),client};
 const reply={schema:1,id:request.id,digest:request.digest,status:'observed',outcome_unknown:false,launcher:'/owned/fresh/open.html',client};
@@ -48,4 +49,32 @@ test('one private fixed fixture A request is issued and cannot repeat after obse
   assert.deepEqual(Object.keys(issued).sort(),['action','client','digest','expires_at_ms','id','label','schema','session_id']);
   await assert.rejects(requestNativeReopen(cfg),error=>error.code==='EEXIST');
  }finally{clearInterval(poll);await rm(directory,{recursive:true,force:true});}
+});
+
+function privateFixture({controls=true,foreign=false}={}){
+ const old={attachment_id:'11111111-1111-4111-8111-111111111111',browser_id:'22222222-2222-4222-8222-222222222222',incarnation:'33333333-3333-4333-8333-333333333333',tab_id:'44444444-4444-4444-8444-444444444444',document_epoch:1,viewport_epoch:1,controller_epoch:2,capture_epoch:3};
+ const fresh={...old,controller_epoch:3,capture_epoch:4};if(foreign)fresh.browser_id='55555555-5555-4555-8555-555555555555';
+ const state={status:{running:true,mode:'private',binding:fresh,controller:controls?old.attachment_id:null},native_claims:new Map([['attach',{action:'attach',binding:{...old,attachment_id:'66666666-6666-4666-8666-666666666666'}}]])};
+ const clicks=[];const page={locator(){return {async getAttribute(){return 'true';},async waitFor(){}};},getByRole(_role,{name}){return {async click(){clicks.push(name);assert.equal(name,'Browse privately');state.status.controller=old.attachment_id;}};},async waitForFunction(){assert.equal(state.status.mode,'private');}};
+ return {old,state,page,clicks};
+}
+test('confirmed same-principal private Attach never toggles Finish private browsing',async()=>{
+ const f=privateFixture();const proof=await confirmPrivateReclaim(f.page,f.state,f.old);
+ assert.equal(proof.same_private_owner,true);assert.equal(proof.fresh_attach_request,true);assert.deepEqual(f.clicks,[]);
+});
+test('private observer uses one explicit reclaim and still proves exact owner and advanced fences',async()=>{
+ const f=privateFixture({controls:false});const proof=await confirmPrivateReclaim(f.page,f.state,f.old);
+ assert.equal(proof.fresh_control_and_capture_fences,true);assert.deepEqual(f.clicks,['Browse privately']);
+});
+test('foreign private browser is refused before any reclaim input',async()=>{
+ const f=privateFixture({foreign:true});await assert.rejects(confirmPrivateReclaim(f.page,f.state,f.old));assert.deepEqual(f.clicks,[]);
+});
+test('final cleanup reacquires public control after idle detach before one Close',async()=>{
+ let phase='agent';const clicks=[];const page={
+  locator(selector){return {async getAttribute(){return selector==='.host-browser-viewer'?phase:'true';},async waitFor(){}};},
+  getByLabel(name){return {async click(){clicks.push(name);}};},
+  getByRole(_role,{name}){return {async click(){clicks.push(name);if(name==='Use browser')phase='human';else if(name==='Close browser'){assert.equal(phase,'human');phase='stopped';}else assert.fail('unexpected input');}};},
+  async waitForFunction(_fn,wanted){assert.equal(phase,wanted||'stopped');},
+ };
+ await closeBrowser(page);assert.equal(phase,'stopped');assert.deepEqual(clicks,['More browser options','Use browser','More browser options','Close browser']);
 });

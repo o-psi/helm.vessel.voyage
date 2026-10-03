@@ -123,8 +123,9 @@ export class BrowserConnection {
         }
         for(const [id,picture] of frame.visualNodes)if(!present.has(id)){picture.remove();frame.visualNodes.delete(id);}
     }
-    async updateFrames(items){
-        if(!this.frameLayer)return;
+    async updateFrames(items,epoch=this.epoch,key=pageKey(this.status)){
+        const current=()=>!this.closed&&this.phase!=='disconnected'&&epoch===this.epoch&&key===pageKey(this.status);
+        if(!this.frameLayer||!current())return;
         if(!Array.isArray(items)||items.length>8)throw Error('invalid_frames');
         const present=new Set();
         for(const item of items){
@@ -134,6 +135,7 @@ export class BrowserConnection {
             if(!parent?.player)continue;
             let frame=this.frames.get(item.frame_id);
             const events=await decodeMirror(item);
+            if(!current())return;
             if(!frame||item.reset){
                 if(!events.some(event=>event?.type===2))throw Error('missing_frame_snapshot');
                 frame?.player.destroy();frame?.root.remove();
@@ -211,28 +213,31 @@ export class BrowserConnection {
     }
     schedulePoll(delay=180){
         clearTimeout(this.pollTimer);
-        if(this.closed||!this.attached||!this.status?.running)return;
+        if(this.closed||this.phase==='disconnected'||!this.attached||!this.status?.running)return;
+        const epoch=this.epoch;
         this.pollTimer=setTimeout(async()=>{
+            if(epoch!==this.epoch||this.closed||this.phase==='disconnected')return;
             if(this.polling){this.schedulePoll(180);return;}
             this.polling=true;
             const observed=pageKey(this.status);
-            try{await this.pull();if(this.issue==='page-unavailable')this.issue=null;}
-            catch(error){this.lastError=String(error);if(!this.closed&&!this.busy&&observed===pageKey(this.status)){this.clearMirror();this.fail('page-unavailable');}}
-            finally{this.polling=false;this.schedulePoll(this.streaming?260:600);}
+            try{await this.pull(epoch);if(epoch===this.epoch&&this.issue==='page-unavailable')this.issue=null;}
+            catch(error){if(epoch===this.epoch&&!this.closed&&this.phase!=='disconnected'){this.lastError=String(error);if(!this.busy&&observed===pageKey(this.status)){this.clearMirror();this.fail('page-unavailable');}}}
+            finally{this.polling=false;if(epoch===this.epoch)this.schedulePoll(this.streaming?260:600);}
         },delay);
     }
     async pull(epoch=this.epoch){
-        if(!this.attached||!this.status?.running||this.closed)return;
+        if(!this.attached||!this.status?.running||this.closed||this.phase==='disconnected'||epoch!==this.epoch)return;
         const binding={...this.status.binding}, key=pageKey(this.status), since=this.cursor;
+        const current=()=>!this.closed&&this.phase!=='disconnected'&&epoch===this.epoch&&key===pageKey(this.status);
         const reply=await this.request({action:'mirror',binding,since},epoch);
-        if(key!==pageKey(this.status))return;
+        if(!current())return;
         const value=reply.value;
         if(!value||value.reset&&value.encoding!=='gzip'){
             this.clearMirror();return;
         }
         if(!Number.isSafeInteger(value.cursor)||value.cursor<since&&!value.reset)throw Error('invalid_cursor');
         const events=await decodeMirror(value);
-        if(key!==pageKey(this.status))return;
+        if(!current())return;
         if(value.reset){
             this.clearMirror();
             if(!events.some(event=>event?.type===2))throw Error('missing_full_snapshot');
@@ -241,27 +246,30 @@ export class BrowserConnection {
         for(const event of events)this.replayer?.addEvent(fenceSnapshot(event));
         this.cursor=value.cursor;
         this.latestVisuals=Array.isArray(value.visuals)?value.visuals:[];
-        await this.updateFrames(value.frames||[]);
+        await this.updateFrames(value.frames||[],epoch,key);
+        if(!current())return;
         this.onVisuals(this.latestVisuals,this.replayer);
     }
     async refresh(){
-        if(this.closed||this.refreshing||!this.status)return;
+        if(this.closed||this.refreshing||!this.status||this.phase==='disconnected')return;
+        const epoch=this.epoch;
         this.refreshing=true;
-        try{await this.request({action:'status'});if(this.attached&&this.status.running&&!this.pollTimer)this.schedulePoll();}
-        catch{if(!this.closed)this.fail('status-unavailable');}
+        try{await this.request({action:'status'},epoch);if(this.attached&&this.status.running&&!this.pollTimer)this.schedulePoll();}
+        catch{if(epoch===this.epoch&&!this.closed&&this.phase!=='disconnected')this.fail('status-unavailable');}
         finally{this.refreshing=false;}
     }
     async recover(){
         if(this.closed||this.busy)return;
         this.issue=null;this.clearMirror();
         if(!this.status)return this.connect({start:false});
+        const epoch=this.epoch;
         this.phase='recovering';this.emit();
-        try{await this.request({action:'status'});
+        try{await this.request({action:'status'},epoch);
             // Disconnect sends its exact detach without accepting a late reply.
             // Decide reattachment from this fresh status, never the old binding.
             if(!this.attached)return await this.connect({start:false});
-            if(this.status.running)await this.pull();this.schedulePoll();}
-        catch{this.fail('status-unavailable');}
+            if(this.status.running)await this.pull(epoch);if(epoch===this.epoch)this.schedulePoll();}
+        catch{if(epoch===this.epoch&&!this.closed&&this.phase!=='disconnected')this.fail('status-unavailable');}
     }
     async control(mode){
         if(!this.attached||this.busy||!['agent','human','private'].includes(mode))return;
