@@ -17,6 +17,11 @@ diagnostics omit error messages, assertion values, private content and raw stack
 Read-only observation subprocesses also handle stdin closure explicitly: an
 unused input pipe cannot crash the driver after a successful hash check, while
 loss of required JSON input remains a failed observation.
+The CUA cost collector drains its bounded event history while waiting for and
+observing each scheduled window. Operators must also drain retained collectors
+that are not being measured, including a tab whose browser dock is closed.
+These are read-only observations; scheduled durations, freshness checks and
+truncation refusals remain unchanged.
 
 ## Current archive and observed four-phase result
 

@@ -127,8 +127,12 @@ export async function cuaBrowserCost(tab,{label,socketUrl,tabId,connectionId,ses
  };
  observer.measureAt=async(startedAt,milliseconds=10000)=>{
   if(!Number.isSafeInteger(startedAt)||milliseconds!==10000||startedAt-Date.now()>30000||Date.now()-startedAt>1000)fail();
-  await new Promise(resolve=>setTimeout(resolve,Math.max(0,startedAt-Date.now())));
-  await observer.begin();await new Promise(resolve=>setTimeout(resolve,milliseconds));return observer.finish();
+  // Drain the bounded event buffer while waiting and measuring. This sends no
+  // page input and preserves the original scheduled metrics window and fences.
+  while(Date.now()<startedAt){await poll();await new Promise(resolve=>setTimeout(resolve,Math.max(0,Math.min(250,startedAt-Date.now()))));}
+  await observer.begin();const end=window.at+milliseconds;
+  while(Date.now()<end){await new Promise(resolve=>setTimeout(resolve,Math.max(0,Math.min(250,end-Date.now()))));await poll();}
+  return observer.finish();
  };
  return observer;
 }
