@@ -13,8 +13,11 @@ use axum::{
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -39,6 +42,8 @@ pub(crate) enum Control {
 pub(crate) struct Handle {
     initial_incarnation: Uuid,
     owner: Arc<Mutex<(Uuid, u64)>>,
+    preparation: Arc<Preparation>,
+    mismatch_since: Mutex<Option<Instant>>,
     pub state: watch::Receiver<Status>,
     control: mpsc::Sender<Control>,
     stop: CancellationToken,
@@ -55,9 +60,20 @@ impl Handle {
         let stop = CancellationToken::new();
         let cancelled = stop.clone();
         let owner = Arc::new(Mutex::new((incarnation, revision)));
+        let preparation = Arc::new(Preparation::default());
         let adapter_owner = owner.clone();
+        let adapter_preparation = preparation.clone();
         let job = tokio::spawn(async move {
-            let result = run(client, session, adapter_owner, cancelled, rx, tx.clone()).await;
+            let result = run(
+                client,
+                session,
+                adapter_owner,
+                adapter_preparation,
+                cancelled,
+                rx,
+                tx.clone(),
+            )
+            .await;
             tx.send_modify(|s| {
                 s.finished = true;
                 s.launcher = None;
@@ -73,6 +89,8 @@ impl Handle {
         Self {
             initial_incarnation: incarnation,
             owner,
+            preparation,
+            mismatch_since: Mutex::new(None),
             state,
             control,
             stop,
@@ -83,6 +101,27 @@ impl Handle {
     /// observation or our explicitly prepared owner, never an arbitrary restart.
     pub fn accepts_incarnation(&self, observed: Uuid) -> bool {
         observed == self.initial_incarnation || observed == self.owner.lock().unwrap().0
+    }
+    pub fn retire_for_incarnation(&self, observed: Uuid) -> bool {
+        if self.accepts_incarnation(observed) {
+            *self.mismatch_since.lock().unwrap() = None;
+            return false;
+        }
+        if self.preparation.ever_bound.load(Ordering::Acquire)
+            || self.preparation.pending.load(Ordering::Acquire) == 0
+        {
+            return true;
+        }
+        // Catalogue delivery can precede the authenticated preparation reply.
+        // Defer only invalidation, never adopt its owner or extend an operation.
+        // Three existing 15-second exchanges bound this nonrenewable window;
+        // another Status request or a different mismatch cannot refresh it.
+        self.mismatch_since
+            .lock()
+            .unwrap()
+            .get_or_insert_with(Instant::now)
+            .elapsed()
+            >= Duration::from_secs(45)
     }
     pub fn control(&self, control: Control) -> Result<()> {
         self.control
@@ -113,6 +152,7 @@ struct Adapter {
     client: Client,
     session: Uuid,
     owner: Arc<Mutex<(Uuid, u64)>>,
+    preparation: Arc<Preparation>,
     socket: Uuid,
     origin: String,
     host: String,
@@ -123,6 +163,17 @@ struct Adapter {
     binding: Mutex<Option<HostBrowserBinding>>,
     stop: CancellationToken,
     status: watch::Sender<Status>,
+}
+#[derive(Default)]
+struct Preparation {
+    pending: AtomicUsize,
+    ever_bound: AtomicBool,
+}
+struct PendingPreparation<'a>(&'a AtomicUsize);
+impl Drop for PendingPreparation<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 impl Adapter {
     fn headers_ok(&self, headers: &HeaderMap) -> bool {
@@ -139,6 +190,14 @@ impl Adapter {
             && headers.get("x-helm-csrf").and_then(|v| v.to_str().ok()) == Some(self.csrf.as_str())
     }
     async fn dispatch(&self, mut op: Op) -> Result<Value> {
+        let _preparation = if !self.preparation.ever_bound.load(Ordering::Acquire)
+            && matches!(&op, Op::Status {} | Op::Start { .. })
+        {
+            self.preparation.pending.fetch_add(1, Ordering::AcqRel);
+            Some(PendingPreparation(&self.preparation.pending))
+        } else {
+            None
+        };
         let incarnation = self.owner.lock().unwrap().0;
         let (value, owner) = self
             .client
@@ -190,6 +249,9 @@ impl Adapter {
         let binding = serde_json::from_value::<HostBrowserBinding>(status["binding"].clone())
             .ok()
             .filter(|b| b.incarnation == self.owner.lock().unwrap().0 && b.valid());
+        if binding.is_some() {
+            self.preparation.ever_bound.store(true, Ordering::Release);
+        }
         *self.binding.lock().unwrap() = binding;
         let mode = match status["mode"].as_str() {
             Some("human") => "human",
@@ -368,6 +430,7 @@ async fn run(
     client: Client,
     session: Uuid,
     owner: Arc<Mutex<(Uuid, u64)>>,
+    preparation: Arc<Preparation>,
     stop: CancellationToken,
     mut controls: mpsc::Receiver<Control>,
     status: watch::Sender<Status>,
@@ -385,6 +448,7 @@ async fn run(
         client,
         session,
         owner,
+        preparation,
         socket,
         origin: origin.clone(),
         host,
@@ -548,6 +612,7 @@ mod tests {
             ),
             session: Uuid::new_v4(),
             owner: Arc::new(Mutex::new((Uuid::new_v4(), 1))),
+            preparation: Arc::new(Preparation::default()),
             socket: Uuid::new_v4(),
             origin: "http://127.0.0.1:12345".into(),
             host: "127.0.0.1:12345".into(),

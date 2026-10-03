@@ -231,6 +231,11 @@ function observation(page,session,socketUrl,{native=false}={}){
    try{const op=JSON.parse(body);
     if(state.native_operations.length<16){
      const diagnostic={action:['status','start','attach','control','detach','close','mirror','input','receipt','dialog'].includes(op.action)?op.action:'other',http_status:null};
+     // Exact non-secret command fences let the host correlate an unknown Start
+     // with its durable receipt without retaining input or request payloads.
+     if(uuid(op.command_id))diagnostic.command_id=op.command_id;
+     if(op.action==='start'&&uuid(op.incarnation))diagnostic.incarnation=op.incarnation;
+     if(op.action==='start'&&Number.isSafeInteger(op.expected_revision)&&op.expected_revision>=0)diagnostic.expected_revision=op.expected_revision;
      state.native_operations.push(diagnostic);operationDiagnostics.set(request,diagnostic);
     }else state.native_operations_truncated=true;
     if(op.action==='start')state.browser_starts++;if(op.action==='close')state.browser_closes++;sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}

@@ -14,6 +14,15 @@ This replaces the whole-page frame transport and its second browser process. It 
 
 The `HostBrowserOperation` schema is strict. The authenticated socket and process grant identify the principal; an operation's attachment ID is never authority by itself. Status, attachment and live page reads require Observe. Starting, controlling, typing and closing require Execute. Input must carry the current incarnation/browser/tab/document/viewport/controller/capture binding and a consecutive sequence. Ordinary page and navigation input can claim human control in that same operation: the worker fences pending agent effects and applies the original action only while its target remains valid. Private control is a separate explicit choice before entering secrets. It excludes other viewers and never automatically returns to the agent on disconnect. Unconfirmed effects are never replayed automatically; receipts preserve exact identities without private page content.
 
+During native viewer startup, catalogue updates can arrive before the response
+that confirms a resumed Voyage owner. Helm briefly defers cancellation for an
+incarnation mismatch while an unbound preparation is in flight. This bounded
+wait never adopts an owner from the catalogue or extends command deadlines.
+Only the verified preparation response and revision permit rebinding the same,
+explicitly undispatched command. Once a browser has been bound, owner mismatch
+still cancels the viewer immediately; deletion, archive and socket loss also
+retain their cancellation behavior.
+
 The worker retains a private Chromium profile, an origin/DNS-pinned proxy and explicit grants for private destinations. Browser flags and application policy are defense in depth, not an OS egress sandbox. Browser resources and descendants require observed cleanup. Human input and page snapshots stay out of model-visible history, ordinary logs and durable receipts. The executing host can see the website and its credentials. Native macOS/Windows behavior and broad public-site security are not established by Linux loopback checks.
 
 ## Implementation and verification

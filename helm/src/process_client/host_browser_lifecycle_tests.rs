@@ -456,6 +456,56 @@ async fn unattached_controls_do_not_start_or_close_a_browser_and_queue_is_bounde
 }
 
 #[tokio::test]
+async fn unbound_catalogue_deferral_expires_without_renewal_or_owner_adoption() {
+    let mut live = Live::new().await;
+    live.bootstrap().await;
+    let task = live.submit(&Op::Status {});
+    let (id, _) = live.command().await;
+    let other = Uuid::new_v4();
+    assert!(!live.handle.retire_for_incarnation(other));
+    assert!(!live.handle.accepts_incarnation(other));
+    let expired = Instant::now() - Duration::from_secs(46);
+    *live.handle.mismatch_since.lock().unwrap() = Some(expired);
+    assert!(live.handle.retire_for_incarnation(other));
+    assert!(live.handle.retire_for_incarnation(Uuid::new_v4()));
+    live.reply(id, json!({"status":{"running":false,"binding":null}}))
+        .await;
+    assert_eq!(task.await.unwrap().status(), StatusCode::OK);
+    // Another unbound exchange cannot renew an already observed mismatch.
+    let task = live.submit(&Op::Status {});
+    let (id, _) = live.command().await;
+    assert!(live.handle.retire_for_incarnation(other));
+    assert_eq!(*live.handle.mismatch_since.lock().unwrap(), Some(expired));
+    live.reply(id, json!({"status":{"running":false,"binding":null}}))
+        .await;
+    assert_eq!(task.await.unwrap().status(), StatusCode::OK);
+    assert!(live.handle.retire_for_incarnation(other));
+    live.finish().await;
+    live.no_command().await;
+}
+
+#[tokio::test]
+async fn previously_bound_browser_never_defers_owner_mismatch_even_after_binding_clears() {
+    let mut live = Live::new().await;
+    live.bootstrap().await;
+    let binding = live.attach_status().await;
+    let task = live.submit(&Op::Status {});
+    let (id, _) = live.command().await;
+    assert!(live.handle.retire_for_incarnation(Uuid::new_v4()));
+    live.reply(id, json!({"status":{"running":false,"binding":null}}))
+        .await;
+    assert_eq!(task.await.unwrap().status(), StatusCode::OK);
+    let task = live.submit(&Op::Status {});
+    let (id, _) = live.command().await;
+    assert!(live.handle.retire_for_incarnation(Uuid::new_v4()));
+    assert_eq!(live.handle.preparation.pending.load(Ordering::Acquire), 0);
+    live.reply(id, json!({"status":{"running":true,"binding":binding}}))
+        .await;
+    assert_eq!(task.await.unwrap().status(), StatusCode::OK);
+    live.detached(&binding).await;
+}
+
+#[tokio::test]
 async fn socket_retirement_while_start_is_pending_does_not_reconnect_or_replay() {
     let mut live = Live::new().await;
     live.bootstrap().await;
