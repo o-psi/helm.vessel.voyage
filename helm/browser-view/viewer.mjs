@@ -13,6 +13,39 @@ const safe = (value, limit = 512) => typeof value === 'string'
     ? value.replace(/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g,'').slice(0,limit) : '';
 const replayPolicy="default-src 'none'; img-src data: blob:; font-src data: blob:; media-src data: blob:; style-src 'unsafe-inline'; frame-src data: blob:; form-action 'none'; base-uri 'none'";
 
+function preserveCanvasLayout(doc) {
+    // With scripts disabled, Chromium lays out canvas fallback children instead
+    // of its intrinsic bitmap box. An inert image restores replaced-element
+    // sizing while keeping the canvas tag, author CSS and recorder node identity.
+    // Live canvas ignores CSS content in favor of its bitmap. Script-disabled
+    // fallback does not, so even authored content must use the bitmap dimensions
+    // here. Authenticated visual overlays provide the actual canvas pixels.
+    const size=canvas=>{
+        const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}"/>`;
+        const content=`url("data:image/svg+xml;base64,${btoa(svg)}")`;
+        if(canvas.style.content!==content)canvas.style.content=content;
+    };
+    const observer=new MutationObserver(records=>{
+        for(const record of records){
+            if(record.type==='attributes')size(record.target);
+            else for(const node of record.addedNodes)visit(node);
+        }
+    });
+    const visit=node=>{
+        if(node.nodeType===1){
+            if(node.localName==='canvas'){
+                size(node);
+                observer.observe(node,{attributes:true,attributeFilter:['width','height','style']});
+            }
+            if(node.shadowRoot)watch(node.shadowRoot);
+        }
+        for(const child of node.children||[])visit(child);
+    };
+    const watch=root=>{observer.observe(root,{childList:true,subtree:true});visit(root);};
+    watch(doc);
+    return ()=>observer.disconnect();
+}
+
 function fenceSnapshot(event) {
     if(event?.type!==2)return event;
     const html=event.data?.node?.childNodes?.find(node=>node.tagName==='html');
@@ -70,6 +103,9 @@ export class BrowserConnection {
             // Historical reset mutations are synchronous in rrweb. Live
             // addEvent has no virtual-DOM Flush, so apply them to the real DOM.
             useVirtualDom:false,showWarning:false,UNSAFE_replayCanvas:false,loadTimeout:500});
+        let releaseCanvasLayout=()=>{};
+        const destroy=player.destroy.bind(player);
+        player.destroy=()=>{releaseCanvasLayout();destroy();};
         const replayDocument=player.iframe.contentDocument;
         const policy=replayDocument.createElement('meta');
         policy.httpEquiv='Content-Security-Policy';policy.content=replayPolicy;
@@ -77,11 +113,13 @@ export class BrowserConnection {
         player.iframe.referrerPolicy='no-referrer';
         player.enableInteract();
         player.on('fullsnapshot-rebuilded',()=>{
+            if(frameId===null?this.replayer!==player:this.frames.get(frameId)?.player!==player)return;
+            releaseCanvasLayout();
+            releaseCanvasLayout=preserveCanvasLayout(player.iframe.contentDocument);
             if(frameId===null){
-                if(this.replayer!==player)return;
                 this.streaming=true;this.phase='live';if(this.issue==='page-unavailable')this.issue=null;this.emit();
                 this.onVisuals(this.latestVisuals||[],player);
-            }else if(this.frames.get(frameId)?.player!==player)return;
+            }
             this.onReplay(player,this,frameId);
             if(frameId!==null){const frame=this.frames.get(frameId);this.paintFrameVisuals(frame,frame.latestVisuals||[]);}
         });
