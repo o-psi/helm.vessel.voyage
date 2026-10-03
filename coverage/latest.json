@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-10-03T05:21:03.819691+00:00",
-  "source_commit": "8457095ffc15764737e40a7f80039ec2fd857c8d",
+  "measured_at_utc": "2026-10-03T15:22:38.371027+00:00",
+  "source_commit": "4d941cb5ac5e6f2748d6371340b26881b28f733e",
   "dirty": false,
   "source_fingerprint_sha256": "95f4b01872adb107703ef7d64d526339342b172e1b1c616e0f99feb162ccce1e",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
@@ -8,7 +8,7 @@
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=provider415integrated-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user MemoryMax=18G MemorySwapMax=0 UMask=0077 RuntimeMaxSec=3600",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103postbrowserfinal-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user MemoryMax=18G MemorySwapMax=0 UMask=0077 RuntimeMaxSec=3600",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,13 +19,14 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Integrated source includes the concurrent main browser fix through dd338c2; measured Rust/Cargo bytes remained unchanged. Web source 6328e5d2 was tested separately.",
-    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. Reporting was separated to avoid selecting historical shared-target binaries/profiles; no cache or foreign profiles were cleared.",
-    "Every current Cargo executable retained: 19 objects, 16 executed Cargo test binaries, 546 default-scope source maps. Prior source-map inventory retained in full.",
-    "All 42 zero-hash missing-record warnings were inspected with llvm-cov --dump and demangled to seven dependency symbols in bytes, memchr, image_webp, tokio, tracing and tracing_core. No workspace symbol occurs in those diagnostics. The prior export had the same warning count. Diagnostics remain in the private evidence.",
-    "The unchanged default sysroot thread-local mapping (five covered lines) is retained as in the prior record. No new source exclusions. Detailed JSON and LCOV reconcile every file summary and exact line counter.",
-    "Passing/failing/ignored counts use each Cargo target's final test result; one nested fixture result is not counted twice. Earlier failed/interrupted measurements are preserved and are not mixed into this run.",
-    "Line coverage delta against the prior main record: +0.01857976 percentage points. Coverage measures execution, not correctness."
+    "Final measured source 4d941cb includes the viewer disconnect-polling fix; the Rust/Cargo fingerprint remains identical to the prior record. JavaScript/Python checks are separate and excluded from these Rust counts.",
+    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. Existing target dependencies were reused under the current checkout wrapper namespace; no cache or foreign profiles were deleted.",
+    "All 19 current Cargo workspace executables were inventoried and archived, including 16 executed Cargo test binaries. All 546 prior default-scope source mappings remain; no exclusions changed.",
+    "Only the 902 fresh measurement-prefix profiles were merged. All 4,370 foreign profiles retained their original size and modification time.",
+    "The 42 actual zero-hash warnings were inspected with LLVM dump and matched the previously audited seven dependency symbols only. No new or workspace mismatch was accepted.",
+    "The unchanged default sysroot mapping remains. Detailed JSON and LCOV reconcile all 546 files and 12,495 function groups: 26,045 aggregate gaps versus 23,950 unique zero lines; difference 2,095 = 144 maximum/union + 1,978 overlap - 27 shadowing.",
+    "Test counts use each Cargo target final result; one nested fixture summary is not counted twice. Full coverage test exit 0; subsequent optimized workspace build exit 0.",
+    "Line coverage decreased by 3 covered lines (0.00218796 percentage points) with unchanged denominator/source/exclusions: execution.rs -2 and tools/process/shutdown/linux.rs -1. This is observed execution variation, not a source-scope change. Coverage measures execution, not correctness."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
@@ -38,8 +39,8 @@
   "totals": {
     "lines": {
       "count": 137114,
-      "covered": 111072,
-      "percent": 81.00704523243432
+      "covered": 111069,
+      "percent": 81.00485727205098
     },
     "functions": {
       "count": 12495,
@@ -48,9 +49,9 @@
     },
     "regions": {
       "count": 227038,
-      "covered": 175193,
-      "notcovered": 51845,
-      "percent": 77.16461561500718
+      "covered": 175188,
+      "notcovered": 51850,
+      "percent": 77.16241334049808
     }
   }
 }
