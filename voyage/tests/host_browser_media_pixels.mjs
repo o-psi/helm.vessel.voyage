@@ -33,8 +33,15 @@ export function mediaMovementFacts(samples){
   facts[name]={decoded_colors:['orange','blue'],first_version:values[0].version,last_version:values.at(-1).version,content_changed:true};
  }
  const first=samples[0].playback,last=samples.at(-1).playback;
- for(const value of [first,last])assert.ok(value.state==='playing'&&value.starts===1&&Number.isSafeInteger(value.frames)&&value.frames>0&&Number.isSafeInteger(value.time_ms)&&value.time_ms>=0);
- assert.ok(last.frames>first.frames&&last.time_ms!==first.time_ms,'decoded playback callbacks/time did not advance');
+ const playback=samples.map(sample=>sample.playback);
+ for(let index=0;index<playback.length;index++){
+  const value=playback[index];
+  assert.ok(value.state==='playing'&&value.starts===1&&Number.isSafeInteger(value.frames)&&value.frames>0&&Number.isSafeInteger(value.time_ms)&&value.time_ms>=0);
+  assert.ok(!index||value.frames>=playback[index-1].frames,'decoded playback frame count regressed');
+ }
+ // The fixture video loops, so endpoint media times may alias. Its sampled
+ // trace must contain an actual time change while decoded frames advance.
+ assert.ok(last.frames>first.frames&&playback.some(value=>value.time_ms!==first.time_ms),'decoded playback callbacks/time did not advance');
  return {...facts,playback:{decoded_frames_before:first.frames,decoded_frames_after:last.frames,media_time_changed:true,one_play_intent:true},samples:samples.length};
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {test} from 'node:test';
-import {readOwnedMediaJpegs} from './host_browser_media_pixels.mjs';
+import {readOwnedMediaJpegs,mediaMovementFacts} from './host_browser_media_pixels.mjs';
 
 // Exercise the serialized function used by the read-only DOM evaluator, including
 // its actual expected-identity boundary, without a browser or real-time waits.
@@ -57,4 +57,29 @@ test('serialized DOM observer refuses changed, missing, extra and mistyped ident
  ];
  for(const mutate of mutations){const value=identity();mutate(value);await assert.rejects(observe(value),/owned public media observation unavailable/);}
  for(const value of [false,0,'identity',[]])await assert.rejects(observe(value),/owned public media observation unavailable/);
+});
+
+function movingSamples(){
+ return [0,500,0].map((time_ms,index)=>({
+  canvas:{version:index+1,color:index===1?'blue':'orange'},
+  video:{version:index+1,color:index===1?'blue':'orange'},
+  playback:{state:'playing',starts:1,frames:index+10,time_ms}
+ }));
+}
+test('looping media can advance time between equal endpoint timestamps',()=>{
+ const facts=mediaMovementFacts(movingSamples());
+ assert.equal(facts.playback.media_time_changed,true);
+ assert.equal(facts.playback.decoded_frames_before,10);
+ assert.equal(facts.playback.decoded_frames_after,12);
+});
+test('media movement refuses stalled, regressing or invalid playback traces',()=>{
+ const mutations=[
+  values=>values.forEach(value=>{value.playback.frames=10;}),
+  values=>values.forEach(value=>{value.playback.time_ms=0;}),
+  values=>{values[1].playback.frames=9;},
+  values=>{values[1].playback.state='paused';},
+  values=>{values[1].playback.starts=2;},
+  values=>{values[1].playback.time_ms=-1;}
+ ];
+ for(const mutate of mutations){const values=movingSamples();mutate(values);assert.throws(()=>mediaMovementFacts(values));}
 });
