@@ -76,7 +76,13 @@ export async function networkProxy(allowed, publicWeb = false, maxBytes = 2*1024
     try {
       const {u,address} = await check(`https://${req.url}`);
       const remote = net.connect({host:address,port:Number(u.port || 443)});
-      sockets.add(remote); remote.once('close',() => sockets.delete(remote));
+      sockets.add(remote); remote.once('close',() => {
+        sockets.delete(remote);
+        // Timeout/destroy can emit close without end or error. Retire the
+        // Chromium side too, so it cannot reuse a tunnel with no upstream.
+        // Ordinary EOF keeps already queued response bytes until they flush.
+        if(remote.readableEnded)client.destroySoon();else client.destroy();
+      });
       remote.setTimeout(30000,() => remote.destroy());
       remote.once('connect',() => { client.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if(head.length)remote.write(head); client.pipe(remote); remote.pipe(client); });
       remote.on('error',() => client.destroy()); client.on('error',() => remote.destroy()); client.on('close',() => remote.destroy());
