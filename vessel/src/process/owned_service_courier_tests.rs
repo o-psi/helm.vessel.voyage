@@ -765,7 +765,12 @@ async fn journey(root: &Path, mode: &str) {
         service.terminate().await;
     }
     tokio::time::timeout(Duration::from_secs(10), async {
-        while !owned(&directory).is_empty() {
+        // Runtime exit can precede guardian retirement. Observe both exact
+        // identities within the same bound before asserting cleanup below.
+        while !owned(&directory).is_empty()
+            || start(runtime_identity.0).as_ref() == Some(&runtime_identity.1)
+            || start(guardian_identity.0).as_ref() == Some(&guardian_identity.1)
+        {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
