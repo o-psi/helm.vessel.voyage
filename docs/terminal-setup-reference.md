@@ -15,7 +15,7 @@ server or project map is required for this local walkthrough.
 The Linux x86-64 v1.0.2 binary release is described in the
 [release guide](releases-v1.0.2.md). These instructions are not a
 claim that a new user's live login or paid request has been tested. Subscription
-sign-in uses an experimental provider endpoint. Installation, authentication,
+sign-in uses the provider’s native account endpoint. Installation, authentication,
 account selection, and model access are different checks; none guarantees the next.
 
 ## Before you start

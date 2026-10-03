@@ -14,7 +14,7 @@ you in to the interface.
    guide and open the profile/account controls.
 2. For an eligible ChatGPT or Grok subscription, use the private sign-in screen
    and select **ChatGPT** or **SuperGrok**. Model access depends on the account
-   and provider; the ChatGPT integration remains experimental. Grok sign-in
+   and provider. Grok sign-in
    requires a Vessel build with native `xai_oauth` support.
 3. For an OpenAI or Anthropic API key, use [private API setup](#execution-host-api-enrollment)
    on the computer doing the work. API billing is separate from chat subscriptions.
@@ -40,7 +40,7 @@ reference, including alternative providers and existing installations.
 | Goal | Use | Check before the first task |
 | --- | --- | --- |
 | New SuperGrok subscription account | [Helm private sign-in](#device-sign-in-in-helm) | xAI device grant, named account, explicit host default; model access depends on the plan |
-| New ChatGPT subscription/device-flow account | [Helm private sign-in](#device-sign-in-in-helm) | Named account, explicit host default, model availability; experimental transport, not API credit |
+| New ChatGPT subscription/device-flow account | [Helm private sign-in](#device-sign-in-in-helm) | Named account, explicit host default, model availability; subscription transport, not API credit |
 | OpenAI or Anthropic API key | [Executing-host private API enrollment](#execution-host-api-enrollment) | Endpoint/transport, API billing and explicit default; a chat subscription is not API credit |
 | Existing legacy native OAuth cache | [Legacy migration](#legacy-migration) | Stop old credential writers, migrate explicitly, select a named account and set a default |
 | Remote account | [Remote authority](#remote-authority) | Authenticated executing host, account-use/enrollment grants and host-owner default |
@@ -136,7 +136,7 @@ inserted into the selectable list. Catalogue presence does not prove inference
 entitlement or remaining quota. HTTP 403 is reported as account access denied,
 separately from HTTP 401 authentication failure and usage exhaustion; denial
 neither refreshes credentials nor retries inference or changes billing accounts.
-Both clients label the native ChatGPT integration experimental. Sign-in choices
+Sign-in choices
 require the host-advertised native transport and its exact provider endpoint;
 an OpenAI-compatible xAI API-key connection does not enable SuperGrok sign-in.
 

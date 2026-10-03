@@ -50,7 +50,7 @@ release when no local `--bin-dir` is supplied. The source bootstrap supports
   download utilities and ordinary-user private storage. Direct archive commands
   can be used without installing a service.
 - Provider accounts and budget are separate. No model credits or credentials are
-  included. ChatGPT subscription integration remains experimental; release
+  included. Release
   verification does not certify paid-provider access.
 - Checksums detect changed bytes but are not independent publisher signatures.
   No production signing trust root or reproducible-build certification is claimed.

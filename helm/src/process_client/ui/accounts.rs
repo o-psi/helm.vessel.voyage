@@ -339,10 +339,7 @@ impl Picker {
                 }
             }
         }
-        items.push((
-            "+ Subscription account — ChatGPT (experimental) or SuperGrok".into(),
-            None,
-        ));
+        items.push(("+ Subscription account — ChatGPT or SuperGrok".into(), None));
         items.push(("+ OpenAI / Anthropic — use an API key…".into(), None));
         items
     }

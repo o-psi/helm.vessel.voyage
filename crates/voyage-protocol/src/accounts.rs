@@ -176,7 +176,7 @@ pub enum AccountUsageRefreshStatus {
 impl Transport {
     pub fn subscription_label(self) -> Option<&'static str> {
         match self {
-            Self::ChatgptOauth => Some("ChatGPT (experimental)"),
+            Self::ChatgptOauth => Some("ChatGPT"),
             Self::XaiOauth => Some("SuperGrok"),
             _ => None,
         }

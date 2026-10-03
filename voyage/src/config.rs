@@ -140,7 +140,7 @@ pub struct Config {
     /// Use the compatible Chat max_tokens field instead of max_completion_tokens.
     pub chat_use_max_tokens: bool,
     pub base_url: Option<String>,
-    /// Explicit override for the experimental ChatGPT subscription backend.
+    /// Explicit override for the native ChatGPT subscription backend.
     /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
     pub chatgpt_base_url: Option<String>,
     pub system_prompt: String,

@@ -443,7 +443,7 @@ async fn single_connection_signin_skips_metadata_and_back_preserves_composer() {
         Mode::Alias(_)
     ));
     let screen = draw(&app, 120, 40);
-    assert!(screen.contains("ChatGPT (experimental) sign-in"));
+    assert!(screen.contains("ChatGPT sign-in"));
     assert!(screen.contains("native xai_oauth support"));
     assert!(app.accounts.picker.as_ref().unwrap().intent.is_none());
     key(&mut app, KeyCode::Char('w'));
