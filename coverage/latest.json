@@ -1,38 +1,40 @@
 {
-  "measured_at_utc": "2026-10-02T20:40:17.628062+00:00",
-  "source_commit": "71d0d8bd8c38ac6da3ffac0df87940bf5d10ca18",
+  "measured_at_utc": "2026-10-03T01:17:45.962292+00:00",
+  "source_commit": "ad1a24e34288d0847d69403a4472f5abac991eed",
+  "final_fixture_source": "3547e618a68118a6814a6a721066b9815e76d2c9",
+  "merged_web_source": "265dd42374316c2dfb97afb41cb4adbe74e3eedc",
   "dirty": false,
-  "source_fingerprint_sha256": "deb89a921c49c45937baf576568b50cd784ace9e91e3c30fb41b7e8523cb07f0",
-  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo file names, NUL, exact bytes, NUL",
+  "source_fingerprint_sha256": "23495aab302596c500dfc51af9427e90f62625de07a9f9c492d7882aa9047542",
+  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 3100,
+    "passed": 3101,
     "failed": 0,
     "ignored": 10
   },
   "totals": {
     "lines": {
-      "count": 136905,
-      "covered": 110870,
-      "percent": 80.98316350754172
+      "count": 136937,
+      "covered": 110900,
+      "percent": 80.98614691427444
     },
     "functions": {
-      "count": 12477,
-      "covered": 10012,
-      "percent": 80.24364831289573
+      "count": 12481,
+      "covered": 10017,
+      "percent": 80.25799214806506
     },
     "regions": {
-      "count": 226767,
-      "covered": 174932,
-      "notcovered": 51835,
-      "percent": 77.14173579048098
+      "count": 226799,
+      "covered": 174959,
+      "notcovered": 51840,
+      "percent": 77.14275636135962
     }
   },
-  "command": "CARGO_TARGET_DIR=$VOYAGE_SHARED_TARGET CARGO_LLVM_COV_TARGET_DIR=$VOYAGE_SHARED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata RUST_TEST_THREADS=1 RUSTC_WORKSPACE_WRAPPER=$PWD/packaging/rustc-workspace-forward cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir $VOYAGE_COVERAGE_REPORT/automatic-html -j 8; bounded systemd user service MemoryMax=26G, MemorySwapMax=0, UMask=0077, RuntimeMaxSec=2400",
-  "report_command": "llvm-profdata merge -sparse -f $WORKSPACE_PROFILE_LIST -o $CURRENT_PROFDATA; llvm-cov export/show with all 19 archived current workspace objects and unchanged cargo-llvm-cov filename exclusions; packaging/reconcile_coverage_lines.py --detailed $DETAILED --lcov $LCOV --source-root $PWD --output $ACCOUNTING",
+  "command": "CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_PROFILE_FILE_NAME=$EXCLUSIVE_PREFIX RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-clean --no-fail-fast --html --output-dir $REPORT/automatic-html -j1; systemd user MemoryMax10G MemorySwapMax0 UMask0077 RuntimeMaxSec2400 RemainAfterExitno",
+  "report_command": "exact current Cargo execution-target and entrypoint objects; own-prefix profdata; original cargo-llvm-cov exclusions; archived identical objects detail/LCOV/HTML; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -42,11 +44,11 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Full default workspace scope, 16 parent test targets: 3100 passed, 0 failed, 10 ignored. Ignored live-provider checks were separately authorized and executed; they are not included in these coverage counters.",
-    "Exact 19 current workspace objects and 573 workspace-prefixed profiles; 546 mapped files include the same distribution std support map retained in the prior record. No foreign workspace maps. Automatic reports selecting historical binaries were rejected; every current target remains in the audited exports.",
-    "Summary/detail/archived-object LCOV/HTML agree; every file and line counter reconciled with unchanged exclusions. Source content fingerprint remained unchanged during the measurement. Shared compilation cache and a real private fixture target directory avoid unsafe symlink ancestors without weakening checks.",
-    "Lines 110870/136905 = 80.98316350754172%; delta -0.0032290466524358408 percentage points. Scope gained 1097 lines; no scope narrowing.",
-    "Strict affected-package all-target/all-feature Clippy, formatting and documentation paths/links passed. SuperGrok browser device authorization, three streamed retained-context/tool replies, standard native schemas, 15-model discovery, and an independent supervised file-tool journey with observed cleanup passed separately. No API-key fallback, native macOS/Windows or installation claim.",
-    "Earlier failing measurements and diagnostics remain in ignored evidence. CLI read-side metadata initialization was corrected; fixture layout was corrected; the existing managed-shell cleanup case passed an inspected bounded retry and both later complete measurements. xAI u64 schema interoperability was fixed without changing authoritative runtime tool contracts."
+    "Rust measurement began at ad1a24e34288d0847d69403a4472f5abac991eed; only the external journey cleanup fixture advanced during measurement to 3547e618a68118a6814a6a721066b9815e76d2c9. All 923 Rust/Cargo files remained identical; all 19 objects and full source mappings were retained without new exclusions. Existing export/detailed reports were reused without replay. Final corrected fixture journey and merged Web 265dd42374316c2dfb97afb41cb4adbe74e3eedc passed separately. This does not attribute whole final source to the original measurement. Only default.profraw had a persisted pre-run checkout baseline; other default*.profraw historical preservation is unproven.",
+    "Dynamic current Cargo target/entrypoint inventory; no fixed historical target count or file-count gate.",
+    "All baseline71d source maps retained by repository-relative names; baseline original root rebased for comparison only, no LLVM filtering or source rewriting.",
+    "Foreign profiles and existing checkout default.profraw preserved; all detailed/HTML/LCOV/raw evidence remains ignored.",
+    "Python/JavaScript/full maintained host-browser agent-interactions and Web gates passed separately; they do not establish native host/browser or live-provider behavior.",
+    "Line coverage delta vs prior: 0.0029834067327243474 percentage points."
   ]
 }
