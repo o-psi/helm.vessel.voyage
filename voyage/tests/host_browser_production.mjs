@@ -694,7 +694,13 @@ export async function runCuaProductionQualification(context,cfg){
      nodes:v.nodes,node_delta:v.node_delta,metric_scope:v.metric_scope,sent_bytes:v.sent_bytes,received_bytes:v.received_bytes,scope:v.scope,
      window_aligned:Number.isFinite(v.captured_at_ms)&&Math.abs(v.captured_at_ms-Date.parse(started))<1000&&Math.abs(v.elapsed_ms-10000)<1000};
    });
-   const nativeRenderer=await Promise.all(nativeCosts.map(c=>c.stop()));assert.ok(nativeRenderer.every(v=>v.status==='observed'));
+   const nativeRenderer=await Promise.all(nativeCosts.map(c=>c.stop()));
+   // Preserve actual reduced measurements before a refusing assertion.
+   // Metrics/counters only: no page content, request IDs or HTTP bodies.
+   const rendererEvidence={condition,index,started,native:nativeRenderer};
+   await save(path.join(cfg.output,`native-renderer-${condition}-${index}.json`),rendererEvidence);
+   report.native_renderer_windows??=[];report.native_renderer_windows.push(rendererEvidence);
+   assert.ok(nativeRenderer.every(v=>v.status==='observed'));
    const all_window_aligned=measurementWindowAligned(Date.parse(started),[
     {start:host.window_started_at_ms,end:host.window_ended_at_ms},{start:client.window_started_at_ms,end:client.window_ended_at_ms},
     ...report.native_windows.at(-1).clients.map(c=>({start:c.started_at_ms,end:c.ended_at_ms})),

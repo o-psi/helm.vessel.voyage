@@ -426,7 +426,7 @@ historical single-viewer comparison and explicitly limit cross-run comparisons.
 | Host CPU/RSS/PSS | `voyage/tests/host_browser_cost.py` on the executing host with explicit PID/starttime ledger | Observe each fixture Voyage/worker/browser tree; gateway/supervisor leaf PID separately. Never include unrelated production descendant trees. RSS sums double-count shared pages; PSS apportions them. Missing permissions are unavailable, not zero. |
 | Client renderer CPU/heap/DOM | `host_browser_client_cost.mjs` Performance metrics on each qualification-owned Chromium page | Task/Script/Layout durations and JS heap/DOM counts; renderer task time is not whole-browser OS CPU. Measure the isolated qualification browser process tree with the PID ledger for OS CPU/RSS/PSS. |
 | Web payload | Passive CDP counters for the exact actual browser-socket URL | Application frame bytes including auth/renewal, without retaining contents; excludes TLS/TCP framing/compression overhead. Attach before socket creation/renewal; zero selected connections seen means unqualified traffic, not zero cost. |
-| Native viewer payload | Passive CDP counters for that owned localhost `/operation` URL | UTF8 request and decoded response application bodies; encoded response transfer bytes and in-flight edges separate. This is not the Native–Vessel socket or total TCP/TLS cost. Native local/public socket bytes use the separately labelled passive native meter. Missing task-time/heap/body/encoding, empty selected source or in-flight requests cannot pass. |
+| Native viewer payload | Passive CDP counters for that owned localhost `/operation` URL | UTF8 request bytes at request start; decoded/encoded response chunk bytes from selected CDP dataReceived events delivered inside the window. Completions and in-flight edges are separate. This is not the Native–Vessel socket or total TCP/TLS cost. Missing task-time/heap/request bodies, malformed chunk counts, transport failures, overflow or empty selected sources cannot pass; known boundary crossings are reported explicitly. |
 | Latency/fidelity | One explicit benign input and observed replay marker in both clients | Record sample count/median/p95/max plus action/refusal/recovery counts and unsupported classes. Time only the single confirmed intent; never retry an unknown effect to get a number. |
 
 The passive client helper requests no response bodies, parses no private messages
@@ -680,15 +680,22 @@ physical Vessel. Browser binding/attachment/incarnation/controller fences and
 observed same native client/socket remain mandatory; Web never borrows this actor.
 The ordinary Linux route is not a native macOS/Windows or protected Root claim.
 
-Native graphical metrics separately count UTF8 HTTP request bodies begun and
-decoded response bodies completed inside each observation window. CDP-reported encoded request
-transfer bytes (header/framing inclusion unspecified) and requests crossing the
-window boundary are separate fields.
-Missing bodies, nonboolean/missing response encoding, transport failure,
-requests still in flight at window end, or a selected native source with no
-observed requests/responses produce unknown metrics. Overflow cannot pass. No page/private text,
-URL, header, cookie, command body or token is retained. These bridge and native
-Vessel socket layers overlap and must **not** be summed as total bandwidth.
+Native graphical metrics count UTF8 HTTP request body bytes at request start and
+actual response chunks from selected `Network.dataReceived` events delivered
+within the fixed observation window. `dataLength` is decoded chunk length;
+`encodedDataLength` is the encoded chunk length, which may be zero for buffered
+or cached data. These counts exclude headers and are not total TCP/TLS bytes.
+`Network.responseReceived.response.url` identifies a selected response whose
+request predates collector attachment; its request bytes are not invented.
+Completion counts, prewindow completions and requests still in flight at the end
+are separate facts. Known crossings do not make the counted event bytes unknown,
+and observed metrics do not assert complete transactions. Missing request bodies,
+malformed chunk values, transport failures, overflow, missing renderer metrics or
+an empty selected event source still refuse qualification. No response-body fetch
+or postwindow body wait shifts bytes across the measurement boundary. The ten-second
+window, real clock alignment and independent unknown-effect/receipt fences remain
+unchanged. No private content, URL, header, cookie, request ID or token is retained.
+Native graphical and Vessel socket layers overlap and must **not** be summed.
 CPU/RSS/heap/latency and actual deployed Web public WSS scopes remain distinct.
 
 This mode preserves the full site/media/private/control/reopen/renewal/multi-voyage
@@ -726,16 +733,20 @@ unobserved page closure prevents pass. It never enumerates/closes human CUA tabs
 All actual host/client/native-byte/renderer/CUA observation intervals must be
 within one second of the requested start, end and ten-second duration. Samplers
 record their real UTC start/end; no scheduled time is substituted for observation.
-CDP payload counts begin after enablement/baseline: selected socket identity may
-be discovered earlier, but prewindow HTTP requests crossing into the interval
-remain explicitly unknown. A selected silent socket is unqualified. Required
-TaskDuration/heap/Nodes must be finite before/after; missing data cannot pass.
-Native Local/Public socket, graphical body counts and Web WSS remain distinct.
+CDP payload counts begin after enablement/baseline. Selected response identity may
+be discovered earlier; actual chunks delivered before activation or after stop
+are excluded. A selected silent socket is unqualified. Required TaskDuration,
+heap and Nodes must be finite before/after. Native Local/Public socket, graphical
+chunk counts and Web WSS remain distinct.
 
-In-flight-at-end native requests currently prevent complete cost qualification.
-This is deliberately conservative: continuous mirror polling can expose boundary
-censoring in a real run. Do not pause/rewrite polling, erase a request or infer its
-body to produce a green window. Retain incomplete cost facts for the owner.
+Continuous mirror polling is measured without pauses or rewritten requests.
+In-flight-at-end and prewindow requests are explicit boundary counters; no
+unobserved body bytes or transaction outcomes are inferred. Focused synthetic CDP
+contracts cover requests spanning either edge, preexisting response discovery,
+partial/compressed chunks, ambient exclusion and refusing malformed/missing data.
+The production driver writes each reduced native-renderer window before checking
+its status, preserving diagnostic evidence even when that window is refused.
+
 
 
 Additional prepared metadata/oracle contracts:

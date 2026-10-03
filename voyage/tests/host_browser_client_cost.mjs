@@ -9,9 +9,10 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
  const selected=new Set(webSocketUrls),httpSelected=new Set(nativeOperationUrls),sockets=new Set(),requests=new Set();
  const traffic={ws_sent_payload_bytes:0,ws_received_payload_bytes:0,ws_sent_frames:0,ws_received_frames:0,
   selected_ws_connections_seen:0,http_operation_request_payload_bytes:0,http_operation_requests:0,
-  http_operation_response_payload_bytes:0,http_operation_response_encoded_bytes:0,http_operation_responses:0,
-  http_operation_failures:0,http_operation_body_unavailable:0,http_operation_inflight_at_window_end:0};
- const cdp=await context.newCDPSession(page),handlers=[],bodyReads=new Set(),earlyRequests=new Set();let overflow=false,active=false,crossWindow=0;
+  http_operation_response_payload_bytes:0,http_operation_response_encoded_bytes:0,http_operation_responses:0,http_operation_data_chunks:0,
+  http_operation_failures:0,http_operation_body_unavailable:0,http_operation_inflight_at_window_end:0,
+  http_operation_response_completions_from_before_window:0,http_operation_preexisting_inflight_at_window_end:0};
+ const cdp=await context.newCDPSession(page),handlers=[],earlyRequests=new Set();let overflow=false,active=false,crossWindow=0;
  const on=(name,handler)=>{cdp.on(name,handler);handlers.push([name,handler]);};
  on('Network.webSocketCreated',event=>{if(selected.has(event.url)){if(sockets.size>=64){overflow=true;return;}sockets.add(event.requestId);traffic.selected_ws_connections_seen++;}});
  on('Network.webSocketClosed',event=>sockets.delete(event.requestId));
@@ -31,21 +32,32 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
   const bytes=Buffer.byteLength(event.request.postData||'', 'utf8');
   if(bytes>4*1024*1024){overflow=true;return;}traffic.http_operation_request_payload_bytes+=bytes;
  }});
- on('Network.loadingFailed',event=>{if(earlyRequests.delete(event.requestId))return;if(active&&requests.delete(event.requestId))traffic.http_operation_failures++;});
- on('Network.loadingFinished',event=>{if(earlyRequests.delete(event.requestId))return;if(active&&requests.delete(event.requestId)){
-  if(!Number.isSafeInteger(event.encodedDataLength)||event.encodedDataLength<0){overflow=true;return;}
-  traffic.http_operation_response_encoded_bytes+=event.encodedDataLength;traffic.http_operation_responses++;
-  if(bodyReads.size>=128){overflow=true;return;}
-  // Count the actual decoded application body, never retain/return its content.
-  const reading=(async()=>{try{
-   const body=await cdp.send('Network.getResponseBody',{requestId:event.requestId});
-   if(typeof body.base64Encoded!=='boolean'){traffic.http_operation_body_unavailable++;return;}
-   if(typeof body.body!=='string'||body.body.length>8*1024*1024){overflow=true;return;}
-   const bytes=body.base64Encoded?Buffer.from(body.body,'base64').length:Buffer.byteLength(body.body,'utf8');
-   if(bytes>4*1024*1024){overflow=true;return;}traffic.http_operation_response_payload_bytes+=bytes;
-  }catch{traffic.http_operation_body_unavailable++;}})();
-  bodyReads.add(reading);void reading.finally(()=>bodyReads.delete(reading));
+ // A response can belong to a request already in flight when Network was enabled.
+ // Its response URL identifies scope without counting its prewindow request bytes.
+ on('Network.responseReceived',event=>{if(httpSelected.has(event.response.url)&&!requests.has(event.requestId)&&!earlyRequests.has(event.requestId)){
+  if(earlyRequests.size>=128){overflow=true;return;}earlyRequests.add(event.requestId);
  }});
+ on('Network.loadingFailed',event=>{const early=earlyRequests.delete(event.requestId),started=requests.delete(event.requestId);if(active&&(early||started))traffic.http_operation_failures++;});
+ on('Network.dataReceived',event=>{
+  if(!active||(!requests.has(event.requestId)&&!earlyRequests.has(event.requestId)))return;
+  // Count actual delivered chunks, including partial responses. Completion
+  // timing never moves an entire response body into another sample window.
+  if(!Number.isFinite(event.timestamp)||event.timestamp<0||
+     !Number.isSafeInteger(event.dataLength)||event.dataLength<0||event.dataLength>4*1024*1024||
+     !Number.isSafeInteger(event.encodedDataLength)||event.encodedDataLength<0||event.encodedDataLength>4*1024*1024){
+   traffic.http_operation_body_unavailable++;return;
+  }
+  traffic.http_operation_response_payload_bytes+=event.dataLength;
+  traffic.http_operation_response_encoded_bytes+=event.encodedDataLength;
+  traffic.http_operation_data_chunks++;
+ });
+ on('Network.loadingFinished',event=>{
+  const early=earlyRequests.delete(event.requestId),started=requests.delete(event.requestId);
+  if(active&&(early||started)){
+   traffic.http_operation_responses++;
+   if(early)traffic.http_operation_response_completions_from_before_window++;
+  }
+ });
  try{await cdp.send('Performance.enable');await cdp.send('Network.enable');}
  catch(error){for(const [name,handler] of handlers)cdp.off(name,handler);await cdp.detach();throw error;}
  const read=async()=>{
@@ -60,14 +72,21 @@ export async function browserCost(context,page,{webSocketUrls=[],nativeOperation
    try{
     for(const [name,handler] of handlers)cdp.off(name,handler);
     traffic.http_operation_inflight_at_window_end=requests.size;
-    await Promise.race([Promise.all([...bodyReads]),new Promise(resolve=>setTimeout(()=>{if(bodyReads.size)traffic.http_operation_body_unavailable+=bodyReads.size;resolve();},1000))]);
+    traffic.http_operation_preexisting_inflight_at_window_end=earlyRequests.size;
     const after=await read(),essential=['TaskDuration','JSHeapUsedSize','Nodes'];
     const rendererComplete=essential.every(name=>[before[name],after[name]].every(value=>Number.isFinite(value)&&value>=0))&&after.TaskDuration>=before.TaskDuration;
     const endedAt=Date.now();const socketComplete=selected.size===0||(traffic.selected_ws_connections_seen>0&&traffic.ws_received_frames>0);
-    return {started_at_ms:startedAt,ended_at_ms:endedAt,elapsed_ms:performance.now()-started,prewindow_requests_crossing:crossWindow,before,after,renderer_metrics_qualified:rendererComplete,traffic:{...traffic},
-    status:overflow?'scope_overflow':!rendererComplete||!socketComplete||crossWindow>0||traffic.http_operation_failures||traffic.http_operation_body_unavailable||traffic.http_operation_inflight_at_window_end||(httpSelected.size>0&&(traffic.http_operation_requests===0||traffic.http_operation_responses===0))?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&socketComplete,
+    const qualification_gaps=[];
+    if(overflow)qualification_gaps.push('scope_overflow');
+    if(!rendererComplete)qualification_gaps.push('renderer_metrics_incomplete');
+    if(!socketComplete)qualification_gaps.push('selected_socket_incomplete');
+    if(traffic.http_operation_failures)qualification_gaps.push('http_operation_failed');
+    if(traffic.http_operation_body_unavailable)qualification_gaps.push('http_body_unavailable');
+    if(httpSelected.size>0&&(traffic.http_operation_requests===0&&traffic.http_operation_responses===0&&traffic.http_operation_data_chunks===0))qualification_gaps.push('http_sample_empty');
+    return {qualification_gaps,started_at_ms:startedAt,ended_at_ms:endedAt,elapsed_ms:performance.now()-started,prewindow_requests_crossing:crossWindow,before,after,renderer_metrics_qualified:rendererComplete,traffic:{...traffic},
+    status:overflow?'scope_overflow':!rendererComplete||!socketComplete||traffic.http_operation_failures||traffic.http_operation_body_unavailable||(httpSelected.size>0&&(traffic.http_operation_requests===0&&traffic.http_operation_responses===0&&traffic.http_operation_data_chunks===0))?'unknown':'observed',websocket_traffic_qualified:selected.size>0&&socketComplete,
     cpu_scope:'renderer task time; whole-browser OS CPU/RSS require the owned PID ledger',
-    traffic_scope:'selected WebSocket payload and native HTTP requests begun/responses completed in observation window (inflight-at-end counted separately); UTF8 request/decoded response application bytes; CDP-reported encoded request transfer bytes separate (header/framing inclusion unspecified); application body counts exclude headers; neither is total TCP/TLS nor native Helm Vessel socket bytes'};}
+    traffic_scope:'selected WebSocket payload and native HTTP CDP events delivered during the fixed observation window; UTF8 request body bytes at request start; decoded response dataLength and encodedDataLength chunk bytes at Network.dataReceived; completions and boundary inflight counts are separate, not complete-transaction evidence; no response body reads, headers, total TCP/TLS or native Helm Vessel socket bytes are claimed'};}
    finally{for(const [name,handler] of handlers)cdp.off(name,handler);await cdp.detach();}
   })();
  timer=setTimeout(()=>{void finish().catch(()=>{});},maxMilliseconds);
