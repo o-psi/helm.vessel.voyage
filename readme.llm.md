@@ -5,6 +5,22 @@ Start here for implementation context. The [main README](README.md) and
 This file maps the technical contracts; it does not replace source or the
 repository instructions in [AGENTS.md](AGENTS.md).
 
+## Product direction
+
+Voyage is for agents completing work across multiple computers: modifying files,
+running tools, building and verifying software, producing deliverables and
+performing authorized operations. Helm directs the work, Vessel supervises it on
+the host, and independent Voyage processes execute it. Preserve those ownership
+boundaries when adding capabilities. A question-only walkthrough or an
+unprivileged installation ceiling does not describe the intended product.
+
+The host-administration target uses a privileged supervisor, a separate
+unprivileged public gateway, and explicit owner authorization for administrator
+execution. Supported system installation and migration are unfinished under
+[#344](https://github.com/o-psi/helm.vessel.voyage/issues/344) and
+[#380](https://github.com/o-psi/helm.vessel.voyage/issues/380). The current user
+installer is a scoped option, not evidence that this target is delivered.
+
 ## Establish the facts before changing anything
 
 - Read [AGENTS.md](AGENTS.md) for repository-wide instructions, delivery and
@@ -49,7 +65,7 @@ text may retain superseded draft descriptions.
 
 ## Supported onboarding paths
 
-### Local Linux terminal
+### Current user-scoped Linux installation
 
 The stable bootstrap installs the latest stable release and starts a local user
 service. The documented prebuilt path is Linux x86-64, glibc 2.39+, Python 3.11+,
@@ -61,7 +77,7 @@ curl --fail --location --proto '=https' --proto-redir '=https' \
 sh install.sh
 export PATH="$HOME/.local/bin:$PATH"
 cd /path/to/your/folder
-helm --access read-only
+helm --access approval
 ```
 
 Use [terminal setup reference](docs/terminal-setup-reference.md) for enrollment,

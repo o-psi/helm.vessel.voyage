@@ -3,10 +3,11 @@
 For a shorter walkthrough, start with [Your first voyage in the browser](getting-started-web.md).
 This reference retains the detailed setup, authority and recovery procedures.
 
-Helm Web is the browser interface to Vessels you operate. It does not run agents
-on the web server. A Vessel supervises each independent Voyage process on its
-own host, where workspaces and provider credentials remain. This guide uses the
-production React console at [helm.vessel.voyage](https://helm.vessel.voyage/).
+Helm Web directs AI agents to complete tasks across Vessels you operate. Helm
+provides the interface; each Vessel supervises independent Voyage processes on
+its host. Voyage owns task execution, and workspaces and provider credentials
+remain on the executing computer. The Web server does not run the agents. This
+guide uses the production React console at [helm.vessel.voyage](https://helm.vessel.voyage/).
 
 ## Before you start
 
@@ -15,6 +16,12 @@ public HTTPS/WSS endpoint for that Vessel on port 443, and a browser. A local
 Vessel installation by itself is not reachable from Helm Web. You also need an
 eligible AI provider account on the executing host; Helm Web does not include
 provider credit. Only configured Web sign-in providers appear on the login page.
+
+The currently available installer provisions a user service for work within the
+installing account. The intended host deployment includes authorized
+administrative work, but its [system-service and privileged execution path](privileged-vessel-plan.md)
+is unfinished. Infrastructure work today needs a management path established by
+the host operator; a connected Vessel alone is not proof of the required access.
 
 For the current Web-compatible development build, download and review the
 [public nightly bootstrap](../installer/README.md#public-nightly-installation) on
@@ -72,16 +79,29 @@ provider account on the Vessel are separate things.
 
 ## 3. Create and use the voyage
 
-Choose **Create voyage** to create the independent conversation. This action
-alone sends no model request. Type a small prompt, for example:
+Choose **Approval** in the access selector to permit workspace edits under the
+runtime approval policy. Enter a task and choose **Send** to create the voyage
+and start its first run. **Create without message** creates the independent
+conversation without a model request. Assign a task with a concrete artifact
+and acceptance criteria:
 
-> What is in this workspace? Summarize the main files and suggest where I should start.
+> Create WORKSPACE-GUIDE.md in this folder for someone taking over the work.
+> Describe its purpose, map the main files, and include setup and verification
+> commands only when you can support them from existing files. Link each claim
+> to its source path, mark unknowns, and leave other files unchanged. If the guide
+> already exists, update it without removing unrelated content. Check the finished
+> file against those requirements and report the changes and verification results.
 
-Sending it starts a run on the Vessel. You can leave Helm Web and return to the
-saved conversation while its Voyage continues. If the connection drops, reconnect
+Sending it starts a run on the Vessel. Follow tool activity and respond to input
+and approval requests. **Approval** follows runtime policy rather than asking
+separately for every edit. When the run finishes, open the guide and check its
+references, commands, and changed files against the task. Request corrections in
+the same voyage and verify the result before relying on it. Read-only access is
+available for inspection-only tasks.
+
+You can leave Helm Web and return to the saved conversation while its Voyage continues. If the connection drops, reconnect
 and inspect the run status; an uncertain submission is not automatically sent
-again. Unsent text and pictures survive switching conversations within the page,
-but are lost on reload.
+again.
 
 For connection recovery, profiles, browser viewing, and update controls, see
 [Helm Web's current behavior](helm-web.md). The

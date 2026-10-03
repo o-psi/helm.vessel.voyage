@@ -4,6 +4,22 @@ Status: canonical component model. The Linux implementation uses these process
 boundaries; see [current state](current-state.md) and [delivery evidence](implementation.md)
 for supported paths, verification and deployment limits.
 
+## Product purpose
+
+AI agents carry out work across computers under user direction. Helm provides
+the interface, Vessel supervises execution on each host, and each Voyage owns
+its agent loop and work in an independent process. These separate programs and
+processes allow interfaces to detach, hosts to manage execution, and sessions to
+retain their own history and cleanup obligations. They are the foundation for
+capable agents that modify, build, verify and operate systems.
+
+The intended administration setup uses a privileged Vessel supervisor and a
+separate unprivileged public gateway. Ordinary execution and explicitly
+owner-approved administrator execution use configured identities. The
+[privileged Vessel plan](privileged-vessel-plan.md) tracks the unfinished system
+installation, review and adoption work. Existing user-service installation is a
+scoped deployment option; it does not define the product’s capability ceiling.
+
 ## Browser ownership and qualification
 
 Issue #333 puts the browser on the Vessel host inside its Voyage process. Both Helm

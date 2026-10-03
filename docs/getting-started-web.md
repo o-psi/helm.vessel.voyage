@@ -2,9 +2,10 @@
 
 # Your first voyage in Helm Web
 
-Use Voyage from a browser: choose a folder, describe a task, and follow the work
-in a chat interface. Open [Helm Web](https://helm.vessel.voyage/) once your machine
-is connected.
+Direct AI agents to complete work on your connected computers from a browser.
+Choose a Vessel and workspace, assign a task, and verify the changes. Helm Web
+is your interface; Vessel supervises independent Voyage processes on the selected
+computer. Open [Helm Web](https://helm.vessel.voyage/) once your machine is connected.
 
 ## Before you start
 
@@ -51,19 +52,27 @@ not grant extra access to files.
 
 ## 3. Create and use the voyage
 
-Choose **Create voyage**. That opens the conversation; sending a message starts
-the AI work. For a first task, try:
+Choose **Approval** in the access selector. This permits workspace edits under
+the runtime approval policy. Enter a task and choose **Send** to create the
+voyage and start work. **Create without message** creates the voyage without
+starting a run. For a first task, try:
 
-> Explain the main files in this folder in plain language. Don't change anything
-> or run project scripts. Tell me what you couldn't determine.
+> Create WORKSPACE-GUIDE.md in this folder for someone taking over the work.
+> Describe its purpose, map the main files, and include setup and verification
+> commands only when you can support them from existing files. Link each claim
+> to its source path, mark unknowns, and leave other files unchanged. If the guide
+> already exists, update it without removing unrelated content. Check the finished
+> file against those requirements and report the changes and verification results.
 
-Watch the answer, tool activity, and any requests for your input. For another
-step, stay in the same conversation and ask a follow-up.
+Follow tool activity and respond to requests for your input or approval. Open the
+finished file and review the changes against the task. Ask the agent to correct
+any errors and verify the correction in the same conversation. **Approval**
+uses the runtime approval policy, not a separate approval for every edit.
+Read-only access remains available for tasks that only require inspection.
 
 You can close the browser and return to the saved conversation. Accepted work
 continues on the connected machine while it remains running. If the connection
-drops, reconnect and check the status before repeating a task. Unsent messages
-and pictures are kept while you switch conversations, but are lost on page reload.
+drops, reconnect and check the status before repeating a task.
 
 ## Connect a machine for browser use
 
@@ -73,9 +82,11 @@ need browser access.
 
 The operator needs to:
 
-1. Choose a host account with access to the intended folders and services. For
-   server or Proxmox administration, establish an authorized management path; see
-   [host account prerequisites](../installer/README.md#choose-the-host-account-before-installing).
+1. Choose the intended work and a host account with the required access. The
+   current user-service installer handles work within that account. The planned
+   [system-service and administrator execution path](privileged-vessel-plan.md)
+   is unfinished; infrastructure work today requires an operator-established
+   management path. See [host account prerequisites](../installer/README.md#choose-the-host-account-before-installing).
 2. Install the [current public nightly](../installer/README.md#public-nightly-installation)
    on a supported Linux x86-64 machine.
 3. Provide an authenticated public HTTPS/WSS endpoint on port 443 with a

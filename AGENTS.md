@@ -5,6 +5,13 @@ scope, preserve unrelated work and respect runtime permissions.
 
 ## Product model
 
+The product is for AI agents completing work across multiple computers. Keep
+README, onboarding and operator guidance oriented toward concrete outcomes,
+execution and verification. Explain Helm presentation, Vessel supervision and
+independent Voyage execution as distinct responsibilities. User installation is
+a scoped option; do not turn its current limits into the product direction or
+advertise unfinished system/admin execution as shipped.
+
 The canonical target is [docs/architecture.md](docs/architecture.md):
 
 - **Helm** comprises Helm TUI and Helm Web. Both connect to Vessels; client presentation must not become a competing execution owner.

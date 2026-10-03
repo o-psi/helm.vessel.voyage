@@ -1,6 +1,7 @@
 # Helm
 
-Helm is a TUI that connects only to local or remote Vessels. Each Vessel
+Helm is the terminal interface for directing agents to complete work across
+local and remote computers. It connects only to Vessels. Each Vessel
 supervises and exposes Voyage runtime processes, with **one session per independent
 Voyage process**. See the [architecture](../docs/architecture.md).
 
@@ -28,7 +29,7 @@ helm config
 helm doctor
 helm chat
 helm chat --plain
-helm run "summarize the files in this workspace"
+helm run "Create SETUP.md from this project’s configuration and verify its command references"
 helm sessions
 ```
 

@@ -1,6 +1,8 @@
 # Voyage runtime
 
-The `voyage` executable owns one session in an independent process. Linux Vessel
+The `voyage` executable carries out AI work: its agent loop uses tools to edit
+files, run commands, produce deliverables and verify results within the granted
+access. It owns one session in an independent process. Linux Vessel
 creates its private registration and launches it; use `helm connect` through Vessel
 for normal operations. Starting an arbitrary runtime socket directly from Helm is
 not the supported process route.

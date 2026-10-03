@@ -6,9 +6,11 @@ This reference retains the detailed setup, authority and recovery procedures.
 For browser use, start with [Your first voyage in Helm Web](getting-started-web.md).
 
 Follow this guide for **local Linux terminal use**: install the programs, open
-Helm, set up an account privately, ask one small question about a folder, inspect
-the result, and return to the same conversation. No remote server or project map
-is required.
+Helm, set up an account privately, have an agent create a useful workspace guide,
+verify the artifact, and return to the same voyage for more work. Helm directs
+work, Vessel supervises the independent Voyage process, and Voyage executes the
+task. You can connect additional Vessels for work on other computers; no remote
+server or project map is required for this local walkthrough.
 
 The Linux x86-64 v1.0.2 binary release is described in the
 [release guide](releases-v1.0.2.md). These instructions are not a
@@ -21,8 +23,9 @@ account selection, and model access are different checks; none guarantees the ne
 You need a Linux machine, a terminal, a folder you are comfortable letting the
 selected provider learn about, and permission to use that provider. Start with a
 small folder without secrets. Model requests can send file contents and tool results
-to the selected provider. Read-only mode prevents tool mutations, **not disclosure**,
-and is application policy rather than an OS sandbox.
+to the selected provider. Use a folder where you can create the guide. Access
+modes are application policy rather than an OS sandbox; inspection-only work can
+also send content to a provider.
 
 Choose your billing route before entering credentials:
 
@@ -43,11 +46,17 @@ provider and subscription plan.
 
 ## 1. Install on Linux
 
-### Prebuilt release (recommended)
+### Current user-service installation
+
+This available installation path runs Vessel within a Linux account. The intended
+host deployment includes authorized administrative work, but the
+[system-service and administrator execution path](privileged-vessel-plan.md) is
+unfinished. Infrastructure tasks currently need an operator-established
+management path; see [host account prerequisites](../installer/README.md#choose-the-host-account-before-installing).
 
 Use Linux x86-64 with glibc 2.39+, curl, Python 3.11+ and a reachable systemd
-user manager. Run as your ordinary user, never with sudo. Fetch the current
-bootstrap, inspect it if desired, then install the latest published release:
+user manager. Run this user-service installer as your ordinary user, without sudo.
+Fetch the current bootstrap, inspect it if desired, then install the latest published release:
 
 ```sh
 curl --fail --location --proto '=https' --proto-redir '=https' \
@@ -84,11 +93,12 @@ installer walkthrough.
 
 ## 2. Launch Helm
 
-Change to the folder for your first task, then launch with inspection-only authority:
+Change to the folder for your first task, then launch with approval-controlled
+authority so the agent can perform the requested edits:
 
 ```sh
 cd /path/to/your/folder
-helm --access read-only
+helm --access approval
 ```
 
 Replace `/path/to/your/folder` with a real folder path. Helm connects to the local
@@ -141,12 +151,15 @@ is not proof of credit or model entitlement. See [account recovery](provider-acc
 
 ## 4. First task
 
-Back in the draft, check that its workspace, account/model, and read-only access
-are the ones you intended. Type this, then press **Enter**:
+Back in the draft, check the workspace, account/model, and **Ask first** access
+selected by `--access approval`. Type this, then press **Enter**:
 
-> List the top-level files in this folder and explain briefly what this folder
-> appears to contain. Do not modify files or run project scripts. Say what you
-> could not determine.
+> Create WORKSPACE-GUIDE.md in this folder for someone taking over the work.
+> Describe its purpose, map the main files, and include setup and verification
+> commands only when you can support them from existing files. Link each claim
+> to its source path, mark unknowns, and leave other files unchanged. If the guide
+> already exists, update it without removing unrelated content. Check the finished
+> file against those requirements and report the changes and verification results.
 
 The first send creates the voyage and submits the message. Wait for a visible
 outcome. Creating a voyage is not proof that the provider accepted the request.
@@ -160,16 +173,23 @@ continuation. There is no automatic move to someone else's account.
 
 ## 5. Inspect what happened
 
-Read the answer and the visible tool activity, not just the status label. Compare
-claimed filenames with your folder. **PageUp/PageDown** scroll the transcript;
+Open WORKSPACE-GUIDE.md and review the visible tool activity. Check its source
+paths, compare the documented commands with existing project files, and confirm
+that unrelated files were left unchanged. **PageUp/PageDown** scroll the transcript;
 **Ctrl+End** returns to the latest output. Use **F9 Actions → Details** to inspect
 the selected voyage's identity and process details. The provider-attempt details
 help distinguish a request failure from a completed task.
 
-This first task should not change files. Read-only refusal is expected if a tool
-tries to mutate them. For future write tasks, review the requested access change
-explicitly and inspect the actual diff before trusting or committing changes.
-An assistant's success sentence alone is not verification.
+The first task is complete when the requested file exists and meets the acceptance
+criteria, including accurate references and reported unknowns. Review its actual
+diff before relying on or committing it. Ask for corrections and verify them in
+the same voyage. An assistant's success sentence alone is not verification.
+
+**Ask first** follows the runtime approval policy, so respond when a consequential
+action needs approval; it does not prompt separately for every edit. For optional
+inspection-only work, launch with `helm --access read-only`. Use **Voyage Actions
+→ Access** to change an existing voyage's access mode. Neither mode elevates the
+executing Linux account.
 
 To stop work, use **F9 Actions → Cancel current run**. A requested cancellation is
 not observed cleanup. **Ctrl+C leaves Helm; it does not cancel the voyage.**
@@ -179,13 +199,14 @@ not observed cleanup. **Ctrl+C leaves Helm; it does not cancel the voyage.**
 Press **Ctrl+C** to leave Helm. Later, open it again from your task folder:
 
 ```sh
-helm --access read-only
+helm --access approval
 ```
 
 Press **F2 Voyages**, choose the existing voyage, and press **Enter**. Inspect its
 history and current status before sending a follow-up. For example:
 
-> Which file would you suggest I read first, and why?
+> Add a troubleshooting section for the setup commands, using evidence in this
+> workspace. Verify the added source references.
 
 This continues the existing conversation; **Ctrl+N** would create a separate draft.
 Reopening Helm does not mean a dead process survived a reboot, nor does reconnect
@@ -200,7 +221,7 @@ that label is not proof that its answer is correct.
 - **Remote work:** [Vessel connections](vessel-connections.md). The workspace and
   credentials belong to the executing host, not automatically to your laptop.
 - **Admin tasks:** [installation/upgrades/services](../installer/README.md) and
-  [operations](operations.md). No service or remote-access administration is needed
-  just to understand the first task above.
+  [operations](operations.md). Provision the required host authority before
+  assigning infrastructure work.
 - **Development:** [build and contribution guide](development.md),
   [quality and verification limits](quality.md), and [architecture](architecture.md).

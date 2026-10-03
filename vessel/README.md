@@ -1,7 +1,8 @@
 # Vessel
 
-Vessel supervises and exposes local Voyage runtime processes to Helm
-interfaces. Helm connects only to local or remote Vessels; each Voyage runtime owns
+Vessel is the host supervisor for AI work across connected computers. It
+authenticates clients, starts and supervises independent Voyage runtime
+processes, and exposes their authorized state to Helm interfaces. Helm connects only to local or remote Vessels; each Voyage runtime owns
 **one session per independent process**. See the
 [architecture](../docs/architecture.md).
 

@@ -2,6 +2,15 @@
 
 # Connecting to Vessels inside Helm
 
+Connect the computers where agents need to do work, then choose a Vessel and
+workspace for each task. A workstation can host development voyages while a
+server hosts build or operations voyages. Helm provides one interface to those
+connections; each Vessel supervises its own independent Voyage processes.
+Connections and workspaces use the destination host's configured access. See
+[installation scope](../installer/README.md#choose-the-host-account-before-installing)
+for the current user setup and unfinished administrator-install path.
+
+
 A Vessel connection tells Voyage which computer should do the work. For local
 terminal use, that is usually your own computer. In the browser, it is the
 computer you or its operator have connected to Helm Web.

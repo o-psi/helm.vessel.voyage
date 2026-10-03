@@ -2,61 +2,60 @@
 
 # Install and upgrade Voyage
 
-New to Voyage? Follow the [terminal walkthrough](../docs/getting-started.md) or
-[browser walkthrough](../docs/getting-started-web.md) first. This page is the
-installation reference for the person setting up or maintaining the computer.
-
-For local use, start with [Download a published version](#download-a-published-version).
-For browser use, the current setup needs the [public development nightly](#public-nightly-installation)
-and a separate secure connection setup. Installing the programs does not include
-an AI account or credit.
-
-The Linux installer installs a complete release: `helm`, `vessel`, `voyage` and
-`voyage-installer`. With no action it opens an interactive review/apply/cancel
-wizard. The review is a dry run; applying performs the displayed installation.
-Provider setup and remote Vessel pairing are separate operations. Existing
-configuration, credentials and voyage data are preserved.
+Install the execution host so agents can carry out the work you intend to assign:
+software development, builds, document production or authorized operations.
+Helm connects to hosts, Vessel supervises their independent Voyage processes,
+and Voyage runs the agent and its tools. Install the complete release on each
+execution host; connect those Vessels from [Helm Web](../docs/getting-started-web.md)
+or the [terminal](../docs/getting-started.md).
 
 ## Choose the host account before installing
 
-The supported installation runs Vessel and its voyages as the Linux account
-that installs it. It does not create administrator rights, add sudo rules or
-provide Proxmox management access. Choose an account that can already access the
-intended workspace and services. An account with existing administrative grants
-retains those grants; a nonzero UID alone does not mean it is unprivileged.
+### Intended system administration setup — unfinished
 
-For server administration, such as creating Proxmox VMs or containers, the host
-operator must separately provide an authorized management connection or the
-required OS permissions. A connected Vessel is not evidence of that access.
-**Full access** in Helm controls application approval behavior; owner pairing
-controls access to Vessel. Neither changes the process's Linux identity or
-bypasses sudo authentication and Proxmox ACLs.
+The intended host-administration installation uses a privileged Vessel supervisor,
+a separate unprivileged public gateway, and configured execution identities.
+Ordinary work runs under an ordinary account; administrator work requires explicit
+owner authorization. Existing installations need a reviewed migration that
+preserves their connections, accounts and voyage history.
 
-Before assigning an administrative task, run these read-only checks as the
-account used by the Vessel service (or ask its voyage to run them):
+That path is still being completed in
+[#344](https://github.com/o-psi/helm.vessel.voyage/issues/344) and
+[#380](https://github.com/o-psi/helm.vessel.voyage/issues/380). The
+[system assessment and fixture path](#read-only-system-host-assessment) is an
+implementation increment, not a supported production deployment or migration.
+These are delivery gaps to complete, not limits on the intended product.
 
-```sh
-id
-hostname
-sudo -n -l
-```
+### Current user-scoped option
 
-`sudo -n -l` reports what the current sudo policy permits without prompting; a
-password-required response means this check could not establish available sudo
-rights. Verify the specific management operation too. Root in a container is not
-necessarily an administrator of its Proxmox host.
+The published installer runs Vessel and its voyages under the installing Linux
+account. This supports work using that account's existing access: editing files,
+running project tools, building software and operating services the account can
+already manage. It installs `helm`, `vessel`, `voyage` and `voyage-installer` as one
+versioned release. Provider setup and remote pairing are separate operations;
+existing configuration, credentials and voyage data are preserved.
 
-If access is missing, an existing host administrator must establish the approved
-access path outside the conversation. Do not paste a sudo password, SSH private
-key or API token into chat. Retrying with Helm Full access or reinstalling as the
-same account cannot supply missing OS authority. Do not run the user bootstrap
-with sudo or change a user-writable installation into a root service.
+For infrastructure tasks such as creating Proxmox VMs, an operator must currently
+provide an authorized management connection or the required host permissions.
+Choose the execution account and verify that access before assigning the task.
+Existing administrative grants remain effective; a nonzero UID alone does not
+establish that an account is unprivileged. Helm Full access and owner pairing do
+not change the Linux process identity or satisfy sudo authentication.
 
-A supported system installation with owner-approved administrator voyages is
-being implemented in [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344)
-and [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380). The
-[system host assessment and fixture installation](#read-only-system-host-assessment)
-below describe current limits; they are not a production migration procedure.
+Use the user-scoped instructions below for work within an existing account's
+access. Running this bootstrap with sudo or changing its user-writable binaries
+into a root service does not implement the system architecture. For an existing
+access failure, see [host access checks](#host-access-checks).
+
+## Install the current user-scoped release
+
+For published stable downloads, use [Download a published version](#download-a-published-version).
+Current browser use needs the [public nightly](#public-nightly-installation)
+and a separately configured secure connection. Installation does not include
+an AI account or credit.
+
+With no action, the bundled installer opens an interactive review/apply/cancel
+wizard. The review is a dry run; applying performs the displayed installation.
 
 ## Install from a local release
 
@@ -233,6 +232,27 @@ public prerelease and passes its verified binaries directly to the bundled insta
 When no published release is available, provide an explicit trusted local release
 directory.
 Publication to GitHub main is not publication of a downloadable release.
+
+## Host access checks
+
+Run these read-only checks as the Vessel service account, or ask its voyage to
+run them before an administrative task:
+
+```sh
+id
+hostname
+sudo -n -l
+```
+
+`sudo -n -l` checks current sudo policy without prompting. A password-required
+response means this check could not establish available sudo rights. Verify the
+specific management operation too: root in a container does not necessarily have
+authority over its Proxmox host.
+
+Missing OS access requires an existing administrator to establish the approved
+management path privately. Do not put passwords, private keys or API tokens into
+conversation history. Reinstalling under the same account or changing Helm's
+access mode cannot supply that missing authority.
 
 ## The local service
 

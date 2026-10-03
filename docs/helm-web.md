@@ -1,5 +1,12 @@
 # Helm Web: React console, personal tenants and public Vessels
 
+Helm Web directs AI work across connected computers: select the host and
+workspace, assign an outcome, review execution and changes, and continue the
+voyage. It owns presentation and user interaction. Vessel owns host supervision;
+each independent Voyage process owns its agent loop, tools and work. The
+interface can disconnect while accepted work continues on the executing host.
+
+
 For a short user path, see [Your first voyage in Helm Web](getting-started-web.md).
 This document covers connection, deployment and current behavior in detail.
 

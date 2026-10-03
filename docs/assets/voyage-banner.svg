@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
-<title id="title">Voyage</title><desc id="desc">Voyage. An AI workspace on your own machine. Red sails chart a route across a charcoal background.</desc>
+<title id="title">Voyage</title><desc id="desc">Voyage. AI agents working across your computers. Red sails chart a route across a charcoal background.</desc>
 <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#171419"/><stop offset="1" stop-color="#29131d"/></linearGradient><linearGradient id="red" x2="1" y2="1"><stop stop-color="#ff7c88"/><stop offset="1" stop-color="#e11d48"/></linearGradient><radialGradient id="glow"><stop stop-color="#e11d48" stop-opacity=".19"/><stop offset="1" stop-color="#e11d48" stop-opacity="0"/></radialGradient></defs>
 <rect width="1200" height="360" rx="20" fill="url(#bg)"/>
 <ellipse cx="935" cy="170" rx="270" ry="260" fill="url(#glow)"/>
@@ -13,5 +13,5 @@
 <rect x="65" y="62" width="28" height="4" rx="2" fill="#fb7185"/>
 <text x="65" y="97" fill="#fda4af" font-family="Arial, sans-serif" font-size="14" letter-spacing="3">HELM / VESSEL / VOYAGE</text>
 <text x="60" y="202" fill="#fff1f2" font-family="Arial, sans-serif" font-size="91" font-weight="700" letter-spacing="-4">Voyage<tspan fill="#fb7185">.</tspan></text>
-<text x="65" y="248" fill="#decbd2" font-family="Arial, sans-serif" font-size="24">An AI workspace on your own machine.</text>
+<text x="65" y="248" fill="#decbd2" font-family="Arial, sans-serif" font-size="24">AI agents working across your computers.</text>
 </svg>

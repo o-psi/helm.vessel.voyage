@@ -4,22 +4,28 @@
 
 <a id="documentation"></a>
 
-New to Voyage? Start with one small task and a folder you want help with.
-You don't need to learn the internal architecture before using it.
+Use AI agents to complete work across computers you control. Choose the host and
+workspace, assign an outcome, then review the changes and verification results.
+Start with a deliverable in the browser or terminal guide.
 
 ## Get started
 
 | What you want to do | Guide |
 | --- | --- |
-| Use a browser chat interface | [Your first voyage in Helm Web](getting-started-web.md) |
-| Work locally in a Linux terminal | [Your first voyage in the terminal](getting-started.md) |
+| Direct work from your browser | [Your first voyage in Helm Web](getting-started-web.md) |
+| Direct local or remote work from a terminal | [Your first voyage in the terminal](getting-started.md) |
 | Install or update the programs | [Installation and updates](../installer/README.md) |
 | Connect an AI account and choose a model | [Accounts and models](provider-accounts.md) |
 | Connect another computer | [Vessel connections](vessel-connections.md) |
 
-**Helm** is your interface, **Vessel** is the service on the computer doing the
-work, and a **voyage** is your ongoing AI conversation. Browser use needs a
-connected machine; AI access and credit come from your chosen provider.
+**Helm** directs work, **Vessel** supervises execution on each connected computer,
+and **Voyage** carries out one session in an independent agent process. The
+separate components keep presentation, supervision and execution distinct.
+Browser use needs a connected machine; AI access and credit come from your provider.
+
+The [installer guide](../installer/README.md#choose-the-host-account-before-installing)
+distinguishes the current user-scoped setup from the intended system supervisor
+and owner-approved administrator execution, which remain unfinished.
 
 ## Setup help
 
