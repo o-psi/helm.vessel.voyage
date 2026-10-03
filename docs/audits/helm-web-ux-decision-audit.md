@@ -1,5 +1,10 @@
 # Helm Web interaction decision audit
 
+Current subscription setup supports **ChatGPT or Grok subscriptions**. The Web
+control is **Add subscription account**, followed by **ChatGPT** or **SuperGrok**;
+the dialog, continue button and sign-in link identify the selected provider.
+ChatGPT-only control names below describe the earlier audited interface.
+
 - **Inspected:** 2026-09-28, authenticated console at `/`.
 - **Baseline:** [interaction inventory](helm-web-interaction-inventory.md).
 - **Scope:** Helm Web controls and their enclosing flows; design recommendations, not implemented behavior.

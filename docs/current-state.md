@@ -64,8 +64,9 @@ The [Web](getting-started-web.md) and [local terminal](getting-started.md)
 first-voyage guides are the user entry points; architecture and custom configuration
 are separate paths. In the terminal, a first-send draft with
 no selected account opens account readiness without sending the prompt. Native
-ChatGPT setup skips a sole connection choice, names the account, and reviews an
-explicit persistent host default. API setup uses an executing-host private prompt
+ChatGPT or Grok (SuperGrok) subscription setup selects the provider, skips a sole
+connection choice, names the account, and reviews an explicit persistent host
+default. API setup uses an executing-host private prompt
 via `vessel auth accounts setup`; billing and model entitlement remain distinct.
 
 F8 and `/actions` search actual command metadata, scope and unavailable reasons;

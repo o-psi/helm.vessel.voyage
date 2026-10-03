@@ -200,6 +200,7 @@ from the active turn's frozen settings. Rejections preserve effective settings.
 | `openai-responses` | Native Responses; API key from `api_key_env`. |
 | `openai-chat` | Native compatible Chat Completions; endpoint-defined API credentials. |
 | `chatgpt-oauth` | Native experimental subscription transport; Vessel-managed OAuth tokens. |
+| `xai-oauth` | Native Grok (SuperGrok) subscription transport; named Vessel-managed `xai_oauth` account. |
 | `anthropic` | Native Messages; normally `ANTHROPIC_API_KEY`. |
 
 All providers are native and do not require a Codex executable. Config aliases

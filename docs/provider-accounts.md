@@ -12,8 +12,10 @@ you in to the interface.
 
 1. Follow the [browser](getting-started-web.md) or [terminal](getting-started.md)
    guide and open the profile/account controls.
-2. For an eligible ChatGPT account, use the private sign-in screen. This route
-   is experimental, so model access can depend on the account and provider.
+2. For an eligible ChatGPT or Grok subscription, use the private sign-in screen
+   and select **ChatGPT** or **SuperGrok**. Model access depends on the account
+   and provider; the ChatGPT integration remains experimental. Grok sign-in
+   requires a Vessel build with native `xai_oauth` support.
 3. For an OpenAI or Anthropic API key, use [private API setup](#execution-host-api-enrollment)
    on the computer doing the work. API billing is separate from chat subscriptions.
 
@@ -218,8 +220,8 @@ an API-key account automatically. xAI still controls plan access and limits.
 
 ## Execution-host API enrollment
 
-This is the alternative API-key branch, not a prerequisite for the ChatGPT device
-flow. You need the API provider's credit/billing separately from any chat-product
+This is the alternative API-key branch, not a prerequisite for ChatGPT or Grok
+subscription device sign-in. You need the API provider's credit/billing separately from any chat-product
 subscription. In your **own private terminal on the machine executing Voyage**,
 as its OS account, choose **one**:
 

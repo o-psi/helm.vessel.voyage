@@ -38,8 +38,9 @@ to work in. This folder is on the connected computer, which may be different
 from the computer running your browser.
 
 Choose a **profile** to select an AI account and model, or create one. The
-console can guide ChatGPT account sign-in on the connected machine; API keys
-use [private setup on that machine](provider-accounts.md#execution-host-api-enrollment).
+console supports ChatGPT or Grok subscriptions. Choose **Provider account →
+Add subscription account**, then **ChatGPT** or **SuperGrok** to sign in on the
+selected Vessel. API keys use [private setup on that machine](provider-accounts.md#execution-host-api-enrollment).
 Your Helm Web login and your AI account are separate.
 
 Start with a small folder without secrets. Relevant files and results may be

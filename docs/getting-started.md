@@ -12,7 +12,7 @@ folder path with your own. For the browser interface, use the
 You need a Linux x86-64 computer with glibc 2.39+, curl, Python 3.11+, and a
 systemd user session. You also need an eligible AI provider account. Voyage does
 not include AI credit; [account options](provider-accounts.md) explains API keys
-and the experimental ChatGPT sign-in route. A chat subscription does not
+and sign-in with eligible ChatGPT or Grok (SuperGrok) subscriptions. A chat subscription does not
 automatically provide API credit or access to every model.
 
 Choose a small folder without secrets for your first task. Relevant files and
@@ -61,8 +61,9 @@ A **profile** saves your choice of AI account and model.
 1. Open **Profile** below the message box.
 2. Choose an existing profile, or press **N** to create one. A name such as
    `Everyday` is enough.
-3. Select an account and model. If you need a ChatGPT account, use the account
-   sign-in option in the profile editor and follow the provider's browser steps.
+3. Select an account and model. To add a ChatGPT or Grok subscription, use
+   account sign-in in the profile editor, choose **ChatGPT** or **SuperGrok**,
+   and follow that provider's browser steps.
 4. Choose **Save profile**, then select it with **Enter**.
 
 Leave advanced thinking and service settings unset unless you want to change

@@ -21,6 +21,10 @@ answers questions, or makes changes with the access you allow.
 Start small: understand a folder, work through some notes, or draft a document.
 Keep the conversation and come back to it when you have more to do.
 
+Use an eligible **ChatGPT or Grok subscription** (SuperGrok), or an API-key
+account. See [provider account options](docs/provider-accounts.md) for sign-in,
+supported builds and the separate billing routes.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-dark.svg" />
   <img width="100%" src="https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/docs/assets/voyage-steps-light.svg" alt="Choose a folder. Ask in your own words. Follow the work." />

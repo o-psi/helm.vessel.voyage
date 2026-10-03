@@ -29,15 +29,17 @@ Choose your billing route before entering credentials:
 | What you have | Route | What it does not provide |
 | --- | --- | --- |
 | A ChatGPT account eligible for the provider's subscription/device flow | Private ChatGPT sign-in in Helm below | OpenAI API credit; guaranteed subscription entitlement or model availability |
+| An eligible Grok (SuperGrok) subscription | Private **SuperGrok** sign-in in Helm; requires native `xai_oauth` support | API credit or guaranteed access to every Grok model |
 | OpenAI API credit and an API key | [Private API setup](provider-accounts.md#execution-host-api-enrollment) | ChatGPT subscription access |
 | Anthropic API credit and an API key | [Private API setup](provider-accounts.md#execution-host-api-enrollment) | Access merely from a Claude chat subscription |
 | An old `vessel auth login` or imported Codex cache | [Legacy migration](provider-accounts.md#legacy-migration) | A ready named/default account just because a cache exists |
 | None of these | Obtain eligible access directly from your chosen provider first | Helm does not include provider credit |
 
-The walkthrough below uses ChatGPT device sign-in. If that route is not appropriate,
-complete the API branch instead and rejoin at **First task** with a named default
-account. Do not buy a subscription on the assumption this experimental integration
-will work for it.
+The walkthrough below supports ChatGPT or Grok subscription device sign-in.
+Choose **ChatGPT** or **SuperGrok** in the private account screen. If subscription
+sign-in is not appropriate, complete the API branch and rejoin at **First task**
+with a named default account. Eligibility and available models depend on the
+provider and subscription plan.
 
 ## 1. Install on Linux
 
@@ -106,8 +108,8 @@ create a profile, enter a name such as `Everyday`, and choose its provider accou
 model, thinking level and service tier. Profile settings do not include permissions
 or instructions.
 
-In the profile editor, use account sign-in to add a ChatGPT account. Choose the
-intended connection if more than one is offered, then enter a descriptive new
+In the profile editor, use account sign-in to add a ChatGPT or Grok subscription
+account. Choose **ChatGPT** or **SuperGrok**, then enter a descriptive new
 alias such as `personal`. Existing aliases are not silently overwritten. The
 private account view also remains available through `/account`.
 

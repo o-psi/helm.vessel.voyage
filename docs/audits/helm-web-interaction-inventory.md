@@ -1,5 +1,10 @@
 # Helm Web interaction inventory
 
+Current subscription setup supports **ChatGPT or Grok subscriptions**. The Web
+control is **Add subscription account**, followed by **ChatGPT** or **SuperGrok**;
+the dialog, continue button and sign-in link identify the selected provider.
+ChatGPT-only control names below describe the earlier audited interface.
+
 This inventory records the authenticated Helm Web console at `/` as inspected on
 2026-09-28. It maps the controls a person can reach from the voyage list,
 connection manager, setup screens, conversation, and shared browser. Repeated

@@ -18,8 +18,8 @@ alternative. Browser callback relays and API-key entry in Helm are out of scope.
   and verified provider verification URL reach a private authentication view. The
   local browser's normal provider website cookies are separate from remote runtime
   credentials. No localhost redirect relay, SSH tunnel or token-forwarding fallback.
-- Support all four native transports: OpenAI Responses, OpenAI Chat, ChatGPT OAuth,
-  and Anthropic. API billing and subscription access remain distinct. Do not restore
+- Support native OpenAI Responses, OpenAI Chat, ChatGPT OAuth, xAI OAuth
+  (Grok/SuperGrok subscriptions), and Anthropic. API billing and subscription access remain distinct. Do not restore
   the removed external Codex bridge.
 - One explicit account is bound to each voyage's next-run configuration. A running
   execution retains its admitted binding. Different voyages may use different

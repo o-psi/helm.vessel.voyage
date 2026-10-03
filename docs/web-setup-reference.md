@@ -60,8 +60,9 @@ your selected AI provider. Choose an existing profile, or create one with an
 available account and model. Profiles select the provider account, model,
 reasoning level, and service tier; they do not change workspace permissions.
 
-If no account is available, the console can guide a ChatGPT account sign-in on
-the Vessel. API-key setup uses a private prompt on the executing host; see
+If no account is available, choose **Add subscription account** for ChatGPT or
+Grok subscriptions, then select **ChatGPT** or **SuperGrok**. Sign-in creates the
+account on the selected Vessel. API-key setup uses a private prompt on the executing host; see
 [provider account setup](provider-accounts.md). A Web sign-in to Helm and an AI
 provider account on the Vessel are separate things.
 

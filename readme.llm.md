@@ -92,7 +92,9 @@ sandbox or a no-disclosure mode. Profiles bind account, model, thinking and serv
 tier; they do not confer workspace permissions. Provider authentication, billing,
 model discovery and model entitlement are separate checks.
 
-ChatGPT device/subscription sign-in is experimental. OpenAI and Anthropic API
+ChatGPT or Grok (SuperGrok) subscriptions can use native device sign-in.
+ChatGPT integration remains experimental; Grok requires a Vessel build with native
+`xai_oauth` support. Model access depends on the provider and account. OpenAI and Anthropic API
 access requires eligible API billing/credentials, separately from chat subscriptions.
 Do not put keys, device codes, pairing tokens or private terminal input into
 conversations or published logs. Use [provider accounts](docs/provider-accounts.md),
