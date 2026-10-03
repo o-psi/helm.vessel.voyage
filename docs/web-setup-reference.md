@@ -25,7 +25,10 @@ curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyag
 VOYAGE_VERSION=nightly sh install.sh install --start
 ```
 
-That command starts a local user service. Publishing its authenticated public
+That command starts a local user service with the installing account’s existing
+OS permissions. It does not grant sudo or cluster-management access. Check the
+[host account prerequisites](../installer/README.md#choose-the-host-account-before-installing)
+before assigning infrastructure work. Publishing its authenticated public
 endpoint is a separate operator setup; follow the [Web connection requirements](helm-web.md#connect-your-vessels)
 and [Vessel connection guide](vessel-connections.md#connect-the-web-console-as-the-owner).
 Use a browser-trusted TLS certificate and the Vessel's public API, not its private
@@ -50,7 +53,8 @@ with the installed Vessel state directory and an owned private output location:
 Enter the private invitation in Helm Web's pairing form. Do not paste it into a
 conversation or issue. The form verifies the Vessel before saving the connection.
 Full access lets this Web tenant operate the Vessel; review that trust before
-pairing. For limited access or existing credentials, see the [connection details](helm-web.md#connect-your-vessels).
+pairing. Owner pairing and the voyage’s Full access mode do not elevate its Linux
+identity or bypass host permissions. For limited access or existing credentials, see the [connection details](helm-web.md#connect-your-vessels).
 
 ## 2. Choose a workspace and account
 

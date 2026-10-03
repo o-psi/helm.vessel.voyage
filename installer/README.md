@@ -17,6 +17,47 @@ wizard. The review is a dry run; applying performs the displayed installation.
 Provider setup and remote Vessel pairing are separate operations. Existing
 configuration, credentials and voyage data are preserved.
 
+## Choose the host account before installing
+
+The supported installation runs Vessel and its voyages as the Linux account
+that installs it. It does not create administrator rights, add sudo rules or
+provide Proxmox management access. Choose an account that can already access the
+intended workspace and services. An account with existing administrative grants
+retains those grants; a nonzero UID alone does not mean it is unprivileged.
+
+For server administration, such as creating Proxmox VMs or containers, the host
+operator must separately provide an authorized management connection or the
+required OS permissions. A connected Vessel is not evidence of that access.
+**Full access** in Helm controls application approval behavior; owner pairing
+controls access to Vessel. Neither changes the process's Linux identity or
+bypasses sudo authentication and Proxmox ACLs.
+
+Before assigning an administrative task, run these read-only checks as the
+account used by the Vessel service (or ask its voyage to run them):
+
+```sh
+id
+hostname
+sudo -n -l
+```
+
+`sudo -n -l` reports what the current sudo policy permits without prompting; a
+password-required response means this check could not establish available sudo
+rights. Verify the specific management operation too. Root in a container is not
+necessarily an administrator of its Proxmox host.
+
+If access is missing, an existing host administrator must establish the approved
+access path outside the conversation. Do not paste a sudo password, SSH private
+key or API token into chat. Retrying with Helm Full access or reinstalling as the
+same account cannot supply missing OS authority. Do not run the user bootstrap
+with sudo or change a user-writable installation into a root service.
+
+A supported system installation with owner-approved administrator voyages is
+being implemented in [#344](https://github.com/o-psi/helm.vessel.voyage/issues/344)
+and [#380](https://github.com/o-psi/helm.vessel.voyage/issues/380). The
+[system host assessment and fixture installation](#read-only-system-host-assessment)
+below describe current limits; they are not a production migration procedure.
+
 ## Install from a local release
 
 Extract a full release into an owned directory. Run its installer next to the

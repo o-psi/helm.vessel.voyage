@@ -28,8 +28,10 @@ account) to make a private invitation. Enter that invitation in the connection
 form, rather than in chat. The [connection reference](web-setup-reference.md#1-sign-in-and-pair-your-vessel)
 has the operator commands.
 
-An owner invitation gives your Web account full access to that Vessel. Only
-connect a machine whose operator has authorized this access.
+An owner invitation gives your Web account full access to that Vessel. It does
+not grant Linux administrator rights: work uses the host account’s existing
+permissions, even with Helm **Full access** selected. Only connect a machine
+whose operator has authorized this access.
 
 ## 2. Choose a workspace and account
 
@@ -71,11 +73,14 @@ need browser access.
 
 The operator needs to:
 
-1. Install the [current public nightly](../installer/README.md#public-nightly-installation)
+1. Choose a host account with access to the intended folders and services. For
+   server or Proxmox administration, establish an authorized management path; see
+   [host account prerequisites](../installer/README.md#choose-the-host-account-before-installing).
+2. Install the [current public nightly](../installer/README.md#public-nightly-installation)
    on a supported Linux x86-64 machine.
-2. Provide an authenticated public HTTPS/WSS endpoint on port 443 with a
+3. Provide an authenticated public HTTPS/WSS endpoint on port 443 with a
    browser-trusted certificate. Installing Vessel alone does not publish it.
-3. Create a private pairing invitation for your Helm Web account and help you
+4. Create a private pairing invitation for your Helm Web account and help you
    select a folder and an eligible AI account on that machine.
 
 Follow the [complete browser setup reference](web-setup-reference.md) for the

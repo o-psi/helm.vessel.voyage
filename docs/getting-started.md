@@ -15,6 +15,11 @@ not include AI credit; [account options](provider-accounts.md) explains API keys
 and sign-in with eligible ChatGPT or Grok (SuperGrok) subscriptions. A chat subscription does not
 automatically provide API credit or access to every model.
 
+Voyage runs with the permissions of the Linux account that installs it. Installing
+it does not grant administrator access. For server or Proxmox administration,
+review [host account and access prerequisites](../installer/README.md#choose-the-host-account-before-installing)
+first. Helm access modes do not elevate Linux privileges.
+
 Choose a small folder without secrets for your first task. Relevant files and
 results may be sent to the AI provider. Read-only mode prevents edits, not sharing.
 
