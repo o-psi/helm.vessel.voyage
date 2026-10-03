@@ -130,9 +130,10 @@ Helm socket. Tokens, raw provider bodies, and usage are not added to conversatio
 public tool history. Offline fixtures establish parser/authorization/UI behavior only;
 the read-only upstream endpoint is not a live compatibility guarantee.
 
-Model choices come only from the selected account's provider catalogue. A saved
-model omitted by that catalogue remains in the saved configuration but is not
-inserted into the selectable list. Catalogue presence does not prove inference
+Discovered model choices come only from the selected account's provider catalogue.
+A saved model omitted by a successful catalogue read remains in configuration but
+is not inserted into the discovered list. Failed reads retain the TUI's saved value
+for recovery, labeled unverified; manually entered model IDs use the same label. Catalogue presence does not prove inference
 entitlement or remaining quota. HTTP 403 is reported as account access denied,
 separately from HTTP 401 authentication failure and usage exhaustion; denial
 neither refreshes credentials nor retries inference or changes billing accounts.

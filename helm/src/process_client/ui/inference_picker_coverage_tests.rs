@@ -27,7 +27,7 @@ fn picker(target: Target, field: Field) -> Picker {
 }
 
 #[tokio::test]
-async fn unavailable_catalog_preserves_custom_model_and_resets_selection() {
+async fn failed_catalog_preserves_saved_model_but_successful_empty_catalog_does_not_list_it() {
     let (_fixture, _app, target) = coverage_support::app();
     let mut p = picker(target, Field::Model);
     p.install_models(None);
@@ -35,8 +35,10 @@ async fn unavailable_catalog_preserves_custom_model_and_resets_selection() {
     assert_eq!(p.selected, 0);
     assert!(p.notice.contains("Couldn’t load models"));
     p.install_models(Some(vec![]));
-    assert!(p.notice.is_empty());
-    assert_eq!(p.options, vec!["saved-model"]);
+    assert!(p.notice.contains("not listed"));
+    assert!(p.options.is_empty());
+    assert_eq!(p.chooser.model, "saved-model");
+    assert_eq!(p.original.model, "saved-model");
 }
 
 #[tokio::test]
