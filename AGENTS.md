@@ -172,9 +172,9 @@ Read [the nightly workflow](.github/workflows/nightly.yml),
 
 ### Close with evidence, or preserve a real blocker
 
-- Keep issue/PR/project state aligned with reality throughout the work. Record the
-  delivered commit, actual checks and outcomes, build URL and artifact identity
-  when required, and material limitations. Close an issue only when its acceptance
+- Keep issue/PR/project state aligned with reality using the single checkpoint
+  defined below. Link the delivered commit, actual checks and outcomes, build URL,
+  artifact identity and material limitations. Close an issue only when its acceptance
   criteria are met, including required build follow-through. Do not close scope on
   push alone, workflow admission, a green skip without its artifact, or future work.
 - Repair failures you can address within scope and authority without asking the
@@ -187,29 +187,38 @@ Read [the nightly workflow](.github/workflows/nightly.yml),
   successful; an unavailable service is unknown, not failed verification. Report
   these facts concisely instead of presenting a routine handoff as completion.
 
-### Leave work independently resumable
+### Keep one current checkpoint and leave work resumable
 
-An agent's lifetime is not the lifetime of the work. Update the shared delivery
-record at material transitions, before long external waits and before stopping;
-chat history, private scratch files and promises to return are not sufficient.
-For unfinished work, leave a concise checkpoint containing:
+Maintain one current-state checkpoint per issue, preferably in a bounded section
+of its body. If the body cannot be edited, reuse one designated checkpoint
+comment. Update that checkpoint in place; do not append a running progress log.
 
-- Objective, scope, acceptance criteria and remaining obligations.
-- Issue/PR/milestone links, branch/worktree location if relevant, exact commits and
-  whether each is local, pushed or integrated. Identify unrelated/concurrent work
-  that must be preserved without publishing private local details.
-- Commands/checks actually completed and their outcomes; exact Actions run URLs,
-  observed status, checked-out source and artifact identities where known. Link
-  durable evidence; do not rely solely on expiring artifacts or local logs.
-- Failure or blocker, attempted remedies, pending/uncertain external effects and
-  their operation identities where available, plus the next safe concrete action.
+- Routine commits, test results, build transitions, deployments, host checks and
+  scope bookkeeping do not justify new issue comments. New comments are reserved
+  for a question or decision needing human discussion, an explicitly requested
+  comment, and at most one final delivery summary when the issue is complete.
+- Keep the checkpoint under 300 words of readable prose: current delivered state,
+  remaining obligations or blocker, evidence links, and the next concrete action.
+  Keep acceptance criteria in their existing section instead of repeating them.
+- Put detailed hashes, command output and logs in their existing verification
+  records, commits, coverage summary, Actions runs or release artifacts. Link
+  that evidence rather than copying it into each update. Do not create additional
+  progress documents merely to relocate the same repetitive log.
+- Update the checkpoint when an outcome, scope, blocker or next action materially
+  changes. Before a long wait or stopping, update it only if a successor needs new
+  information. A tool call, unchanged poll, agent turn ending or context compaction
+  is not itself a reason to write an update or create another checkpoint.
+- Preserve exact pending or uncertain operation IDs and the constraints needed to
+  avoid replay. Distinguish local, pushed and integrated changes; retain unrelated
+  work and evidence. Never include credentials, private input or sensitive logs.
+- On resumption, read the current checkpoint and relevant Git/GitHub state first.
+  Retrieve older comments only to resolve a specific unanswered question. Do not
+  routinely fetch, classify or summarize the entire issue history.
 
-On resumption, reconcile this record with current Git/GitHub state before acting.
-Confirm whether queued work finished or another agent delivered the fix. Do not
-replay an uncertain dispatch/publication or duplicate active work. Continue feasible
-authorized steps without routine human handoffs; a checkpoint preserves unfinished
-responsibility, it does not make the objective complete. Never include credentials,
-private terminal input or sensitive diagnostics in the shared record.
+These limits govern communication and context loading. They do not remove any
+acceptance criterion, verification, build follow-through or cleanup obligation.
+Confirm whether queued work finished before acting, never duplicate active work
+or replay uncertain effects, and continue the delivery objective.
 
 ## Correctness and security
 
