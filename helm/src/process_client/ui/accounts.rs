@@ -292,7 +292,9 @@ impl Picker {
                         format!(
                             "{}    {}    {}{}",
                             safe(&a.label),
-                            if c.transports.len() > 1 {
+                            if let Some(label) = t.subscription_label() {
+                                label.to_owned()
+                            } else if c.transports.len() > 1 {
                                 format!("{} ({})", safe(&c.label), provider(t))
                             } else {
                                 safe(&c.label)
@@ -337,7 +339,10 @@ impl Picker {
                 }
             }
         }
-        items.push(("+ Subscription account — ChatGPT or SuperGrok".into(), None));
+        items.push((
+            "+ Subscription account — ChatGPT (experimental) or SuperGrok".into(),
+            None,
+        ));
         items.push(("+ OpenAI / Anthropic — use an API key…".into(), None));
         items
     }
@@ -1522,7 +1527,7 @@ impl App {
                         .connections
                         .iter()
                         .any(|c| c.supports_device_sign_in()),
-                    "No authorized native device connection. Use the private execution-host terminal alternative"
+                    "No authorized native subscription connection. SuperGrok requires a Vessel with native xai_oauth support and account-enroll permission"
                 );
                 let connections: Vec<_> = p
                     .catalogue
@@ -1537,7 +1542,13 @@ impl App {
                 };
                 p.selected = 0;
                 p.query.clear();
-                p.notice = "Name this subscription account, then Enter starts private sign-in on the displayed host. Subscription limits/entitlement depend on your account. Esc back.".into();
+                p.notice = "Choose a subscription account. Model access and limits depend on the provider and account. No API billing fallback. Esc back.".into();
+                if !connections
+                    .iter()
+                    .any(|c| c.transports == [Transport::XaiOauth])
+                {
+                    p.notice.push_str(" SuperGrok is not advertised here; it requires native xai_oauth support and account-enroll permission on this Vessel.");
+                }
             } else if index == choices.len().saturating_sub(1) {
                 p.mode = Mode::ApiSetup;
                 p.notice = "Enter refreshes accounts after private setup · Esc back".into();

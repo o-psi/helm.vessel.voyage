@@ -26,6 +26,7 @@ pub(crate) async fn discover(
     .map_err(|e| {
         failure(match e.category() {
             "authentication" => Failure::Authentication,
+            "access_denied" => Failure::AccessDenied,
             "rate_limit" | "usage_limit" => Failure::RateLimit,
             "transport" | "connection" => Failure::Network,
             "timeout" | "transport_timeout" => Failure::Timeout,
@@ -33,9 +34,7 @@ pub(crate) async fn discover(
             _ => Failure::Unavailable,
         })
     })?;
-    if !models.iter().any(|model| model.id == config.model) {
-        models.push(crate::provider::ModelInfo::minimal(config.model.clone()));
-    }
+    // Saved configuration is not evidence that this account can discover a model.
     let secrets = crate::build::redactor(resolved.config());
     crate::provider::validate_models_for_display(&models, |value| secrets.contains_secret(value))
         .map_err(|_| failure(Failure::DisplayValidation))?;

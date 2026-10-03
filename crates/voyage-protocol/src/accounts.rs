@@ -174,6 +174,13 @@ pub enum AccountUsageRefreshStatus {
 }
 
 impl Transport {
+    pub fn subscription_label(self) -> Option<&'static str> {
+        match self {
+            Self::ChatgptOauth => Some("ChatGPT (experimental)"),
+            Self::XaiOauth => Some("SuperGrok"),
+            _ => None,
+        }
+    }
     pub fn is_subscription(self) -> bool {
         matches!(self, Self::ChatgptOauth | Self::XaiOauth)
     }
@@ -183,5 +190,31 @@ impl ConnectionDescriptor {
         (self.transports == [Transport::ChatgptOauth]
             && self.endpoint == "https://chatgpt.com/backend-api/codex")
             || (self.transports == [Transport::XaiOauth] && self.endpoint == "https://api.x.ai/v1")
+    }
+}
+
+#[cfg(test)]
+mod subscription_tests {
+    use super::*;
+    #[test]
+    fn native_sign_in_requires_an_exact_provider_transport_and_endpoint() {
+        let mut c = ConnectionDescriptor {
+            id: Uuid::nil(),
+            revision: 1,
+            label: "SuperGrok".into(),
+            endpoint: "https://api.x.ai/v1".into(),
+            transports: vec![Transport::OpenaiChat],
+        };
+        assert!(!c.supports_device_sign_in());
+        c.transports = vec![Transport::XaiOauth];
+        assert!(c.supports_device_sign_in());
+        c.endpoint = "https://api.x.ai.attacker.invalid/v1".into();
+        assert!(!c.supports_device_sign_in());
+        c.endpoint = "https://chatgpt.com/backend-api/codex".into();
+        assert!(!c.supports_device_sign_in());
+        c.transports = vec![Transport::ChatgptOauth];
+        assert!(c.supports_device_sign_in());
+        c.transports.push(Transport::XaiOauth);
+        assert!(!c.supports_device_sign_in());
     }
 }

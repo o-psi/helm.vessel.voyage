@@ -173,7 +173,9 @@ impl App {
                         Paragraph::new(format!(
                             "{} {} · subscription",
                             if p.selected == index { ">" } else { " " },
-                            safe(&c.label)
+                            c.transports[0]
+                                .subscription_label()
+                                .unwrap_or("Subscription")
                         )),
                         Rect::new(body.x, row, body.width, 1),
                     );
@@ -183,8 +185,15 @@ impl App {
                         .push((Rect::new(body.x, row, body.width, 1), index));
                 }
             }
-            Mode::Alias(_) => {
-                frame.render_widget(Paragraph::new(format!("Subscription sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
+            Mode::Alias(connection) => {
+                let label = p
+                    .catalogue
+                    .connections
+                    .iter()
+                    .find(|c| c.id == *connection && c.supports_device_sign_in())
+                    .and_then(|c| c.transports[0].subscription_label())
+                    .unwrap_or("Unavailable subscription");
+                frame.render_widget(Paragraph::new(format!("{label} sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nModel access and limits depend on this account.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
             }
             Mode::Enrollment => {
                 let private = p.private.as_ref().filter(|v| {

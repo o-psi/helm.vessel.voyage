@@ -180,12 +180,13 @@ pub(crate) async fn json(
     let code = response.status().as_u16();
     match code {
         200..=299 => {}
-        401 | 403 => {
+        401 => {
             return Err(ProviderError::Authentication(
                 "authentication failure: endpoint rejected credentials".into(),
             )
             .with_http_status(code));
         }
+        403 => return Err(ProviderError::AccessDenied.with_http_status(code)),
         429 => {
             return Err(ProviderError::RateLimit {
                 message: "model endpoint rate limited".into(),

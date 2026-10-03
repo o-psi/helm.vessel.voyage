@@ -741,16 +741,27 @@ mod tests {
             Err(ProviderError::AuthenticationRefreshed)
         ));
         assert_eq!(task.await.unwrap().len(), 2);
-        let (url, task) = server(vec![(
-            403,
-            json!({"error":{"message":"private-server-diagnostic"}}).to_string(),
-        )])
-        .await;
-        let p = provider(registry, binding, &url);
-        let error = p.models().await.err().unwrap();
-        assert!(!error.is_retryable());
-        assert!(!error.to_string().contains("private-server-diagnostic"));
-        assert_eq!(task.await.unwrap().len(), 1);
+        for mode in 0..3 {
+            let before = registry.xai_load(&binding).unwrap();
+            let (url, task) = server(vec![(
+                403,
+                json!({"error":{"code":"token_expired","message":"private-server-diagnostic"}})
+                    .to_string(),
+            )])
+            .await;
+            let p = provider(registry.clone(), binding.clone(), &url);
+            let error = match mode {
+                0 => p.models().await.err().unwrap(),
+                1 => p.complete(request()).await.err().unwrap(),
+                _ => p.stream(request()).await.err().unwrap(),
+            };
+            assert_eq!(error.category(), "access_denied");
+            assert_eq!(error.http_status(), Some(403));
+            assert!(!error.is_retryable());
+            assert!(!format!("{error:?}").contains("private-server-diagnostic"));
+            assert!(registry.xai_load(&binding).unwrap() == before);
+            assert_eq!(task.await.unwrap().len(), 1);
+        }
     }
     #[tokio::test]
     async fn foreign_verification_site_and_cancelled_grants_never_publish_an_account() {

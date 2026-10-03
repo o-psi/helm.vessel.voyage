@@ -8,6 +8,7 @@ pub enum Failure {
     Workspace,
     Policy,
     Authentication,
+    AccessDenied,
     RateLimit,
     Network,
     InvalidResponse,
@@ -22,6 +23,7 @@ impl Failure {
             Self::Workspace => "workspace",
             Self::Policy => "policy",
             Self::Authentication => "authentication",
+            Self::AccessDenied => "access_denied",
             Self::RateLimit => "rate_limit",
             Self::Network => "network",
             Self::InvalidResponse => "invalid_response",
@@ -40,6 +42,9 @@ impl Failure {
             Self::Authentication => {
                 "The provider rejected model-catalogue authentication. Review this account's sign-in."
             }
+            Self::AccessDenied => {
+                "The provider denied model discovery for this account. Review provider permissions and model access."
+            }
             Self::RateLimit => "The provider rate-limited model discovery. Retry later.",
             Self::Network => "The executing host could not reach the model catalogue.",
             Self::InvalidResponse => {
@@ -57,6 +62,7 @@ impl Failure {
             Self::Workspace,
             Self::Policy,
             Self::Authentication,
+            Self::AccessDenied,
             Self::RateLimit,
             Self::Network,
             Self::InvalidResponse,

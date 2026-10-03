@@ -684,7 +684,9 @@ async fn model_selection_cache_and_context_ceiling_remain_separate() {
     assert_eq!(agent.set_model("  new-model  ").unwrap(), "new-model");
     assert_eq!(*mirror.read().unwrap(), "new-model");
     let models = agent.models(false).await.unwrap();
-    assert!(models.iter().any(|m| m.id == "new-model"));
+    assert!(!models.iter().any(|m| m.id == "new-model"));
+    assert!(models.iter().any(|m| m.id == "z-model"));
+    assert_eq!(agent.model(), "new-model");
     agent.models(false).await.unwrap();
     assert_eq!(observed.discoveries.load(Ordering::SeqCst), 1);
     agent.models(true).await.unwrap();

@@ -277,7 +277,7 @@ fn failure_metadata_is_content_free_and_wrappers_preserve_policy() {
 async fn http_metadata_preserves_authentication_and_unknown_error_classification() {
     for (status, category, retryable) in [
         (401, "authentication", false),
-        (403, "authentication", false),
+        (403, "access_denied", false),
         (302, "request", false),
         (400, "request", false),
         (413, "request", false),

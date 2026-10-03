@@ -61,6 +61,10 @@ pub enum ProviderError {
     Authentication(String),
     #[error("Provider rejected an expired token; same-account credentials were refreshed.")]
     AuthenticationRefreshed,
+    #[error(
+        "Provider denied access for the selected account. Review provider permissions and model access."
+    )]
+    AccessDenied,
     #[error("{USAGE_LIMIT_MESSAGE}")]
     UsageLimit,
     #[error("{CONTEXT_LENGTH_MESSAGE}")]
@@ -343,6 +347,7 @@ impl ProviderError {
             | Self::HttpStatus { source, .. }
             | Self::RetryAfter { source, .. } => source.category(),
             Self::Authentication(_) | Self::AuthenticationRefreshed => "authentication",
+            Self::AccessDenied => "access_denied",
             Self::UsageLimit => "usage_limit",
             Self::ContextLength => "context_length",
             Self::RateLimit { .. } => "rate_limit",
@@ -430,6 +435,9 @@ impl ProviderError {
                 "Provider authentication failed. Check credentials on the executing machine."
             }
             Self::AuthenticationRefreshed => "Account sign-in refreshed. Send again to continue.",
+            Self::AccessDenied => {
+                "Provider denied access for the selected account. Review provider permissions and model access."
+            }
             Self::UsageLimit => USAGE_LIMIT_MESSAGE,
             Self::ContextLength => CONTEXT_LENGTH_MESSAGE,
             Self::RateLimit { .. } => "Provider rate limit prevented completion.",
@@ -755,6 +763,15 @@ pub(crate) async fn checked_json(
     reject_redirect(&response)?;
     let request_id = upstream_request_id(&response);
     let status = response.status();
+    if status.as_u16() == 403 {
+        // Permission/entitlement denial is not evidence of expired credentials.
+        // Do not read or retain an arbitrary upstream diagnostic body.
+        return Err(ProviderError::HttpStatus {
+            source: Box::new(ProviderError::AccessDenied),
+            status: 403,
+            request_id,
+        });
+    }
     let retry_after = response_retry_after(&response);
     let body = response
         .text()
@@ -763,7 +780,7 @@ pub(crate) async fn checked_json(
     let result = if status.is_success() {
         serde_json::from_str(&body)
             .map_err(|e| ProviderError::InvalidResponse(format!("{e}: {body}")))
-    } else if status.as_u16() == 401 || status.as_u16() == 403 {
+    } else if status.as_u16() == 401 {
         Err(ProviderError::Authentication(body))
     } else if let Some(error) = serde_json::from_str::<serde_json::Value>(&body)
         .ok()

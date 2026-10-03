@@ -130,6 +130,16 @@ Helm socket. Tokens, raw provider bodies, and usage are not added to conversatio
 public tool history. Offline fixtures establish parser/authorization/UI behavior only;
 the read-only upstream endpoint is not a live compatibility guarantee.
 
+Model choices come only from the selected account's provider catalogue. A saved
+model omitted by that catalogue remains in the saved configuration but is not
+inserted into the selectable list. Catalogue presence does not prove inference
+entitlement or remaining quota. HTTP 403 is reported as account access denied,
+separately from HTTP 401 authentication failure and usage exhaustion; denial
+neither refreshes credentials nor retries inference or changes billing accounts.
+Both clients label the native ChatGPT integration experimental. Sign-in choices
+require the host-advertised native transport and its exact provider endpoint;
+an OpenAI-compatible xAI API-key connection does not enable SuperGrok sign-in.
+
 ## Device sign-in in Helm
 
 In Account choose **+ Subscription account — ChatGPT or SuperGrok**. Select the

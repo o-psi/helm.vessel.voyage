@@ -814,10 +814,7 @@ impl Agent {
         let mut models = tokio::time::timeout(self.context.timeout, self.provider.models())
             .await
             .map_err(|_| ProviderError::Timeout("model discovery timed out".into()))??;
-        let current = self.model();
-        if !models.iter().any(|model| model.id == current) {
-            models.push(ModelInfo::minimal(current));
-        }
+        // Keep explicit configuration separate from provider-advertised choices.
         crate::provider::validate_models_for_display(&models, |value| {
             self.context.redactor.contains_secret(value)
         })?;

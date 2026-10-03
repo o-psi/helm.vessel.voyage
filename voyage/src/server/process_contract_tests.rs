@@ -604,7 +604,7 @@ async fn sessionless_model_helper_reports_safe_metadata_and_typed_refusals_witho
             .any(|model| model["id"] == "fixture")
     );
     assert!(
-        models
+        !models
             .as_array()
             .unwrap()
             .iter()
@@ -668,6 +668,7 @@ async fn model_discovery_auth_rate_invalid_display_and_timeout_errors_never_expo
     use voyage_protocol::{model_discovery::Failure, vessel::VesselCommand};
     for (reply, expected) in [
         (Reply::error(401), Failure::Authentication),
+        (Reply::error(403), Failure::AccessDenied),
         (Reply::error(429), Failure::RateLimit),
         (
             Reply {

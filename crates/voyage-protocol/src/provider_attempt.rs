@@ -127,6 +127,7 @@ impl ProviderAttempt {
         };
         let category = match self.category.as_deref() {
             Some("authentication") => "authentication failure",
+            Some("access_denied") => "account access denied",
             Some("usage_limit") => "account usage limit",
             Some("context_length") => "context rejection",
             Some("rate_limit") => "rate limit",

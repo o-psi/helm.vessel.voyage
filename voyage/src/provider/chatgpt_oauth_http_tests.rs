@@ -575,3 +575,27 @@ async fn account_bound_store_reauthenticates_rotates_and_logs_out_locally() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn access_denial_does_not_refresh_or_retry_chatgpt_credentials() {
+    for mode in 0..3 {
+        let (url, task) = server(vec![(
+            403,
+            json!({"error":{"code":"token_expired", "message":"PRIVATE_DENIAL"}}).to_string(),
+        )])
+        .await;
+        let (_dir, p) = local(&url);
+        p.replace(tokens()).await.unwrap();
+        let error = match mode {
+            0 => p.models().await.err().unwrap(),
+            1 => p.complete(request()).await.err().unwrap(),
+            _ => p.stream(request()).await.err().unwrap(),
+        };
+        assert_eq!(error.category(), "access_denied");
+        assert_eq!(error.http_status(), Some(403));
+        assert!(!error.is_retryable());
+        assert!(!format!("{error:?}").contains("PRIVATE_DENIAL"));
+        assert!(p.valid_tokens().await.unwrap() == tokens());
+        assert_eq!(task.await.unwrap().len(), 1);
+    }
+}
