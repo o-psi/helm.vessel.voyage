@@ -555,15 +555,24 @@ async function suspendedNative(item){
   save();throw error;
  }finally{
   try{
-   if(!await page.getByRole('button',{name:'Close browser',exact:true}).isEnabled())
+   if(!await page.getByRole('button',{name:'Close browser',exact:true,includeHidden:true}).isEnabled())
     throw Error('close_control_unavailable; browser cleanup remains unconfirmed');
    await more(page,'Close browser');
    await page.waitForFunction(()=>window.operations.some(o=>o.action==='close'&&o.running===false));
    closed=true;evidence.cleanup[item.session]={closed};save();
   }catch(error){
+   const preservePrimary=!!primaryFailure;
+   primaryFailure ||= error;
    evidence.cleanup[item.session]={closed:false,name:error.name,message:String(error.message).slice(0,2048)};
-   save();if(!primaryFailure)throw error;
-  }finally{await page.close();}
+   save();if(!preservePrimary)throw error;
+  }finally{
+   try{await page.close();}
+   catch(error){
+    evidence.cleanup[item.session]={...evidence.cleanup[item.session],viewer_closed:false,
+     viewer_close_error:{name:error.name,message:String(error.message).slice(0,2048)}};
+    save();if(!primaryFailure)throw error;
+   }
+  }
  }
 }
 async function suspendedWeb(item){
