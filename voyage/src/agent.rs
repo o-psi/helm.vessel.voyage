@@ -815,6 +815,10 @@ impl Agent {
             .await
             .map_err(|_| ProviderError::Timeout("model discovery timed out".into()))??;
         // Keep explicit configuration separate from provider-advertised choices.
+        crate::provider::validate_models_for_display(
+            &[ModelInfo::minimal(self.model())],
+            |value| self.context.redactor.contains_secret(value),
+        )?;
         crate::provider::validate_models_for_display(&models, |value| {
             self.context.redactor.contains_secret(value)
         })?;

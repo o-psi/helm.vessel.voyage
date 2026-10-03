@@ -36,6 +36,12 @@ pub(crate) async fn discover(
     })?;
     // Saved configuration is not evidence that this account can discover a model.
     let secrets = crate::build::redactor(resolved.config());
+    // Keep the existing display fence for the independently presented selection.
+    crate::provider::validate_models_for_display(
+        &[crate::provider::ModelInfo::minimal(config.model.clone())],
+        |value| secrets.contains_secret(value),
+    )
+    .map_err(|_| failure(Failure::DisplayValidation))?;
     crate::provider::validate_models_for_display(&models, |value| secrets.contains_secret(value))
         .map_err(|_| failure(Failure::DisplayValidation))?;
     crate::provider::normalize_models(&mut models);

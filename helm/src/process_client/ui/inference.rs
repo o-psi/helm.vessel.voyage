@@ -211,7 +211,12 @@ impl Picker {
         self.original.resolve(&self.models);
         self.options = match self.field {
             Field::Account => Vec::new(),
-            Field::Model => self.models.iter().map(|m| m.id.clone()).collect(),
+            Field::Model => self
+                .models
+                .iter()
+                .map(|m| m.id.clone())
+                .chain((!available).then(|| self.original.model.clone()))
+                .collect(),
             Field::Thinking => self.original.reasoning_efforts.clone(),
             Field::Service => self.original.service_tiers.clone(),
         };

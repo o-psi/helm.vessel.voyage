@@ -1539,12 +1539,12 @@ impl App {
                 };
                 p.selected = 0;
                 p.query.clear();
-                p.notice = "Choose a subscription account. Model access and limits depend on the provider and account. No API billing fallback. Esc back.".into();
+                p.notice = "Model access and limits depend on this account. Esc back.".into();
                 if !connections
                     .iter()
                     .any(|c| c.transports == [Transport::XaiOauth])
                 {
-                    p.notice.push_str(" SuperGrok is not advertised here; it requires native xai_oauth support and account-enroll permission on this Vessel.");
+                    p.notice.push_str("\nSuperGrok needs native xai_oauth support and account-enroll permission on this Vessel.");
                 }
             } else if index == choices.len().saturating_sub(1) {
                 p.mode = Mode::ApiSetup;
