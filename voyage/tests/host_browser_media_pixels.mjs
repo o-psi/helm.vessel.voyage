@@ -62,7 +62,14 @@ export async function readOwnedMediaJpegs({expected=null}={}){
  };
  const nodes=selected(),ids=Object.fromEntries(Object.entries(nodes).map(([name,image])=>[name,Number(image.dataset.nodeId)]));
  if(Object.values(ids).some(id=>!Number.isSafeInteger(id)||id<=0)||new Set(Object.values(ids)).size!==3)fail();
- if(expected&&JSON.stringify(expected)!==JSON.stringify({fence:initial,ids}))fail();
+ // The DOM evaluator may reorder object keys while transporting this identity.
+ // Require its exact shape and scalar values without relying on insertion order.
+ const exactFields=(value,reference)=>value!==null&&typeof value==='object'&&!Array.isArray(value)
+  &&Object.keys(value).length===Object.keys(reference).length
+  &&Object.entries(reference).every(([key,field])=>Object.prototype.hasOwnProperty.call(value,key)&&value[key]===field);
+ if(expected!==null&&(!expected||typeof expected!=='object'||Array.isArray(expected)
+  ||Object.keys(expected).length!==2||!Object.prototype.hasOwnProperty.call(expected,'fence')
+  ||!Object.prototype.hasOwnProperty.call(expected,'ids')||!exactFields(expected.fence,initial)||!exactFields(expected.ids,ids)))fail();
  const result=[],deadline=performance.now()+10000;
  for(let index=0;index<12;index++){
   if(index)await new Promise(resolve=>setTimeout(resolve,650));
