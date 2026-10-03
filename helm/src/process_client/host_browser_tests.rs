@@ -11,6 +11,7 @@ fn adapter() -> Adapter {
         ),
         session: Uuid::new_v4(),
         owner: Arc::new(Mutex::new((Uuid::new_v4(), 1))),
+        preparation: Arc::new(Preparation::default()),
         socket: Uuid::new_v4(),
         origin: "http://127.0.0.1:12345".into(),
         host: "127.0.0.1:12345".into(),

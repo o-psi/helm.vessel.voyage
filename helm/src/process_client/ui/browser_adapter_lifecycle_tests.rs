@@ -78,7 +78,10 @@ async fn no_command(peer: &mut Peer) {
         "unrequested owner/runtime operation crossed synthetic peer"
     );
 }
-async fn status(app: &mut App, target: Target, peer: &mut Peer) -> HostBrowserBinding {
+async fn authenticated_browser(
+    app: &App,
+    target: Target,
+) -> impl Fn(&str) -> reqwest::RequestBuilder + use<> {
     let path = app.browsers[&target]
         .state
         .borrow()
@@ -112,12 +115,16 @@ async fn status(app: &mut App, target: Target, peer: &mut Peer) -> HostBrowserBi
         .json()
         .await
         .unwrap();
-    let request = http
-        .post(url.join("/operation").unwrap())
-        .header("origin", url.origin().ascii_serialization())
-        .header("authorization", auth["authorization"].as_str().unwrap())
-        .header("x-helm-csrf", auth["csrf"].as_str().unwrap())
-        .json(&Op::Status {});
+    move |path| {
+        http.post(url.join(path).unwrap())
+            .header("origin", url.origin().ascii_serialization())
+            .header("authorization", auth["authorization"].as_str().unwrap())
+            .header("x-helm-csrf", auth["csrf"].as_str().unwrap())
+    }
+}
+async fn status(app: &mut App, target: Target, peer: &mut Peer) -> HostBrowserBinding {
+    let browser = authenticated_browser(app, target).await;
+    let request = browser("/operation").json(&Op::Status {});
     let task = tokio::spawn(async move { request.send().await.unwrap() });
     let (id, command) = peer.command().await;
     let incarnation = app.views[&target].process.incarnation;
@@ -314,6 +321,166 @@ async fn background_viewer_updates_only_its_panel_without_switching_target_or_pr
     .await;
     finish(&mut app, &[path]).await;
     no_command(&mut peer).await;
+}
+
+#[tokio::test]
+async fn catalogue_owner_can_lead_unbound_preparation_without_cancel_or_start_replay() {
+    let mut peer = Peer::open().await;
+    let (_fixture, mut app, old) = super::super::coverage_support::app();
+    let target = connect(&mut app, old, &peer);
+    let launcher = opened(&mut app, target).await;
+    let browser = authenticated_browser(&app, target).await;
+    let original = app.views[&target].process.incarnation;
+    let prepared = Uuid::new_v4();
+    let command_id = Uuid::new_v4();
+    let request = browser("/operation").json(&Op::Start {
+        command_id,
+        incarnation: original,
+        expected_revision: 17,
+    });
+    let task = tokio::spawn(async move { request.send().await });
+    let (id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Voyage(VoyageRequest {
+        incarnation: Some(owner), command: VoyageCommand::HostBrowser { operation: Op::Start { command_id: exact, .. } }, ..
+    }) if owner == original && exact == command_id));
+    // Catalogue/event delivery may precede the explicit not-dispatched reply.
+    app.views.get_mut(&target).unwrap().process.incarnation = prepared;
+    app.poll_browsers();
+    assert_eq!(
+        browser("/alive").send().await.unwrap().status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
+    assert!(!app.browsers[&target].accepts_incarnation(prepared));
+    peer.voyage_reply(
+        id,
+        target.session,
+        prepared,
+        json!({"status":"prepared","not_dispatched":true}),
+    )
+    .await;
+    let (revision_id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Voyage(VoyageRequest {
+        incarnation: Some(owner), command: VoyageCommand::Snapshot, ..
+    }) if owner == prepared));
+    // Even after explicit preparation, the exact revision observation is pending.
+    app.poll_browsers();
+    assert_eq!(
+        browser("/alive").send().await.unwrap().status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
+    assert!(!app.browsers[&target].accepts_incarnation(prepared));
+    peer.voyage_reply(
+        revision_id,
+        target.session,
+        prepared,
+        json!({"revision":23}),
+    )
+    .await;
+    let (start_id, command) = peer.command().await;
+    assert!(matches!(command, VesselCommand::Voyage(VoyageRequest {
+        incarnation: Some(owner), command: VoyageCommand::HostBrowser { operation: Op::Start { command_id: exact, incarnation, expected_revision:23 } }, ..
+    }) if owner == prepared && incarnation == prepared && exact == command_id));
+    peer.voyage_reply(
+        start_id,
+        target.session,
+        prepared,
+        json!({"status":{"running":false,"binding":null}}),
+    )
+    .await;
+    assert_eq!(
+        task.await.unwrap().unwrap().status(),
+        reqwest::StatusCode::OK
+    );
+    app.poll_browsers();
+    assert!(app.browsers[&target].accepts_incarnation(prepared));
+    assert_eq!(
+        browser("/alive").send().await.unwrap().status(),
+        reqwest::StatusCode::NO_CONTENT
+    );
+    no_command(&mut peer).await;
+    // The catalogue is still not authority to accept an unrelated replacement.
+    app.views.get_mut(&target).unwrap().process.incarnation = Uuid::new_v4();
+    app.poll_browsers();
+    stopped(&mut app, target).await;
+    finish(&mut app, &[launcher]).await;
+    no_command(&mut peer).await;
+}
+
+#[tokio::test]
+async fn pending_unbound_preparation_cannot_preserve_unrelated_or_retired_catalogue_owner() {
+    for variant in 0..5 {
+        let mut peer = Peer::open().await;
+        let (_fixture, mut app, old) = super::super::coverage_support::app();
+        let target = connect(&mut app, old, &peer);
+        let launcher = opened(&mut app, target).await;
+        let browser = authenticated_browser(&app, target).await;
+        let original = app.views[&target].process.incarnation;
+        let request = browser("/operation").json(&Op::Status {});
+        let task = tokio::spawn(async move { request.send().await });
+        let (id, _) = peer.command().await;
+        app.views.get_mut(&target).unwrap().process.incarnation = Uuid::new_v4();
+        if variant < 2 {
+            app.poll_browsers();
+            assert_eq!(
+                browser("/alive").send().await.unwrap().status(),
+                reqwest::StatusCode::NO_CONTENT
+            );
+            let reply_owner = if variant == 0 {
+                original
+            } else {
+                Uuid::new_v4()
+            };
+            peer.voyage_reply(
+                id,
+                target.session,
+                reply_owner,
+                json!({"status":{"running":false,"binding":null}}),
+            )
+            .await;
+            let reply = task.await.unwrap();
+            if variant == 0 {
+                assert_eq!(reply.unwrap().status(), reqwest::StatusCode::OK);
+            }
+            app.poll_browsers();
+        } else {
+            match variant {
+                2 => {
+                    app.views
+                        .get_mut(&target)
+                        .unwrap()
+                        .snapshot
+                        .as_mut()
+                        .unwrap()
+                        .lifecycle = json!({"deleted":true})
+                }
+                3 => {
+                    app.views
+                        .get_mut(&target)
+                        .unwrap()
+                        .snapshot
+                        .as_mut()
+                        .unwrap()
+                        .lifecycle = json!({"archived":true})
+                }
+                _ => app.stop_browser_route(target.route.id),
+            }
+            app.poll_browsers();
+            // Retirement is immediate despite a held unbound request.
+            assert!(!matches!(browser("/alive").send().await,
+                Ok(reply) if reply.status() == reqwest::StatusCode::NO_CONTENT));
+            peer.voyage_reply(
+                id,
+                target.session,
+                original,
+                json!({"status":{"running":false,"binding":null}}),
+            )
+            .await;
+            let _ = task.await.unwrap();
+        }
+        stopped(&mut app, target).await;
+        finish(&mut app, &[launcher]).await;
+        no_command(&mut peer).await;
+    }
 }
 
 #[tokio::test]
