@@ -9,7 +9,7 @@ loading-state defect; it does not establish why a particular real provider stall
 
 All model discovery paths now share one owned request with a 12-second deadline.
 A timeout, missing/setup-failed account or stale response settles the loading state.
-The chooser keeps the current model and unsent conversation draft available and
+The chooser preserves the current model selection and unsent conversation draft and
 shows a **Retry** action. Retry is an explicit fresh catalogue read, not inference,
 tool replay or automatic provider retry. It cancels the prior read and replaces
 its ID. Timed-out IDs are retired so late replies cannot repopulate the chooser.
@@ -29,7 +29,7 @@ Existing direct chooser and account tests pass.
 
 `helm/tests/model_loading.py` holds an actual loopback `/models` response beyond the
 deadline through real Helm/Vessel/Voyage. Loading visibly starts, then stops after
-approximately 12 seconds; the current model stays available. Releasing the server
+approximately 12 seconds; the current model selection stays unchanged. Releasing the server
 and clicking Retry displays an additional catalogue model. Cancel retains the draft;
 no prompt or model-inference request is sent. Fixture cleanup is observed. The
 normal/narrow direct chooser regression also passes. Evidence is ignored under
@@ -48,3 +48,7 @@ Tracked in [#277](https://github.com/o-psi/voyage/issues/277), related to
 [#276](https://github.com/o-psi/voyage/issues/276) and broader
 [#272](https://github.com/o-psi/voyage/issues/272). Installation must be observed
 before claiming the normal command updated; existing Helm clients need reopening.
+
+Successful discovery lists only provider-returned models for the selected account.
+An unlisted saved model stays in configuration but is not manufactured into a
+selectable catalogue entry. Listing is not proof of inference entitlement.

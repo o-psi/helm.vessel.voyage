@@ -43,8 +43,11 @@ impl Catalogue {
                     };
                     out.push(Choice {
                         label: format!(
-                            "{}{}",
+                            "{}{}{}",
                             safe(&a.label),
+                            t.subscription_label()
+                                .map(|label| format!(" · {label}"))
+                                .unwrap_or_default(),
                             if self.default_account.as_ref() == Some(&binding) {
                                 " · Default"
                             } else {

@@ -146,6 +146,9 @@ fn model_load_error(failure: Option<voyage_protocol::model_discovery::Failure>) 
     use voyage_protocol::model_discovery::Failure;
     match failure {
         Some(Failure::Authentication) => "Couldn’t load models. Check your account’s sign-in.",
+        Some(Failure::AccessDenied) => {
+            "The provider denied access. Review this account’s provider permissions and model access."
+        }
         Some(Failure::RateLimit) => "Too many requests. Try again shortly.",
         Some(Failure::Network) => "Couldn’t connect. Check the connection and try again.",
         Some(Failure::InvalidResponse | Failure::DisplayValidation) => {
@@ -208,12 +211,7 @@ impl Picker {
         self.original.resolve(&self.models);
         self.options = match self.field {
             Field::Account => Vec::new(),
-            Field::Model => self
-                .models
-                .iter()
-                .map(|m| m.id.clone())
-                .chain(std::iter::once(self.original.model.clone()))
-                .collect(),
+            Field::Model => self.models.iter().map(|m| m.id.clone()).collect(),
             Field::Thinking => self.original.reasoning_efforts.clone(),
             Field::Service => self.original.service_tiers.clone(),
         };
@@ -230,7 +228,11 @@ impl Picker {
         self.notice = if !available {
             "Couldn’t load models. Try again."
         } else if self.field == Field::Model {
-            ""
+            if self.models.iter().any(|model| model.id == self.original.model) {
+                "Models listed by this account’s provider; access and quota remain provider-controlled."
+            } else {
+                "The saved model is not listed for this account. Its configuration is unchanged."
+            }
         } else {
             match self.original.resolution.as_ref().map(|r| if self.field == Field::Service { r.service.support } else { r.thinking.support }) {
                 Some(voyage_protocol::inference::Support::Advertised) => "Model-advertised choices; account acceptance remains provider-authoritative.",

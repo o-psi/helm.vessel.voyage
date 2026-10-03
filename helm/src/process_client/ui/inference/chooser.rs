@@ -631,7 +631,9 @@ impl App {
                     "{} {}{}",
                     if selected { "●" } else { " " },
                     safe(v),
-                    if *v == p.original.model {
+                    if !p.models.iter().any(|model| model.id == *v) {
+                        " (unverified)"
+                    } else if *v == p.original.model {
                         " (current)"
                     } else {
                         ""
@@ -813,6 +815,33 @@ mod tests {
             command_text: String::new(),
             preserve_draft: true,
         });
+    }
+    #[tokio::test]
+    async fn catalogue_choices_do_not_invent_saved_models_and_manual_ids_are_unverified() {
+        let fixture = super::super::super::account_test_support::Fixture::new();
+        let mut app = super::super::super::accounts::app_tests::app(fixture.0.path());
+        let t = app_fixture(&mut app);
+        picker(&mut app, t);
+        let p = app.inference.picker.as_mut().unwrap();
+        p.install_models(Some(vec![crate::provider::ModelInfo::minimal("allowed")]));
+        assert_eq!(p.options(), vec!["allowed"]);
+        assert_eq!(p.chooser.model, "current");
+        assert!(p.notice.contains("not listed"));
+        p.query = "explicit-custom".into();
+        assert_eq!(p.options(), vec!["explicit-custom"]);
+        assert!(text(&paint(&app, 120, 40)).contains("explicit-custom (unverified)"));
+        let p = app.inference.picker.as_mut().unwrap();
+        p.query.clear();
+        p.install_models(Some(vec![]));
+        assert!(p.options().is_empty());
+        assert_eq!(p.chooser.model, "current");
+        assert_eq!(app.views[&t].draft.text, "keep my draft");
+        assert!(
+            model_load_error(Some(
+                voyage_protocol::model_discovery::Failure::AccessDenied
+            ))
+            .contains("provider denied access")
+        );
     }
     fn key(c: KeyCode) -> Event {
         Event::Key(KeyEvent::new(c, KeyModifiers::NONE))
