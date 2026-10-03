@@ -14,6 +14,9 @@ acceptance remains incomplete; attempted runs do not add passing evidence to
 this record. Failed native bootstrap now reports the fixed step that was in
 progress and up to three line/column coordinates in the driver source. These
 diagnostics omit error messages, assertion values, private content and raw stacks.
+Read-only observation subprocesses also handle stdin closure explicitly: an
+unused input pipe cannot crash the driver after a successful hash check, while
+loss of required JSON input remains a failed observation.
 
 ## Current archive and observed four-phase result
 

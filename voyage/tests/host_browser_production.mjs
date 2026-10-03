@@ -289,7 +289,10 @@ function sshCommand(cfg,args,input=null,timeout=20000){
   assert.ok([h.python,'/usr/bin/sha256sum'].includes(args[0]));
   return new Promise((resolve,reject)=>{
    const child=execFile(args[0],args.slice(1),{timeout,maxBuffer:256*1024},(error,stdout)=>error?reject(Error('fixed local host observation failed')):resolve(stdout));
-   child.stdin.end(input===null?'':JSON.stringify(input));
+   // A no-input observer (such as sha256sum) may exit before its pipe closes.
+   // Required JSON input must still fail closed if the reader disappears.
+   child.stdin.on('error',error=>{if(input!==null||error.code!=='EPIPE')reject(Error('fixed local host observation input unavailable'));});
+   child.stdin.end(input===null?undefined:JSON.stringify(input));
   });
  }
  const argv=['-F','/dev/null','-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=10',
@@ -300,7 +303,8 @@ function sshCommand(cfg,args,input=null,timeout=20000){
   const child=execFile('/usr/bin/ssh',argv,{timeout,maxBuffer:256*1024},(error,stdout)=>{
    if(error)reject(Error('fixed read-only host observation failed'));else resolve(stdout);
   });
-  child.stdin.end(input===null?'':JSON.stringify(input));
+  child.stdin.on('error',error=>{if(input!==null||error.code!=='EPIPE')reject(Error('fixed read-only host observation input unavailable'));});
+  child.stdin.end(input===null?undefined:JSON.stringify(input));
  });
 }
 async function pinHostHelpers(cfg){
