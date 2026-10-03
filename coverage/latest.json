@@ -1,36 +1,34 @@
 {
-  "measured_at_utc": "2026-10-03T01:17:45.962292+00:00",
-  "source_commit": "ad1a24e34288d0847d69403a4472f5abac991eed",
-  "final_fixture_source": "3547e618a68118a6814a6a721066b9815e76d2c9",
-  "merged_web_source": "265dd42374316c2dfb97afb41cb4adbe74e3eedc",
+  "measured_at_utc": "2026-10-03T04:37:27.688739+00:00",
+  "source_commit": "6bf7d6e755fbd50cc00d89bae7a853a8e259b5ae",
   "dirty": false,
-  "source_fingerprint_sha256": "23495aab302596c500dfc51af9427e90f62625de07a9f9c492d7882aa9047542",
+  "source_fingerprint_sha256": "383e6b5cd7a45676cc8c6656edceef521859bef5fd34ea6c8a87b2c6ee6a0ae5",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
   "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
   "tests": {
-    "passed": 3101,
+    "passed": 3105,
     "failed": 0,
     "ignored": 10
   },
   "totals": {
     "lines": {
-      "count": 136937,
-      "covered": 110900,
-      "percent": 80.98614691427444
+      "count": 136980,
+      "covered": 110938,
+      "percent": 80.9884654694116
     },
     "functions": {
-      "count": 12481,
-      "covered": 10017,
-      "percent": 80.25799214806506
+      "count": 12483,
+      "covered": 10019,
+      "percent": 80.26115517103261
     },
     "regions": {
-      "count": 226799,
-      "covered": 174959,
-      "notcovered": 51840,
-      "percent": 77.14275636135962
+      "count": 226851,
+      "covered": 174993,
+      "notcovered": 51858,
+      "percent": 77.14006109737228
     }
   },
   "command": "CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_PROFILE_FILE_NAME=$EXCLUSIVE_PREFIX RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-clean --no-fail-fast --html --output-dir $REPORT/automatic-html -j1; systemd user MemoryMax10G MemorySwapMax0 UMask0077 RuntimeMaxSec2400 RemainAfterExitno",
@@ -44,11 +42,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Rust measurement began at ad1a24e34288d0847d69403a4472f5abac991eed; only the external journey cleanup fixture advanced during measurement to 3547e618a68118a6814a6a721066b9815e76d2c9. All 923 Rust/Cargo files remained identical; all 19 objects and full source mappings were retained without new exclusions. Existing export/detailed reports were reused without replay. Final corrected fixture journey and merged Web 265dd42374316c2dfb97afb41cb4adbe74e3eedc passed separately. This does not attribute whole final source to the original measurement. Only default.profraw had a persisted pre-run checkout baseline; other default*.profraw historical preservation is unproven.",
     "Dynamic current Cargo target/entrypoint inventory; no fixed historical target count or file-count gate.",
     "All baseline71d source maps retained by repository-relative names; baseline original root rebased for comparison only, no LLVM filtering or source rewriting.",
     "Foreign profiles and existing checkout default.profraw preserved; all detailed/HTML/LCOV/raw evidence remains ignored.",
-    "Python/JavaScript/full maintained host-browser agent-interactions and Web gates passed separately; they do not establish native host/browser or live-provider behavior.",
-    "Line coverage delta vs prior: 0.0029834067327243474 percentage points."
+    "This record measures the final Rust source only. Unchanged Web/worker/Python checks were not rerun; previous separate evidence retains its original source attribution. Final native prepared-owner acceptance remains a separate release obligation.",
+    "Line coverage delta vs prior: 0.0023185551371511792 percentage points."
   ]
 }
