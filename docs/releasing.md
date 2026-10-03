@@ -27,10 +27,11 @@ and failure handling. Build from a clean committed source checkout:
 
 ```sh
 cargo build --workspace --release --locked -j 8
-python3 packaging/package_linux.py --version v1.0.2 --bin-dir target/release --output dist/linux-release
-(cd dist/linux-release && sha256sum -c *.sha256)
+python3 packaging/package_linux.py --version v1.0.3 --bin-dir target/release --output dist/v1.0.3-candidate-01
+(cd dist/v1.0.3-candidate-01 && sha256sum -c *.sha256)
 ```
 
+The example packages the v1.0.3 candidate; it does not publish a stable release.
 Use a new output directory for every attempt. The packager validates binary versions,
 generates CLI documentation, and packages only explicitly selected public documents.
 Full archives carry `release.json` with the release identity, target and executable
