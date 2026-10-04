@@ -27,7 +27,15 @@ fn automatic_large_result_preserves_canonical_and_identity() {
     let canonical = history(300_000);
     let original = serde_json::to_vec(&canonical).unwrap();
     let mut context = WorkingContext::default();
-    assert_eq!(context.prepare(&canonical).unwrap(), 1);
+    let pressure = crate::context::RequestPressure {
+        enabled_capacity: Some(1000),
+        input_tokens: Some(900),
+        complete: true,
+        method: "offline fixture".into(),
+        reserve_tokens: Some(100),
+        safety_tokens: 0,
+    };
+    assert_eq!(context.prepare_pressure(&canonical, &pressure).unwrap(), 1);
     let projected = context.project(&canonical).unwrap();
     assert!(size(&projected) < size(&canonical) / 10);
     assert_eq!(projected[0].content, canonical[0].content);
@@ -144,4 +152,42 @@ fn explicit_middle_decisions_are_retained_and_oversized_constraints_are_not_summ
     assert!(excerpt(&text, 256).contains("Decision: retain migration compatibility."));
     let text = format!("Constraint: {}", "mandatory ".repeat(1000));
     assert_eq!(excerpt(&text, 256), text);
+}
+
+#[test]
+fn unknown_pressure_preserves_unsaved_large_evidence() {
+    let canonical = history(300_000);
+    let mut context = WorkingContext::default();
+    assert_eq!(context.prepare(&canonical).unwrap(), 0);
+    assert_eq!(
+        serde_json::to_vec(&context.project(&canonical).unwrap()).unwrap(),
+        serde_json::to_vec(&canonical).unwrap()
+    );
+}
+
+#[test]
+fn pressure_not_payload_controls_reduction() {
+    let pressure = crate::context::RequestPressure {
+        enabled_capacity: Some(1000),
+        input_tokens: Some(500),
+        complete: true,
+        method: "offline exact fixture".into(),
+        reserve_tokens: Some(100),
+        safety_tokens: 0,
+    };
+    for bytes in [40_000, 300_000] {
+        let canonical = history(bytes);
+        let mut context = WorkingContext::default();
+        assert_eq!(context.prepare_pressure(&canonical, &pressure).unwrap(), 0);
+        let mut full = pressure.clone();
+        full.input_tokens = Some(950);
+        assert_eq!(context.prepare_pressure(&canonical, &full).unwrap(), 1);
+        assert_eq!(context.prepare_pressure(&canonical, &full).unwrap(), 0);
+        let saved = serde_json::to_vec(&context).unwrap();
+        let resumed: WorkingContext = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&resumed.project(&canonical).unwrap()).unwrap(),
+            serde_json::to_vec(&context.project(&canonical).unwrap()).unwrap()
+        );
+    }
 }

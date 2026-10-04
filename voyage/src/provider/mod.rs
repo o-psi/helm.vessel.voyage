@@ -485,6 +485,13 @@ pub(crate) fn response_retry_after(response: &reqwest::Response) -> Option<std::
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Count this exact request using the final transport encoding and applicable
+    /// model/account capacity. Never infer tokens from bytes or cumulative usage.
+    /// Adapters without a trustworthy complete counter must return None.
+    async fn request_pressure(&self, _request: &ModelRequest) -> Option<crate::context::RequestPressure> {
+        None
+    }
+
     /// A known effective model limit, when supplied by the provider adapter.
     /// Can narrow an operator-enabled local ceiling; it does not enable a gate
     /// when the operator has left local token limits disabled.
@@ -857,6 +864,10 @@ struct BoundProvider {
 }
 #[async_trait]
 impl Provider for BoundProvider {
+    async fn request_pressure(&self, request: &ModelRequest) -> Option<crate::context::RequestPressure> {
+        native_from_config(&self.config, self.redactor.clone()).ok()?.request_pressure(request).await
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         native_from_config(&self.config, self.redactor.clone())?
             .models()

@@ -722,6 +722,17 @@ impl RunOwner {
 
 #[async_trait]
 impl RunCheckpoint for ManagedRunCheckpoint {
+    async fn goal_snapshot(
+        &self,
+    ) -> Result<Option<voyage_protocol::goals::GoalSnapshot>, CheckpointError> {
+        let token = self.token.clone();
+        self.storage_named(Operation::WorkingContext, move |store| {
+            if let Some(authority) = &token.execution_authority { authority.check()?; }
+            steering::authorize(store, &token)?;
+            store.journal.goal(store.session_id).map(Some)
+        }).await
+    }
+
     fn run_id(&self) -> Uuid {
         self.token.run_id
     }
@@ -914,6 +925,12 @@ impl RunCheckpoint for ManagedRunCheckpoint {
 
 #[async_trait]
 impl RunCheckpoint for RunOwner {
+    async fn goal_snapshot(
+        &self,
+    ) -> Result<Option<voyage_protocol::goals::GoalSnapshot>, CheckpointError> {
+        self.checkpoint().goal_snapshot().await
+    }
+
     fn run_id(&self) -> Uuid {
         self.run_id
     }

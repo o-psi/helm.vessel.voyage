@@ -1248,3 +1248,16 @@ named `xai_oauth` credentials for each native HTTP dispatch and owns inference,
 tools and conversation. The direct xAI API uses subscription OAuth with fenced
 refresh, exact endpoint binding and no API billing fallback. Provider denial, quota
 and unknown model availability remain explicit. See [named accounts](provider-accounts.md#supergrok-subscription-access).
+
+### Request pressure accounting
+
+Voyage has an adapter seam for complete, exact-request context pressure facts
+(enabled capacity, input tokens, output/reasoning reserve and safety headroom).
+Anthropic uses its count_tokens endpoint with the shared dispatch input encoder;
+its result is labeled a provider count estimate, and absent retrieved input capacity
+remains unknown. Other production adapters do not supply complete accounting; unknown
+occupancy does not trigger byte-based proactive compaction. The old 192 KiB
+unsaved-message trigger is removed. Saved-tool-evidence payload projection and
+bounded explicit provider-rejection recovery remain distinct. A model-callable runtime `context` status/compaction tool is implemented with
+durable projection receipts. Shared client accounting presentation and broader production
+count adapter qualification remain unfinished. See [configuration](configuration.md#working-context-compaction).

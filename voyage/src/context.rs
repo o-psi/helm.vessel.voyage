@@ -3,6 +3,9 @@ use crate::model::{ModelRequest, Role};
 use thiserror::Error;
 
 mod working;
+pub(crate) mod control;
+mod pressure;
+pub use pressure::RequestPressure;
 pub use working::WorkingContext;
 
 /// Zero disables local token admission checks. Providers enforce their own capacity.

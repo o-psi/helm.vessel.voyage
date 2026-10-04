@@ -607,12 +607,28 @@ through Vessel. Neither Helm nor Vessel runs a summarizing agent.
 
 ### Automatic preparation and recovery
 
-Before a provider request, Voyage applies saved working-context reductions. At
-192 KiB of serialized projected messages it attempts extractive preparation of
-large assistant text and tool results. This is a preparation threshold, **not a
-token allowance or admission veto**. If preparation cannot shrink anything, the
-initial request still reaches the provider unless an operator explicitly enabled
-a local context limit. The threshold is not a model-capacity claim.
+Before a provider request, Voyage applies saved working-context reductions.
+Already saved large tool evidence may be replaced with an integrity-bound retrieval
+reference for payload/resource management. Unsaved assistant text and tool results
+are no longer reduced merely because projected messages exceed 192 KiB.
+
+The runtime's provider accounting seam accepts only complete counts of the exact
+outgoing encoded request, including instructions, schemas, replay and modalities,
+with enabled (not maximum advertised) capacity and response/reasoning reserve.
+Unknown capacity, incomplete counting or unknown reserve does not trigger pressure
+preparation. Cached input still occupies context; cumulative billing and byte size
+are not occupancy. After redaction and replay projection, pressure reductions are persisted and
+the request is rebuilt/recounted before dispatch; pre-redaction counting would
+be invalid. Irreducible measured pressure terminates with context-exhausted
+rather than dispatching an unchanged known-oversized request.
+Anthropic supplies a labeled provider count estimate through `messages/count_tokens`,
+using the same input encoding as dispatch. Its model-specific retrieved
+`context_window`, when present, supplies input capacity; unsupported metadata
+remains unknown. Other transports remain unknown; provider-rejection recovery
+is the backstop. This endpoint work has not been live-provider qualified.
+This does not enable a mandatory local admission gate: zero retains its existing
+meaning of no operator local context cap. The legacy opt-in admission estimator
+remains separate and is not a provider token measurement.
 
 A recognized provider input-context rejection causes the same active run to build
 a smaller request. Native OpenAI Chat/Responses, ChatGPT OAuth Responses and
@@ -746,3 +762,18 @@ sign-in. Select it through Account/profiles rather than entering a token in TOML
 The executing-host account binds `https://api.x.ai/v1`; overriding the endpoint
 cannot redirect subscription credentials. API-key accounts remain separate.
 See [SuperGrok access](provider-accounts.md#supergrok-subscription-access).
+
+### Model-requested working projection
+
+The agent exposes a runtime-owned `context` tool: `status` reports the projection
+generation and whether durable compaction is possible; `compact` takes `retain`
+(1–100000) and optional bounded model-authored notes. Current next-request token
+counts remain null unless fully counted, rather than reusing the previous request
+or cumulative usage. Notes are preserved as untrusted receipt data, never promoted
+to system instructions or verified evidence. Applied/no-op receipts identify the
+generation; canonical history, user task/steering and recorded tool identities
+remain intact. A checkpoint failure aborts before next provider dispatch rather
+than returning a successful compaction receipt. Current runtime Goal snapshots
+are refreshed from the execution owner and added as request-only task data,
+independently of historical summaries. Model initiative does not replace bounded
+provider-rejection recovery.

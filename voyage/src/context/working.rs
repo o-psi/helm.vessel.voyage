@@ -4,8 +4,6 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Preparation threshold in serialized bytes, not a token allowance or admission gate.
-const PREPARE_BYTES: usize = 192 * 1024;
 const EXCERPT_LIMITS: [usize; 3] = [4096, 1024, 256];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -196,18 +194,28 @@ impl WorkingContext {
         Ok(changed)
     }
 
-    /// Proactive preparation is advisory: inability to shrink never vetoes initial dispatch.
+    /// Resource-only projection of already saved results. This does not measure
+    /// context occupancy and never discards unsaved evidence because of byte size.
     pub fn prepare(&mut self, canonical: &[Message]) -> Result<usize> {
-        let saved = self.reduce_saved_results(canonical)?;
-        if size(&self.project(canonical)?) <= PREPARE_BYTES {
-            return Ok(saved);
+        self.reduce_saved_results(canonical)
+    }
+
+    /// Capacity preparation requires complete adapter accounting of the actual
+    /// outgoing request. Unknown accounting never selects a byte-based fallback.
+    pub fn prepare_pressure(
+        &mut self,
+        canonical: &[Message],
+        pressure: &super::RequestPressure,
+    ) -> Result<usize> {
+        if !pressure.should_prepare() {
+            return Ok(0);
         }
         let count = canonical.iter().filter(|m| m.role != Role::System).count();
         let changed = self.reduce(canonical, count, EXCERPT_LIMITS[0], false)?;
         if changed > 0 {
             self.reason = Some(CompactionReason::Preparation);
         }
-        Ok(changed + saved)
+        Ok(changed)
     }
 
     /// At most four distinct reductions follow an actual provider rejection. Each caller

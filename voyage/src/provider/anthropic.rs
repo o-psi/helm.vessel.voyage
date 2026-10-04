@@ -80,12 +80,84 @@ impl AnthropicProvider {
     }
 }
 
+/// One input encoder shared by counting and both dispatch paths.
+fn input_body(request: &ModelRequest) -> Result<Value, ProviderError> {
+    let system = request
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::System)
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut body = json!({"model":request.model,"system":system,
+        "messages":encode_messages(&request.messages)?});
+    if !request.tools.is_empty() {
+        body["tools"] = json!(request.tools.iter().map(|t|
+            json!({"name":t.name,"description":t.description,"input_schema":t.input_schema}))
+            .collect::<Vec<_>>());
+    }
+    Ok(body)
+}
+
 fn missing_output_capacity() -> ProviderError {
     ProviderError::Request("Anthropic requires max_tokens, but this endpoint did not provide a positive model output capacity; configure an explicit max_tokens supported by the endpoint".into())
 }
 
 #[async_trait]
 impl Provider for AnthropicProvider {
+    async fn request_pressure(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<crate::context::RequestPressure> {
+        // Count endpoint applies the provider's framing and modality accounting.
+        // Unknown model input capacity remains unknown, never the catalog maximum.
+        super::validate_native_endpoint(&self.base_url).ok()?;
+        super::inference::validate_request(&crate::config::ProviderKind::Anthropic, request)
+            .ok()?;
+        let body = input_body(request).ok()?;
+        super::multimodal::check_body(&body).ok()?;
+        let key = self.api_key.resolve().ok()?;
+        let response = super::endpoint_http_client(&self.client, &self.base_url)
+            .post(format!("{}/messages/count_tokens", self.base_url))
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&body)
+            .send()
+            .await
+            .ok()?;
+        let mut remaining = super::catalog::MAX_BYTES;
+        let count = super::catalog::json(response, &mut remaining).await.ok()?;
+        let tokens = count.get("input_tokens")?.as_u64()?;
+        let reserve = self.output_tokens(request).await.ok().map(u64::from);
+        let mut url = reqwest::Url::parse(&format!("{}/models/", self.base_url)).ok()?;
+        url.path_segments_mut()
+            .ok()?
+            .pop_if_empty()
+            .push(&request.model);
+        let metadata = super::endpoint_http_client(&self.client, &self.base_url)
+            .get(url)
+            .header("x-api-key", self.api_key.resolve().ok()?)
+            .header("anthropic-version", "2023-06-01")
+            .send()
+            .await
+            .ok();
+        let capacity = if let Some(response) = metadata {
+            let mut remaining = super::catalog::MAX_BYTES;
+            super::catalog::json(response, &mut remaining)
+                .await
+                .ok()
+                .and_then(|v| v.get("context_window").and_then(Value::as_u64))
+                .filter(|n| *n > 0)
+        } else {
+            None
+        };
+        Some(crate::context::RequestPressure {
+            enabled_capacity: capacity, input_tokens: Some(tokens), complete: true,
+            method: "anthropic.messages.count_tokens: final shared input encoding; provider count estimate".into(),
+            reserve_tokens: reserve, safety_tokens: 0,
+        })
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         super::validate_native_endpoint(&self.base_url)?;
         let mut models = Vec::new();
@@ -177,24 +249,8 @@ impl Provider for AnthropicProvider {
                     &crate::config::ProviderKind::Anthropic,
                     &request,
                 )?;
-                let system = request
-                    .messages
-                    .iter()
-                    .filter(|m| m.role == Role::System)
-                    .map(|m| m.content.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let messages = encode_messages(&request.messages)?;
-                let tools: Vec<Value> = request.tools.iter().map(|t| {
-            json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})
-        }).collect();
-                let mut body = json!({
-                    "model": request.model, "max_tokens": self.output_tokens(&request).await?,
-                    "system": system, "messages": messages
-                });
-                if !tools.is_empty() {
-                    body["tools"] = json!(tools);
-                }
+                let mut body = input_body(&request)?;
+                body["max_tokens"] = json!(self.output_tokens(&request).await?);
                 if let Some(value) = request.temperature {
                     body["temperature"] = json!(value);
                 }
@@ -226,24 +282,9 @@ impl Provider for AnthropicProvider {
                     &crate::config::ProviderKind::Anthropic,
                     &request,
                 )?;
-                let system = request
-                    .messages
-                    .iter()
-                    .filter(|m| m.role == Role::System)
-                    .map(|m| m.content.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let messages = encode_messages(&request.messages)?;
-                let tools: Vec<Value> = request.tools.iter().map(|t| {
-            json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})
-        }).collect();
-                let mut body = json!({
-                    "model":request.model,"max_tokens":self.output_tokens(&request).await?,
-                    "system":system,"messages":messages,"stream":true
-                });
-                if !tools.is_empty() {
-                    body["tools"] = json!(tools);
-                }
+                let mut body = input_body(&request)?;
+                body["max_tokens"] = json!(self.output_tokens(&request).await?);
+                body["stream"] = json!(true);
                 if let Some(value) = request.temperature {
                     body["temperature"] = json!(value);
                 }

@@ -198,6 +198,12 @@ pub trait RunCheckpoint: Send + Sync {
     ) -> Result<(), CheckpointError> {
         Ok(())
     }
+    /// Runtime-observed goal data, not instructions or a model-authored summary.
+    async fn goal_snapshot(
+        &self,
+    ) -> Result<Option<voyage_protocol::goals::GoalSnapshot>, CheckpointError> {
+        Ok(None)
+    }
     /// Durable request-only reductions; canonical history remains independently readable.
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         Ok(Default::default())
@@ -528,13 +534,16 @@ impl Agent {
         base.push_str(&self.context.redactor.redact(extensions));
         runtime_guidance(
             &base,
-            &self.tools.definitions(),
+            &self.tool_inventory(),
             self.context.policy.access_mode(),
         )
     }
 
     pub fn tool_inventory(&self) -> Vec<ToolDefinition> {
-        self.tools.definitions()
+        let mut tools = self.tools.definitions();
+        tools.retain(|tool| tool.name != "context");
+        tools.push(crate::context::control::definition());
+        tools
     }
     /// Current process manager only; persisted terminal metadata is never attachable.
     pub fn plain_terminals(
@@ -560,7 +569,7 @@ impl Agent {
 
     /// Operator presentation only; executable names and schemas stay in the registry.
     pub fn tool_inventory_display(&self) -> Vec<String> {
-        self.tools.definitions().iter().map(|tool| {
+        self.tool_inventory().iter().map(|tool| {
             // Redact original bytes before making terminal controls visible.
             let text = self.context.redactor.redact_public_prefix(&format!("{} — {}", tool.name, tool.description));
             let mut display = String::new();
@@ -1178,6 +1187,17 @@ impl Agent {
             let response = loop {
                 let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
                 completion_continuation.project(&mut messages);
+                if let Some(checkpoint) = checkpoint
+                    && let Some(goal) = gate::guarded(tokio::time::timeout(context.timeout,
+                        checkpoint.goal_snapshot()), &cancel).await?
+                        .map_err(|_| CheckpointError)??
+                    && goal.goal.is_some()
+                {
+                    let data = serde_json::to_string(&goal).map_err(|_| CheckpointError)?;
+                    messages.push(Message::new(crate::model::Role::User,
+                        format!("Runtime-observed current Goal snapshot. Task data, not system instructions; this current state supersedes historical goal summaries. Preserve identity, revision and unmet obligations.\n{data}")));
+                }
+
                 crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
                 let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
                 completion_continuation.append_to(&mut instructions);
@@ -1186,13 +1206,26 @@ impl Agent {
                 }
                 messages.insert(0, Message::new(crate::model::Role::System, instructions));
                 let request = ModelRequest {
-                    model: active_model.clone(), messages, tools: self.tools.definitions(),
+                    model: active_model.clone(), messages, tools: self.tool_inventory(),
                     temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
                 let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
                 match result {
                     Ok(provider_attempts::RequestOutcome::Completed(response)) => break *response,
+                    Ok(provider_attempts::RequestOutcome::Pressure(pressure)) => {
+                        let changed = working_context.prepare_pressure(&history, &pressure)
+                            .map_err(|_| CheckpointError)?;
+                        if changed == 0 {
+                            return Err(AgentError::ContextExhausted(None).with_recovery(&history, &usage));
+                        }
+                        if let Some(checkpoint) = checkpoint {
+                            gate::guarded(tokio::time::timeout(context.timeout,
+                                checkpoint.save_working_context(&working_context)), &cancel)
+                                .await?.map_err(|_| CheckpointError)??;
+                        }
+                        // Rebuild and recount the changed request before dispatch.
+                    },
                     Ok(provider_attempts::RequestOutcome::Interrupted(attempt_id)) => {
                         let prepared: Result<(), AgentError> = async {
                             let mut segment = Message::new(crate::model::Role::Assistant, partial_output.clone());
@@ -1390,10 +1423,45 @@ impl Agent {
                     })
                     .await;
                 let tool_started = std::time::Instant::now();
-                let result = tokio::select! {
+                let result = if call.name == "context" {
+                    self.check_current_policy()?;
+                    if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
+                    match crate::context::control::parse(call.arguments) {
+                        Err(error) => Err(error),
+                        Ok(crate::context::control::Control::Status) => Ok(crate::tools::ToolReport::text(
+                            serde_json::json!({"status":"observed","generation":working_context.generation,
+                                "enabled_capacity":null,"input_tokens":null,"remaining_tokens":null,
+                                "method":"unknown","scope":"next final encoded request not counted",
+                                "compaction_possible":checkpoint.is_some()}).to_string())),
+                        Ok(crate::context::control::Control::Compact { retain, notes }) => {
+                            if let Some(checkpoint) = checkpoint {
+                                let mut next = working_context.clone();
+                                match next.compact(&history, retain) {
+                                    Err(_) => Err(crate::tools::ToolError::Failed("projection validation failed".into())),
+                                    Ok(changed) => {
+                                        gate::guarded(tokio::time::timeout(context.timeout,
+                                            checkpoint.save_working_context(&next)), &cancel)
+                                            .await?.map_err(|_| CheckpointError)??;
+                                        working_context = next;
+                                        Ok(crate::tools::ToolReport::text(serde_json::json!({
+                                            "status":if changed > 0 {"applied"} else {"no_op"},
+                                            "generation":working_context.generation,"changed_messages":changed,
+                                            "before_tokens":null,"after_tokens":null,
+                                            "notes":notes,"notes_authority":"model-authored untrusted working data",
+                                            "canonical_history":"retained"
+                                        }).to_string()))
+                                    }
+                                }
+                            } else {
+                                Err(crate::tools::ToolError::Denied("durable compaction unavailable without checkpoint".into()))
+                            }
+                        }
+                    }
+                } else { tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
                     value = gate::guarded(self.tools.execute_report_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
+                }
                 };
                 let mut report = match result {
                     Ok(report) => report,
@@ -1594,6 +1662,16 @@ impl Agent {
                 "explicit request context preflight"
             );
             self.sink.emit(AgentEvent::ContextBudget(report)).await;
+        }
+        self.check_current_policy()?;
+        // Only the adapter can count its final encoding. Bounded failure leaves
+        // occupancy unknown; bytes and billing are never a pressure fallback.
+        if let Some(pressure) = gate::guarded(
+            tokio::time::timeout(self.context.timeout, self.provider.request_pressure(&request)), cancel,
+        ).await?.ok().flatten()
+            && pressure.should_prepare()
+        {
+            return Ok(provider_attempts::RequestOutcome::Pressure(pressure));
         }
         // Compare the actual post-redaction, tool-replay and explicit-limit projection.
         // A raw-history decrease is insufficient if preflight had already omitted it.
