@@ -484,7 +484,7 @@ fn gateway_credential_dropin_is_exact_private_owned_and_context_pinned() {
 }
 
 #[test]
-fn copied_recovery_receipt_refuses_apply_status_and_supersession_without_effects() {
+fn copied_recovery_receipt_refuses_apply_and_status_without_effects() {
     let f = Fixture::new();
     let record = Recovery {
         review: review(&f),
