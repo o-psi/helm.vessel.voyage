@@ -195,6 +195,36 @@ fn session_control(root: &Path, session: Uuid) -> Result<RootDirectory> {
 
 /// Local child retirement only. A missing/unfinished same-boot record cannot be
 /// converted into a restart permission by any runtime-written stopped marker.
+/// Bounded polling must not wait on the live guardian's lifetime ownership lock.
+/// Only immutable protected retirement records may pass this preliminary gate;
+/// the normal fenced proof still establishes the final result.
+pub(super) fn cleanup_available(root: &Path, session: Uuid, incarnation: Uuid) -> Result<bool> {
+    let record = RootDirectory::open(root)?
+        .child("guardians".as_ref())?
+        .child(session.to_string().as_ref())?
+        .child(incarnation.to_string().as_ref())?;
+    let admission: Admission =
+        serde_json::from_slice(&record.read("admission.json".as_ref(), 4096)?)?;
+    ensure!(
+        admission.session_id == session && admission.incarnation == incarnation,
+        "guardian admission identity mismatch"
+    );
+    if admission.boot_id == boot()? {
+        match record.read("completion.json".as_ref(), 4096) {
+            Ok(_) => (),
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    cleanup_observed(root, session, incarnation)
+}
+
 pub(super) fn cleanup_observed(root: &Path, session: Uuid, incarnation: Uuid) -> Result<bool> {
     let control = RootDirectory::open(root)?
         .child("guardians".as_ref())?

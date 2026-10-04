@@ -20,7 +20,7 @@ use voyage_protocol::{
 fn producer_stopped(root: &std::path::Path, registration: &ProcessRegistration) -> bool {
     if registration.peer_uids.is_some() {
         #[cfg(target_os = "linux")]
-        return super::guardian::cleanup_observed(
+        return super::guardian::cleanup_available(
             root,
             registration.session_id,
             registration.incarnation,
