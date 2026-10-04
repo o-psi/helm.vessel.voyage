@@ -1,3 +1,13 @@
+// Presentation only; observations never grant control or replay lifecycle actions.
+export function browserModeHint({phase,privateControl,controls,canClaim}){
+    if(phase==='stopped')return 'This browser is stopped. Start a browser before browsing or entering text.';
+    if(phase==='unavailable')return 'Browsing is unavailable on this host.';
+    if(phase==='needs-review')return 'An action needs review. Check the browser state before browsing again; do not repeat unconfirmed input.';
+    if(phase!=='live')return ['connecting','recovering','waiting-page','switching'].includes(phase)?'Browser controls are being prepared. Wait for the page before browsing.':'Browser controls are unavailable. Check browser status before browsing.';
+    if(privateControl)return 'Private: other viewers and agent capture are paused. Continue agent when finished.';
+    if(controls)return 'You are browsing. Other connected viewers can see this page.';
+    return canClaim?'Click the page to browse. Choose Private before entering secrets.':'Watching the browser. Browsing controls are not available to this viewer.';
+}
 const NIL = '00000000-0000-0000-0000-000000000000';
 const bytes = value => new TextEncoder().encode(value).length;
 const bindingKey = status => JSON.stringify(status?.binding);
@@ -709,9 +719,7 @@ export function mountBrowserViewer(root,options={}){
             recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';recoveryAction.disabled=connection.busy;
             recoveryAction.setAttribute('aria-label',recoveryAction.textContent);recoveryAction.title=recoveryAction.textContent;
         }
-        modeHint.textContent=phase==='stopped'?'This browser is stopped. Start a browser before browsing or entering text.':phase==='unavailable'?'Browsing is unavailable on this host.':privateControl?'Private: other viewers and agent capture are paused. Continue agent when finished.'
-            :connection.controls?'You are browsing. Other connected viewers can see this page.'
-            :'Click the page to browse. Choose Private before entering secrets.';
+        modeHint.textContent=browserModeHint({phase,privateControl,controls:connection.controls,canClaim:connection.canClaim});
         compose.hidden=!connection.controls;composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;
         const dialog=connection.controls?current?.dialog:null;
         dialogPanel.hidden=!dialog;dialogMessage.textContent=safe(dialog?.message,4096);dialogInput.hidden=dialog?.type!=='prompt';
