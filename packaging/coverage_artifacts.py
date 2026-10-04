@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from coverage_provenance import validate as validate_provenance
 
 
 def require(ok, message):
@@ -127,6 +128,7 @@ def main():
     s.add_argument('--output', type=Path, required=True)
     e = sub.add_parser('export')
     e.add_argument('--manifest', type=Path, required=True)
+    e.add_argument('--input-provenance', type=Path, required=True)
     e.add_argument('--llvm-cov', required=True)
     e.add_argument('--profile', type=Path, required=True)
     e.add_argument('--ignore-filename-regex', required=True)
@@ -150,6 +152,7 @@ def main():
             out.write('\n')
     elif args.command == 'export':
         manifest = json.loads(args.manifest.read_text())
+        validate_provenance(manifest, json.loads(args.input_provenance.read_text()), root)
         # Validate unchanged input before LLVM; a nonempty placeholder export
         # lets audit enforce the same source/object constraints.
         source = next(iter(manifest['sources']))
