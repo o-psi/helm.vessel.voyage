@@ -68,7 +68,7 @@ impl Journal {
                 .context("Goal allocation objective missing")?;
             let reserved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_turns WHERE command_id=?1 AND goal_id=?2)",params![command.to_string(),goal.id.to_string()],|r|r.get(0))?;
             ensure!(
-                reserved && goal.usage.unmeasured_runs == 0,
+                reserved && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
                 "Goal allocation objective or accounting changed"
             );
             let used = goal
@@ -77,9 +77,12 @@ impl Journal {
                 .checked_add(goal.usage.output_tokens)
                 .context("Goal usage overflow")?;
             (
-                goal.limits.tokens.saturating_sub(used),
-                u64::try_from(started)?
-                    .saturating_add(goal.limits.elapsed_ms.saturating_sub(goal.usage.elapsed_ms)),
+                goal.limits.token_allowance().saturating_sub(used),
+                u64::try_from(started)?.saturating_add(
+                    goal.limits
+                        .time_allowance_ms()
+                        .saturating_sub(goal.usage.elapsed_ms),
+                ),
             )
         };
         let (input, output, _, _) = super::metering::retained_usage(&tx, command)?;

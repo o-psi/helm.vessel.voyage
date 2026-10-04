@@ -93,7 +93,9 @@ impl GoalMeter {
                 return Ok(prior.budget.clone());
             }
             ensure!(
-                !t.uncertain && !t.cleanup_unobserved() && t.allocations.len() < 128,
+                (!t.uncertain || self.token_allowance == u64::MAX)
+                    && !t.cleanup_unobserved()
+                    && t.allocations.len() < 128,
                 "Goal allocations are unavailable or exhausted"
             );
             let used = t
@@ -101,7 +103,7 @@ impl GoalMeter {
                 .checked_add(t.output)
                 .and_then(|v| v.checked_add(t.reserved))
                 .context("Goal usage overflow")?;
-            let tokens = self.token_allowance.saturating_sub(used) / 2;
+            let tokens = (self.token_allowance.saturating_sub(used) / 2).min(10_000_000);
             ensure!(
                 tokens > 0 && !self.remaining_time().is_zero(),
                 "Goal budget cannot allocate child work"
@@ -114,7 +116,7 @@ impl GoalMeter {
         };
         // A dropped future retains the reservation. The parent cannot certify
         // missing child usage as zero, even if durable publication was interrupted.
-        let elapsed_ms = u64::try_from(self.remaining_time().as_millis())?;
+        let elapsed_ms = u64::try_from(self.remaining_time().as_millis())?.min(86_400_000);
         let now = u64::try_from(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
@@ -319,7 +321,9 @@ impl GoalMeter {
     }
 
     pub(crate) async fn wait_allocations(&self, cancel: tokio_util::sync::CancellationToken) {
-        let deadline = tokio::time::Instant::now() + self.remaining_time() + Duration::from_secs(5);
+        let deadline = tokio::time::Instant::now()
+            + self.remaining_time().min(Duration::from_secs(86_400))
+            + Duration::from_secs(5);
         loop {
             let notified = self.allocation_changed.notified();
             tokio::pin!(notified);

@@ -93,6 +93,9 @@ impl GoalMeter {
         work: impl std::future::Future<Output = T>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> T {
+        if self.time_allowance == Duration::from_millis(u64::MAX) {
+            return work.await;
+        }
         tokio::pin!(work);
         tokio::select! {
             result=&mut work=>result,
@@ -109,7 +112,10 @@ impl GoalMeter {
             .totals
             .lock()
             .map_err(|_| anyhow::anyhow!("Goal usage is unavailable"))?;
-        anyhow::ensure!(!t.uncertain, "Goal usage is incomplete");
+        anyhow::ensure!(
+            !t.uncertain || self.token_allowance == u64::MAX,
+            "Goal usage is incomplete for a configured token quota"
+        );
         anyhow::ensure!(!t.cleanup_unobserved(), "Goal child cleanup is unobserved");
         anyhow::ensure!(
             t.input
@@ -177,7 +183,7 @@ impl GoalMeter {
             .checked_add(t.output)
             .and_then(|used| used.checked_add(t.reserved))
             .ok_or_else(refused)?;
-        if t.uncertain
+        if (t.uncertain && self.token_allowance != u64::MAX)
             || t.cleanup_unobserved()
             || used >= self.token_allowance
             || self.started.elapsed() >= self.time_allowance
@@ -187,7 +193,9 @@ impl GoalMeter {
         // This caps requested output. Input size and provider billing are known
         // only after dispatch; this is an observed-usage stop, not a billing cap.
         let remaining = (self.token_allowance - used).min(u64::from(u32::MAX)) as u32;
-        request.max_tokens = Some(request.max_tokens.unwrap_or(remaining).min(remaining));
+        if self.token_allowance != u64::MAX {
+            request.max_tokens = Some(request.max_tokens.unwrap_or(remaining).min(remaining));
+        }
         t.in_flight = t.in_flight.checked_add(1).ok_or_else(refused)?;
         Ok(Attempt {
             meter: self.clone(),

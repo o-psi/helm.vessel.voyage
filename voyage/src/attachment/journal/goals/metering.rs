@@ -46,7 +46,7 @@ impl Journal {
             goal.id.to_string() == goal_id
                 && goal.status == GoalStatus::Active
                 && goal.continuation_authorized
-                && goal.usage.unmeasured_runs == 0,
+                && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
             "Goal meter continuation is not authorized"
         );
         let used = goal
@@ -54,21 +54,27 @@ impl Journal {
             .input_tokens
             .checked_add(goal.usage.output_tokens)
             .context("Goal token total overflow")?;
-        let tokens = goal
-            .limits
-            .tokens
-            .checked_sub(used)
-            .filter(|n| *n > 0)
-            .context("Goal token limit reached")?;
+        let tokens = if goal.limits.tokens == 0 {
+            u64::MAX
+        } else {
+            goal.limits
+                .tokens
+                .checked_sub(used)
+                .filter(|n| *n > 0)
+                .context("Goal token limit reached")?
+        };
         let elapsed = u64::try_from(now.saturating_sub(started).max(0))?
             .checked_add(goal.usage.elapsed_ms)
             .context("Goal elapsed usage overflow")?;
-        let time = goal
-            .limits
-            .elapsed_ms
-            .checked_sub(elapsed)
-            .filter(|n| *n > 0)
-            .context("Goal time limit reached")?;
+        let time = if goal.limits.elapsed_ms == 0 {
+            u64::MAX
+        } else {
+            goal.limits
+                .elapsed_ms
+                .checked_sub(elapsed)
+                .filter(|n| *n > 0)
+                .context("Goal time limit reached")?
+        };
         tx.execute(
             "INSERT INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
             params![command.to_string(), incarnation.to_string(), started],

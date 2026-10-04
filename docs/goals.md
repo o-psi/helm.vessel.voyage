@@ -1,13 +1,15 @@
 # Persistent Goals (#378)
 
-This is an implementation checkpoint for the v1.0.3 Goal feature. Automatic continuation and model
-reporting are implemented in Voyage, with Helm Web and TUI controls. Vessel
+This describes the Voyage runtime revision for the v1.1.0 Goal objective. Automatic
+continuation and model reporting belong to Voyage; Helm clients present and control
+the same state. The earlier v1.0.3 client behavior is not evidence that the revised
+both-client acceptance criteria have passed. Vessel
 advertises `goals` and `execution_budget`; capabilities do not grant authority.
 Release qualification remains in progress.
 The release gate remains [#378](https://github.com/o-psi/helm.vessel.voyage/issues/378).
 
 Voyage owns one Goal per session UUID in its canonical journal. The public record
-contains its objective, status, finite limits, usage, timestamps and explicit
+contains its objective, status, optional quotas, usage, timestamps and explicit
 continuation authorization. A separate private record binds authorization to
 the initiating installation, principal and optional current grant revision.
 Goal text is user-authored data; it grants no filesystem, tool, provider or
@@ -24,24 +26,27 @@ authority while waiting. Only pending storage statements wait; the mutation is
 dispatched once. Exhaustion or revoked authority remains a refusal.
 
 Set uses the command ID as the new Goal ID. Replacing a current Goal requires
-its exact ID. Edit preserves accumulated usage and pauses continuation; Resume
-records fresh authorization for the edited objective and limits. Pause may
+its exact ID. Set starts active without a second Resume or continuation checkbox.
+Edit preserves accumulated usage and active intent; an explicitly paused Goal
+stays paused. Resume records fresh authorization and resets the impasse assessment. Pause may
 stop future continuation during a run. Other changes require safe idle and no
 unresolved continuation reservation. Clear preserves the Goal revision counter;
 old commands cannot affect a later replacement. Session deletion scrubs Goal
 state and continuation requests. A branch starts without a Goal and inherits
 no continuation authority.
 
-The finite defaults are 20 admitted runs, 200,000 total input/output tokens,
-one hour of execution time, and three consecutive runs without progress.
-Limits are owner-configurable within the bounds in
+New Goals have no implicit run, token, elapsed-time or no-tool quotas. A zero
+limit denotes an unset user quota; persisted positive limits keep their original
+meaning. Limits are owner-configurable within the bounds in
 [`goals.rs`](../crates/voyage-protocol/src/goals.rs). The journal records an
 admitted-run charge before a continuation effect; a failed reservation does
 not refund its charge. Terminal settlement records aggregate token/time usage
 once, retaining an immutable receipt across reopen. Missing aggregate usage
-retains the known lower bound, increments `unmeasured_runs`, stops continuation
-and prevents Resume from disguising an unknown cost as fresh budget. An explicit
-replacement creates a new Goal. A successful run does not complete the Goal.
+retains the known lower bound and increments `unmeasured_runs`. An explicitly
+configured token quota still requires complete accounting before continuation;
+without that quota, missing aggregate token telemetry alone does not terminate
+intent. Removing the quota is an explicit owner budget change, not replacement
+of the objective. A successful run does not complete the Goal.
 
 Newly admitted Goal turns install a local provider meter shared across cloned
 child configurations. A private journal observer records each request before
@@ -54,8 +59,8 @@ cancellation. Schema 20 fences writers that cannot preserve these observations, 
 allocations, delegated-run receipts, late accounting, dispatch/non-admission
 records and evidence-linked Goal assessments.
 
-The meter refuses subsequent requests after uncertainty or observed token/time
-limits. It also adds a deny-only check to the existing execution authority, so
+The meter refuses subsequent requests after accounting uncertainty when a token
+quota is configured, or after observed configured token/time limits. It also adds a deny-only check to the existing execution authority, so
 tools and local children cannot continue after the budget ends or ignore an
 upstream revocation. A time limit requests cancellation and awaits the same
 execution through cleanup. Goal settlement releases the active steering callback
@@ -188,37 +193,49 @@ an authorized Goal remains active; client disconnect is not cancellation.
 
 Unresolved command bindings for human input, steering or cancellation block
 continuation, even across restart. Expiry alone does not prove non-admission;
-exact receipt resolution closes the binding. Accepted ordinary input/steering
-stops future continuation with `user_input` while preserving the current run and
-usage. Required decisions, pending workflow input and unresolved effects stop
-automatic admission. An explicit owner Resume is required after the obstruction
-has been handled. A delayed failure cannot stop a replacement or undo a Pause.
+exact receipt resolution closes the binding. Accepted ordinary input and steering
+preserve the Goal's active intent. Pending input, unanswered decisions and pending
+workflow input defer automatic admission without requiring another Resume after
+normal collaboration resolves them. Answered decisions do not stop settlement.
+Unresolved external effects still require attention; explicit Pause/Clear and
+cancellation retain their separate authority and cleanup boundaries. A delayed failure cannot stop a replacement or undo a Pause.
 The continuation prompt contains bounded Goal state as user task data.
 
 Snapshots expose the History-authorized objective. Ordered `goal` observations
 carry only identity, revision, status, usage and a fixed stop reason; they omit
 objective text and private authority. Clients refresh the authenticated canonical
 snapshot after Goal metadata events; they do not reconstruct objectives or
-assessments from metadata. The root of a metered Goal run receives a `goal` model tool with
-`read` and `report` actions. Local children and independently budgeted child
+assessments from metadata. An authenticated root-owner conversation receives a
+`goal` model tool with `create`, `read` and `report` actions; creation requires an
+explicit human request and starts active immediately. Existing unfinished Goals
+cannot be replaced by the model. The root of a metered Goal run receives the
+same read/report capability. Local children and independently budgeted child
 Voyages do not receive authority to report the parent's Goal. The owner mutation
-API cannot claim completion, and the model tool cannot create, resume, clear or
+API cannot claim completion, and the model tool cannot resume, clear, replace or
 increase a Goal. Reading/reporting this bound metadata is permitted during a
 read-only run; filesystem, process and remote-tool policies remain authoritative.
 
 A report binds its completion/blocked assessment to the current objective revision,
-run, incarnation and exact canonical tool call. It needs bounded explanations and
-actual tool-result IDs from the same run. Completion evidence must be successful
-and complete. Invented, repeated, ambiguous, failed, stale and other-run evidence
+run, incarnation and exact canonical tool call. It needs a bounded explanation and evidence appropriate to the objective.
+Writing, analysis and conversation assessments can omit tool evidence; executed
+work should cite available observations rather than manufacture calls solely to
+satisfy bookkeeping. Any cited tool-result IDs must belong to the same run, and
+cited completion evidence must be successful and complete. Invented, repeated, ambiguous, failed, stale and other-run evidence
 is refused. Configured secrets are rejected before report persistence. A run can
 record one immutable assessment; it remains pending until terminal settlement.
 
 Settlement revalidates the evidence digest against the final canonical transcript.
-A completed run, known aggregate usage, current authority and observed cleanup are
-required. Pause, intervening input, cancellation, interruption, decisions, token/time
-limits or unknown effects prevent promotion. A valid assessment may complete the
+A completed run, current authority and observed cleanup are required; known
+aggregate token usage is additionally required for a configured token quota.
+Pause, cancellation, interruption, unanswered decisions, configured token/time
+limits or unknown effects prevent promotion. Ordinary conversation and answered
+decisions do not revoke the objective. A valid assessment may complete the
 last allowed run; a run limit or no-progress limit alone never means success.
-Blocked assessments carry their evidence separately from a limit stop. The Goal
+Blocked assessments are retained as checkpoints; stopping as blocked requires the
+same genuine impasse in three consecutive Goal-turn assessments, with no useful
+authorized action remaining. A different or absent assessment breaks the streak,
+and owner Resume clears the current assessment. Difficulty and optional questions
+are not impasses. These assessments carry their evidence separately from a limit stop. The Goal
 snapshot retains the accepted assessment and evidence digest; public invalidation
 events omit its text. Evidence validation establishes provenance and freshness;
 it does not mechanically prove that the model's interpretation of an arbitrary

@@ -131,7 +131,7 @@ pub async fn execute_admitted_with_controls(
     let prepared = async {
         let record = run.record().await.map_err(|_| preparation::RECORD_READ)?;
         let goal_tool = owner
-            .goal_tool(run_id)
+            .goal_tool(run_id, config.goal_control.clone())
             .await
             .map_err(|_| preparation::GOAL_CONFIG)?;
         let participant_tool = crate::participant::ParticipantTool::configured(

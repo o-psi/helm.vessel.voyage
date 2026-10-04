@@ -90,7 +90,7 @@ pub(super) async fn submit(
     ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
     let request = TurnAdmission {
         budget: budget.clone(),
-        coordination,
+        coordination: coordination.clone(),
         operator_name: operator.as_ref().map(|(name, _)| name.clone()),
         command_id,
         machine_id: authorization.actor.installation_id,
@@ -213,6 +213,24 @@ pub(super) async fn submit(
             );
         }
         Admission::New(run) => run,
+    };
+    // Ordinary owner conversation can explicitly create a Goal. Delegated,
+    // coordinated and operator work never acquires human Goal control.
+    config.goal_control = if authorization.owner_connection
+        && budget.is_none()
+        && coordination.is_none()
+        && operator.is_none()
+    {
+        Some(crate::tools::goal::GoalControl {
+            authority: crate::attachment::journal::GoalAuthority {
+                installation_id: authorization.actor.installation_id,
+                principal_id: authorization.actor.principal_id,
+                grant: authorization.grant.clone(),
+            },
+            incarnation: state.registration.incarnation,
+        })
+    } else {
+        None
     };
     let terminal_authority = authorization.authority.clone();
     let workflow_result: Result<()> = async {

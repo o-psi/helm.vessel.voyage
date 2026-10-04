@@ -207,7 +207,7 @@ impl Journal {
                 objective,
                 limits,
                 replace_goal_id,
-                continue_automatically,
+                continue_automatically: _,
             } => {
                 ensure!(
                     valid_objective(objective) && limits.valid(),
@@ -228,20 +228,16 @@ impl Journal {
                     id: *command_id,
                     session_id: guard.session_id,
                     objective: objective.clone(),
-                    status: if *continue_automatically {
-                        GoalStatus::Active
-                    } else {
-                        GoalStatus::Paused
-                    },
-                    continuation_authorized: *continue_automatically,
+                    status: GoalStatus::Active,
+                    continuation_authorized: true,
                     limits: limits.clone(),
                     usage: GoalUsage::default(),
                     created_at_ms: now,
                     updated_at_ms: now,
                     assessment: None,
-                    stop_reason: (!continue_automatically).then_some(GoalStopReason::UserPaused),
+                    stop_reason: None,
                 });
-                continuation = continue_automatically.then_some(authority);
+                continuation = Some(authority);
             }
             GoalAction::Edit {
                 goal_id,
@@ -259,14 +255,13 @@ impl Journal {
                     "completed goal requires explicit replacement"
                 );
                 goal.assessment = None;
+                goal.usage.impasse_runs = 0;
                 goal.objective = objective.clone();
                 goal.limits = limits.clone();
-                // Continuation consent describes the accepted objective/limits.
-                // An edit retains usage but needs an explicit fresh resume.
-                goal.status = GoalStatus::Paused;
-                goal.stop_reason = Some(GoalStopReason::UserPaused);
-                goal.continuation_authorized = false;
-                continuation = None;
+                // A human refinement preserves active intent and accumulated use.
+                // An explicit pause stays paused; editing does not implicitly resume.
+                continuation = (goal.status == GoalStatus::Active && goal.continuation_authorized)
+                    .then_some(authority);
                 if let Some(reason) = goal.limit_reached() {
                     goal.status = GoalStatus::Limited;
                     goal.stop_reason = Some(reason);
@@ -292,10 +287,12 @@ impl Journal {
                     "goal limit reached; edit limits before resuming"
                 );
                 ensure!(
-                    goal.usage.unmeasured_runs == 0,
-                    "goal usage is incomplete; explicitly replace the goal with a new budget"
+                    !goal.limits.usage_required() || goal.usage.unmeasured_runs == 0,
+                    "goal usage is incomplete for the configured token quota; edit or remove the quota before resuming"
                 );
                 goal.status = GoalStatus::Active;
+                goal.assessment = None;
+                goal.usage.impasse_runs = 0;
                 goal.stop_reason = None;
                 goal.continuation_authorized = true;
                 goal.updated_at_ms = now;
