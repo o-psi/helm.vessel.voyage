@@ -2568,6 +2568,15 @@ fn same_genuine_impasse_requires_three_consecutive_assessments() {
         journal
             .report_goal(&guard, &context, "assessment", &report)
             .unwrap();
+        let mut messages = journal.load_session(session.id).unwrap().session.messages;
+        messages.push(Message::tool_result(
+            "assessment",
+            "recorded checkpoint",
+            true,
+        ));
+        journal
+            .checkpoint_canonical_at(&guard, run.id, &messages, &Usage::default(), now + 50)
+            .unwrap();
         journal
             .finish(
                 &guard,
@@ -2626,4 +2635,103 @@ fn human_creation_is_active_even_without_legacy_continuation_checkbox() {
     assert_eq!(after.id, before.id);
     assert_eq!(after.status, GoalStatus::Active);
     assert!(after.continuation_authorized);
+}
+
+#[test]
+fn unbudgeted_goal_continues_tool_free_turns_and_preserves_refinement_across_reopen() {
+    let (root, mut journal, session, guard, authority) = fixture();
+    let creation = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Draft the explanation and verify all requested sections".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: false,
+        },
+    );
+    journal
+        .update_goal(&guard, authority.clone(), &creation, 1000)
+        .unwrap();
+    let id = journal.goal(session.id).unwrap().goal.unwrap().id;
+    for index in 0..5 {
+        let run = finish_reserved(
+            &mut journal,
+            &guard,
+            2000 + index * 1000,
+            None,
+            RunState::Completed,
+        );
+        journal
+            .settle_goal_run(&guard, run.id, None, true, 2100 + index * 1000)
+            .unwrap();
+        let goal = journal.goal(session.id).unwrap().goal.unwrap();
+        assert_eq!(goal.id, id);
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert!(goal.continuation_authorized);
+        assert!(goal.assessment.is_none());
+        assert_eq!(goal.usage.runs, index as u32 + 1);
+    }
+    let edit = command(
+        &journal,
+        session.id,
+        GoalAction::Edit {
+            goal_id: id,
+            objective: "Draft and verify every requested section, including the human refinement"
+                .into(),
+            limits: GoalLimits::default(),
+        },
+    );
+    journal.update_goal(&guard, authority, &edit, 8000).unwrap();
+    let expected = journal.goal(session.id).unwrap();
+    drop(guard);
+    drop(journal);
+    let reopened = Journal::open(root.path().join("journal")).unwrap();
+    assert_eq!(reopened.goal(session.id).unwrap(), expected);
+    assert_eq!(expected.goal.as_ref().unwrap().status, GoalStatus::Active);
+    assert_eq!(expected.goal.as_ref().unwrap().usage.runs, 5);
+}
+
+#[test]
+fn explicit_pause_survives_terminal_settlement_and_owner_restart() {
+    let (root, mut journal, session, guard, authority) = fixture();
+    let creation = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Continue until all work is done".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: true,
+        },
+    );
+    journal
+        .update_goal(&guard, authority.clone(), &creation, 1000)
+        .unwrap();
+    let (run, _) = start_reserved(&mut journal, &guard, 2000);
+    let id = journal.goal(session.id).unwrap().goal.unwrap().id;
+    let pause = command(&journal, session.id, GoalAction::Pause { goal_id: id });
+    journal
+        .update_goal(&guard, authority, &pause, 2100)
+        .unwrap();
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Completed,
+            None,
+            Some("intermediate checkpoint"),
+        )
+        .unwrap();
+    journal
+        .settle_goal_run(&guard, run.id, None, true, 2200)
+        .unwrap();
+    let expected = journal.goal(session.id).unwrap();
+    assert_eq!(expected.goal.as_ref().unwrap().status, GoalStatus::Paused);
+    assert!(!expected.goal.as_ref().unwrap().continuation_authorized);
+    drop(guard);
+    drop(journal);
+    let reopened = Journal::open(root.path().join("journal")).unwrap();
+    assert_eq!(reopened.goal(session.id).unwrap(), expected);
+    assert!(reopened.goal_continuation(session.id).unwrap().is_none());
 }
