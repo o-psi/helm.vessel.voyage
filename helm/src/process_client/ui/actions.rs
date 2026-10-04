@@ -154,6 +154,9 @@ impl App {
                 preserve_draft,
             );
         }
+        if command_text == "/update" || command_text.starts_with("/update ") {
+            return self.remote_update_command(target.route, command_text);
+        }
         if command_text == "/execution" || command_text.starts_with("/execution ") {
             return self.execution_command(target, command_text);
         }

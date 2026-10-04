@@ -123,7 +123,11 @@ the displayed version and Vessel verification of the exact prepared artifact.
 Prepare reserves a unique operation identity before launching a bounded transient
 systemd user service. Approval records the exact release hash and original
 installation. Repeated commands return the same receipt; an uncertain launch or
-lost response never automatically reapplies the update. A prepared review expires
+lost response never automatically reapplies the update. Ordinary-user receipt
+reads also bind the stored operation identity to its filename, including
+latest-status and pending-operation scans. A copied or misnamed receipt refuses
+before worker admission, reconciliation or discard; it is not treated as approval
+for another operation. A prepared review expires
 after one hour. Only one prepared or unresolved operation is admitted at a time.
 
 The updater runs outside the supervisor's service so replacing Vessel does not
@@ -368,3 +372,21 @@ schema1/marker/backup/leases before selecting the old reader; generic rollback
 refusal remains unchanged. See [transition qualification](testing/legacy-rollback-transition-qualification.md).
 This is prepared source awaiting coordinated local/build and fresh native
 qualification; the actual CT124 unconfirmed operation is retained, not replayed.
+
+## Helm TUI review and recovery
+
+From a voyage composer or a preserved setup draft, `/update status` reads owner
+update readiness and the retained operation. `/update prepare nightly` requests a
+review, not consent to install. Read the structured receipt (version, release hash,
+service list and expiry), then explicitly use `/update approve UUID RELEASE_HASH`.
+`/update discard UUID` discards a prepared review. The ordinary-user verified
+updater capability is required; historical updater flags and version strings do
+not confer approval. Scoped workspace access does not confer installation rights.
+
+Helm records the exact connection, Vessel and operation before a request. After
+interruption, reconnect and use `/update status` rather than repeating prepare or
+apply. A copied local receipt or changed Vessel identity refuses. Completion is
+accepted only after fresh capabilities report the same Vessel and exact reviewed
+running release. No session, draft text, grant or provider credential is moved.
+This TUI controller currently admits the verified ordinary-user updater, not
+privileged system activation; that remains a separately verified installation scope.

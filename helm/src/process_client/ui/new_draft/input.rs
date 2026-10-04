@@ -158,6 +158,10 @@ impl App {
             self.quit = true;
             return Ok(());
         }
+        if text == "/update" || text.starts_with("/update ") {
+            let route = self.new_drafts.get(&id).context("Draft unavailable")?.route;
+            return self.remote_update_command(route, text);
+        }
         if self.discovery_command(text)? {
             return Ok(());
         }

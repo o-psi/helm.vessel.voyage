@@ -46,6 +46,19 @@ fn record_path(operation: &str) -> Result<PathBuf> {
     id(operation)?;
     Ok(directory()?.join(format!("{operation}.json")))
 }
+fn load_recovery(path: &Path) -> Result<Recovery> {
+    let operation = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .context("Invalid recovery receipt filename")?;
+    id(operation)?;
+    let record: Recovery = serde_json::from_slice(&files::read(path, 1024 * 1024)?)?;
+    ensure!(
+        record.review.operation_id == operation,
+        "Recovery receipt identity conflict"
+    );
+    Ok(record)
+}
 fn save_recovery(record: &mut Recovery, phase: &str) -> Result<()> {
     record.phase = phase.into();
     files::atomic_json(&record_path(&record.review.operation_id)?, record)
@@ -991,7 +1004,7 @@ fn apply(record: &mut Recovery, approved: &str) -> Result<()> {
     for entry in fs::read_dir(root()?)? {
         let path = entry?.path();
         if path.extension().is_some_and(|ext| ext == "json") {
-            let other: Record = serde_json::from_slice(&files::read(&path, 65536)?)?;
+            let other = load_path(&path)?;
             ensure!(
                 other.operation_id == record.review.original_operation
                     || ![
@@ -1077,8 +1090,7 @@ pub(super) fn supersedes(original: &Record) -> Result<bool> {
     ensure!(entries.len() <= 260, "Recovery receipt bound exceeded");
     for entry in entries {
         if entry.path().extension().is_some_and(|ext| ext == "json") {
-            let recovered: Recovery =
-                serde_json::from_slice(&files::read(&entry.path(), 1024 * 1024)?)?;
+            let recovered = load_recovery(&entry.path())?;
             if recovered.phase == "complete"
                 && recovered.review.original_operation == original.operation_id
             {
@@ -1143,14 +1155,12 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 args.len() == 4 && args[2] == "--review",
                 "Exact owner review hash required"
             );
-            let mut record: Recovery =
-                serde_json::from_slice(&files::read(&record_path(operation)?, 1024 * 1024)?)?;
+            let mut record = load_recovery(&record_path(operation)?)?;
             apply(&mut record, &args[3])
         }
         "status" => {
             ensure!(args.len() == 2, "Status takes only the recovery UUID");
-            let mut record: Recovery =
-                serde_json::from_slice(&files::read(&record_path(operation)?, 1024 * 1024)?)?;
+            let mut record = load_recovery(&record_path(operation)?)?;
             if record.phase == "committing" || record.phase == "unconfirmed" {
                 let _worker = files::lock(&root()?.join("worker.lock"))?;
                 if let Some(proof) = &record.proof
