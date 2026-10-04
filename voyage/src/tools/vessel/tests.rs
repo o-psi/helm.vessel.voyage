@@ -609,7 +609,7 @@ async fn dispatch_matrix_preserves_public_read_and_mutation_envelopes() {
     ];
     for value in actions {
         let action: Action = serde_json::from_value(value.clone()).unwrap();
-        let result = perform(action, &transport, &ctx, None, None).await;
+        let result = perform(action, &transport, &ctx, None, None, "local").await;
         assert!(result.is_ok(), "{value}: {result:?}");
     }
     task.abort();

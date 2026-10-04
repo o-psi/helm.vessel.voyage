@@ -716,7 +716,7 @@ impl Tool for VesselTool {
         let timeout = context.timeout.min(Duration::from_secs(35));
         let result = tokio::select! {
             _ = context.cancellation.cancelled() => Err(ToolError::Cancelled),
-            result = tokio::time::timeout(timeout, perform(action, &transport, context, self.context.as_ref(), self.launch.as_ref())) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
+            result = tokio::time::timeout(timeout, perform(action, &transport, context, self.context.as_ref(), self.launch.as_ref(), &target)) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
         };
         if let Some((root, id)) = journal {
             let value = match result {
@@ -803,6 +803,7 @@ async fn perform(
     context: &ToolContext,
     owner: Option<&VesselContext>,
     launch: Option<&crate::Config>,
+    target: &str,
 ) -> Result<Value, ToolError> {
     check(context)?;
     let budget = goal_budget::prepare(&action, t, launch).await?;
@@ -1116,7 +1117,7 @@ async fn perform(
             if started.get("status").is_some() {
                 return Ok(
                     json!({"start_command_id":session_id,"start":started,"initial_task_submitted":false,"resolution_request": {
-                        "action":"resolve_create", "command_id":session_id,"session_id":session_id,
+                        "action":"resolve_create", "target":target, "command_id":session_id,"session_id":session_id,
                         "workspace":command_workspace, "config_path":command_config,
                         "settings":command_settings,"account":command_binding
                     }}),

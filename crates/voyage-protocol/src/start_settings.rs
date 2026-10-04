@@ -10,6 +10,7 @@ pub enum StartAccessMode {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct StartSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(
         default,
@@ -31,13 +32,21 @@ pub struct StartSettings {
     pub temperature: Option<Option<f32>>,
     /// Omission preserves the base; zero removes the explicit output-token cap.
     /// Provider/model limits still apply. Positive values request an explicit cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_window: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub access_mode: Option<StartAccessMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_max_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_max_unread_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subagent_max_concurrency: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub command_timeout_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_output_bytes: Option<usize>,
 }
 fn nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(

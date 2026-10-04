@@ -687,6 +687,11 @@ async fn creation_start_refusal_or_unknown_never_submits_and_retains_exact_resol
         start.refused(unknown);
         let result = done(task).await.unwrap();
         assert_eq!(result["result"]["initial_task_submitted"], false);
+        assert_eq!(result["result"]["resolution_request"]["target"], "local");
+        crate::tools::schema::CompiledSchema::compile(&input_schema())
+            .unwrap()
+            .validate(&result["result"]["resolution_request"])
+            .unwrap();
         assert_no_secret(&result);
         assert_eq!(f.peer.count(), 2);
         f.reopen_registry();

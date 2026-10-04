@@ -196,7 +196,10 @@ Account transport names come from the shared typed contract, including `xai_oaut
 accepting a transport name does not establish host availability or account-use rights.
 Startup refusals expose only bounded cause codes and an optional settings field,
 never the raw host diagnostic. A refused create result includes `resolution_request`
-with its exact resolved settings/account payload. Use that request unchanged with
+with its exact resolved settings/account payload and original `target` alias.
+Recovery must retain that destination; omission must never redirect remote recovery
+to local. Absent settings remain omitted, explicit nullable resets remain null, and
+zero output-token caps remain explicit zero. Use that request unchanged with
 `action: "resolve_create"` on targets advertising `start_settings_resolution`.
 Its `command_id` is the start-command/session ID, **not** the initial-submit ID.
 Resolution never launches or submits the initial task, recaptures defaults, or

@@ -213,7 +213,7 @@ async fn goal_vessel_create_and_submit_publish_budget_before_effects_and_import_
             json!({"action":"submit","session_id":session,"command_id":command,"expected_revision":0,"prompt":"bounded child"})
         };
         let action: Action = serde_json::from_value(value.clone()).unwrap();
-        let result = perform(action, &peer.transport, &ctx, None, Some(&config))
+        let result = perform(action, &peer.transport, &ctx, None, Some(&config), "local")
             .await
             .unwrap();
         assert!(result.to_string().contains("accepted"), "{result}");
@@ -262,7 +262,7 @@ async fn goal_vessel_refuses_legacy_peer_and_unbudgeted_steering_before_effects(
     let ctx = crate::tools::reliability_tests::context(peer.root.path());
     let action:Action=serde_json::from_value(json!({"action":"submit","session_id":Uuid::new_v4(),"command_id":Uuid::new_v4(),"expected_revision":0,"prompt":"bounded child"})).unwrap();
     assert!(
-        perform(action, &peer.transport, &ctx, None, Some(&config))
+        perform(action, &peer.transport, &ctx, None, Some(&config), "local")
             .await
             .is_err()
     );
@@ -276,7 +276,7 @@ async fn goal_vessel_refuses_legacy_peer_and_unbudgeted_steering_before_effects(
     );
     let action:Action=serde_json::from_value(json!({"action":"steer","session_id":Uuid::new_v4(),"command_id":Uuid::new_v4(),"incarnation":Uuid::new_v4(),"run_id":Uuid::new_v4(),"expected_revision":0,"prompt":"unbounded"})).unwrap();
     assert!(
-        perform(action, &peer.transport, &ctx, None, Some(&config))
+        perform(action, &peer.transport, &ctx, None, Some(&config), "local")
             .await
             .is_err()
     );
@@ -297,7 +297,7 @@ async fn goal_child_submission_requires_history_before_allocating_or_dispatching
     let ctx = crate::tools::reliability_tests::context(peer.root.path());
     let action:Action=serde_json::from_value(json!({"action":"submit","session_id":Uuid::new_v4(),"command_id":Uuid::new_v4(),"expected_revision":0,"prompt":"requires accounting"})).unwrap();
     assert!(
-        perform(action, &peer.transport, &ctx, None, Some(&config))
+        perform(action, &peer.transport, &ctx, None, Some(&config), "local")
             .await
             .is_err()
     );

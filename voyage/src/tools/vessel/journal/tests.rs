@@ -87,6 +87,50 @@ fn uncertain_create_receipt_exposes_exact_frozen_resolution_not_mutable_defaults
     assert_eq!(resolution["command_id"], start_id.to_string());
     assert_eq!(resolution["settings"]["max_output_tokens"], 0);
     assert!(resolution["settings"]["reasoning_effort"].is_null());
-    let action: Action = serde_json::from_value(resolution.clone()).unwrap();
+    let mut typed = resolution.clone();
+    typed.as_object_mut().unwrap().remove("target");
+    let action: Action = serde_json::from_value(typed).unwrap();
     assert!(matches!(action, Action::ResolveCreate { command_id, .. } if command_id == start_id));
+}
+
+#[test]
+fn remote_frozen_resolution_is_schema_valid_and_preserves_destination_and_resets() {
+    for settings in [
+        json!({}),
+        json!({"max_output_tokens":0}),
+        json!({"reasoning_effort":null,"temperature":null}),
+        json!({"max_output_tokens":2048}),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let submit = Uuid::new_v4();
+        let start = Uuid::new_v4();
+        admit(
+            root,
+            submit,
+            &json!({"target":"remote-b","request":{"action":"create","session_id":start}}),
+        )
+        .unwrap();
+        let command = VesselCommand::StartSettings {
+            command_id: start,
+            session_id: start,
+            workspace: "/remote".into(),
+            config_path: None,
+            settings: serde_json::from_value(settings.clone()).unwrap(),
+            binding: None,
+        };
+        wire(root, start, &serde_json::to_value(command).unwrap()).unwrap();
+        let request = receipt(root, submit).unwrap()["resolution_request"].clone();
+        assert_eq!(request["target"], "remote-b");
+        assert_eq!(request["settings"], settings);
+        crate::tools::schema::CompiledSchema::compile(&input_schema())
+            .unwrap()
+            .validate(&request)
+            .unwrap();
+        let mut typed = request.clone();
+        typed.as_object_mut().unwrap().remove("target");
+        assert!(
+            matches!(serde_json::from_value::<Action>(typed).unwrap(),Action::ResolveCreate {command_id,..} if command_id == start)
+        );
+    }
 }

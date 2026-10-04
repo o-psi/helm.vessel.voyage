@@ -156,7 +156,7 @@ fn creation_resolution(root: &Path, metadata: &Value) -> Result<Value, ToolError
         return Err(failed("retained start identity mismatch"));
     }
     Ok(
-        json!({"action":"resolve_create","command_id":command_id,"session_id":session_id,
+        json!({"action":"resolve_create","target":metadata["target"],"command_id":command_id,"session_id":session_id,
         "workspace":workspace,"config_path":config_path,"settings":settings,"account":binding}),
     )
 }
