@@ -22,6 +22,9 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expected_revision,
             expected_cursor,
         },
+        VoyageCommand::InitializeDecisions { generation } => {
+            RuntimeCommand::InitializeDecisions { generation }
+        }
         VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
         VoyageCommand::WorkspaceFile { path } => RuntimeCommand::WorkspaceFile { path },
         VoyageCommand::WorkspaceChanges { scope, path } => {
@@ -719,7 +722,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         VoyageCommand::WorkspaceChanges { .. } | VoyageCommand::WorkspaceFile { .. } => {
             Some(ProcessRight::WorkspaceRead)
         }
-        VoyageCommand::Decisions => Some(ProcessRight::Decide),
+        VoyageCommand::Decisions | VoyageCommand::InitializeDecisions { .. } => {
+            Some(ProcessRight::Decide)
+        }
         VoyageCommand::UploadImage { .. }
         | VoyageCommand::SubmitContent { .. }
         | VoyageCommand::Submit { .. }

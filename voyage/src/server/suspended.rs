@@ -267,6 +267,13 @@ async fn inspect(
                 )
                 .await
         }
+        RuntimeCommand::InitializeDecisions { generation } => super::commands::decision_entities(
+            generation,
+            registration.session_id,
+            registration.incarnation,
+            0,
+            json!([]),
+        ),
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
             if let Ok(mut config) = config(owner, registration, directory).await {

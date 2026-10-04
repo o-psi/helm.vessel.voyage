@@ -21,6 +21,10 @@ pub enum WorkspaceChangeScope {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    /// Separate Decide-authorized entity stream; never included in History initialization.
+    InitializeDecisions {
+        generation: Uuid,
+    },
     /// Bounded canonical entity initialization at an exact revision/journal fence.
     InitializeEntities {
         generation: Uuid,
@@ -386,6 +390,7 @@ impl RuntimeCommand {
                 | Self::Resolve { .. }
                 | Self::Events { .. }
                 | Self::NotificationEvents { .. }
+                | Self::InitializeDecisions { .. }
                 | Self::Decisions
                 | Self::Controls { .. }
                 | Self::WorkflowPreview { .. }

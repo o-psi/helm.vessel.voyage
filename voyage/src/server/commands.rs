@@ -665,6 +665,23 @@ pub(super) async fn dispatch_admitted(
                 .terminal(run_id, terminal_id, operation)
                 .await
         }
+        RuntimeCommand::InitializeDecisions { generation } => {
+            let _admission = state.admission.lock().await;
+            let decisions = state
+                .owner
+                .decisions(state.registration.incarnation)
+                .await?;
+            let cursor = state.owner.live_observations(0, 1).await?["latest_cursor"]
+                .as_u64()
+                .context("missing decision cursor")?;
+            decision_entities(
+                generation,
+                state.registration.session_id,
+                state.registration.incarnation,
+                cursor,
+                decisions,
+            )
+        }
         RuntimeCommand::Decisions => state.owner.decisions(state.registration.incarnation).await,
         command @ RuntimeCommand::Respond { .. } => {
             let _admission = state.admission.lock().await;
@@ -694,4 +711,53 @@ pub(super) async fn dispatch_admitted(
             Ok(json!({"status":"stopping","cleanup":"pending"}))
         }
     }
+}
+
+pub(super) fn decision_entities(
+    generation: Uuid,
+    session_id: Uuid,
+    incarnation: Uuid,
+    cursor: u64,
+    decisions: Value,
+) -> Result<Value> {
+    use voyage_protocol::event_connection::{
+        EntityKind, Fence, InitializationEvent, MAX_ENTITY_BYTES,
+    };
+    ensure!(!generation.is_nil(), "decision generation required");
+    let values = decisions
+        .as_array()
+        .context("invalid decision entity list")?;
+    ensure!(values.len() <= 64, "decision entity scope exceeds bound");
+    let fence = Fence {
+        generation,
+        session_id,
+        incarnation,
+    };
+    let mut events = vec![InitializationEvent::Begin {
+        fence: fence.clone(),
+        cursor,
+    }];
+    for (sequence, value) in values.iter().enumerate() {
+        ensure!(
+            serde_json::to_vec(value)?.len() <= MAX_ENTITY_BYTES,
+            "decision entity exceeds bound"
+        );
+        let id = value["decision_id"]
+            .as_str()
+            .context("missing decision identity")?
+            .to_owned();
+        events.push(InitializationEvent::Entity {
+            fence: fence.clone(),
+            sequence: sequence as u64,
+            entity_kind: EntityKind::Decision,
+            entity_id: id,
+            value: value.clone(),
+        });
+    }
+    events.push(InitializationEvent::Complete {
+        fence,
+        sequence: values.len() as u64,
+        cursor,
+    });
+    Ok(json!({"version":3,"events":events,"cursor":cursor}))
 }

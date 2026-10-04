@@ -272,6 +272,7 @@ fn allowed(command: &VesselCommand) -> bool {
             | VoyageCommand::GoalUpdate { .. }
             | VoyageCommand::InitializeEntities { .. }
             | VoyageCommand::Snapshot
+            | VoyageCommand::InitializeDecisions { .. }
             | VoyageCommand::Decisions
             | VoyageCommand::Receipt { .. }
             | VoyageCommand::UploadImage { .. }

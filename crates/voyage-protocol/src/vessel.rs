@@ -117,6 +117,10 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    /// Separate Decide-authorized entity stream; never included in History initialization.
+    InitializeDecisions {
+        generation: Uuid,
+    },
     /// Bounded canonical entity initialization at an exact revision/journal fence.
     InitializeEntities {
         generation: Uuid,
@@ -398,7 +402,8 @@ impl VoyageCommand {
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
-            Self::InitializeEntities { .. }
+            Self::InitializeDecisions { .. }
+                | Self::InitializeEntities { .. }
                 | Self::HostBrowser { .. }
                 | Self::Browser { .. }
                 | Self::ExecuteTool { .. }
