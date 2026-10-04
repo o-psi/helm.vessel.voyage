@@ -12,6 +12,7 @@ pub struct AnthropicProvider {
     api_key: super::api_credential::ApiCredential,
     base_url: String,
     output_capacities: tokio::sync::Mutex<std::collections::BTreeMap<String, u32>>,
+    enabled_context: Option<u64>,
 }
 
 impl AnthropicProvider {
@@ -20,6 +21,7 @@ impl AnthropicProvider {
             client: super::native_http_client(),
             api_key: super::api_credential::ApiCredential::Legacy(api_key),
             output_capacities: Default::default(),
+            enabled_context: None,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com/v1".into())
                 .trim_end_matches('/')
@@ -31,6 +33,7 @@ impl AnthropicProvider {
         config: &crate::Config,
         redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     ) -> Self {
+        self.enabled_context = (config.context_window > 0).then_some(config.context_window as u64);
         if let Some(binding) = &config.account {
             self.api_key = super::api_credential::ApiCredential::Account {
                 binding: binding.clone(),
@@ -128,6 +131,7 @@ impl Provider for AnthropicProvider {
         let mut remaining = super::catalog::MAX_BYTES;
         let count = super::catalog::json(response, &mut remaining).await.ok()?;
         let tokens = count.get("input_tokens")?.as_u64()?;
+        self.api_key.resolve().ok()?; // repeat authority after the count operation
         let reserve = self.output_tokens(request).await.ok().map(u64::from);
         let mut url = reqwest::Url::parse(&format!("{}/models/", self.base_url)).ok()?;
         url.path_segments_mut()
@@ -157,7 +161,11 @@ impl Provider for AnthropicProvider {
             None
         };
         Some(crate::context::RequestPressure {
-            enabled_capacity: capacity, input_tokens: Some(tokens), complete: true,
+            enabled_capacity: match (self.enabled_context, capacity) {
+                (Some(operator), Some(provider)) => Some(operator.min(provider)),
+                (Some(operator), None) => Some(operator),
+                (None, known) => known,
+            }, input_tokens: Some(tokens), complete: true,
             method: "anthropic.messages.count_tokens: final shared input encoding; provider count estimate".into(),
             reserve_tokens: reserve, safety_tokens: 0,
         })

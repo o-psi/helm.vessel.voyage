@@ -1259,5 +1259,6 @@ remains unknown. Other production adapters do not supply complete accounting; un
 occupancy does not trigger byte-based proactive compaction. The old 192 KiB
 unsaved-message trigger is removed. Saved-tool-evidence payload projection and
 bounded explicit provider-rejection recovery remain distinct. A model-callable runtime `context` status/compaction tool is implemented with
-durable projection receipts. Shared client accounting presentation and broader production
-count adapter qualification remain unfinished. See [configuration](configuration.md#working-context-compaction).
+durable projection receipts. Both Helm clients expose request-scoped read-only accounting (TUI operator
+header and Web refresh panel); broader transport counter qualification and
+final-source coverage remain pending. See [configuration](configuration.md#working-context-compaction).
