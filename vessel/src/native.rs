@@ -4,6 +4,8 @@ pub mod macos;
 #[cfg(target_os = "macos")]
 pub mod macos_session;
 #[cfg(unix)]
+pub mod unix_catalogue;
+#[cfg(unix)]
 pub mod unix_registry;
 #[cfg(unix)]
 pub mod unix_transport;
