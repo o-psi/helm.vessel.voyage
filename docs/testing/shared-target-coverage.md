@@ -1,0 +1,91 @@
+# Current-workspace coverage objects (#251)
+
+`packaging/coverage_artifacts.py` is an offline selection/export/audit guard, not
+an alternative test runner. It never scans `target/debug/deps` for executables,
+cleans caches, merges profiles, changes source or computes published percentages.
+It retains **every current workspace executable**, including non-test executables
+reported by Cargo, and requires a test artifact for every test-enabled member
+target. Disabled test targets and custom build scripts are not required test
+artifacts. Dependencies are not workspace test targets. Default features remain
+Cargo's default; the manifest records resolved member features for review.
+
+Use an exclusive shared-target window, the checkout-absolute forwarding wrapper
+and the instrumentation environment from `cargo llvm-cov show-env --export-prefix`.
+Do not run the selection Cargo command without that instrumentation. Preserve
+foreign profiles. Select/merge only the current measurement's profile prefix;
+never glob every shared profile. The ordinary full-workspace tests in `AGENTS.md`
+remain mandatory. Retain the default reports as rejected evidence if their object
+scan includes historical binaries; do not publish them as corrected results.
+
+After the full test command has passed, with unchanged source and environment,
+collect the complete current compiler-artifact stream (including cached artifacts):
+
+```sh
+# $evidence is a new ignored directory; $PWD is the measured checkout.
+# All commands here run in the already-authorized exclusive Cargo window.
+cargo metadata --no-deps --locked --format-version 1 > "$evidence/metadata.json"
+cargo test --workspace --locked --no-run --message-format=json -j 8 \
+  > "$evidence/artifacts.jsonl" 2> "$evidence/artifacts.stderr"
+# Check the Cargo exit status before continuing.
+python3 packaging/coverage_artifacts.py select --source-root "$PWD" \
+  --metadata "$evidence/metadata.json" --cargo-json "$evidence/artifacts.jsonl" \
+  --output "$evidence/objects.json"
+```
+
+Selection records SHA-256 for all selected executables, every Rust source file
+outside target/Git metadata, Cargo manifests and lockfiles. Untracked Rust source
+is included. It rejects failed/incomplete build streams, missing test targets,
+missing member metadata, wrong checkout and missing executables. Preserve Git
+commit/dirty state, tool versions, exact instrumentation environment (without
+credentials), command and test counts alongside this evidence. A hash of source
+bytes is not proof an executable was compiled from those bytes: validate compiler
+instrumentation, mapping inventory and source identity before accepting caches.
+The Cargo JSON and metadata must come from the same invocation scope/checkout.
+
+Export the explicitly merged current profile over the selected objects. Supply
+**exactly the existing cargo-llvm-cov default filename exclusion regex**, obtained
+from that installed tool's verbose report command; retain the verbose command in
+the evidence. Do not invent extra exclusions or omit inconvenient current source.
+`$current_profdata` and `$default_regex` below are prerequisites, not guessed paths:
+
+```sh
+python3 packaging/coverage_artifacts.py export --source-root "$PWD" \
+  --manifest "$evidence/objects.json" --llvm-cov "$LLVM_COV" \
+  --profile "$current_profdata" --ignore-filename-regex "$default_regex" \
+  --output "$evidence/current-export.json" --diagnostics "$evidence/export.stderr"
+python3 packaging/coverage_artifacts.py audit --source-root "$PWD" \
+  --manifest "$evidence/objects.json" --export "$evidence/current-export.json" \
+  --diagnostics "$evidence/export.stderr"
+```
+
+Export refuses to overwrite evidence and audits again after LLVM. Any LLVM
+stderr, changed source/object, foreign mapping, unknown source, duplicate logical
+file or empty mapping inventory is a refusal. Preserve diagnostics and investigate;
+report generation is not a passed test. Summary totals come from this audited
+export's `data[0].totals`, not the historical glob report. For HTML/LCOV use the
+**same explicit object list, profile and exclusions**; retain and reconcile detailed
+JSON/LCOV as described in `quality.md`.
+
+The guard deliberately refuses reused foreign source paths, even byte-identical
+ones. Recompile affected targets with current-checkout mapping rather than silently
+normalizing another checkout's paths. Compare mapped source inventory/totals to
+previous full-workspace evidence: missing cross-crate counters need investigation,
+not denominator reduction. This guard cannot prove complete counters from a source
+hash alone, or prove which test actually ran from a no-run stream. Retain the full
+test log and verify every executed test executable belongs to `test_objects`.
+
+## Verification and source-switch qualification
+
+Run `python3 -m unittest discover -s packaging -p test_coverage_artifacts.py -v`.
+Synthetic cases cover all-member target completeness, non-test executables, stale objects, incomplete Cargo streams, mutations, foreign
+and duplicate mappings, diagnostics and checkout-switch refusal. They are not a
+native Cargo/LLVM source-switch qualification.
+
+In a serialized Cargo window, collect/instrument/test/export in main, then a clean
+worktree sharing its target, then main again, with checkout-specific wrapper paths
+and distinct current profile prefixes/evidence directories. Retain manifests,
+Cargo logs and exports from all three. Each audit must accept only its checkout's
+current source mappings, every member/test target and all executed binaries; old
+manifests must reject replacement objects/source. Preserve caches and all foreign
+raw profiles. Missing toolchains or coverage tools are a real gate: do not install
+privileged dependencies, substitute a synthetic run or claim final-source coverage.
