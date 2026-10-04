@@ -249,6 +249,12 @@ async fn inspect(
             expected_revision,
             expected_cursor,
         } => {
+            let settings = if let Ok(config) = config(owner, registration, directory).await {
+                json!({"inference":super::configuration::inference_snapshot(&config),"inference_next_turn":false,"inference_current":null,
+                    "access":crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace).ok().and_then(|p|serde_json::to_value(p.policy().access_mode()).ok())})
+            } else {
+                json!({"inference":null,"access":null,"inference_next_turn":false,"inference_current":null})
+            };
             owner
                 .initialize_entities(
                     generation,
@@ -257,6 +263,7 @@ async fn inspect(
                     limit,
                     expected_revision,
                     expected_cursor,
+                    settings,
                 )
                 .await
         }

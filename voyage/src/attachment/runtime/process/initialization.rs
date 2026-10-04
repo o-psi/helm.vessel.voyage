@@ -10,6 +10,7 @@ impl ManagedSessionOwner {
         limit: u32,
         expected_revision: Option<u64>,
         expected_cursor: Option<u64>,
+        settings: Value,
     ) -> anyhow::Result<Value> {
         anyhow::ensure!((1..=64).contains(&limit), "entity page limit must be 1..64");
         anyhow::ensure!(!generation.is_nil(), "initialization generation required");
@@ -21,7 +22,7 @@ impl ManagedSessionOwner {
             if offset > 0 { anyhow::ensure!(expected_revision == Some(saved.revision) && expected_cursor == Some(cursor), "initialization fence changed; discard staged generation"); }
             let session = &saved.session;
             let fence = Fence { generation, session_id: store.session_id, incarnation };
-            let total = 8_usize.checked_add(session.messages.len()).context("entity count overflow")?;
+            let total = 9_usize.checked_add(session.messages.len()).context("entity count overflow")?;
             let offset = usize::try_from(offset)?;
             anyhow::ensure!(offset <= total, "entity offset beyond scope");
             let end = offset.saturating_add(limit as usize).min(total);
@@ -37,7 +38,8 @@ impl ManagedSessionOwner {
                     5 => (EntityKind::Resource, "cleanup".to_string(), store.journal.cleanup_progress(store.session_id)?),
                     6 => (EntityKind::Resource, "session_resources".to_string(), store.journal.session_resources(store.session_id)?),
                     7 => (EntityKind::Usage, "usage".to_string(), serde_json::to_value(store.journal.delegated_usage(session.id)?)?),
-                    _ => { let message = index - 8; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
+                    8 => (EntityKind::Settings, "settings".to_string(), settings.clone()),
+                    _ => { let message = index - 9; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
                 };
                 anyhow::ensure!(serde_json::to_vec(&value)?.len() <= MAX_ENTITY_BYTES, "entity requires bounded content chunks");
                 events.push(InitializationEvent::Entity { fence: fence.clone(), sequence: index as u64, entity_kind, entity_id, value });

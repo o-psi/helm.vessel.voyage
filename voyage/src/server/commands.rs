@@ -349,6 +349,14 @@ pub(super) async fn dispatch_admitted(
             expected_revision,
             expected_cursor,
         } => {
+            let _admission = state.admission.lock().await;
+            let config = state.config.read().await.clone();
+            let active = state.active.lock().await;
+            let settings = json!({"inference": super::configuration::inference_snapshot(&config),
+                "inference_next_turn":active.is_some(),
+                "inference_current":active.as_ref().map_or(Value::Null, |run| run.inference.clone()),
+                "access":crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace).ok().and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())});
+            drop(active);
             state
                 .owner
                 .initialize_entities(
@@ -358,6 +366,7 @@ pub(super) async fn dispatch_admitted(
                     limit,
                     expected_revision,
                     expected_cursor,
+                    settings,
                 )
                 .await
         }
