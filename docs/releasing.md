@@ -44,6 +44,13 @@ in historical commits does not justify restoring deleted files in a working tree
 The GitHub [`nightly` workflow](../.github/workflows/nightly.yml) builds Linux x86-64 programs at
 03:23 UTC each night (GitHub may delay scheduled runs), or through a manual
 workflow dispatch. Both modes check out current `main`. No hosted tests run.
+The schedule is the default build cadence. Ordinary code, Cargo, packaging,
+workflow and documentation deliveries do not dispatch nightlies. Manual dispatch
+requires an explicit user request for an immediate hosted build/download or an
+explicit gate in the requested release process. Required local verification and
+publication still apply; ordinary delivery does not wait for the next nightly.
+When a hosted build is explicitly required, follow the run and verify the actual
+source and published assets as described in [project instructions](../AGENTS.md).
 A successful new build publishes a **public GitHub prerelease** with a unique
 `nightly-VERSION` tag, a full `.tar.gz` archive and `.sha256` checksum. The tag
 points to the actual checked-out source commit; `BUILD.txt` records the same

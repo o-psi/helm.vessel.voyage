@@ -645,10 +645,12 @@ check the test exit status, select all current workspace objects and publish
 formatting, Clippy and client/gateway checks appropriate to each change. Validate
 actual changed behavior; do not count a compile as installation or runtime proof.
 
-After authorized main publication, inspect existing nightly runs, dispatch the
-existing build-only workflow if needed, follow it to completion and inspect actual
+Ordinary main publication does not dispatch a nightly or wait for one. When the
+user explicitly requests an immediate hosted build/download or the requested
+release process requires it, inspect existing runs before dispatching the existing
+build-only workflow. Follow that required build to completion and inspect actual
 BUILD.txt source, archive checksum, binaries and browser-asset inventory. No stable
-release is implied. Record exact commits, run URLs and artifacts in #344.
+release is implied. Record required build evidence in #344's current checkpoint.
 
 Live acceptance uses an opted-in host after inventory and review. Through the
 shared browser: create ordinary voyage → observe controlled OS denial → approve

@@ -122,15 +122,18 @@ responsibility for its integration and outcome.
   then retire completed task worktrees while preserving unrelated work, release
   artifacts and evidence. If rules require unavailable human review, record that
   specific blocker instead of bypassing it or calling the work delivered.
-- For changes to build workflows, version generation, packaging, Rust code or Cargo
-  inputs, own an actual hosted build result after publication. Inspect existing runs
-  first; reuse a suitable queued/running run or a verified artifact rather than
-  dispatching duplicates. If none exists, dispatch the existing `nightly.yml` on
-  `main` yourself; do not wait overnight or tell the user to click Run workflow.
-  Ordinary documentation-only changes do not need an extra hosted build; the
-  scheduled workflow will pick them up normally.
-- Follow the exact run to a terminal result with bounded waits. Inspect failing
-  jobs/logs, fix in-scope causes, verify locally, publish and follow the corrected
+- Nightly builds run on the schedule in `nightly.yml`; ordinary delivery does not
+  authorize a manual dispatch, including changes to Rust, Cargo, packaging,
+  version generation or workflows. Complete applicable local verification and
+  publication without starting or waiting for a nightly. A pending scheduled
+  build is not a delivery blocker unless its result is an explicit acceptance gate.
+- Dispatch `nightly.yml` on `main` only when the user explicitly requests an
+  immediate hosted build/download or the requested release process explicitly
+  requires it. When a build is required, inspect existing runs and artifacts first;
+  reuse a suitable run or verified artifact instead of dispatching duplicates.
+  Own that required build through its result and artifact verification.
+- For a required build, follow the exact run to a terminal result with bounded
+  waits. Inspect failing jobs/logs, fix in-scope causes, verify locally, publish and follow the corrected
   build. Retry a known transient failure only after inspecting it, with a bounded
   retry budget. Resolve uncertain dispatch results by inspecting runs before issuing
   another dispatch. Never repeatedly rebuild unchanged failing source blindly.
