@@ -34,3 +34,27 @@ pub(super) async fn observe(
         tokio::select! {_=state.shutdown.cancelled()=>return Ok(events),_=tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
     }
 }
+
+/// Replay the retained public journal without translating missing payloads into
+/// synthetic entities. Transitional metadata-only rows demand reinitialization.
+pub(super) fn entity_replay(page: Value) -> Result<Value> {
+    if page["replay_gap"] == true {
+        return Ok(
+            serde_json::json!({"version":3,"reset":"retention_gap","cursor":page["cursor"],"latest_cursor":page["latest_cursor"],"has_more":false,"events":[]}),
+        );
+    }
+    let events = page["events"].as_array().context("missing replay events")?;
+    ensure!(events.len() <= 128, "replay page exceeds bound");
+    if events.iter().any(|event| {
+        event["payload"]
+            .as_object()
+            .is_none_or(|payload| payload.is_empty())
+    }) {
+        return Ok(
+            serde_json::json!({"version":3,"reset":"unprojected_retained_entity","cursor":page["cursor"],"latest_cursor":page["latest_cursor"],"has_more":false,"events":[]}),
+        );
+    }
+    Ok(
+        serde_json::json!({"version":3,"cursor":page["cursor"],"latest_cursor":page["latest_cursor"],"has_more":page["has_more"],"events":events}),
+    )
+}

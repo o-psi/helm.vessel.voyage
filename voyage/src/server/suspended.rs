@@ -274,6 +274,10 @@ async fn inspect(
             0,
             json!([]),
         ),
+        RuntimeCommand::ReplayEntities { after, limit } => {
+            let page = owner.live_observations(after, limit).await?;
+            super::observations::entity_replay(page)
+        }
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
             if let Ok(mut config) = config(owner, registration, directory).await {

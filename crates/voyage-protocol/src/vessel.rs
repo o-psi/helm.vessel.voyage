@@ -117,6 +117,11 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    /// Explicit bounded replay; retention loss requires entity reinitialization.
+    ReplayEntities {
+        after: u64,
+        limit: u32,
+    },
     /// Separate Decide-authorized entity stream; never included in History initialization.
     InitializeDecisions {
         generation: Uuid,
@@ -402,7 +407,8 @@ impl VoyageCommand {
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
-            Self::InitializeDecisions { .. }
+            Self::ReplayEntities { .. }
+                | Self::InitializeDecisions { .. }
                 | Self::InitializeEntities { .. }
                 | Self::HostBrowser { .. }
                 | Self::Browser { .. }

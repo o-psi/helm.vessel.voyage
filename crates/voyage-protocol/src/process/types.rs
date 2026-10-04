@@ -21,6 +21,11 @@ pub enum WorkspaceChangeScope {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    /// Explicit bounded replay; retention loss requires entity reinitialization.
+    ReplayEntities {
+        after: u64,
+        limit: u32,
+    },
     /// Separate Decide-authorized entity stream; never included in History initialization.
     InitializeDecisions {
         generation: Uuid,
@@ -376,6 +381,7 @@ impl RuntimeCommand {
             self,
             Self::Health
                 | Self::Stop
+                | Self::ReplayEntities { .. }
                 | Self::InitializeEntities { .. }
                 | Self::Snapshot
                 | Self::GoalRead

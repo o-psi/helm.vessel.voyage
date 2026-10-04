@@ -25,6 +25,9 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
         VoyageCommand::InitializeDecisions { generation } => {
             RuntimeCommand::InitializeDecisions { generation }
         }
+        VoyageCommand::ReplayEntities { after, limit } => {
+            RuntimeCommand::ReplayEntities { after, limit }
+        }
         VoyageCommand::GoalRead => RuntimeCommand::GoalRead,
         VoyageCommand::WorkspaceFile { path } => RuntimeCommand::WorkspaceFile { path },
         VoyageCommand::WorkspaceChanges { scope, path } => {
@@ -711,6 +714,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         } => None,
         VoyageCommand::GoalReconcile { .. }
         | VoyageCommand::GoalRead
+        | VoyageCommand::ReplayEntities { .. }
         | VoyageCommand::InitializeEntities { .. }
         | VoyageCommand::Snapshot
         | VoyageCommand::ProviderAttempts { .. }

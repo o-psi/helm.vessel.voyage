@@ -370,6 +370,10 @@ pub(super) async fn dispatch_admitted(
                 )
                 .await
         }
+        RuntimeCommand::ReplayEntities { after, limit } => {
+            let page = state.owner.live_observations(after, limit).await?;
+            super::observations::entity_replay(page)
+        }
         RuntimeCommand::Snapshot => {
             // Serialize with settings publication so revision and values describe one state.
             let _admission = state.admission.lock().await;

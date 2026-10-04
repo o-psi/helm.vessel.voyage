@@ -518,3 +518,18 @@ async fn entity_initialization_has_canonical_barrier_and_rejects_changed_fence()
     );
     assert_eq!(next["cursor"], first["cursor"]);
 }
+
+#[test]
+fn entity_replay_refuses_retention_gaps_and_metadata_only_rows() {
+    let gap =
+        super::observations::entity_replay(json!({"replay_gap":true,"cursor":3,"latest_cursor":8}))
+            .unwrap();
+    assert_eq!(gap["reset"], "retention_gap");
+    assert!(gap.get("recovery").is_none());
+    let metadata=super::observations::entity_replay(json!({"replay_gap":false,"cursor":8,"latest_cursor":8,"has_more":false,"events":[{"payload":{}}]})).unwrap();
+    assert_eq!(metadata["reset"], "unprojected_retained_entity");
+    let replay=super::observations::entity_replay(json!({"replay_gap":false,"cursor":8,"latest_cursor":9,"has_more":true,"events":[{"cursor":8,"kind":"text_delta","payload":{"offset":0,"text":"é"}}]})).unwrap();
+    assert_eq!(replay["version"], 3);
+    assert_eq!(replay["has_more"], true);
+    assert_eq!(replay["events"][0]["payload"]["text"], "é");
+}
