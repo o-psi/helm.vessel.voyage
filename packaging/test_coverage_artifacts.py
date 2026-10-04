@@ -106,9 +106,20 @@ class SelectionTests(unittest.TestCase):
         tool.chmod(0o700)
         output = self.root / 'export.json'
         diagnostics = self.root / 'stderr'
+        dep = self.root / 'target' / 'test.d'
+        dep.write_text(str(self.binary) + ': lib.rs\n')
+        fp = self.root / 'target' / 'fingerprint.json'
+        fp.write_text(json.dumps({'deps': [], 'rustflags': []}))
+        from coverage_provenance import sha
+        provenance = self.root / 'target' / 'provenance.json'
+        provenance.write_text(json.dumps({'objects': {str(self.binary): {
+            'object_sha256': sha(self.binary), 'dep_info': str(dep),
+            'dep_info_sha256': sha(dep), 'fingerprint': str(fp),
+            'fingerprint_sha256': sha(fp)}},
+            'fingerprints': {str(fp): {'dependencies': []}}}))
         command = [sys.executable, str(Path(__file__).with_name('coverage_artifacts.py')),
                    'export', '--source-root', str(self.root), '--manifest', str(manifest),
-                   '--llvm-cov', str(tool), '--profile', str(profile),
+                   '--input-provenance', str(provenance), '--llvm-cov', str(tool), '--profile', str(profile),
                    '--ignore-filename-regex', 'existing-default', '--output', str(output),
                    '--diagnostics', str(diagnostics)]
         result = subprocess.run(command, capture_output=True, text=True)

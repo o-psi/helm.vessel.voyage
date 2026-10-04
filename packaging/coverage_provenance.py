@@ -29,6 +29,34 @@ def dependencies(text):
     return inputs
 
 
+def fingerprint_closure(path, expected_sha, nodes, visiting=None, done=None):
+    visiting = set() if visiting is None else visiting
+    done = set() if done is None else done
+    path = str(Path(path).resolve())
+    require(path not in visiting, 'Cargo fingerprint dependency cycle')
+    if path in done:
+        return
+    require(sha(Path(path)) == expected_sha, 'dependency fingerprint changed')
+    node = nodes.get(path)
+    require(node is not None, 'unknown fingerprint producer')
+    data = json.loads(Path(path).read_text())
+    require(isinstance(data.get('deps'), list) and 'rustflags' in data,
+            'unsupported Cargo fingerprint')
+    edges = node.get('dependencies', [])
+    require(len(edges) == len(data['deps']), 'incomplete fingerprint dependency closure')
+    visiting.add(path)
+    used = set()
+    for dep in data['deps']:
+        matches = [e for e in edges if e['cargo_dependency'] == dep]
+        require(len(matches) == 1, 'unknown or ambiguous fingerprint dependency')
+        edge = matches[0]
+        require(edge['path'] not in used, 'duplicate fingerprint dependency producer')
+        used.add(edge['path'])
+        fingerprint_closure(edge['path'], edge['sha256'], nodes, visiting, done)
+    visiting.remove(path)
+    done.add(path)
+
+
 def validate(manifest, evidence, root):
     root = Path(root).resolve()
     require(set(evidence['objects']) == set(manifest['objects']), 'incomplete input provenance objects')
@@ -44,9 +72,8 @@ def validate(manifest, evidence, root):
         require(isinstance(cargo.get('deps'), list) and 'rustflags' in cargo,
                 'unsupported Cargo fingerprint')
         # Every dependency/build-script fingerprint must be recursively supplied.
-        require(len(record['dependency_fingerprints']) == len(cargo['deps']),
-                'missing dependency fingerprint closure')
-        require(not cargo['deps'], 'dependency closure needs native recursive qualification; refusing')
+        fingerprint_closure(fingerprint, record['fingerprint_sha256'],
+                            evidence.get('fingerprints', {}))
         for name in dependencies(dep.read_text()):
             path = Path(name)
             if not path.is_absolute():
