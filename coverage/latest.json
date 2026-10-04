@@ -1,14 +1,14 @@
 {
-  "measured_at_utc": "2026-10-03T15:22:38.371027+00:00",
-  "source_commit": "4d941cb5ac5e6f2748d6371340b26881b28f733e",
+  "measured_at_utc": "2026-10-04T02:52:59.681064+00:00",
+  "source_commit": "79009bc5d85e7fb6e868dc5a0d401147bea636b0",
   "dirty": false,
-  "source_fingerprint_sha256": "95f4b01872adb107703ef7d64d526339342b172e1b1c616e0f99feb162ccce1e",
+  "source_fingerprint_sha256": "004ab5fad77a295d8c6fef23ef1d55d309f331f57c7bfd966c36be4880249dc6",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
-  "platform": "Linux-6.18.50-2-lts-x86_64-with-glibc2.44",
+  "platform": "Linux-7.2.5-4-omarchy-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103postbrowserfinal-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user MemoryMax=18G MemorySwapMax=0 UMask=0077 RuntimeMaxSec=3600",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103storagecorrected5fe3a43aa2664c9b8db6dd544bd8aa22-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user background.slice MemoryMax=18G MemorySwapMax=0 effective umask 0077",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,39 +19,41 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Final measured source 4d941cb includes the viewer disconnect-polling fix; the Rust/Cargo fingerprint remains identical to the prior record. JavaScript/Python checks are separate and excluded from these Rust counts.",
-    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. Existing target dependencies were reused under the current checkout wrapper namespace; no cache or foreign profiles were deleted.",
-    "All 19 current Cargo workspace executables were inventoried and archived, including 16 executed Cargo test binaries. All 546 prior default-scope source mappings remain; no exclusions changed.",
-    "Only the 902 fresh measurement-prefix profiles were merged. All 4,370 foreign profiles retained their original size and modification time.",
-    "The 42 actual zero-hash warnings were inspected with LLVM dump and matched the previously audited seven dependency symbols only. No new or workspace mismatch was accepted.",
-    "The unchanged default sysroot mapping remains. Detailed JSON and LCOV reconcile all 546 files and 12,495 function groups: 26,045 aggregate gaps versus 23,950 unique zero lines; difference 2,095 = 144 maximum/union + 1,978 overlap - 27 shadowing.",
-    "Test counts use each Cargo target final result; one nested fixture summary is not counted twice. Full coverage test exit 0; subsequent optimized workspace build exit 0.",
-    "Line coverage decreased by 3 covered lines (0.00218796 percentage points) with unchanged denominator/source/exclusions: execution.rs -2 and tools/process/shutdown/linux.rs -1. This is observed execution variation, not a source-scope change. Coverage measures execution, not correctness."
+    "Measured clean source 79009bc follows the negotiated CSS mirror codec and final browser-fixture correction; Rust/Cargo fingerprint 004ab5fa remained frozen throughout this measurement. JavaScript/Python journeys are separate.",
+    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. A preceding redundant --no-clean invocation was refused before compilation or tests; that record is preserved separately.",
+    "The shared cached storage library embedded three duplicate greeting-worktree source mappings despite byte-identical current sources. After the optimized build succeeded, only voyage-storage dev artifacts were invalidated once. Current storage and dependent test binaries were rebuilt with unchanged toolchain/flags; optimized release binary hashes were preserved.",
+    "The original mixed report, all 19 archived objects and prior profiles remain preserved. No mixed totals were published, no sources were excluded or hidden, and default exclusions are unchanged.",
+    "All 19 current Cargo workspace executables were inventoried and archived, including all 16 executed test binaries. The corrected report has exactly the same 546 default-scope source mappings as the prior qualified record.",
+    "Only 900 fresh measurement-prefix profiles were merged; all 6489 foreign profiles retained their original size and modification time.",
+    "The 42 actual zero-hash warnings were inspected with LLVM dump and match the previously audited dependency symbols only; no new or workspace mismatch was accepted.",
+    "Detailed JSON and LCOV reconcile all 546 files and 12512 function groups: 26020 aggregate gaps versus 23923 unique zero lines; difference 2097 = 146 maximum/union + 1978 overlap -27 shadowing. Scope and reachability claims are unchanged.",
+    "Test counts use each Cargo target final result; one nested fixture summary is not counted twice. Full test exit 0 and artifact/report audit exit 0.",
+    "Compared with the prior record, line coverage increased 0.03938497 percentage points (+178 covered/+153 total lines). All three measured percentages increased. Coverage measures execution, not correctness."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
   "source_files": 546,
   "tests": {
-    "passed": 3108,
+    "passed": 3114,
     "failed": 0,
     "ignored": 10
   },
   "totals": {
     "lines": {
-      "count": 137114,
-      "covered": 111069,
-      "percent": 81.00485727205098
+      "count": 137267,
+      "covered": 111247,
+      "percent": 81.04424224321943
     },
     "functions": {
-      "count": 12495,
-      "covered": 10031,
-      "percent": 80.28011204481793
+      "count": 12512,
+      "covered": 10049,
+      "percent": 80.31489769820972
     },
     "regions": {
-      "count": 227038,
-      "covered": 175188,
-      "notcovered": 51850,
-      "percent": 77.16241334049808
+      "count": 227252,
+      "covered": 175435,
+      "notcovered": 51817,
+      "percent": 77.1984404977734
     }
   }
 }
