@@ -34,6 +34,14 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::CoordinationContextProvision {
+            command_id,
+            context,
+            routes,
+        } => {
+            super::coordination_scope::provision(state, &authorization, command_id, context, routes)
+                .await
+        }
         RuntimeCommand::CoordinationScopeRead => {
             super::coordination_scope::read(state, &authorization).await
         }

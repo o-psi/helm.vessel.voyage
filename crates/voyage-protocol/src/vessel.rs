@@ -187,6 +187,11 @@ pub enum VoyageCommand {
         access: String,
     },
     CoordinationScopeRead,
+    CoordinationContextProvision {
+        command_id: Uuid,
+        context: crate::process::GrantBinding,
+        routes: Vec<crate::coordination_scope::RouteReference>,
+    },
     CoordinationScopeCommit {
         command_id: Uuid,
         selection: crate::coordination_scope::ScopeSelection,
@@ -414,6 +419,7 @@ impl VoyageCommand {
             | Self::OperatorTool { command_id, .. }
             | Self::Github { command_id, .. }
             | Self::SetAccess { command_id, .. }
+            | Self::CoordinationContextProvision { command_id, .. }
             | Self::CoordinationScopeCommit { command_id, .. }
             | Self::Configure { command_id, .. }
             | Self::WorkflowSubmit { command_id, .. }

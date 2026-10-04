@@ -1313,3 +1313,16 @@ async fn perform(
 #[cfg(all(test, unix))]
 #[path = "vessel/owned_public_journey_tests.rs"]
 mod owned_public_journey_tests;
+
+/// Private setup adapter: callers must authenticate host-owner authority first.
+pub(crate) fn read_setup_credential(path: &Path) -> anyhow::Result<Vec<u8>> {
+    transport::private_read(path, 16384).map_err(|_| anyhow::anyhow!("private route unavailable"))
+}
+pub(crate) async fn observe_setup_route(path: &Path) -> anyhow::Result<Value> {
+    let transport = transport::Transport::open(Path::new("/"), Some(path))
+        .map_err(|_| anyhow::anyhow!("private route unavailable"))?;
+    transport
+        .exchange(VesselCommand::Capabilities)
+        .await
+        .map_err(|_| anyhow::anyhow!("destination observation unavailable"))
+}

@@ -128,3 +128,11 @@ impl ScopeSelection {
         candidate.validate(current, now_ms)
     }
 }
+
+/// Private host-side provisioning reference, excluded from model tool schemas.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RouteReference {
+    pub alias: String,
+    pub credential_path: std::path::PathBuf,
+}

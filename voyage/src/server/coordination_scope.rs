@@ -174,3 +174,126 @@ mod tests {
         assert_eq!(restored.receipts[&id].selection, selection);
     }
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProvisionRecord {
+    command_id: Uuid,
+    context: voyage_protocol::process::GrantBinding,
+    routes: Vec<voyage_protocol::coordination_scope::RouteReference>,
+    observed: ScopeSelection,
+}
+
+pub(super) async fn provision(
+    state: &Arc<State>,
+    auth: &super::authorization::Authorization,
+    command_id: Uuid,
+    context: voyage_protocol::process::GrantBinding,
+    routes: Vec<voyage_protocol::coordination_scope::RouteReference>,
+) -> Result<Value> {
+    // A paired human connection is NOT host authority to import bearer material.
+    ensure!(
+        auth.grant.is_none(),
+        "destination provisioning requires executing host owner authority"
+    );
+    ensure!(
+        !command_id.is_nil() && !context.grant_id.is_nil() && routes.len() <= 32,
+        "invalid provisioning identity or capacity"
+    );
+    let _admission = state.admission.lock().await;
+    ensure!(
+        state.active.lock().await.is_none(),
+        "provisioning requires idle Voyage"
+    );
+    let directory = Directory::open(&state.directory.join("coordination-contexts"))?;
+    let _lock = directory.lock()?;
+    let operation = format!("receipt-{command_id}.json");
+    if let Some(bytes) = directory.read_bounded(&operation, MAX)? {
+        let prior: ProvisionRecord = serde_json::from_slice(&bytes)?;
+        ensure!(
+            prior.context == context && prior.routes == routes,
+            "provision command payload conflict"
+        );
+        directory.publish(
+            &format!("{}-{}.json", context.grant_id, context.revision),
+            &serde_json::to_vec(&prior.observed)?,
+        )?;
+        return Ok(
+            json!({"command_id":command_id,"status":"context_provisioned","context":context}),
+        );
+    }
+    let mut destinations = Vec::new();
+    for route in &routes {
+        ensure!(
+            route.credential_path.is_absolute(),
+            "private route reference must be absolute"
+        );
+        let bytes = crate::tools::vessel::read_setup_credential(&route.credential_path)?;
+        let credential: voyage_protocol::process::WorkspaceCredential =
+            serde_json::from_slice(&bytes)?;
+        ensure!(
+            credential.principal_id == context.principal_id,
+            "route principal differs from actor context"
+        );
+        let capabilities =
+            crate::tools::vessel::observe_setup_route(&route.credential_path).await?;
+        ensure!(
+            capabilities["vessel_id"] == credential.vessel_id.to_string(),
+            "destination identity changed"
+        );
+        let revision = capabilities["grant_revision"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("route grant revision unavailable"))?;
+        let expires_at_ms = capabilities["expires_at_ms"]
+            .as_u64()
+            .ok_or_else(|| anyhow::anyhow!("route expiry unavailable"))?;
+        let rights = serde_json::from_value(capabilities["rights"].clone())?;
+        let workspaces: Vec<voyage_protocol::process::ApprovedWorkspace> =
+            serde_json::from_value(capabilities["workspaces"].clone())?;
+        ensure!(
+            workspaces.len() == 1,
+            "provisioning requires one exact approved destination workspace"
+        );
+        destinations.push(voyage_protocol::coordination_scope::DestinationPin {
+            alias: route.alias.clone(),
+            vessel_id: credential.vessel_id,
+            workspace: workspaces[0].path.clone(),
+            grant: voyage_protocol::process::GrantBinding {
+                grant_id: credential.grant_id,
+                principal_id: credential.principal_id,
+                revision,
+            },
+            rights,
+            expires_at_ms,
+        });
+    }
+    let observed = ScopeSelection {
+        session_id: state.registration.session_id,
+        context: context.clone(),
+        expected_revision: 0,
+        destinations,
+    };
+    observed
+        .validate(
+            &observed,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+                .try_into()?,
+        )
+        .map_err(anyhow::Error::msg)?;
+    let record = ProvisionRecord {
+        command_id,
+        context: context.clone(),
+        routes,
+        observed: observed.clone(),
+    };
+    let bytes = serde_json::to_vec(&record)?;
+    ensure!(bytes.len() <= MAX, "provisioning record capacity exhausted");
+    directory.publish_new(&operation, &bytes)?;
+    directory.publish(
+        &format!("{}-{}.json", context.grant_id, context.revision),
+        &serde_json::to_vec(&observed)?,
+    )?;
+    Ok(json!({"command_id":command_id,"status":"context_provisioned","context":context}))
+}

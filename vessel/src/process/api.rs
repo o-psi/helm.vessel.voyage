@@ -113,6 +113,15 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expires_at_ms,
             access,
         },
+        VoyageCommand::CoordinationContextProvision {
+            command_id,
+            context,
+            routes,
+        } => RuntimeCommand::CoordinationContextProvision {
+            command_id,
+            context,
+            routes,
+        },
         VoyageCommand::CoordinationScopeRead => RuntimeCommand::CoordinationScopeRead,
         VoyageCommand::CoordinationScopeCommit {
             command_id,
