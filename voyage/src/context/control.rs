@@ -13,6 +13,20 @@ pub(crate) enum Control {
 }
 
 pub(crate) fn parse(value: serde_json::Value) -> Result<Control, crate::tools::ToolError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| crate::tools::ToolError::InvalidArguments("expected object".into()))?;
+    let allowed: &[&str] =
+        if object.get("action").and_then(serde_json::Value::as_str) == Some("status") {
+            &["action"]
+        } else {
+            &["action", "retain", "notes"]
+        };
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(crate::tools::ToolError::InvalidArguments(
+            "unknown context control field".into(),
+        ));
+    }
     let request: Control = serde_json::from_value(value)
         .map_err(|e| crate::tools::ToolError::InvalidArguments(e.to_string()))?;
     if let Control::Compact { retain, notes } = &request {
