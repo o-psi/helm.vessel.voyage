@@ -270,6 +270,18 @@ const counts = await observer.finish();
 await observer.stop();
 ```
 
+During the entire journey, continuously drain every retained selected-tab
+consumer, including cost, action-count and sanitized mirror-error observers.
+Serialize each consumer's methods before adding it to the shared bounded drain
+loop. An action observer that exposes only `poll` still needs a serialized wrapper
+with the drain loop's health interface; omitting it after a missing-interface
+error loses action history while other consumers continue to pass. Keep the loop
+active during DOM waits, navigation, armed windows and manual observations.
+Truncation invalidates that run: preserve its failure and never reset its cursor
+to make the remaining observations appear complete. Attach fresh consumers before
+navigation for a new, separately admitted journey; this does not extend an active
+request or window deadline.
+
 The collector follows Fleet's authenticated renewal lifecycle. Each selected socket
 must have its own observed authenticate frame, protocol-1 hello for the pinned
 physical Vessel, unique server socket identity and the selected connection's

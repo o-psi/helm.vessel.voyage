@@ -1,9 +1,5 @@
 # v1.0.3 — Live Events and Host Browser
 
-**Candidate: production browser qualification and stable publication are pending.**
-Stable downloads still select v1.0.2. Remove this notice only after the release
-criteria and public downloads have been verified.
-
 Voyage puts AI agents to work across computers you control: choose an execution
 host and workspace, assign an outcome, and review the work and verification in
 Helm Web or Helm TUI. Helm presents and directs work, Vessel supervises processes
@@ -42,14 +38,15 @@ The authoritative acceptance and delivery evidence is in
 [release issue #375](https://github.com/o-psi/helm.vessel.voyage/issues/375),
 [provider access issue #415](https://github.com/o-psi/helm.vessel.voyage/issues/415), and
 [the release milestone](https://github.com/o-psi/helm.vessel.voyage/milestone/3).
-The [browser qualification guide](testing/host-browser-v1.0.3.md) describes the
-required journeys; prior checks alone do not establish final production acceptance.
+The [browser qualification guide](testing/host-browser-v1.0.3.md) records completed
+checks and their limits. Broader production browser acceptance remains open in
+#333, moved to **v1.1.1** by the release owner.
 
 ## Linux downloads and installation
 
 The release targets **Linux x86-64 with glibc 2.39 or later** and the ELF loader
 `/lib64/ld-linux-x86-64.so.2`. These requirements were inspected in all four
-executables from the qualified public development archive. Planned stable assets are:
+selected optimized executables. Release assets are:
 
 - `voyage-v1.0.3-x86_64-unknown-linux-gnu.tar.gz`
 - `voyage-v1.0.3-x86_64-unknown-linux-gnu.tar.gz.sha256`
@@ -60,7 +57,7 @@ The full archive contains `helm`, `vessel`, `voyage`, `voyage-installer`, genera
 CLI documentation and the pinned host-browser worker. The standalone installer
 asset does not contain the runtime programs.
 
-After publication, download the full archive and its checksum from
+Download the full archive and its checksum from
 [release v1.0.3](https://github.com/o-psi/helm.vessel.voyage/releases/tag/v1.0.3),
 then run:
 
@@ -77,42 +74,39 @@ release inventory and preserves browser assets on upgrade. Follow the
 [installer guide](../installer/README.md) for ordinary user-service setup and
 activation. The command above installs without starting the service.
 
-The earlier optimized candidate passed archive and checksum verification,
-conversation-file and concurrent-voyage checks, and isolated installation and
-upgrade with browser assets retained. That installation check used an inactive
-service-manager fixture; it does not establish native service activation.
+## Verification and known browser limitation
 
-The previously qualified public development archive is
-[nightly run 37178357510](https://github.com/o-psi/helm.vessel.voyage/actions/runs/37178357510),
-built from [Core source 68151fc9](https://github.com/o-psi/helm.vessel.voyage/commit/68151fc9f8122754dcc32bb813397008dfe1310f).
-Its archive/checksum, all four binary versions and ELF targets, glibc requirement,
-124 browser assets and embedded viewer assets were verified. This previous build
-(release identity `0e10276a`) was installed on the qualification host with native
-program/hash and service readiness,
-strict TLS and authenticated local socket checks. These are development-build
-facts. It predates the completed candidate browser changes through Core source
-`c19f040`; a new candidate archive, final production browser acceptance and stable
-public downloads remain pending in #375.
+The selected four optimized programs report 1.0.3. Formatting, Clippy,
+56 worker checks, packaging regressions, conversation-file checks, all four
+concurrent-voyage variants and the full offline TUI/native plus Web browser
+journey passed with observed cleanup.
 
-The latest completed local Rust workspace measurement records **3,114 passed,
-zero failed, ten ignored**, with **81.0350103% line coverage**. The clean measured source is
-[Core c19f040](https://github.com/o-psi/helm.vessel.voyage/commit/c19f04092a1964ee7f7f5e7e4cc39775da03b957);
-counts, toolchain and exclusions are retained in the compact
-[coverage record](../coverage/latest.json). Python, JavaScript and production
-browser journeys are separate from that Rust measurement.
+The Rust workspace measurement records **3,114 passed, zero failed, ten ignored**
+and **81.0350% line coverage**, measured from clean
+[Core c19f040](https://github.com/o-psi/helm.vessel.voyage/commit/c19f04092a1964ee7f7f5e7e4cc39775da03b957).
+Exact counts, toolchain and exclusions are in the
+[coverage record](../coverage/latest.json). JavaScript, Python and manual journeys
+are separate from this measurement; these checks do not certify live providers.
 
-Completed browser source through `c19f040` passed **56/56 worker checks** and
-**21/21 focused Node 24 checks**. A bounded two-viewer check on the qualification
-host verified complete page styling and guardian-observed cleanup of 13 owned
-processes. This focused check does not establish the full production browser pass.
-Helm Web source
-[662b2af](https://github.com/o-psi/webhelm/commit/662b2af99254795c50186d38aa9e26eed873f855)
-was published and deployed separately. The optimized workspace build passed with all four programs reporting 1.0.3.
-Conversation-file checks, all four concurrent-voyage variants, and the full offline
-TUI/native and Web browser journey passed with observed cleanup. Final hosted
-archive, installation, production acceptance and stable downloads must still
-identify the actual delivered candidate. Offline checks do not establish
-live-provider access.
+[Hosted run 37222528825](https://github.com/o-psi/helm.vessel.voyage/actions/runs/37222528825)
+qualified the same delivered runtime source through
+[07278f2](https://github.com/o-psi/helm.vessel.voyage/commit/07278f2fa9f09b0afd36083f3463e7c8b2233fde):
+archive/checksum, four binaries, all 124 browser assets and embedded viewer bytes
+were verified. Its installation and upgrade retention check used an inactive
+service-manager fixture. The development build was also installed on CT106,
+with native program/assets, service readiness, strict TLS, authenticated local
+socket access and independent updater retirement verified. Those native facts
+identify the development build; stable archive acquisition is verified separately.
+
+**Known limitation:** full production host-browser acceptance is unfinished.
+The production journey passed site classes, nested-frame control, media,
+Rustbook and GitHub checks, but the Three.js Web view stopped before the required
+page marker appeared. A focused check reproduced a bounded Chrome frame-tree
+query timeout. Failed runs remain failed; no uncertain website action was replayed.
+The release owner deferred the remaining browser work to
+[#333 in v1.1.1](https://github.com/o-psi/helm.vessel.voyage/issues/333).
+This release includes the implemented browser improvements and does not claim
+universal site compatibility or completed production browser acceptance.
 
 ## Runtime and support boundaries
 
