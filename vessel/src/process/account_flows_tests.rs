@@ -617,3 +617,70 @@ async fn settings_resolution_fences_exact_request_without_account_or_launch() {
             .unwrap()
     );
 }
+
+#[tokio::test]
+async fn settings_resolution_reads_literal_preupgrade_database_without_effects() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let command_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    // Prior serializer's field order and explicit nulls are intentional. Do not
+    // generate this retained database byte record using today's typed serializer.
+    let workspace = serde_json::to_string(&f.0).unwrap();
+    let old = format!(r#"{{"op":"start_settings","command_id":"{command_id}","session_id":"{session_id}","workspace":{workspace},"config_path":null,"settings":{{"model":null,"max_output_tokens":0,"context_window":null,"access_mode":null,"terminal_max_count":null,"terminal_max_unread_bytes":null,"subagent_max_concurrency":null,"command_timeout_secs":null,"max_output_bytes":null}},"binding":null}}"#).into_bytes();
+    assert!(
+        !database::command(&f.0, "commands", command_id, old.clone(), true)
+            .await
+            .unwrap()
+    );
+    let start: VesselCommand = serde_json::from_slice(&old).unwrap();
+    assert_eq!(serde_json::to_vec(&start).unwrap(), old);
+    let VesselCommand::StartSettings {
+        workspace,
+        config_path,
+        settings,
+        binding,
+        ..
+    } = start
+    else {
+        unreachable!()
+    };
+    let resolve = VesselCommand::ResolveStartSettings {
+        command_id,
+        session_id,
+        workspace,
+        config_path,
+        settings,
+        binding,
+    };
+    for _ in 0..2 {
+        let result = s
+            .host_accounts(resolve.clone(), Scope::Owner)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "unknown");
+        assert_eq!(result["command_id"], command_id.to_string());
+        assert_eq!(result["session_id"], session_id.to_string());
+    }
+    let mut changed = resolve;
+    if let VesselCommand::ResolveStartSettings { settings, .. } = &mut changed {
+        settings.max_output_tokens = Some(2048);
+    }
+    let error = s.host_accounts(changed, Scope::Owner).await.unwrap_err();
+    assert!(error.to_string().contains("payload conflict"));
+    // Exact old bytes are still present; resolution did not rewrite the record.
+    assert!(
+        database::command(&f.0, "commands", command_id, old, false)
+            .await
+            .unwrap()
+    );
+    assert!(s.registrations.lock().await.unwrap().is_empty());
+    assert!(
+        database::creation_receipt(&f.0, command_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!f.0.join("account-launch").exists());
+    assert!(!registry::directory(&f.0, session_id).exists());
+}
