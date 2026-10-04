@@ -10,7 +10,7 @@ pub(super) fn current(
     command: Uuid,
     incarnation: Uuid,
 ) -> Result<(Uuid, Option<ExecutionBudget>, i64)> {
-    let row:Option<(String,Option<String>,i64)>=db.query_row("SELECT r.id,m.budget,m.started_at_ms FROM process_goal_meters m JOIN commands c ON c.id=m.command_id JOIN runs r ON r.id=c.run_id WHERE m.command_id=?1 AND m.incarnation=?2 AND r.session_id=?3 AND m.settlement IS NULL AND (m.budget IS NOT NULL OR EXISTS(SELECT 1 FROM process_goal_turns t WHERE t.command_id=m.command_id AND t.incarnation=m.incarnation AND t.state='reserved'))",params![command.to_string(),incarnation.to_string(),session.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+    let row:Option<(String,Option<String>,i64)>=db.query_row("SELECT r.id,m.budget,m.started_at_ms FROM process_goal_meters m JOIN commands c ON c.id=m.command_id JOIN runs r ON r.id=c.run_id WHERE m.command_id=?1 AND m.incarnation=?2 AND r.session_id=?3 AND m.settlement IS NULL AND (r.active=1 OR m.budget IS NOT NULL OR EXISTS(SELECT 1 FROM process_goal_turns t WHERE t.command_id=m.command_id AND t.incarnation=m.incarnation AND t.state='reserved'))",params![command.to_string(),incarnation.to_string(),session.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
     let (run, budget, started) = row.context("Goal allocation belongs to an inactive meter")?;
     Ok((
         Uuid::parse_str(&run)?,
@@ -63,27 +63,35 @@ impl Journal {
                     .min(u64::try_from(started)?.saturating_add(parent.elapsed_ms)),
             )
         } else {
-            let goal = read(&tx, guard.session_id)?
-                .goal
-                .context("Goal allocation objective missing")?;
-            let reserved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_turns WHERE command_id=?1 AND goal_id=?2)",params![command.to_string(),goal.id.to_string()],|r|r.get(0))?;
-            ensure!(
-                reserved && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
-                "Goal allocation objective or accounting changed"
-            );
-            let used = goal
-                .usage
-                .input_tokens
-                .checked_add(goal.usage.output_tokens)
-                .context("Goal usage overflow")?;
-            (
-                goal.limits.token_allowance().saturating_sub(used),
-                u64::try_from(started)?.saturating_add(
-                    goal.limits
-                        .time_allowance_ms()
-                        .saturating_sub(goal.usage.elapsed_ms),
-                ),
-            )
+            let snapshot = read(&tx, guard.session_id)?;
+            let attributed: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM process_goal_turns WHERE command_id=?1)",
+                [command.to_string()],
+                |r| r.get(0),
+            )?;
+            if snapshot.goal.is_none() || !attributed {
+                (u64::MAX, u64::MAX)
+            } else {
+                let goal = snapshot.goal.context("Goal allocation objective missing")?;
+                let reserved:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_turns WHERE command_id=?1 AND goal_id=?2)",params![command.to_string(),goal.id.to_string()],|r|r.get(0))?;
+                ensure!(
+                    reserved && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
+                    "Goal allocation objective or accounting changed"
+                );
+                let used = goal
+                    .usage
+                    .input_tokens
+                    .checked_add(goal.usage.output_tokens)
+                    .context("Goal usage overflow")?;
+                (
+                    goal.limits.token_allowance().saturating_sub(used),
+                    u64::try_from(started)?.saturating_add(
+                        goal.limits
+                            .time_allowance_ms()
+                            .saturating_sub(goal.usage.elapsed_ms),
+                    ),
+                )
+            }
         };
         let (input, output, _, _) = super::metering::retained_usage(&tx, command)?;
         let mut retained = 0u64;

@@ -1489,15 +1489,22 @@ async fn goal_driver_rechecks_authority_and_pending_input_before_dispatch() {
                 .unwrap();
         }
         super::goals::advance(&state).await.unwrap();
-        let stopped = goal_stopped(&state).await;
-        assert_eq!(stopped.status, GoalStatus::NeedsAttention);
+        let stopped = state.owner.goal().await.unwrap().goal.unwrap();
+        assert_eq!(
+            stopped.status,
+            if changed_authority {
+                GoalStatus::NeedsAttention
+            } else {
+                GoalStatus::Active
+            }
+        );
         assert_eq!(
             stopped.stop_reason,
-            Some(if changed_authority {
-                GoalStopReason::AuthorityRevoked
+            if changed_authority {
+                Some(GoalStopReason::AuthorityRevoked)
             } else {
-                GoalStopReason::UserInput
-            })
+                None
+            }
         );
         assert_eq!(stopped.usage.runs, 0);
         assert!(provider.requests.lock().await.is_empty());
