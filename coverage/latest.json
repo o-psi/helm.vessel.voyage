@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-10-04T08:25:40.859650+00:00",
-  "source_commit": "9eb09753b154c206f02b2769b59499de08fbed9e",
+  "measured_at_utc": "2026-10-04T15:30:21.839663+00:00",
+  "source_commit": "89993a6396cdf6f2ffd06c4b1445e7a6f769d928",
   "dirty": false,
   "source_fingerprint_sha256": "004ab5fad77a295d8c6fef23ef1d55d309f331f57c7bfd966c36be4880249dc6",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
@@ -8,7 +8,7 @@
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103bootstrapfinal1e19ef47e636423183d51bde810f2e1e-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd transient user unit MemoryMax=18G MemorySwapMax=0 effective umask 0077",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET RUSTC=$PINNED_TOOLCHAIN/usr/bin/rustc RUSTDOC=$PINNED_TOOLCHAIN/usr/bin/rustdoc LLVM_COV=$PINNED_TOOLCHAIN/usr/bin/llvm-cov LLVM_PROFDATA=$PINNED_TOOLCHAIN/usr/bin/llvm-profdata LLVM_PROFILE_FILE_NAME=v103helper899ac3b47c80f9e4211895d5d01f5218884-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user background.slice MemoryMax=18G MemorySwapMax=0 RuntimeMaxSec=60min umask 0077",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,12 +19,12 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Measured clean source 9eb09753 after the maintained native fixture bootstrap was corrected to select the exact reviewed voyage before idle-composer readiness. Only Python fixture source changed; Rust/Cargo and production binary/browser inputs are unchanged.",
-    "All19 current workspace objects and16 executed test binaries were inventoried and archived; the same546 default-scope source mappings remain. No scope reduction or cache cleaning occurred.",
-    "Only573 new-prefix profiles were merged; all8061 foreign profiles retained their original size/mtime.",
-    "The42 zero-hash warnings match previously audited dependency symbols only. Detailed JSON, LCOV, HTML and exact line/function reconciliation passed. Existing exclusions are unchanged.",
-    "Nested fixture summary excluded from duplicate test counting; test and artifact/report audit exits were zero. Python and production browser verification are separate.",
-    "Percentage-point changes versus prior: lines -0.01821268, functions -0.00799233, regions -0.02200201. Coverage measures execution, not correctness."
+    "Measured clean source 89993a6 after the bounded native navigation failure-diagnostics helper change. Rust/Cargo fingerprint 004ab5fa remained frozen throughout this run and audit; Python/JavaScript/browser journeys are separate.",
+    "Used private Arch Rust1.98.1/LLVM22.1.8 and the existing corrected shared cache. No raw profiles or compiled caches were cleaned; fresh unique own-prefix profiles only were merged.",
+    "All19 current workspace executables were archived and checked against the16 executed test binaries; exact546 default source mappings and every detailed JSON/LCOV line were reconciled. No foreign worktree maps or narrowed exclusions were accepted.",
+    "The42 actual zero-hash dependency warnings matched the previously reviewed dependency symbols; no new mismatches were accepted. All8634 foreign profiles were preserved byte-size/timestamp unchanged.",
+    "Compared with previous source9eb: total lines/functions/regions unchanged; covered lines+8, functions+1, regions+14 (line percentage+0.005828 points). This small execution variation is not a scope change.",
+    "Default workspace features; ignored/live-provider tests and doctests excluded. No branch or aggregate native-platform qualification is implied."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
@@ -37,19 +37,19 @@
   "totals": {
     "lines": {
       "count": 137267,
-      "covered": 111224,
-      "percent": 81.02748657725455
+      "covered": 111232,
+      "percent": 81.03331463498145
     },
     "functions": {
       "count": 12512,
-      "covered": 10048,
-      "percent": 80.30690537084399
+      "covered": 10049,
+      "percent": 80.31489769820972
     },
     "regions": {
       "count": 227252,
-      "covered": 175392,
-      "notcovered": 51860,
-      "percent": 77.17951877211202
+      "covered": 175406,
+      "notcovered": 51846,
+      "percent": 77.18567933395526
     }
   }
 }
