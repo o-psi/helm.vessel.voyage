@@ -20,10 +20,15 @@ fn process(id: uuid::Uuid, owner: uuid::Uuid) -> ProcessInfo {
 fn snapshot(id: uuid::Uuid, cursor: u64) -> Value {
     json!({"session_id":id,"revision":17,"model":"observer-model","observation_cursor":cursor,"total_messages":1,"messages":[{"message_index":0,"role":"user","content":"Canonical observer Ω"}],"decisions":[]})
 }
-fn initialized(generation: uuid::Uuid, owner: uuid::Uuid, value: Value) -> Value {
+fn initialized(
+    generation: uuid::Uuid,
+    owner: uuid::Uuid,
+    requested: uuid::Uuid,
+    value: Value,
+) -> Value {
     let session = value["session_id"].clone();
     let cursor = value["observation_cursor"].as_u64().unwrap_or(0);
-    let fence = json!({"generation":generation,"session_id":session,"incarnation":owner});
+    let fence = json!({"generation":generation,"session_id":requested,"incarnation":owner});
     let mut events = vec![json!({"kind":"begin","fence":fence,"cursor":cursor})];
     let mut fields = value.clone();
     fields.as_object_mut().unwrap().remove("messages");
@@ -88,7 +93,7 @@ impl Wire {
                             let pending=std::mem::take(&mut held.lock().unwrap().held);
                             held.lock().unwrap().hold_snapshots=false;
                             for (id,session,owner,generation) in pending {
-                                let value=held.lock().unwrap().snapshots[&session].clone();peer.voyage_reply(id,session,owner,initialized(generation,owner,value)).await;
+                                let value=held.lock().unwrap().snapshots[&session].clone();peer.voyage_reply(id,session,owner,initialized(generation,owner,session,value)).await;
                             }
                         }
                         None=>break,
@@ -115,7 +120,7 @@ impl Wire {
                                             let owner=state.processes.iter().find(|p|p.session_id==*session_id).unwrap().incarnation;
                                             let value=match command {
                                                 VoyageCommand::InitializeEntities {generation,..} if state.hold_snapshots=>{state.held.push((request_id,*session_id,owner,*generation));None},
-                                                VoyageCommand::InitializeEntities {generation,..}=>Some(initialized(*generation,owner,state.snapshots[session_id].clone())),
+                                                VoyageCommand::InitializeEntities {generation,..}=>Some(initialized(*generation,owner,*session_id,state.snapshots[session_id].clone())),
                                                 VoyageCommand::Controls {run_id,section}=>{assert!(run_id.is_none());assert_eq!(section,"terminals");Some(json!({"run_id":null,"value":[]}))},
                                                 _=>panic!("observer cannot emit a mutative or unrelated Voyage command"),
                                             };
@@ -385,6 +390,7 @@ async fn foreign_inner_snapshot_returns_no_cursor_and_preserves_app_before_valid
             initialized(
                 generation,
                 owner,
+                session,
                 if rejected {
                     snapshot(foreign, 999)
                 } else {
@@ -625,6 +631,7 @@ async fn held_snapshot_and_terminal_reply_owner_changes_cannot_install_old_catal
                 } else {
                     owner
                 },
+                session,
                 snapshot(session, 90),
             ),
         )

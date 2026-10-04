@@ -257,6 +257,7 @@ impl InitializationFence {
 #[derive(Default, Debug)]
 pub struct EntityReducer {
     gate: InitializationFence,
+    chunks: std::collections::BTreeMap<String, (usize, String)>,
     entities: std::collections::BTreeMap<String, serde_json::Value>,
 }
 #[derive(Debug)]
@@ -274,6 +275,7 @@ impl EntityReducer {
         match event {
             InitializationEvent::Begin { .. } | InitializationEvent::Reset { .. } => {
                 self.entities.clear();
+                self.chunks.clear();
             }
             InitializationEvent::Entity {
                 entity_kind,
@@ -281,12 +283,44 @@ impl EntityReducer {
                 value,
                 ..
             } => {
+                if value["encoding"] == "entity_json_utf8" {
+                    let kind = value["entity_kind"].as_str().ok_or("missing chunk kind")?;
+                    let id = value["entity_id"].as_str().ok_or("missing chunk entity")?;
+                    let offset = value["offset"].as_u64().ok_or("missing chunk offset")? as usize;
+                    let total = value["total_bytes"]
+                        .as_u64()
+                        .ok_or("missing chunk extent")? as usize;
+                    let text = value["text"].as_str().ok_or("missing chunk text")?;
+                    if total > MAX_INITIALIZATION_BYTES {
+                        return Err("chunk scope exceeds bound");
+                    }
+                    let key = format!("{kind}:{id}");
+                    let buffer = self
+                        .chunks
+                        .entry(key.clone())
+                        .or_insert((total, String::new()));
+                    if buffer.0 != total || buffer.1.len() != offset || offset + text.len() > total
+                    {
+                        return Err("chunk offset mismatch");
+                    }
+                    buffer.1.push_str(text);
+                    if buffer.1.len() == total {
+                        let parsed = serde_json::from_str(&buffer.1)
+                            .map_err(|_| "invalid entity chunk JSON")?;
+                        self.entities.insert(key.clone(), parsed);
+                        self.chunks.remove(&key);
+                    }
+                    return Ok(None);
+                }
                 let kind = serde_json::to_value(entity_kind).map_err(|_| "invalid entity kind")?;
                 let kind = kind.as_str().ok_or("invalid entity kind")?;
                 self.entities
                     .insert(format!("{kind}:{entity_id}"), value.clone());
             }
             InitializationEvent::Complete { fence, cursor, .. } if complete => {
+                if !self.chunks.is_empty() {
+                    return Err("incomplete entity chunks");
+                }
                 return Ok(Some(InitializedScope {
                     fence: fence.clone(),
                     cursor: *cursor,

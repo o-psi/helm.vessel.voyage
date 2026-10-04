@@ -31,7 +31,9 @@ impl ManagedSessionOwner {
             if offset>0 {
                 let baseline=store.entity_initializations.get(&generation).context("initialization expired; discard staged generation")?;
                 anyhow::ensure!(baseline.incarnation==incarnation && expected_revision==Some(baseline.revision) && expected_cursor==Some(baseline.cursor),"initialization fence mismatch");
-                return baseline.page(offset,limit);
+                let page=baseline.page(offset,limit)?;
+                if page["has_more"]==false { store.entity_initializations.remove(&generation); }
+                return Ok(page);
             }
             anyhow::ensure!(store.entity_initializations.len()<MAX_BASELINES || store.entity_initializations.contains_key(&generation),"initialization capacity exhausted");
             let saved = store.journal.load_session(store.session_id)?;
@@ -62,13 +64,26 @@ impl ManagedSessionOwner {
                     10 => { let retained=store.journal.retained_cleanup(store.session_id)?; let uncertain=retained["run_ids"].as_array().is_some_and(|values|!values.is_empty()) || retained["resources"].as_array().is_some_and(|values|!values.is_empty()); (EntityKind::Resource,"recovery_notice".to_string(),json!(uncertain.then_some("Conversation ready to continue. Previous interrupted work has unknown effects; its unfinished commands were not repeated."))) },
                     _ => { let message = message_offset + index - 11; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
                 };
-                anyhow::ensure!(serde_json::to_vec(&value)?.len() <= MAX_ENTITY_BYTES, "entity requires bounded content chunks");
-                events.push(InitializationEvent::Entity { fence: fence.clone(), sequence: index as u64, entity_kind, entity_id, value });
+                let serialized=serde_json::to_string(&value)?;
+                if serialized.len()<=MAX_ENTITY_BYTES {
+                    let sequence=(events.len()-1) as u64;
+                    events.push(InitializationEvent::Entity{fence:fence.clone(),sequence,entity_kind,entity_id,value});
+                } else {
+                    let mut byte_offset=0;
+                    while byte_offset<serialized.len() {
+                        let mut end=(byte_offset+8192).min(serialized.len());
+                        while !serialized.is_char_boundary(end){end-=1;}
+                        let chunk=json!({"encoding":"entity_json_utf8","entity_kind":entity_kind,"entity_id":entity_id,"offset":byte_offset,"total_bytes":serialized.len(),"text":&serialized[byte_offset..end]});
+                        let sequence=(events.len()-1) as u64;
+                        events.push(InitializationEvent::Entity{fence:fence.clone(),sequence,entity_kind:EntityKind::Artifact,entity_id:format!("entitychunk:{index}:{byte_offset}"),value:chunk});
+                        byte_offset=end;
+                    }
+                }
             }
-            if end == total { events.push(InitializationEvent::Complete { fence, sequence: total as u64, cursor }); }
+            if end == total { events.push(InitializationEvent::Complete { fence, sequence: (events.len()-1) as u64, cursor }); }
             let baseline=CapturedBaseline{expires:std::time::Instant::now()+std::time::Duration::from_secs(60),incarnation,revision:saved.revision,cursor,events};
             let page=baseline.page(0,limit)?;
-            store.entity_initializations.insert(generation,baseline);
+            if page["has_more"]==true { store.entity_initializations.insert(generation,baseline); }
             Ok(page)
         }).await?
     }
