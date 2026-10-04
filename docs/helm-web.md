@@ -31,8 +31,8 @@ the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository’s `
   checks and CSRF. Successful changes and errors return to `/?manage-vessels=1`.
 - `/console/ticket`: temporary tenant-authorized Vessel credential bootstrap.
 
-React saves each account- and voyage-scoped message draft with prepared pictures
-in browser IndexedDB, and renders canonical history and
+React retains each voyage composer and its prepared pictures in client memory
+only, and renders canonical history and
 live observations, and shows Starting, Working and Waiting for you in the
 conversation pane. Earlier history loads automatically near the top of the scrollable
 transcript (and for short transcripts), maintaining the reader’s scroll position.
@@ -53,10 +53,11 @@ per-message limit remains four pictures and 4 MiB after conversion; errors appea
 by the picker. During an active run, Send queues an image-bearing follow-up locally
 until the run finishes; the draft is frozen and a Cancel queued send control is
 shown. Keep the page open: this is not a durable server queue. Failed or uncertain
-submissions are never automatically retried. Reload restores saved unsent
-text/pictures for review, with an explicit warning when a send may already have
-happened. Storage errors keep the current text on screen for copying; drafts do
-not synchronize between browsers. The executing Voyage retains server-side
+submissions are never automatically retried. Closing or reloading the page loses
+unsent text and pictures; existing stored drafts are left untouched but are not
+restored or updated. Execution receipt journals remain separate from composition
+and preserve exact identities for uncertain requests. Drafts do not synchronize
+between browsers. The executing Voyage retains server-side
 conversation and receipt ownership.
 
 When the Vessel advertises `workspace_changes` and the connection has the
