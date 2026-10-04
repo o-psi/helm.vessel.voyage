@@ -133,7 +133,16 @@ pub fn duplicate<'a>(request: &Request, receipts: &'a [Receipt]) -> Result<Optio
 /// Effect-free ordinary-user preparation through the existing installer flow.
 /// This validates source/options but does not authenticate a browser request,
 /// publish a durable intent, execute an installation or claim service readiness.
-pub fn prepare_user(options: &crate::cli::Options) -> Result<crate::install::Report> {
+pub fn prepare_user(
+    request: &Request,
+    now_ms: u64,
+    options: &crate::cli::Options,
+) -> Result<crate::install::Report> {
+    request.validate(now_ms)?;
+    ensure!(
+        request.scope == Scope::User,
+        "System setup requires protected guardian admission"
+    );
     ensure!(
         options.action.is_some(),
         "Choose a user installation action"
@@ -143,6 +152,74 @@ pub fn prepare_user(options: &crate::cli::Options) -> Result<crate::install::Rep
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn request() -> Request {
+        Request {
+            schema: 1,
+            command_id: Uuid::from_u128(1),
+            transaction_id: Uuid::from_u128(2),
+            target: Target {
+                vessel_id: Uuid::from_u128(3),
+                helm_origin: "https://helm.example".into(),
+                owner_principal_id: Uuid::from_u128(4),
+            },
+            scope: Scope::User,
+            reviewed_plan_sha256: "a".repeat(64),
+            archive_sha256: "b".repeat(64),
+            manifest_sha256: "c".repeat(64),
+            protected_facts_sha256: "d".repeat(64),
+            expires_at_ms: 10,
+        }
+    }
+    #[test]
+    fn malformed_origin_digest_and_expiry_refuse() {
+        let mut value = request();
+        assert!(value.validate(9).is_ok());
+        assert!(value.validate(10).is_err());
+        for origin in [
+            "https://",
+            "https://user@helm.example",
+            "https://helm.example/path",
+            "https://helm.example?x",
+            "https://helm.example#x",
+            "https://HELM.example",
+        ] {
+            value.target.helm_origin = origin.into();
+            assert!(value.validate(1).is_err(), "{origin}");
+        }
+        value = request();
+        value.archive_sha256 = "A".repeat(64);
+        assert!(value.validate(1).is_err());
+    }
+    #[test]
+    fn retained_completion_and_collisions_are_exact() {
+        let value = request();
+        let receipt = Receipt {
+            request: value.clone(),
+            phase: Phase::Complete,
+            effect_possible: true,
+            outcome_unknown: false,
+            cleanup_pending: false,
+        };
+        assert!(value.validate(100).is_err());
+        assert!(
+            duplicate(&value, std::slice::from_ref(&receipt))
+                .unwrap()
+                .is_some()
+        );
+        let mut changed = value.clone();
+        changed.command_id = Uuid::from_u128(5);
+        assert!(duplicate(&changed, std::slice::from_ref(&receipt)).is_err());
+        changed = value;
+        changed.archive_sha256 = "e".repeat(64);
+        assert!(duplicate(&changed, std::slice::from_ref(&receipt)).is_err());
+        let mut invalid = receipt;
+        invalid.cleanup_pending = true;
+        assert!(invalid.validate().is_err());
+        invalid.phase = Phase::Uncertain;
+        assert!(invalid.validate().is_err());
+        invalid.outcome_unknown = true;
+        assert!(invalid.validate().is_ok());
+    }
     #[test]
     fn private_unknown_fields_refuse() {
         assert!(serde_json::from_value::<Target>(serde_json::json!({"vessel_id":Uuid::from_u128(1),"helm_origin":"https://helm.example","owner_principal_id":Uuid::from_u128(2),"credential":"private"})).is_err());
