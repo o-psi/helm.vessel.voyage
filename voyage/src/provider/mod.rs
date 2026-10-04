@@ -181,8 +181,23 @@ pub(crate) fn reported_usage(
 pub type ProviderStream =
     Pin<Box<dyn Stream<Item = Result<ProviderStreamEvent, ProviderError>> + Send>>;
 
+/// Catalog metadata is not proof of the enabled request window.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextCapacity {
+    pub default_tokens: Option<u64>,
+    pub maximum_tokens: Option<u64>,
+    pub enabled_tokens: Option<u64>,
+    pub provenance: String,
+    pub observed_at_ms: u64,
+    pub model: String,
+    pub transport: String,
+    pub account_applicability: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelInfo {
+    #[serde(default)]
+    pub context_capacity: Option<ContextCapacity>,
     pub id: String,
     pub display_name: String,
     #[serde(default)]
@@ -211,6 +226,7 @@ impl ModelInfo {
     pub fn minimal(id: impl Into<String>) -> Self {
         let id = id.into();
         Self {
+            context_capacity: None,
             display_name: id.clone(),
             id,
             description: String::new(),

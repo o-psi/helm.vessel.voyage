@@ -31,6 +31,15 @@ pub fn validate_model(model: &ModelInfo, secrets: &[&str]) -> Result<(), Provide
     validate_text(&model.id, 512, true, secrets)?;
     validate_text(&model.display_name, 512, true, secrets)?;
     validate_text(&model.description, 4096, false, secrets)?;
+    if let Some(capacity) = &model.context_capacity {
+        validate_text(&capacity.provenance, 512, true, secrets)?;
+        validate_text(&capacity.model, 512, true, secrets)?;
+        validate_text(&capacity.transport, 128, true, secrets)?;
+        validate_text(&capacity.account_applicability, 512, true, secrets)?;
+        if capacity.model != model.id || [capacity.default_tokens, capacity.maximum_tokens, capacity.enabled_tokens].contains(&Some(0)) {
+            return Err(invalid());
+        }
+    }
     for fields in [
         &model.reasoning_efforts,
         &model.input_modalities,

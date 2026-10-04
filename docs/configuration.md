@@ -777,3 +777,13 @@ than returning a successful compaction receipt. Current runtime Goal snapshots
 are refreshed from the execution owner and added as request-only task data,
 independently of historical summaries. Model initiative does not replace bounded
 provider-rejection recovery.
+
+Model discovery now retains optional context-capacity metadata separately:
+default, advertised maximum and enabled capacity, with provenance, model,
+transport, account applicability and observation time. A catalog maximum never
+automatically enables that capacity. Account-scoped refresh and unknown values
+are preserved. Both clients can observe `controls` section `context`: Helm TUI
+operator forms show optional request scope/count method; Helm Web provides a
+read-only refresh panel. Idle status is explicitly uncounted. Last measured
+request facts are checkpointed with the working projection and tagged as prior
+request data after restart, never presented as next-request occupancy.

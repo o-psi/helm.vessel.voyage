@@ -1226,11 +1226,6 @@ impl Agent {
                 };
                 let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
                 working_context.request_status = Some(self.request_context_status().await);
-                if let Some(checkpoint) = checkpoint {
-                    gate::guarded(tokio::time::timeout(context.timeout,
-                        checkpoint.request_accounting(working_context.request_status.as_ref().unwrap())), &cancel)
-                        .await?.map_err(|_| CheckpointError)??;
-                }
                 match result {
                     Ok(provider_attempts::RequestOutcome::Completed(response)) => break *response,
                     Ok(provider_attempts::RequestOutcome::Pressure(pressure)) => {
@@ -1699,6 +1694,12 @@ impl Agent {
                 "observed_at_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis())})
         } else { serde_json::json!({"scope":"outgoing request count unavailable", "model":request.model,
             "input_tokens":null,"enabled_capacity":null,"remaining_tokens":null,"method":"unknown"}) };
+        if let Some(checkpoint) = checkpoint {
+            let status = self.request_context_status().await;
+            gate::guarded(tokio::time::timeout(self.context.timeout,
+                checkpoint.request_accounting(&status)), cancel)
+                .await?.map_err(|_| CheckpointError)??;
+        }
         if let Some(pressure) = pressure && pressure.should_prepare() {
             return Ok(provider_attempts::RequestOutcome::Pressure(pressure));
         }
