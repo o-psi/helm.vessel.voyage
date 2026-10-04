@@ -134,6 +134,7 @@ pub fn spawn(
         let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
         let mut retry_after = HashMap::<(uuid::Uuid, uuid::Uuid), (u32, Instant)>::new();
         let mut hydrated_selection = None;
+        let mut hydrated = HashMap::<(uuid::Uuid, uuid::Uuid), (ProcessInfo, Instant)>::new();
         let mut route_failures = 0u32;
         let mut stream_round = 0usize;
         let mut inbox_count = 0u64;
@@ -161,6 +162,18 @@ pub fn spawn(
                             inbox_count = count;
                         }
                     }
+                    hydrated.retain(|key, (previous, observed)| {
+                        processes
+                            .iter()
+                            .find(|p| (p.session_id, p.incarnation) == *key)
+                            .is_some_and(|current| {
+                                !catalogue_changed(
+                                    std::slice::from_ref(previous),
+                                    std::slice::from_ref(current),
+                                ) && (current.catalogue.is_some()
+                                    || observed.elapsed() < Duration::from_secs(60))
+                            })
+                    });
                     retry_after.retain(|(id, incarnation), _| {
                         processes
                             .iter()
@@ -190,6 +203,7 @@ pub fn spawn(
                         // for a catalogue projection while retaining its cursor.
                         if let Some(target) = selected_target.filter(|t| t.route == route) {
                             cursors.retain(|(session, _), _| *session != target.session);
+                            hydrated.retain(|(session, _), _| *session != target.session);
                         }
                         hydrated_selection = selected_target;
                     }
@@ -203,6 +217,7 @@ pub fn spawn(
                                 .is_some_and(|cursor| *cursor > summary.observation_cursor)
                             {
                                 cursors.remove(&key);
+                                hydrated.remove(&key);
                             }
                         }
                     }
@@ -218,13 +233,14 @@ pub fn spawn(
                                     })
                         })
                         .filter(|process| process.archive.is_none() && process.deletion.is_none())
-                        .take(256)
                         .collect::<Vec<_>>();
                     let limit = Arc::new(Semaphore::new(8));
                     let mut initial = tokio::task::JoinSet::new();
                     for process in &processes {
                         let key = (process.session_id, process.incarnation);
-                        if !cursors.contains_key(&key)
+                        if (!hydrated.contains_key(&key)
+                            || (process.state == voyage_protocol::vessel::ProcessState::Live
+                                && (!streaming || !cursors.contains_key(&key))))
                             && retry_after
                                 .get(&key)
                                 .is_none_or(|(_, when)| Instant::now() >= *when)
@@ -235,19 +251,24 @@ pub fn spawn(
                             let limit = limit.clone();
                             initial.spawn(async move {
                                 let Ok(_permit) = limit.acquire_owned().await else {
-                                    return (key, None);
+                                    return (key, process, None);
                                 };
-                                (key, refresh(&client, route, &process, &sender).await)
+                                let result =
+                                    refresh_observation(&client, route, &process, &sender).await;
+                                (key, process, result)
                             });
                         }
                     }
                     while let Some(result) = initial.join_next().await {
                         match result {
-                            Ok((key, Some(cursor))) => {
-                                cursors.insert(key, cursor);
+                            Ok((key, process, Some(cursor))) => {
+                                hydrated.insert(key, (process, Instant::now()));
+                                if let Some(cursor) = cursor {
+                                    cursors.insert(key, cursor);
+                                }
                                 retry_after.remove(&key);
                             }
-                            Ok((key, None)) => {
+                            Ok((key, _, None)) => {
                                 let attempts = retry_after
                                     .get(&key)
                                     .map_or(1, |(attempts, _)| attempts.saturating_add(1))
@@ -264,14 +285,8 @@ pub fn spawn(
                         }
                     }
                     if !streaming {
-                        for process in &processes {
-                            if process.catalogue.is_some() {
-                                continue;
-                            }
-                            if let Some(cursor) = refresh(&client, route, process, &sender).await {
-                                cursors.insert((process.session_id, process.incarnation), cursor);
-                            }
-                        }
+                        // Hydration above owns polling, invalidation and backoff.
+                        // Saved voyages have no running event loop to poll.
                         tokio::time::sleep(Duration::from_millis(750)).await;
                         continue;
                     }
@@ -490,26 +505,78 @@ pub(super) async fn refresh(
     process: &ProcessInfo,
     sender: &mpsc::Sender<Update>,
 ) -> Option<u64> {
+    refresh_observation(client, route, process, sender)
+        .await
+        .flatten()
+}
+
+// Success without a cursor is hydrated saved metadata, not a failed read.
+async fn refresh_observation(
+    client: &Client,
+    route: Route,
+    process: &ProcessInfo,
+    sender: &mpsc::Sender<Update>,
+) -> Option<Option<u64>> {
     let target = Target {
         route,
         session: process.session_id,
     };
     let result = client
-        .voyage_observed(target.session, process.incarnation, VoyageCommand::Snapshot)
+        .initialize_entities(target.session, process.incarnation)
         .await
-        .and_then(|(value, owner)| {
-            anyhow::ensure!(
-                owner == process.incarnation,
-                "Snapshot observation owner changed"
-            );
+        .and_then(|scope| {
+            let mut value = scope
+                .entities
+                .get("session:session")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("missing canonical session entity"))?;
+            let mut messages = scope
+                .entities
+                .iter()
+                .filter(|(key, _)| key.starts_with("message:"))
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>();
+            messages.sort_by_key(|message| message["message_index"].as_u64());
+            value["messages"] = serde_json::json!(messages);
+            value["run"] = scope
+                .entities
+                .get("run:run")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            value["goal"] = scope
+                .entities
+                .get("goal:goal")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            value["lifecycle"] = scope
+                .entities
+                .get("lifecycle:lifecycle")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            value["cleanup"] = scope
+                .entities
+                .get("resource:cleanup")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            value["observation_cursor"] = serde_json::json!(scope.cursor);
+            if let Some(settings) = scope
+                .entities
+                .get("settings:settings")
+                .and_then(serde_json::Value::as_object)
+            {
+                for (key, field) in settings {
+                    value[key] = field.clone();
+                }
+            }
             let snapshot: Snapshot = serde_json::from_value(value)?;
             anyhow::ensure!(
                 snapshot.session_id == target.session,
-                "Snapshot observation session changed"
+                "entity initialization session changed"
             );
             Ok(snapshot)
         })
         .map_err(|error| error.to_string());
+    let success = result.is_ok();
     let cursor = result
         .as_ref()
         .ok()
@@ -522,7 +589,7 @@ pub(super) async fn refresh(
         })
         .await;
     if process.state != voyage_protocol::vessel::ProcessState::Live {
-        return cursor;
+        return success.then_some(cursor);
     }
     let inventory = client
         .voyage_observed(
@@ -550,7 +617,7 @@ pub(super) async fn refresh(
             observed: Instant::now(),
         })
         .await;
-    cursor
+    success.then_some(cursor)
 }
 
 #[cfg(all(test, unix))]
