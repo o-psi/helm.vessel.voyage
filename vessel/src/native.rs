@@ -1,5 +1,12 @@
-//! Native ordinary-process identity and durable registration admission.
-//! This module is not a replacement executor or enabled supervisor backend.
+//! Native ordinary-process adapters; backend remains unqualified.
+#[cfg(target_os = "macos")]
+pub mod macos;
+#[cfg(target_os = "macos")]
+pub mod macos_session;
+#[cfg(unix)]
+pub mod unix_registry;
+#[cfg(unix)]
+pub mod unix_transport;
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
