@@ -251,8 +251,10 @@ receipts retain their pending identity; recovery observes/resolves that identity
 without replaying the mutation. Runtime authority remains authoritative.
 
 Helm Web's Goal panel shows status, usage, limits, stopped reasons and the recorded
-model assessment. Set/replacement has an unchecked continuation option; replacing
-or clearing requires explicit confirmation. Goal form drafts remain in memory.
+model assessment. Set/replacement starts active without a continuation checkbox;
+replacing or clearing still requires explicit confirmation. Zero quotas are
+presented as unset rather than exhausted. Incomplete usage retains its lower
+bound; an unbudgeted Goal does not require replacement to resume. Goal form drafts remain in memory.
 The browser stores only the command identity for receipt recovery.
 
 Helm TUI shows compact Goal status above the conversation. `/goal` reviews its
