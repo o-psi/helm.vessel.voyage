@@ -75,19 +75,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          name="voyage-${VERSION}-x86_64-unknown-linux-gnu"
-          mkdir -p "dist/$name/bin"
-          for binary in helm vessel voyage voyage-installer; do
-            install -m 755 "target/release/$binary" "dist/$name/bin/$binary"
-          done
-          python3 packaging/stage_nightly.py "dist/$name" "$VERSION"
-          printf 'Development build: %s\nSource: %s\nLinux x86-64 only. No tests run. Not a stable release.\n' \
-            "$VERSION" "$SOURCE_SHA" > "dist/$name/BUILD.txt"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+        run: python3 packaging/archive_nightly.py --bin-dir target/release --output dist --version "$VERSION" --source-sha "$SOURCE_SHA" --target x86_64-unknown-linux-gnu
       - uses: actions/upload-artifact@v4
         if: steps.changed.outputs.build == 'true'
         with:
@@ -114,3 +102,64 @@ jobs:
           gh release create "$tag" "dist/$name" "dist/$name.sha256" \
             --repo "$GITHUB_REPOSITORY" --target "$SOURCE_SHA" --prerelease --latest=false \
             --title "Nightly $VERSION" --notes-file dist/notes.md
+
+  native-candidate:
+    # Enable only after native compilation and installer/security gates are met.
+    if: ${{ false }}
+    # Candidate archives are Actions evidence only until native acceptance #363.
+    # No tests, installation, credentials or privileged service effects here.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Identify source
+        id: source
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set unique development version
+        id: version
+        shell: bash
+        run: python packaging/prepare_nightly.py
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Prepare pinned browser worker dependency (no tests)
+        shell: bash
+        run: npm ci --prefix voyage/browser --ignore-scripts --omit=dev --no-audit --no-fund
+      - name: Build native candidate binaries (no tests)
+        shell: bash
+        run: cargo build --workspace --release --locked --target ${{ matrix.target }}
+      - name: Archive native candidate (not support verification)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TARGET: ${{ matrix.target }}
+        run: python packaging/archive_nightly.py --bin-dir "target/$TARGET/release" --output dist --version "$VERSION" --source-sha "$SOURCE_SHA" --target "$TARGET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-candidate-${{ matrix.target }}-${{ steps.source.outputs.sha }}-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 30

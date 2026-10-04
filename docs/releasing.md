@@ -92,6 +92,32 @@ Managed installations can opt into [reviewed remote updates](remote-updates.md).
 A successful build or checksum does not establish native installation or runtime
 behavior on an untested computer.
 
+### Native nightly preparation (#363)
+
+The workflow contains **disabled** native candidate build-only jobs for Intel
+macOS (`x86_64-apple-darwin`) and Windows x64 (`x86_64-pc-windows-msvc`). They are
+not public downloads or supported native installations. Enable them only after
+native compilation and the installer/security dependencies are ready; no manual
+workflow dispatch is authorized by this preparation. Candidate artifacts use
+`.tar.gz` on macOS and `.zip` on Windows, with four executables (`.exe` on
+Windows), browser assets, target-specific `release.json`, exact-source `BUILD.txt`
+and a SHA-256 checksum. The maintained archive entry point is
+[`packaging/archive_nightly.py`](../packaging/archive_nightly.py); the existing
+Linux nightly publisher uses the same entry point without changing its channel.
+
+Before public native publication, record native install/start/stop/readiness,
+upgrade/rollback/uninstall and failure-path evidence on each claimed platform.
+This includes launchd/native Windows service lifecycle, private storage and key
+custody, ownership/symlink/reparse controls, process grants, resource limits and
+observed cleanup. Preserve independent Voyage ownership and never claim a dead
+process survived a restart. Linux packaging fixtures, cross-compilation and a
+hosted green build are not native passes. Verify the downloaded archive and
+checksum, exact source/version identity and browser inventory separately. Native
+bootstrap acquisition and service lifecycle remain unimplemented gates, not
+features provided by the archive helper. Stable release publication is out of
+scope. Native public publication must remain blocked until #363 acceptance is
+actually met.
+
 ## Artifact integrity
 
 Archive publication uses unique labels and must not overwrite existing archives

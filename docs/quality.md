@@ -1564,3 +1564,21 @@ python3 -I -B installer/tests/native_legacy_history_tests.py
 Native read-only qualification is a separately authorized observation after
 restoration, with new exclusive receipts preserving failed monitor evidence.
 It must not re-inject or replay the original upgrade, fault or helper action.
+
+## Native nightly archive preparation (#363)
+
+Run the target-aware archive fixtures after changing nightly staging or archive
+creation:
+
+```sh
+python3 -m unittest discover -s packaging -p test_archive_nightly.py -v
+python3 -m unittest discover -s packaging -p test_browser_assets.py -v
+python3 packaging/test_public_nightly.py -v
+```
+
+These are offline Linux/source fixtures, not macOS/Windows native evidence. They
+check target names, Windows executable suffixes, archive membership, executable
+and browser hashes, exact source identity, invalid inputs and overwrite refusal.
+Native build candidates remain disabled in `nightly.yml`; hosted automation stays
+build-only. Actual native lifecycle/security checks and downloaded public archive
+verification remain mandatory gates in #363, independent of these fixtures.
