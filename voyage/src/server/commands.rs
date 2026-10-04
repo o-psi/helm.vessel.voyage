@@ -671,13 +671,10 @@ pub(super) async fn dispatch_admitted(
         }
         RuntimeCommand::InitializeDecisions { generation } => {
             let _admission = state.admission.lock().await;
-            let decisions = state
+            let (decisions, cursor) = state
                 .owner
-                .decisions(state.registration.incarnation)
+                .decisions_at_cursor(state.registration.incarnation)
                 .await?;
-            let cursor = state.owner.live_observations(0, 1).await?["latest_cursor"]
-                .as_u64()
-                .context("missing decision cursor")?;
             decision_entities(
                 generation,
                 state.registration.session_id,

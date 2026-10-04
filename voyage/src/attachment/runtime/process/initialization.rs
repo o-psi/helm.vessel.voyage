@@ -1,6 +1,16 @@
 //! Bounded public entities read under the canonical owner's journal mutex.
 use super::*;
 use voyage_protocol::event_connection::{EntityKind, Fence, InitializationEvent, MAX_ENTITY_BYTES};
+pub(in crate::attachment::runtime) struct CapturedBaseline {
+    expires: std::time::Instant,
+    incarnation: Uuid,
+    revision: u64,
+    cursor: u64,
+    events: Vec<InitializationEvent>,
+}
+const MAX_BASELINES: usize = 4;
+const INITIAL_MESSAGES: usize = 96;
+
 impl ManagedSessionOwner {
     pub(crate) async fn initialize_entities(
         &self,
@@ -16,22 +26,30 @@ impl ManagedSessionOwner {
         anyhow::ensure!(!generation.is_nil(), "initialization generation required");
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {
-            let store = shared.lock().map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let mut store = shared.lock().map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            store.entity_initializations.retain(|_,baseline|baseline.expires>std::time::Instant::now());
+            if offset>0 {
+                let baseline=store.entity_initializations.get(&generation).context("initialization expired; discard staged generation")?;
+                anyhow::ensure!(baseline.incarnation==incarnation && expected_revision==Some(baseline.revision) && expected_cursor==Some(baseline.cursor),"initialization fence mismatch");
+                return baseline.page(offset,limit);
+            }
+            anyhow::ensure!(store.entity_initializations.len()<MAX_BASELINES || store.entity_initializations.contains_key(&generation),"initialization capacity exhausted");
             let saved = store.journal.load_session(store.session_id)?;
             let cursor = store.journal.observation_cursor(store.session_id)?;
-            if offset > 0 { anyhow::ensure!(expected_revision == Some(saved.revision) && expected_cursor == Some(cursor), "initialization fence changed; discard staged generation"); }
+
             let session = &saved.session;
             let pending_cleanup = store.journal.list_session_summaries(None,100)?.sessions.into_iter().find(|summary|summary.id==store.session_id).and_then(|summary|summary.pending_cleanup_run);
             let fence = Fence { generation, session_id: store.session_id, incarnation };
-            let total = 9_usize.checked_add(session.messages.len()).context("entity count overflow")?;
+            let message_offset=session.messages.len().saturating_sub(INITIAL_MESSAGES);
+            let total = 9_usize.checked_add(session.messages.len()-message_offset).context("entity count overflow")?;
             let offset = usize::try_from(offset)?;
             anyhow::ensure!(offset <= total, "entity offset beyond scope");
-            let end = offset.saturating_add(limit as usize).min(total);
+            let end = total;
             let mut events = Vec::new();
             if offset == 0 { events.push(InitializationEvent::Begin { fence: fence.clone(), cursor }); }
             for index in offset..end {
                 let (entity_kind, entity_id, value) = match index {
-                    0 => (EntityKind::Session, "session".to_string(), json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"name":session.name,"model":session.model,"workspace":session.workspace,"total_messages":session.messages.len(),"message_offset":0,"history_truncated":false,"pending_cleanup_run":pending_cleanup})),
+                    0 => (EntityKind::Session, "session".to_string(), json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"name":session.name,"model":session.model,"workspace":session.workspace,"total_messages":session.messages.len(),"message_offset":message_offset,"history_truncated":message_offset>0,"pending_cleanup_run":pending_cleanup})),
                     1 => (EntityKind::Lifecycle, "lifecycle".to_string(), store.journal.lifecycle_status(store.session_id)?),
                     2 => (EntityKind::Goal, "goal".to_string(), serde_json::to_value(store.journal.goal(store.session_id)?)?),
                     3 => (EntityKind::Resource, "retained_cleanup".to_string(), store.journal.retained_cleanup(store.session_id)?),
@@ -40,13 +58,16 @@ impl ManagedSessionOwner {
                     6 => (EntityKind::Resource, "session_resources".to_string(), store.journal.session_resources(store.session_id)?),
                     7 => (EntityKind::Usage, "usage".to_string(), serde_json::to_value(store.journal.delegated_usage(session.id)?)?),
                     8 => (EntityKind::Settings, "settings".to_string(), settings.clone()),
-                    _ => { let message = index - 9; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
+                    _ => { let message = message_offset + index - 9; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
                 };
                 anyhow::ensure!(serde_json::to_vec(&value)?.len() <= MAX_ENTITY_BYTES, "entity requires bounded content chunks");
                 events.push(InitializationEvent::Entity { fence: fence.clone(), sequence: index as u64, entity_kind, entity_id, value });
             }
             if end == total { events.push(InitializationEvent::Complete { fence, sequence: total as u64, cursor }); }
-            Ok(json!({"version":3,"revision":saved.revision,"cursor":cursor,"events":events,"next_offset":end,"has_more":end<total}))
+            let baseline=CapturedBaseline{expires:std::time::Instant::now()+std::time::Duration::from_secs(60),incarnation,revision:saved.revision,cursor,events};
+            let page=baseline.page(0,limit)?;
+            store.entity_initializations.insert(generation,baseline);
+            Ok(page)
         }).await?
     }
 }
@@ -61,4 +82,29 @@ fn initial_message(messages: &[crate::model::Message], index: usize) -> anyhow::
         value = json!({"message_index":index,"role":message.role,"content":"","projection_truncated":true,"complete_message":"message_chunk","content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty()});
     }
     Ok(value)
+}
+
+impl CapturedBaseline {
+    fn page(&self, offset: u64, limit: u32) -> anyhow::Result<Value> {
+        let total = self.events.len() - 2;
+        let offset = usize::try_from(offset)?;
+        anyhow::ensure!(offset <= total, "entity offset beyond captured scope");
+        let end = offset.saturating_add(limit as usize).min(total);
+        let mut events = Vec::new();
+        if offset == 0 {
+            events.push(self.events[0].clone());
+        }
+        events.extend_from_slice(&self.events[1 + offset..1 + end]);
+        if end == total {
+            events.push(
+                self.events
+                    .last()
+                    .context("missing captured barrier")?
+                    .clone(),
+            );
+        }
+        Ok(
+            json!({"version":3,"revision":self.revision,"cursor":self.cursor,"events":events,"next_offset":end,"has_more":end<total}),
+        )
+    }
 }

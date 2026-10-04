@@ -533,3 +533,76 @@ fn entity_replay_refuses_retention_gaps_and_metadata_only_rows() {
     assert_eq!(replay["has_more"], true);
     assert_eq!(replay["events"][0]["payload"]["text"], "é");
 }
+
+#[tokio::test]
+async fn captured_entity_baseline_survives_concurrent_metadata_output() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let generation = Uuid::new_v4();
+    let first = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 0,
+            limit: 1,
+            expected_revision: None,
+            expected_cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    call(
+        &state,
+        RuntimeCommand::SetModel {
+            command_id: Uuid::new_v4(),
+            expected_revision: first["revision"].as_u64().unwrap(),
+            expires_at_ms: expiry(),
+            model: "changed-between-pages".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let continuation = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: first["revision"].as_u64(),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(continuation["cursor"], first["cursor"]);
+    assert_eq!(continuation["revision"], first["revision"]);
+    assert_eq!(continuation["has_more"], false);
+}
+
+#[tokio::test]
+async fn decision_values_and_cursor_share_agent_insertion_mutex() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let owner = state.owner.clone();
+    let before = owner
+        .decisions_at_cursor(state.registration.incarnation)
+        .await
+        .unwrap();
+    // All insertion paths use this same mutex: no returned barrier can cross
+    // an unseen insertion. Empty scopes still carry their exact retained cursor.
+    let page = call(
+        &state,
+        RuntimeCommand::InitializeDecisions {
+            generation: Uuid::new_v4(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(page["cursor"].as_u64().unwrap() >= before.1);
+    assert_eq!(
+        page["events"].as_array().unwrap().first().unwrap()["kind"],
+        "begin"
+    );
+    assert_eq!(
+        page["events"].as_array().unwrap().last().unwrap()["kind"],
+        "complete"
+    );
+}

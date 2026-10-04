@@ -86,6 +86,8 @@ struct Store {
     session_id: Uuid,
     run_id: Uuid,
     turn: Weak<TurnToken>,
+    entity_initializations:
+        std::collections::HashMap<Uuid, process::initialization::CapturedBaseline>,
 }
 impl ManagedSessionOwner {
     pub async fn put_image(
@@ -137,6 +139,7 @@ impl ManagedSessionOwner {
                     session_id,
                     run_id: Uuid::nil(),
                     turn: Weak::new(),
+                    entity_initializations: Default::default(),
                 })),
                 session_id,
             })
