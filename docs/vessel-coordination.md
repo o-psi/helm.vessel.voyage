@@ -382,3 +382,20 @@ and acknowledgements without new requests do not trigger acknowledgement loops.
 This is model-visible routing guidance, not automatic final-answer forwarding or
 a deterministic reply-completion gate. Delivery still requires an explicit tool
 call and remains subject to the receiver's policy and the target's authority.
+
+## Explicit destination scope RPC (integration in progress)
+
+The public Voyage adapter exposes `CoordinationScopeRead` and
+`CoordinationScopeCommit { command_id, selection }`. Selection contains the exact
+session, actor-context grant/revision, expected scope revision and bounded
+destination pins (alias, Vessel UUID, workspace, grant binding, rights and expiry).
+The executing Voyage authenticates the current request grant before reading its
+host-private context registry. Submitted pins never supply authority. Commit is
+idle-only and atomically retains selection and exact command receipt together;
+conflicting reuse refuses. Read access does not cancel existing work.
+
+**This is not yet a supported end-to-end setup journey.** Authenticated trusted
+context provisioning, private runtime credential routing, affirmative scoped
+execution and the actual disconnected two-Vessel fixture remain unfinished.
+Do not manually write a context file as a substitute for that setup transaction,
+or treat a successful scope commit as installation/account readiness.
