@@ -312,3 +312,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "remote_updates_tests.rs"]
+mod journey_tests;
