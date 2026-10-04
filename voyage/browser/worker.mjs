@@ -123,7 +123,7 @@ const bounded=async(p,ms=12000)=>{let timer;try{return await Promise.race([p,new
 
 export class Worker {
   constructor(){
-    this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();this.recorderSessionCleanups=new Set();
+    this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.cssReads=new Map();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();this.recorderSessionCleanups=new Set();
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;this.assetRevision=0;this.cssBatchCache=new Map();this.cssCacheBytes=0;
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
@@ -443,7 +443,7 @@ export class Worker {
     const generation=++this.captureActivityGeneration;
     let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
     const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(this.recorderCall(frame,'stop',0,2200000,generation),1000))));
-    this.recorderStopObserved=retired&&!this.captureTaskUncertain&&this.cssCacheBytes===0&&this.cssBatchCache.size===0&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
+    this.recorderStopObserved=retired&&!this.captureTaskUncertain&&this.cssCacheBytes===0&&this.cssBatchCache.size===0&&this.cssReads.size===0&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
     await this.publishCaptureObservation();
     this.frameVisuals.clear();
     for(const viewer of this.viewers.values()){viewer.mirrorCursor=0;viewer.frameCursors.clear();}
@@ -489,17 +489,58 @@ export class Worker {
     }
     return prepared;
   }
-  async mirrorRead(frame,since,budget,generation,format,limit,guard){
-    const deadline=Date.now()+limit;
+  async recorderRead(frame,since,budget,generation,format,deadline,guard,reads){
     for(;;){
       guard();const remaining=deadline-Date.now();if(remaining<=0)refuse('observation_unavailable');
+      const call=Promise.resolve().then(()=>this.recorderCall(frame,'drain',since,budget,generation,format));
+      reads?.add(call);this.captureTasks.add(call);
+      void call.finally(()=>this.captureTasks.delete(call)).catch(()=>{});
       try{
-        const value=await bounded(this.recorderCall(frame,'drain',since,budget,generation,format),remaining);
+        const value=await bounded(call,remaining);
         guard();if(value?.error!=='observation_unavailable')return value;
       }catch(error){if(error.code==='operation_timeout'){this.captureTaskUncertain=true;throw error;}guard();if(error.code!=='observation_unavailable')throw error;}
       const wait=Math.min(20,deadline-Date.now());if(wait<=0)refuse('observation_unavailable');
       await new Promise(resolve=>setTimeout(resolve,wait));guard();
     }
+  }
+  async mirrorRead(frame,since,budget,generation,format,limit,guard,producerGuard=guard){
+    const deadline=Date.now()+limit;guard();if(Date.now()>=deadline)refuse('observation_unavailable');
+    const captured={context:this.context,page:this.page,document:this.epochs.document,capture:this.epochs.capture,control:this.epochs.control};
+    const sharedGuard=()=>{producerGuard();if(captured.context!==this.context||captured.page!==this.page||captured.document!==this.epochs.document||captured.capture!==this.epochs.capture||captured.control!==this.epochs.control||generation!==this.captureActivityGeneration||frame.isDetached?.())refuse('capture_fenced');};
+    if(format!=='css_chunks_v1')return this.recorderRead(frame,since,budget,generation,format,deadline,guard);
+    const identity=value=>value&&typeof value==='object'?this.frameId(value):null;
+    const key=JSON.stringify([identity(this.context),identity(this.page),identity(frame),this.browser,this.active,
+      this.epochs.document,this.epochs.capture,this.epochs.control,generation,since,budget,format]);
+    let entry=this.cssReads.get(key);
+    if(!entry){
+      if(this.cssReads.size>=4)refuse('capture_busy');
+      entry={reads:new Set(),promise:null};this.cssReads.set(key,entry);
+      const owned=entry;
+      entry.promise=Promise.resolve().then(async()=>{
+        try{
+          const value=await this.recorderRead(frame,since,budget,generation,format,deadline,sharedGuard,owned.reads);
+          // CSS drain contains encoded strings/scalars only. Legacy event arrays
+          // remain per-reader because asset rewriting mutates those arrays.
+          if(!value||typeof value!=='object'||Array.isArray(value))refuse('mirror_limit');
+          for(const [field,item]of Object.entries(value)){
+            if(field==='chunks'){if(!Array.isArray(item)||item.length>16||item.some(chunk=>typeof chunk!=='string'))refuse('mirror_limit');}
+            else if(item!==null&&!['string','number','boolean'].includes(typeof item))refuse('mirror_limit');
+          }
+          const immutable={...value};if(Array.isArray(value.chunks))immutable.chunks=Object.freeze([...value.chunks]);
+          return Object.freeze(immutable);
+        }finally{
+          // A caller's deadline never abandons a late CDP operation. Keep this
+          // producer owned until the original call and detach actually retire.
+          await Promise.allSettled([...owned.reads]);
+          if(this.cssReads.get(key)===owned)this.cssReads.delete(key);
+        }
+      });
+      this.captureTasks.add(entry.promise);
+      void entry.promise.finally(()=>this.captureTasks.delete(entry.promise)).catch(()=>{});
+    }
+    const remaining=deadline-Date.now();if(remaining<=0)refuse('observation_unavailable');
+    try{const value=await bounded(entry.promise,remaining);guard();return value;}
+    catch(error){if(error.code==='operation_timeout'){this.captureTaskUncertain=true;throw error;}guard();throw error;}
   }
   async mirror(req){
     const viewer=this.viewer(req.viewer);this.requireOpen();
@@ -513,8 +554,9 @@ export class Worker {
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     captureGuard();
-    const guarded=()=>{captureGuard();if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');};
-    const value=await this.mirrorRead(page.mainFrame(),since,2200000,generation,format,5000,guarded);
+    const producerGuard=()=>{if(generation!==this.captureActivityGeneration||!this.viewers.size||stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');};
+    const guarded=()=>{captureGuard();producerGuard();};
+    const value=await this.mirrorRead(page.mainFrame(),since,2200000,generation,format,5000,guarded,producerGuard);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
@@ -537,7 +579,7 @@ export class Worker {
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
         captureGuard();
-        const child=await this.mirrorRead(frame,cursor,550000,generation,format,2500,guarded).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
+        const child=await this.mirrorRead(frame,cursor,550000,generation,format,2500,guarded,producerGuard).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
         if(format===null)this.inlineAssets(child.events,frame.url());
         const bytes=format===null?Buffer.from(JSON.stringify(child.events)):null;

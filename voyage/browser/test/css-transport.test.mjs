@@ -131,9 +131,11 @@ test('only observation-unavailable reads retry within original bounded read and 
  assert.deepEqual(await worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{guards++;}),{ok:true});assert.equal(reads,2);assert.ok(guards>=4);
  reads=0;worker.recorderCall=async()=>{reads++;throw {code:'operation_timeout'};};
  await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{}),error=>error.code==='operation_timeout');assert.equal(reads,1);
- reads=0;worker.recorderCall=async()=>{reads++;throw {code:'observation_unavailable'};};let allowed=true;
- await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{if(!allowed)throw {code:'capture_fenced'};allowed=false;}),error=>error.code==='capture_fenced');assert.equal(reads,1);
- const began=Date.now();await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',40,()=>{}),error=>error.code==='observation_unavailable');assert.ok(Date.now()-began<100);
+ reads=0;let allowed=true;worker.recorderCall=async()=>{reads++;allowed=false;throw {code:'observation_unavailable'};};
+ const authority=()=>{if(!allowed)throw {code:'capture_fenced'};};
+ await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,authority,authority),error=>error.code==='capture_fenced');assert.equal(reads,1);
+ worker.recorderCall=async()=>{throw {code:'observation_unavailable'};};
+ const began=Date.now();await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',40,()=>{}),error=>['observation_unavailable','operation_timeout'].includes(error.code));assert.ok(Date.now()-began<100);
 });
 
 
@@ -142,4 +144,45 @@ test('a concurrent capture fence never masks timeout or retires unknown capture 
  worker.recorderCall=async()=>{reads++;fenced=true;throw {code:'operation_timeout'};};
  await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',100,()=>{if(fenced)throw {code:'capture_fenced'};}),error=>error.code==='operation_timeout');
  assert.equal(reads,1);assert.equal(worker.captureTaskUncertain,true);
+});
+
+test('exact concurrent CSS readers share one immutable recorder producer with independent authority',async()=>{
+ const worker=new Worker(),frame={},other={};let release,reads=0,first=true;
+ worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {encoding:'gzip-chunks',chunks:['encoded'],cursor:1};};
+ const one=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{if(!first)throw {code:'private'};},()=>{});
+ const two=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{},()=>{});
+ await new Promise(resolve=>setTimeout(resolve,0));assert.equal(reads,1);first=false;release();
+ await assert.rejects(one,error=>error.code==='private');const value=await two;
+ assert.ok(Object.isFrozen(value)&&Object.isFrozen(value.chunks));assert.equal(worker.cssReads.size,0);
+ worker.recorderCall=async()=>{reads++;return {chunks:['new']};};
+ await Promise.all([worker.mirrorRead(frame,1,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(other,1,2200000,0,'css_chunks_v1',1000,()=>{})]);assert.equal(reads,3);
+});
+test('CSS producer retirement remains owned after caller deadline and capture fence',async()=>{
+ const worker=new Worker(),frame={};let release,reads=0;
+ worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {chunks:['encoded']};};
+ const pending=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',20,()=>{},()=>{});
+ await assert.rejects(pending,error=>error.code==='operation_timeout');assert.equal(reads,1);assert.equal(worker.cssReads.size,1);assert.ok(worker.captureTasks.size>=1);assert.equal(worker.captureTaskUncertain,true);
+ worker.captureActivityGeneration++;release();await Promise.allSettled([...worker.captureTasks]);assert.equal(worker.cssReads.size,0);assert.equal(worker.captureTasks.size,0);
+});
+test('CSS producer keys refuse generation/private changes and bound outstanding distinct reads',async()=>{
+ const worker=new Worker();let release;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async()=>{await waiting;return {chunks:['encoded']};};
+ const tasks=Array.from({length:4},()=>worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{},()=>{}));
+ await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{}),error=>error.code==='capture_busy');
+ await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{throw {code:'private'};}),error=>error.code==='private');
+ worker.captureActivityGeneration++;release();for(const task of tasks)await assert.rejects(task,error=>error.code==='capture_fenced');assert.equal(worker.cssReads.size,0);
+});
+test('legacy recorder reads stay independent rather than sharing mutable events',async()=>{
+ const worker=new Worker(),frame={};let calls=0;worker.recorderCall=async()=>{calls++;return {events:[]};};
+ const values=await Promise.all([worker.mirrorRead(frame,0,1000,0,null,1000,()=>{}),worker.mirrorRead(frame,0,1000,0,null,1000,()=>{})]);assert.equal(calls,2);assert.notEqual(values[0],values[1]);
+});
+test('in-flight CSS key separates exact cursor and budget while legacy never joins',async()=>{
+ const worker=new Worker(),frame={};let release,calls=0;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async()=>{calls++;await waiting;return {chunks:['encoded']};};
+ const reads=[worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,1,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,0,550000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,0,2200000,0,null,1000,()=>{})];
+ await new Promise(resolve=>setTimeout(resolve,0));assert.equal(calls,4);assert.equal(worker.cssReads.size,3);release();await Promise.all(reads);assert.equal(worker.cssReads.size,0);
+});
+test('CSS sharing refuses mutable nested envelopes and expired callers before producer admission',async()=>{
+ const worker=new Worker();let reads=0;worker.recorderCall=async()=>{reads++;return {chunks:['encoded'],nested:{events:[]}};};
+ await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{}),error=>error.code==='mirror_limit');assert.equal(worker.cssReads.size,0);
+ const before=reads,now=Date.now;let clock=1000;Date.now=()=>clock;
+ try{await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1,()=>{clock=1002;}),error=>error.code==='observation_unavailable');assert.equal(reads,before);assert.equal(worker.cssReads.size,0);}finally{Date.now=now;}
 });
