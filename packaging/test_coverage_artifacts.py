@@ -138,6 +138,9 @@ class SelectionTests(unittest.TestCase):
         m = self.manifest()
         with self.assertRaisesRegex(ValueError, 'mapping qualification'):
             actual_audit(m, self.export, '', self.root)
+        with self.assertRaisesRegex(ValueError, 'duplicate per-object'):
+            actual_audit(m, self.export, '', self.root,
+                         {str(self.binary): ['lib.rs', 'lib.rs']})
         with self.assertRaisesRegex(ValueError, 'incomplete object'):
             actual_audit(m, self.export, '', self.root, {})
 

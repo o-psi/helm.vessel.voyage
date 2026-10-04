@@ -139,3 +139,28 @@ JSON is derived evidence, not a substitute for those exports. Offline audit must
 supply that participation record. This proves object/file participation, not that
 all cross-crate counters or ignored/generated source inputs are complete. Native
 three-cohort provenance/inventory comparison remains a mandatory gate.
+
+### Native input provenance evidence required before acceptance
+
+For each current Cargo executable, retain its matching compiler dep-info (`.d`)
+and Cargo fingerprint/build-script records in the cohort evidence. Resolve all
+compiler source dependencies against the measured checkout: each must be present
+in the conservative source manifest with unchanged bytes. Any ignored, generated,
+external or unresolved dependency refuses qualification until its producer,
+content digest and generation command/environment are captured and reviewed.
+Absence of dep-info is not an empty input set. Build-script rerun-if-changed and
+rerun-if-env-changed records must be reviewed too; do not publish environment
+values containing credentials. Archive actual nonsecret compiler configuration,
+not an assertion that source hashes suffice. This provenance review remains an
+explicit native gate, not an automated claim from this offline guard.
+
+No workspace Cargo custom-build target was observed in the no-build metadata
+inspection for this source. `voyage/src/build.rs` is a Rust module, not proof of a
+Cargo build script. Real inputs observed include Vessel database SQL and Helm
+embedded browser files. Dependencies can still have generators. A native cohort
+must validate the actual instrumented dependency graph and all current objects;
+metadata alone does not establish compiled provenance or cross-crate counters.
+Duplicate source files within a per-object export now refuse; repeated files
+across distinct objects are expected generic instantiations, not automatically
+foreign maps. Compare function/region inventories in the full union against the
+current compiler set and retained prior full report, investigating counter loss.

@@ -109,6 +109,7 @@ def audit(manifest, detail, diagnostics, root, participation=None):
     union = set()
     for obj, mapped in participation.items():
         require(mapped, 'object has no qualified mappings: ' + obj)
+        require(len(mapped) == len(set(mapped)), 'duplicate per-object source mapping')
         require(set(mapped) <= logical, 'object mappings absent from combined export')
         union.update(mapped)
     require(union == logical, 'combined export mapping inventory differs from objects')
@@ -175,8 +176,10 @@ def main():
                     'per-object LLVM qualification failed')
             data = json.loads(evidence.read_text())
             require(len(data['data']) == 1, 'invalid per-object dataset')
-            participation[obj] = [str(Path(f['filename']).resolve().relative_to(root))
-                                  for f in data['data'][0]['files']]
+            mapped = [str(Path(f['filename']).resolve().relative_to(root))
+                      for f in data['data'][0]['files']]
+            require(len(mapped) == len(set(mapped)), 'duplicate per-object source mapping')
+            participation[obj] = mapped
         proof = args.output.with_name(args.output.name + '.participation.json')
         with proof.open('x') as out:
             json.dump(participation, out, sort_keys=True)
