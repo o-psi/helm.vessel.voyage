@@ -103,6 +103,13 @@ public origin and activation intent remain pinned. A same-release replacement is
 not evidence that the reviewed transition is still current. These fixtures do not
 mutate accounts or system services and do not qualify native deployment.
 
+Gateway regressions additionally cover disconnected/missing endpoints, truncated and
+zero-length payloads, unknown/private pairing envelope fields and stale Vessel
+identity grants. Pairing preflight uses an empty struct variant so serde actually
+rejects unknown fields (unit variants ignore them despite `deny_unknown_fields`).
+The installer readiness fixture pins the public reply to the protected supervisor
+identity rather than accepting an unrelated healthy user gateway.
+
 These tests do not run a root supervisor or unprivileged network gateway. A
 separate disposable Ubuntu VM test is required for actual peer identities,
 public routing and failure/restart behavior; the exact fixture commands and

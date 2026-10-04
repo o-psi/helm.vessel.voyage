@@ -33,7 +33,7 @@ pub enum GatewayRequest {
         auth: GrantAuth,
         command: VesselCommand,
     },
-    PairPreflight,
+    PairPreflight {},
     PairRedeem {
         expected_vessel_id: Option<Uuid>,
         request: super::pairing::PairRequest,
@@ -222,6 +222,41 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn gateway_loss_and_truncated_payload_never_become_successful_replies() {
+        let name = format!("voyage-gateway-test-{}", Uuid::new_v4().simple());
+        assert!(
+            connect_peer(&name, unsafe { libc::geteuid() })
+                .await
+                .is_err()
+        );
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        writer.write_all(&16u32.to_be_bytes()).await.unwrap();
+        writer.write_all(b"{}").await.unwrap();
+        writer.shutdown().await.unwrap();
+        assert!(read_frame::<Message>(&mut reader).await.is_err());
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        writer.write_all(&0u32.to_be_bytes()).await.unwrap();
+        assert!(read_frame::<Message>(&mut reader).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn private_and_unknown_envelopes_are_rejected_before_dispatch() {
+        for payload in [
+            br#"{"kind":"pair_preflight","token":"private"}"#.as_slice(),
+            br#"{"kind":"unsupported"}"#.as_slice(),
+            br#"{"kind":"command","auth":{},"command":{}}"#.as_slice(),
+        ] {
+            let (mut writer, mut reader) = UnixStream::pair().unwrap();
+            writer
+                .write_all(&(payload.len() as u32).to_be_bytes())
+                .await
+                .unwrap();
+            writer.write_all(payload).await.unwrap();
+            assert!(read_frame::<GatewayRequest>(&mut reader).await.is_err());
+        }
     }
 
     #[tokio::test]

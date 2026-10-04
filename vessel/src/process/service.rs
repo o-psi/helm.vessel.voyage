@@ -270,7 +270,7 @@ async fn serve_gateway_connection(
         GatewayRequest::Command { auth, command } => {
             gateway_command(&supervisor, auth, command, None).await
         }
-        GatewayRequest::PairPreflight => {
+        GatewayRequest::PairPreflight {} => {
             super::api::response(pairing::preflight(&supervisor.directory))
         }
         GatewayRequest::PairRedeem {

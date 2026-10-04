@@ -724,7 +724,10 @@ mod tests {
             let mut changed = serde_json::to_value(current).unwrap();
             changed[field] = "replaced".into();
             let changed: Record = serde_json::from_value(changed).unwrap();
-            assert!(!retained_candidate_matches(&op, &changed).unwrap(), "{field}");
+            assert!(
+                !retained_candidate_matches(&op, &changed).unwrap(),
+                "{field}"
+            );
             assert!(rollback_eligible(&op, &changed).is_err(), "{field}");
         }
         let mut changed = current.clone();
