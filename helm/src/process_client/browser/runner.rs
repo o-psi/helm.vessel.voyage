@@ -88,10 +88,19 @@ pub(super) async fn run(
     let private = crate::attachment::local_actor::storage::Directory::open(&root)?;
     let _ownership = private.lock()?;
     status.send_modify(|s|s.summary="Starting local Chromium: requires Node 24+, installed executable and a working Chromium sandbox".into());
-    let helper = Helper::start(&assets.join("helper.mjs")).await?;
     let mut diagnostic = super::diagnostics::Diagnostic {
         version: 1,
         ..Default::default()
+    };
+    let helper = match Helper::start(&assets.join("helper.mjs")).await {
+        Ok(helper) => helper,
+        Err(error) => {
+            diagnostic.failure_phase = Some(super::diagnostics::Phase::Startup);
+            status.send_modify(|s| s.summary = diagnostic.summary());
+            // Failure to retain diagnostics must not overwrite the initiating error.
+            let _ = journal::diagnostic(&root, &diagnostic);
+            return Err(error);
+        }
     };
     let mut phase = super::diagnostics::Phase::Startup;
     let mut notices = helper.events();
@@ -158,7 +167,7 @@ pub(super) async fn run(
                             "Vessel socket changed or disconnected; local sharing requires explicit restart");
                     }
                     _ = work_ready.notified() => {pending_needed=true;},
-                    _ = stopped.cancelled() => { phase = super::diagnostics::Phase::ProcessObservation; anyhow::bail!("Local browser process stopped; effects may be unknown"); },
+                    _ = stopped.cancelled() => { phase = super::diagnostics::Phase::HelperTransportObservation; anyhow::bail!("Local browser transport disconnected; effects may be unknown"); },
                     event = notices.recv() => {
                         phase = super::diagnostics::Phase::ControlObservation;
                         match event {
@@ -242,7 +251,7 @@ pub(super) async fn run(
         }.await;
         diagnostic.failure_phase = outcome.as_ref().err().map(|_| phase);
         diagnostic.socket_unchanged = Some(*connection.borrow() == initial_socket);
-        diagnostic.helper_stop_observed = Some(stopped.is_cancelled());
+        diagnostic.helper_transport_disconnected = Some(stopped.is_cancelled());
         // Local fence first, then inform remote. The latter can fail during a partition.
         action_stop.cancel();
         controller.abort();

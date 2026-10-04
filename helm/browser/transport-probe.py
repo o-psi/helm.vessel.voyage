@@ -166,51 +166,62 @@ try:
 finally:
  # Snapshot before any signal/stop: teardown exits are not initiating failures.
  failure=sys.exc_info()[0]
- (E/'pre-teardown.json').write_text(json.dumps({
-  'version':1, 'fixture_stage':fixture_stage, 'provider_stage':stage,
-  'failure_category':('assertion' if failure is AssertionError else
-                      'connection_refused' if failure is ConnectionRefusedError else
-                      'fixture_error' if failure else None),
-  'owned_processes':[{'role':'vessel' if n==0 else 'helm_browser',
-                      'pid':p.pid,'returncode':p.poll()} for n,p in enumerate(children)]
- },indent=2))
- (E/'provider-bodies.json').write_text(json.dumps(bodies,indent=2))
- (E/'errors.json').write_text(json.dumps(errors))
- # Stop the local Helm browser first, while its supervising Vessel is reachable.
- for p in reversed(children[1:]):
-  if p.poll() is None:
-   if tui and master is not None:os.write(master,b'\x11')
-   else:p.send_signal(signal.SIGINT)
-  try:p.wait(timeout=20)
-  except subprocess.TimeoutExpired:p.kill();p.wait()
- if children and children[0].poll() is None and (directory/'process-http.json').exists():
+ evidence_failed=False
+ try:
+  (E/'pre-teardown.json').write_text(json.dumps({
+   'version':1, 'fixture_stage':fixture_stage, 'provider_stage':stage,
+   'failure_category':('assertion' if failure is AssertionError else
+                       'connection_refused' if failure is ConnectionRefusedError else
+                       'fixture_error' if failure else None),
+   'owned_processes':[{'role':'vessel' if n==0 else 'helm_browser',
+                       'pid':p.pid,'returncode':p.poll()} for n,p in enumerate(children)]
+  },indent=2))
+  (E/'provider-bodies.json').write_text(json.dumps(bodies,indent=2))
+  (E/'errors.json').write_text(json.dumps(errors))
+ except Exception:
+  # Fixed category only; never mask the original fixture exception.
+  evidence_failed=True
+ finally:
+  # Stop the local Helm browser first, while its supervising Vessel is reachable.
+  for p in reversed(children[1:]):
+   if p.poll() is None:
+    if tui and master is not None:os.write(master,b'\x11')
+    else:p.send_signal(signal.SIGINT)
+   try:p.wait(timeout=20)
+   except subprocess.TimeoutExpired:p.kill();p.wait()
+  if children and children[0].poll() is None and (directory/'process-http.json').exists():
+   try:
+    for info in request({'op':'catalogue'}):
+     try:request({'op':'stop','session_id':info['session_id'],'incarnation':info['incarnation']})
+     except Exception:pass
+   except Exception:pass
+  for p in children[:1]:
+   if p.poll() is None:p.terminate()
+   try:p.wait(timeout=10)
+   except subprocess.TimeoutExpired:p.kill();p.wait()
+  provider.shutdown();site.shutdown();provider.server_close();site.server_close()
+  # Observe exact owned fixtures; do not delete locks/receipts or claim process exit
+  # resolved a remote cleanup obligation. Preserve private evidence for diagnosis.
+  markers=[str(E).encode(),str(directory).encode()];remaining=[]
+  for proc in pathlib.Path('/proc').glob('[0-9]*'):
+   if int(proc.name)==os.getpid():continue
+   try:
+    cmd=(proc/'cmdline').read_bytes()
+    if any(marker in cmd for marker in markers):remaining.append(int(proc.name))
+   except (FileNotFoundError,ProcessLookupError,PermissionError):pass
+  ports=[provider.server_port,site.server_port]
+  if base:ports.append(urllib.parse.urlparse(base).port)
+  listeners=[]
+  for port in ports:
+   with socket.socket() as sock:
+    sock.settimeout(.3)
+    if sock.connect_ex(('127.0.0.1',port))==0:listeners.append(port)
+  cleanup={'child_exit_codes':[p.poll() for p in children],'matching_live_processes':remaining,'remaining_loopback_listeners':listeners,'executor_locks_remaining':len(list(pathlib.Path(env['XDG_STATE_HOME']).glob('voyage/helm-browser/session-*/executor.lock')))}
   try:
-   for info in request({'op':'catalogue'}):
-    try:request({'op':'stop','session_id':info['session_id'],'incarnation':info['incarnation']})
-    except Exception:pass
-  except Exception:pass
- for p in children[:1]:
-  if p.poll() is None:p.terminate()
-  try:p.wait(timeout=10)
-  except subprocess.TimeoutExpired:p.kill();p.wait()
- provider.shutdown();site.shutdown();provider.server_close();site.server_close()
- # Observe exact owned fixtures; do not delete locks/receipts or claim process exit
- # resolved a remote cleanup obligation. Preserve private evidence for diagnosis.
- markers=[str(E).encode(),str(directory).encode()];remaining=[]
- for proc in pathlib.Path('/proc').glob('[0-9]*'):
-  if int(proc.name)==os.getpid():continue
-  try:
-   cmd=(proc/'cmdline').read_bytes()
-   if any(marker in cmd for marker in markers):remaining.append(int(proc.name))
-  except (FileNotFoundError,ProcessLookupError,PermissionError):pass
- ports=[provider.server_port,site.server_port]
- if base:ports.append(urllib.parse.urlparse(base).port)
- listeners=[]
- for port in ports:
-  with socket.socket() as sock:
-   sock.settimeout(.3)
-   if sock.connect_ex(('127.0.0.1',port))==0:listeners.append(port)
- cleanup={'child_exit_codes':[p.poll() for p in children],'matching_live_processes':remaining,'remaining_loopback_listeners':listeners,'executor_locks_remaining':len(list(pathlib.Path(env['XDG_STATE_HOME']).glob('voyage/helm-browser/session-*/executor.lock')))}
- (E/'cleanup-audit.json').write_text(json.dumps(cleanup,indent=2))
- assert not remaining and not listeners and all(p.poll() is not None for p in children),cleanup
- print('PASS exact fixture process/listener cleanup observed (receipts retained)',flush=True)
+   (E/'cleanup-audit.json').write_text(json.dumps(cleanup,indent=2))
+  except Exception:
+   evidence_failed=True
+  assert not remaining and not listeners and all(p.poll() is not None for p in children),cleanup
+  print('PASS exact fixture process/listener cleanup observed (receipts retained)',flush=True)
+ if evidence_failed and failure is None:
+  raise RuntimeError('fixture evidence capture failed; teardown attempted')

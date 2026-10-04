@@ -7,7 +7,7 @@ pub(super) enum Phase {
     #[default]
     Startup,
     SocketObservation,
-    ProcessObservation,
+    HelperTransportObservation,
     ControlObservation,
     LeaseRenewal,
     HelperHeartbeat,
@@ -23,7 +23,7 @@ pub(super) struct Diagnostic {
     pub version: u32,
     pub failure_phase: Option<Phase>,
     pub socket_unchanged: Option<bool>,
-    pub helper_stop_observed: Option<bool>,
+    pub helper_transport_disconnected: Option<bool>,
     pub local_fence_observed: bool,
     pub helper_shutdown_observed: bool,
     // Deliberately no operation outcome: only exact dispatch receipts establish it.
@@ -56,7 +56,7 @@ mod tests {
             version: 1,
             failure_phase: Some(Phase::ActionCompletion),
             socket_unchanged: Some(true),
-            helper_stop_observed: Some(false),
+            helper_transport_disconnected: Some(false),
             local_fence_observed: true,
             helper_shutdown_observed: true,
         })
@@ -78,11 +78,11 @@ mod tests {
         assert_eq!(value.as_object().unwrap().len(), 6);
         let unknown = serde_json::to_value(Diagnostic::default()).unwrap();
         assert!(unknown["socket_unchanged"].is_null());
-        assert!(unknown["helper_stop_observed"].is_null());
+        assert!(unknown["helper_transport_disconnected"].is_null());
         for phase in [
             Phase::Startup,
             Phase::SocketObservation,
-            Phase::ProcessObservation,
+            Phase::HelperTransportObservation,
             Phase::ControlObservation,
             Phase::LeaseRenewal,
             Phase::HelperHeartbeat,

@@ -276,7 +276,7 @@ must not be relabeled transport failed-cleanup acceptance.
 
 The opt-in local browser runner retains private `diagnostic.json` alongside its
 minimal journal. Fixed `failure_phase` values identify the last failing boundary;
-`socket_unchanged`, `helper_stop_observed`, `local_fence_observed` and
+`socket_unchanged`, `helper_transport_disconnected`, `local_fence_observed` and
 `helper_shutdown_observed` are independent observations, not operation receipts.
 A completed action remains completed even if a later heartbeat/observation fails.
 No error strings, companion URLs/tokens, frames, action arguments or pixels belong
@@ -318,3 +318,16 @@ python3 -I -B helm/browser/diagnostics-probe-tests.py
 These tests validate capture-before-teardown ordering, the fixed evidence fields
 and literal fixture stages without launching a browser, provider or service.
 They are not Rust tests, runtime reproduction or native platform acceptance.
+
+PR #423 review follow-up: helper startup refusal now publishes a fixed `startup`
+phase to finished status and attempts private diagnostic retention without masking
+the initiating error. A helper reader cancellation is recorded only as
+`helper_transport_disconnected`, never process exit; malformed output/EOF can
+occur while the child still runs. The focused malformed-output child regression
+remains a Rust test gate until the coordinated slot executes it.
+
+Probe evidence writes are protected by nested teardown `finally`; capture failure
+cannot skip child teardown. Original fixture exceptions remain primary, and a
+fixed evidence failure is raised only when no original exception exists. The
+cleanup audit write is likewise guarded. Offline injected disk-write failure
+contracts pass without launching product processes.
