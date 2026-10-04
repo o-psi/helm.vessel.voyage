@@ -225,3 +225,69 @@ mod tests {
         assert!(serde_json::from_value::<Target>(serde_json::json!({"vessel_id":Uuid::from_u128(1),"helm_origin":"https://helm.example","owner_principal_id":Uuid::from_u128(2),"credential":"private"})).is_err());
     }
 }
+
+/// Durable local intent admission. The caller must hold the installer operation
+/// lock and authenticate the target owner separately; this journal grants nothing.
+#[cfg(target_os = "linux")]
+pub fn admit_intent(
+    directory: &std::path::Path,
+    request: &Request,
+    now_ms: u64,
+) -> Result<Receipt> {
+    use crate::install::files;
+    use std::os::unix::fs::MetadataExt;
+    files::safe(directory)?;
+    files::private_directory(directory)?;
+    let metadata = std::fs::symlink_metadata(directory)?;
+    ensure!(
+        metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0,
+        "Setup journal must be private to its executing owner"
+    );
+    let mut receipts = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|value| value == "json")
+        {
+            let metadata = std::fs::symlink_metadata(entry.path())?;
+            ensure!(
+                metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0,
+                "Setup receipt is not private"
+            );
+            let receipt: Receipt = serde_json::from_slice(&files::read(&entry.path(), 65536)?)?;
+            receipt.validate()?;
+            receipts.push(receipt);
+        }
+    }
+    if let Some(receipt) = duplicate(request, &receipts)? {
+        return Ok(receipt.clone());
+    }
+    ensure!(
+        !receipts
+            .iter()
+            .any(|receipt| receipt.phase != Phase::Complete
+                || receipt.cleanup_pending
+                || receipt.outcome_unknown),
+        "Unresolved setup obligation blocks new effects"
+    );
+    request.validate(now_ms)?;
+    ensure!(
+        request.scope == Scope::User,
+        "System setup requires protected guardian admission"
+    );
+    let receipt = Receipt {
+        request: request.clone(),
+        phase: Phase::Pending,
+        effect_possible: true,
+        outcome_unknown: true,
+        cleanup_pending: false,
+    };
+    // Exclusive creation plus file/directory fsync precedes any external effect.
+    files::write_new(
+        &directory.join(format!("{}.json", request.command_id)),
+        &serde_json::to_vec(&receipt)?,
+    )?;
+    Ok(receipt)
+}
