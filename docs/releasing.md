@@ -1,23 +1,24 @@
 # Packaging and releases
 
-The current binary release is v1.0.2 for Linux x86-64 only. See the
-[release guide](releases-v1.0.2.md) for scope and installation. The current packagers distribute `helm`,
+The current binary release is v1.0.3 for Linux x86-64 only. See the
+[release guide](releases-v1.0.3.md) for scope and installation. The current packagers distribute `helm`,
 `vessel`, the independent `voyage` runtime, and `voyage-installer`. The supported
 Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
 
 ## Planned release sequence
 
-Main has stable-baseline candidate versions 1.0.3 and a
-[candidate guide](releases-v1.0.3.md); the former integration PR is merged. This prepares the
-coordinated release verification; it does not create a stable tag, publish assets
-or change the current stable download.
+[Stable v1.0.3](https://github.com/o-psi/helm.vessel.voyage/releases/tag/v1.0.3)
+is published with its Linux archive, standalone installer and checksums.
+The [release guide](releases-v1.0.3.md) records verification and the known browser
+limitation. The release owner moved unfinished full production browser acceptance
+[#333](https://github.com/o-psi/helm.vessel.voyage/issues/333) to **v1.1.1**.
 
-The next planned releases are **v1.0.3**, then **v1.1.0**. The latter requires
+The next planned release is **v1.1.0**. It requires
 [complete removal of legacy Helm–Vessel snapshot transport](event-only-v1.1.0.md)
-in both Helm clients. Keep the nightly target on v1.0.3 until that stable release
-is published, then advance it to v1.1.0. This records release intent, not a release
-publication or a claim that the event-only cutover is already implemented.
+in both Helm clients. The nightly target is now v1.1.0; checked-in Cargo versions
+remain the stable 1.0.3 baseline. This is release planning, not a claim that the
+event-only cutover or deferred native deployment work is implemented.
 
 ## Build and package
 
@@ -31,7 +32,8 @@ python3 packaging/package_linux.py --version v1.0.3 --bin-dir target/release --o
 (cd dist/v1.0.3-candidate-01 && sha256sum -c *.sha256)
 ```
 
-The example packages the v1.0.3 candidate; it does not publish a stable release.
+The example packages the 1.0.3 baseline into a fresh candidate directory; it does
+not publish or overwrite the existing stable release.
 Use a new output directory for every attempt. The packager validates binary versions,
 generates CLI documentation, and packages only explicitly selected public documents.
 Full archives carry `release.json` with the release identity, target and executable
@@ -63,8 +65,8 @@ download. Changes anywhere on main, including docs, count as changed source.
 
 The next intended release is recorded in
 [`packaging/nightly-version.txt`](../packaging/nightly-version.txt), currently
-`1.0.3`. In the temporary build checkout only, the workflow sets the Cargo workspace
-and lock entries to `1.0.3-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
+`1.1.0`. In the temporary build checkout only, the workflow sets the Cargo workspace
+and lock entries to `1.1.0-nightly.YYYYMMDD.RUN_ID.ATTEMPT`. The date is UTC;
 run and attempt numbers prevent version reuse. Checked-in Cargo versions remain
 the stable baseline. The version guard refuses a target equal to or older than a
 shipped stable tag; reconcile the next target after a stable release.
