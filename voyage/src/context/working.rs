@@ -12,6 +12,9 @@ pub struct WorkingContext {
     pub generation: u64,
     #[serde(default)]
     pub reason: Option<CompactionReason>,
+    /// Last measured request facts, scoped to that request, never the next one.
+    #[serde(default)]
+    pub request_status: Option<serde_json::Value>,
     #[serde(default)]
     entries: Vec<Reduction>,
 }

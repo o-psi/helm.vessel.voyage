@@ -95,3 +95,42 @@ fn streaming_ignores_sparse_empty_slots_but_not_partial_calls() {
     assert_eq!(response.message.tool_calls.len(), 1);
     assert_eq!(response.message.tool_calls[0].arguments, json!({}));
 }
+
+#[test]
+fn counting_and_dispatch_share_instruction_schema_and_tool_encoding() {
+    let mut assistant = Message::new(Role::Assistant, "inspect");
+    assistant.tool_calls.push(ToolCall {
+        id: "exact".into(),
+        name: "read_file".into(),
+        arguments: json!({"path":"é"}),
+    });
+    let request = ModelRequest {
+        model: "fixture".into(),
+        messages: vec![
+            Message::new(Role::System, "rules"),
+            Message::new(Role::User, "Unicode 🧭"),
+            assistant,
+            Message::tool("exact", "evidence"),
+        ],
+        tools: vec![crate::model::ToolDefinition {
+            name: "read_file".into(),
+            description: "read".into(),
+            input_schema: json!({"type":"object","properties":{"path":{"type":"string"}}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        temperature: None,
+        reasoning_effort: None,
+        service_tier: None,
+        max_tokens: Some(100),
+    };
+    let body = input_body(&request).unwrap();
+    assert_eq!(body["system"], "rules");
+    assert_eq!(
+        body["tools"][0]["input_schema"],
+        request.tools[0].input_schema
+    );
+    assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "exact");
+    assert!(body.get("max_tokens").is_none());
+    assert!(body.get("stream").is_none());
+}

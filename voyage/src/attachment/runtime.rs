@@ -722,6 +722,18 @@ impl RunOwner {
 
 #[async_trait]
 impl RunCheckpoint for ManagedRunCheckpoint {
+    async fn request_accounting(&self, status: &serde_json::Value) -> Result<(), CheckpointError> {
+        let status = status.clone();
+        let token = self.token.clone();
+        self.storage_named(Operation::WorkingContext, move |store| {
+            if let Some(authority) = &token.execution_authority { authority.check()?; }
+            steering::authorize(store, &token)?;
+            let mut context = store.journal.load_working_context(&store.guard, store.run_id)?;
+            context.request_status = Some(status);
+            store.journal.save_working_context(&store.guard, store.run_id, &context)
+        }).await
+    }
+
     async fn goal_snapshot(
         &self,
     ) -> Result<Option<voyage_protocol::goals::GoalSnapshot>, CheckpointError> {
@@ -925,6 +937,10 @@ impl RunCheckpoint for ManagedRunCheckpoint {
 
 #[async_trait]
 impl RunCheckpoint for RunOwner {
+    async fn request_accounting(&self, status: &serde_json::Value) -> Result<(), CheckpointError> {
+        self.checkpoint().request_accounting(status).await
+    }
+
     async fn goal_snapshot(
         &self,
     ) -> Result<Option<voyage_protocol::goals::GoalSnapshot>, CheckpointError> {

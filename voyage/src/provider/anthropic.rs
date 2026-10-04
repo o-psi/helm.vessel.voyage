@@ -146,7 +146,12 @@ impl Provider for AnthropicProvider {
             super::catalog::json(response, &mut remaining)
                 .await
                 .ok()
-                .and_then(|v| v.get("context_window").and_then(Value::as_u64))
+                .and_then(|v| {
+                    if v.get("id").and_then(Value::as_str) != Some(request.model.as_str()) {
+                        return None;
+                    }
+                    v.get("context_window").and_then(Value::as_u64)
+                })
                 .filter(|n| *n > 0)
         } else {
             None
