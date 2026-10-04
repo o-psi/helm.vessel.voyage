@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-10-04T04:47:36.838170+00:00",
-  "source_commit": "af28c367ed6dd7ecb60ab33456e3845466d8168e",
+  "measured_at_utc": "2026-10-04T08:25:40.859650+00:00",
+  "source_commit": "9eb09753b154c206f02b2769b59499de08fbed9e",
   "dirty": false,
   "source_fingerprint_sha256": "004ab5fad77a295d8c6fef23ef1d55d309f331f57c7bfd966c36be4880249dc6",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
@@ -8,7 +8,7 @@
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103releasefinalnext59c41dc9b1544042bbc4c745bf4fb95a-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd transient user unit MemoryMax=18G MemorySwapMax=0 effective umask 0077",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103bootstrapfinal1e19ef47e636423183d51bde810f2e1e-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd transient user unit MemoryMax=18G MemorySwapMax=0 effective umask 0077",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,14 +19,12 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Measured clean source af28c367 after the simultaneous-viewer capture fix and final focused regressions. Rust/Cargo fingerprint 004ab5fa remained unchanged; JavaScript/Python and production browser journeys are separate.",
-    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. Existing corrected workspace caches, earlier mixed reports and all prior raw profiles were preserved; no cache cleaning or scope reduction occurred.",
-    "All 19 current workspace executables and 16 executed test binaries were inventoried and archived. The default scope retains 546 source mappings.",
-    "Only 672 fresh measurement-prefix profiles were merged; all 7389 foreign profiles retained their original size and modification time.",
-    "The 42 actual zero-hash warnings were inspected with LLVM dump and match previously audited dependency symbols; no new or workspace mismatch was accepted.",
-    "Detailed JSON, LCOV and HTML were generated from the same archived current objects, and exact line/function reconciliation passed. Default exclusions are unchanged.",
-    "Test counts use each Cargo target final result; 1 nested fixture summary was not counted twice. Full test exit and artifact/report audit exit were zero.",
-    "Compared with the prior record, percentage-point changes are lines: +0.00145701, functions: +0.00000000, regions: +0.00308028. Coverage measures execution, not correctness."
+    "Measured clean source 9eb09753 after the maintained native fixture bootstrap was corrected to select the exact reviewed voyage before idle-composer readiness. Only Python fixture source changed; Rust/Cargo and production binary/browser inputs are unchanged.",
+    "All19 current workspace objects and16 executed test binaries were inventoried and archived; the same546 default-scope source mappings remain. No scope reduction or cache cleaning occurred.",
+    "Only573 new-prefix profiles were merged; all8061 foreign profiles retained their original size/mtime.",
+    "The42 zero-hash warnings match previously audited dependency symbols only. Detailed JSON, LCOV, HTML and exact line/function reconciliation passed. Existing exclusions are unchanged.",
+    "Nested fixture summary excluded from duplicate test counting; test and artifact/report audit exits were zero. Python and production browser verification are separate.",
+    "Percentage-point changes versus prior: lines -0.01821268, functions -0.00799233, regions -0.02200201. Coverage measures execution, not correctness."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
@@ -39,19 +37,19 @@
   "totals": {
     "lines": {
       "count": 137267,
-      "covered": 111249,
-      "percent": 81.04569925765115
+      "covered": 111224,
+      "percent": 81.02748657725455
     },
     "functions": {
       "count": 12512,
-      "covered": 10049,
-      "percent": 80.31489769820972
+      "covered": 10048,
+      "percent": 80.30690537084399
     },
     "regions": {
       "count": 227252,
-      "covered": 175442,
-      "notcovered": 51810,
-      "percent": 77.20152077869503
+      "covered": 175392,
+      "notcovered": 51860,
+      "percent": 77.17951877211202
     }
   }
 }
