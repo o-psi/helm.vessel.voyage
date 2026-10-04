@@ -312,16 +312,45 @@ fn stop() -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-fn publish(next: &Record, previous: &Record) -> Result<()> {
+fn publish_units(
+    root: &Path,
+    expected_uid: u32,
+    next: &Record,
+    previous: &Record,
+    reload: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    // Check both reviewed definitions before the first write. Partial publication
+    // or reload failure remains in the durable publishing phase, never complete.
+    for (name, expected) in [
+        (ROOT_UNIT, &previous.root_unit),
+        (GATEWAY_UNIT, &previous.gateway_unit),
+    ] {
+        let path = root.join(name);
+        service::files::check_path(&path, expected_uid)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file() && metadata.uid() == expected_uid && metadata.nlink() == 1,
+            "system unit is not an exclusively owned regular file: {name}"
+        );
+        ensure!(
+            fs::read_to_string(&path)? == *expected,
+            "system unit changed: {name}"
+        );
+    }
     for (name, content, expected) in [
         (ROOT_UNIT, &next.root_unit, &previous.root_unit),
         (GATEWAY_UNIT, &next.gateway_unit, &previous.gateway_unit),
     ] {
-        service::files::check_path(&Path::new(UNIT_ROOT).join(name), 0)?;
-        service::files::replace(&Path::new(UNIT_ROOT).join(name), content, Some(expected))?;
+        service::files::replace(&root.join(name), content, Some(expected))?;
     }
-    ctl(&["daemon-reload"])?;
-    Ok(())
+    reload()
+}
+
+fn publish(next: &Record, previous: &Record) -> Result<()> {
+    publish_units(Path::new(UNIT_ROOT), 0, next, previous, || {
+        ctl(&["daemon-reload"])?;
+        Ok(())
+    })
 }
 fn save(record: &Record) -> Result<()> {
     files::atomic_json(Path::new(CONFIG), record)?;
@@ -619,6 +648,52 @@ mod tests {
             fs::remove_dir_all(&self.0).unwrap();
         }
     }
+    #[test]
+    fn unit_publication_preflights_both_definitions_and_retains_reload_failure() {
+        let fixture = Fixture::new();
+        let previous = record('a', "inactive");
+        let mut candidate = record('b', "inactive");
+        candidate.root_unit = "candidate root".into();
+        candidate.gateway_unit = "candidate gateway".into();
+        let root = fixture.0.join(ROOT_UNIT);
+        let gateway = fixture.0.join(GATEWAY_UNIT);
+        fs::write(&root, &previous.root_unit).unwrap();
+        fs::write(&gateway, "concurrent replacement").unwrap();
+        let uid = unsafe { libc::geteuid() };
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                panic!("changed gateway must refuse before reload")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        fs::write(&gateway, &previous.gateway_unit).unwrap();
+        let alias = fixture.0.join("gateway-alias");
+        fs::hard_link(&gateway, &alias).unwrap();
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                panic!("hardlinked gateway must refuse before reload")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        fs::remove_file(alias).unwrap();
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                anyhow::bail!("injected daemon reload failure")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), candidate.root_unit);
+        assert_eq!(
+            fs::read_to_string(&gateway).unwrap(),
+            candidate.gateway_unit
+        );
+        publish_units(&fixture.0, uid, &previous, &candidate, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        assert_eq!(fs::read_to_string(&gateway).unwrap(), previous.gateway_unit);
+    }
+
     #[test]
     fn installer_default_identity_preserves_explicit_account_without_root_or_primary_group() {
         let mut explicit = record('a', "inactive");
@@ -964,6 +1039,7 @@ pub(super) fn start_reviewed_system(args: &[String]) -> Result<()> {
         candidate_start_attempted: false,
     };
     operation.candidate.as_mut().unwrap().phase = "active".into();
+    operation.candidate.as_mut().unwrap().start_requested = true;
     write_operation(&operation)?;
     operation.phase = "activating".into();
     operation.candidate_start_attempted = true;
@@ -974,8 +1050,11 @@ pub(super) fn start_reviewed_system(args: &[String]) -> Result<()> {
         write_operation(&operation)?;
         return Err(error);
     }
-    plan.record.phase = "active".into();
-    plan.record.start_requested = true;
+    plan.record = operation
+        .candidate
+        .as_ref()
+        .context("start candidate missing")?
+        .clone();
     save(&plan.record)?;
     operation.phase = "complete".into();
     write_operation(&operation)?;
