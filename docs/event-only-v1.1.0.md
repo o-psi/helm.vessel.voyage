@@ -67,7 +67,7 @@ hydration and returns `recovery: snapshot` on a retention gap.
 | Catalogue and lifecycle | TUI `ui/catalogue_watch.rs`, `ui/archive.rs`; Vessel catalogue/change commands | Bounded catalogue entity initialization and barrier, followed by replayable upserts/removals; eliminate full catalogue hydration and timer fallback. Scope-filtered sparse positions are valid. |
 | Conversation, history and large content | TUI `ui/observe.rs`, `ui/live_reducer.rs`, `ui/transcript/navigation.rs`, `plain/session.rs`, `export.rs`; Web `resources/js/conversation-stream.js` | Bounded message/history sequences and UTF-8 content chunks; eliminate snapshot seeding and snapshot recovery, without assembling a renamed full-session event. |
 | Runtime production and retention | `voyage/src/attachment/journal/observations.rs`, `voyage/src/server/observations.rs`, `voyage/src/server/suspended.rs` | Durable content-bearing entities, bounded initialization at a consistent journal fence, explicit gap/incarnation reinitialization; no raw provider arguments or private input. Coordinate suspended-owner changes with #256. |
-| Routing and downgrade | `vessel/src/process/service.rs`, `subscriptions_final_tests.rs` | Remove the public-v2-to-v1 retry after decoder failure; a rejected projection is an upgrade error, not permission to hydrate from legacy transport. |
+| Routing and downgrade | `vessel/src/process/service.rs`, `subscriptions_final_tests.rs` | The local #374 source removes the public-v2-to-v1 retry after decoder failure (focused Rust validation pending); a rejected projection is an upgrade error, not permission to hydrate from legacy transport. |
 | Text, reasoning, tools and diagnostics | `live_events.rs`, `provider_attempt.rs`, TUI `ui/previews/`, `ui/provider_attempts.rs` | Stable canonical run/attempt/message/tool references and bounded typed values; provider identifiers retain separate scope and evidence quality. Coordinate model/tool presentation with #418. |
 | Decisions, cancellation and retained work | `VoyageCommand::Decisions/Respond/Cancel`, TUI `ui/run_controls.rs`, `ui/receipts.rs`, `ui/reconcile.rs`; Web `Decisions.tsx` | Outcome and decision entities plus exact retained resource/child obligations. Stop remains available for owned work after foreground terminality; requested cancellation is not observed cleanup. |
 | Settings, models, accounts and usage | `VoyageCommand::Controls/SetInference/SetAccountInference`, `VesselCommand::Accounts/AccountUsage/DiscoverModels`; TUI `ui/accounts/`, `ui/inference/` | Typed bounded metadata entities and exact command results, no refresh RPC following metadata-only invalidation. Existing account authority and private enrollment remain separate. |
@@ -108,3 +108,21 @@ private-data exclusion and uncertain commands preserved across reconnect. Rust
 protocol additions alone do not satisfy either client migration or installed/deployed
 verification. Production Web changes require coordinated ownership in `o-psi/webhelm`;
 this inventory does not authorize edits there or establish Web delivery.
+
+
+### In-progress implementation boundaries
+
+`voyage-protocol::event_connection` stages version-3 initialization and control
+admission types separately from the still-advertised v1 socket. Initialization
+entities are capped at 32 KiB each and 8 MiB per selected scope; larger scope
+requires pagination, and large content uses byte-offset UTF-8 chunks. The matching
+Web modules `event-initialization.js` and `event-command.js` are isolated reducers,
+not yet used by the production connection. They must not be advertised as a
+completed migration. Control operation coverage currently includes only cancel,
+rename and access changes; remaining commands, owner production, retention replay,
+transport admission, both connected reducers and removal of snapshots remain gates.
+
+The Vessel downgrade removal deliberately returns the original uncertain read
+outcome rather than retrying an incompatible private decoder. This does not broaden
+authority or retry a mutation. Legacy subscription callers remain during migration;
+old routes cannot be removed until both clients have a verified replacement.

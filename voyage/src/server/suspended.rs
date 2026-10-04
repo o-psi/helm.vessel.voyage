@@ -242,6 +242,24 @@ async fn inspect(
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
                 "relinquish","stop"],"decisions":"bounded_120_seconds"})),
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset,
+            limit,
+            expected_revision,
+            expected_cursor,
+        } => {
+            owner
+                .initialize_entities(
+                    generation,
+                    registration.incarnation,
+                    offset,
+                    limit,
+                    expected_revision,
+                    expected_cursor,
+                )
+                .await
+        }
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
             if let Ok(mut config) = config(owner, registration, directory).await {

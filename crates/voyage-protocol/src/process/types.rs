@@ -21,6 +21,14 @@ pub enum WorkspaceChangeScope {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    /// Bounded canonical entity initialization at an exact revision/journal fence.
+    InitializeEntities {
+        generation: Uuid,
+        offset: u64,
+        limit: u32,
+        expected_revision: Option<u64>,
+        expected_cursor: Option<u64>,
+    },
     GoalRead,
     WorkspaceFile {
         path: String,
@@ -364,6 +372,7 @@ impl RuntimeCommand {
             self,
             Self::Health
                 | Self::Stop
+                | Self::InitializeEntities { .. }
                 | Self::Snapshot
                 | Self::GoalRead
                 | Self::WorkspaceChanges { .. }

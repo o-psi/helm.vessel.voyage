@@ -3,6 +3,7 @@ use super::*;
 use anyhow::Context;
 use serde_json::{Value, json};
 use voyage_protocol::process::RuntimeCommand;
+mod initialization;
 mod projection;
 impl ManagedSessionOwner {
     pub(crate) async fn goal(&self) -> anyhow::Result<voyage_protocol::goals::GoalSnapshot> {

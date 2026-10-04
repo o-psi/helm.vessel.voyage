@@ -115,6 +115,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         }
         RuntimeCommand::GoalReconcile { .. }
         | RuntimeCommand::GoalRead
+        | RuntimeCommand::InitializeEntities { .. }
         | RuntimeCommand::Snapshot
         | RuntimeCommand::ProviderAttempts { .. }
         | RuntimeCommand::History { .. }

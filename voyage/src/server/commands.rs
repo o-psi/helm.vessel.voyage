@@ -342,6 +342,25 @@ pub(super) async fn dispatch_admitted(
                 json!({"pid":std::process::id(),"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"capabilities":capabilities,"decisions":"bounded_120_seconds"}),
             )
         }
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset,
+            limit,
+            expected_revision,
+            expected_cursor,
+        } => {
+            state
+                .owner
+                .initialize_entities(
+                    generation,
+                    state.registration.incarnation,
+                    offset,
+                    limit,
+                    expected_revision,
+                    expected_cursor,
+                )
+                .await
+        }
         RuntimeCommand::Snapshot => {
             // Serialize with settings publication so revision and values describe one state.
             let _admission = state.admission.lock().await;

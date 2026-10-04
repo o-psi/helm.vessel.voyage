@@ -467,3 +467,54 @@ async fn relinquish_exports_private_text_once_and_collision_retains_original_rec
         receipt
     );
 }
+
+#[tokio::test]
+async fn entity_initialization_has_canonical_barrier_and_rejects_changed_fence() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let generation = Uuid::new_v4();
+    let first = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 0,
+            limit: 1,
+            expected_revision: None,
+            expected_cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first["version"], 3);
+    assert_eq!(first["events"][0]["kind"], "begin");
+    assert_eq!(first["events"][1]["entity_kind"], "session");
+    let bad = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: Some(999),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await;
+    assert!(bad.is_err());
+    let next = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: first["revision"].as_u64(),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(next["has_more"], false);
+    assert_eq!(
+        next["events"].as_array().unwrap().last().unwrap()["kind"],
+        "complete"
+    );
+    assert_eq!(next["cursor"], first["cursor"]);
+}

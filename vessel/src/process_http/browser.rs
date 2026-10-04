@@ -270,6 +270,7 @@ fn allowed(command: &VesselCommand) -> bool {
             | VoyageCommand::WorkspaceChanges { .. }
             | VoyageCommand::WorkspaceFile { .. }
             | VoyageCommand::GoalUpdate { .. }
+            | VoyageCommand::InitializeEntities { .. }
             | VoyageCommand::Snapshot
             | VoyageCommand::Decisions
             | VoyageCommand::Receipt { .. }

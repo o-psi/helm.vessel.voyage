@@ -79,3 +79,6 @@ pub mod execution_transition;
 pub mod execution_scope;
 /// Strict private migration records; no source data confers root authority.
 pub mod migration;
+
+/// Staged event-only initialization contract; not yet advertised.
+pub mod event_connection;
