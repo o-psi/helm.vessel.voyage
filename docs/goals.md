@@ -209,9 +209,11 @@ carry only identity, revision, status, usage and a fixed stop reason; they omit
 objective text and private authority. Clients refresh the authenticated canonical
 snapshot after Goal metadata events; they do not reconstruct objectives or
 assessments from metadata. An authenticated root-owner conversation receives a
-`goal` model tool with `create`, `read` and `report` actions; creation requires an
+`goal` model tool with `create`, `edit`, `read` and `status`/`report` actions; creation requires an
 explicit human request and starts active immediately. Existing unfinished Goals
-cannot be replaced by the model. The root of a metered Goal run receives the
+cannot be replaced by the model. A model edit carries forward an explicit human
+refinement of active task data while retaining identity, usage and limits; it
+cannot resume a pause or change quotas. The root of a metered Goal run receives the
 same read/report capability. Local children and independently budgeted child
 Voyages do not receive authority to report the parent's Goal. The owner mutation
 API cannot claim completion, and the model tool cannot resume, clear, replace or

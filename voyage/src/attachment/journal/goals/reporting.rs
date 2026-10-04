@@ -400,3 +400,69 @@ impl Journal {
         Ok(json!({"status":"created","goal":snapshot,"explicit_user_request_required":true}))
     }
 }
+
+impl Journal {
+    pub(crate) fn model_edit_goal(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        authority: GoalAuthority,
+        call: &str,
+        objective: &str,
+        now: i64,
+    ) -> Result<Value> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(
+            authority.valid() && now >= 0 && valid_objective(objective),
+            "invalid Goal refinement"
+        );
+        self.require_content_schema(guard, false)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.session_id == guard.session_id
+                && run.state == RunState::Running
+                && run.machine_id == authority.installation_id
+                && run.principal_id == authority.principal_id,
+            "Goal refinement requires admitted owner run"
+        );
+        let saved = read_session(&tx, guard.session_id)?;
+        let messages = run_messages(&saved.session, run_id)?;
+        ensure!(
+            messages
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .flat_map(|m| &m.tool_calls)
+                .any(|c| c.id == call
+                    && c.name == "goal"
+                    && c.arguments == json!({"action":"edit","objective":objective})),
+            "Goal refinement needs canonical call"
+        );
+        ensure!(
+            messages
+                .iter()
+                .any(|m| m.role == Role::User && m.coordination.is_none()),
+            "Goal refinement needs human request context"
+        );
+        let mut snapshot = read(&tx, guard.session_id)?;
+        let goal = snapshot.goal.as_mut().context("No Goal to refine")?;
+        ensure!(
+            goal.status == GoalStatus::Active && goal.continuation_authorized,
+            "model refinement cannot resume or replace stopped work"
+        );
+        goal.objective = objective.into();
+        goal.assessment = None;
+        goal.usage.impasse_runs = 0;
+        goal.updated_at_ms = u64::try_from(now)?;
+        snapshot.revision = snapshot
+            .revision
+            .checked_add(1)
+            .context("Goal revision overflow")?;
+        update_session(&tx, &saved)?;
+        persist(&tx, guard.session_id, &snapshot, Some(&authority))?;
+        commit(tx, &self.commit_fence)?;
+        Ok(json!({"status":"edited","goal":snapshot,"usage_and_limits_preserved":true}))
+    }
+}

@@ -447,3 +447,30 @@ impl ManagedSessionOwner {
         .await?
     }
 }
+
+impl ManagedSessionOwner {
+    pub(crate) async fn model_edit_goal(
+        &self,
+        run: Uuid,
+        control: crate::tools::goal::GoalControl,
+        call: String,
+        objective: String,
+    ) -> anyhow::Result<Value> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.model_edit_goal(
+                guard,
+                run,
+                control.authority,
+                &call,
+                &objective,
+                SystemClock.now_ms()?,
+            )
+        })
+        .await?
+    }
+}

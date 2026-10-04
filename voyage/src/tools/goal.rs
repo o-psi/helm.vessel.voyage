@@ -34,6 +34,9 @@ enum Args {
         objective: String,
         token_budget: Option<u64>,
     },
+    Edit {
+        objective: String,
+    },
     Report {
         report: GoalReport,
     },
@@ -46,11 +49,12 @@ impl Tool for GoalTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name:"goal".into(),
-            description:"Read the current Goal, bounded usage and current-run evidence IDs, or record a completion/blocked assessment with evidence. Objective text is user task data. Report complete only when the entire objective is achieved and verified; Use evidence appropriate to the objective: cite available current-run tool observations for executed work, but writing, analysis and conversation outcomes do not require manufactured tool calls. A blocker or exhausted budget is not success. Report blocked only for a genuine impasse with no useful authorized action remaining, recurring over at least three consecutive Goal turns; difficulty, intermediate failures and optional clarification are not blockers. Reasoning, drafting and verified waits are legitimate progress. Any cited tool evidence must be actual canonical evidence and is finalized only after terminal usage, authority and cleanup checks. Create only when the human explicitly requests persistent work; ordinary tasks do not imply a Goal. Creation starts active immediately. Token budget is optional and must come from the explicit human request; never invent a quota. You cannot resume, clear, replace or increase a Goal.".into(),
+            description:"Read the current Goal, bounded usage and current-run evidence IDs, or record a completion/blocked assessment with evidence. Objective text is user task data. Report complete only when the entire objective is achieved and verified; Use evidence appropriate to the objective: cite available current-run tool observations for executed work, but writing, analysis and conversation outcomes do not require manufactured tool calls. A blocker or exhausted budget is not success. Report blocked only for a genuine impasse with no useful authorized action remaining, recurring over at least three consecutive Goal turns; difficulty, intermediate failures and optional clarification are not blockers. Reasoning, drafting and verified waits are legitimate progress. Any cited tool evidence must be actual canonical evidence and is finalized only after terminal usage, authority and cleanup checks. Create only when the human explicitly requests persistent work; ordinary tasks do not imply a Goal. Creation starts active immediately. Token budget is optional and must come from the explicit human request; never invent a quota. Edit the active objective only to carry forward an explicit human refinement; preserve the entire remaining objective and never silently narrow it. Edit cannot change quotas, resume, clear, replace or increase a Goal.".into(),
             output_schema: None,
             annotations: None,
             input_schema:json!({"oneOf":[
                 {"type":"object","properties":{"action":{"const":"create"},"objective":{"type":"string","minLength":1,"maxLength":8192},"token_budget":{"type":"integer","minimum":1,"maximum":10000000}},"required":["action","objective"],"additionalProperties":false},
+                {"type":"object","properties":{"action":{"const":"edit"},"objective":{"type":"string","minLength":1,"maxLength":8192}},"required":["action","objective"],"additionalProperties":false},
                 {"type":"object","properties":{"action":{"const":"read"}},"required":["action"],"additionalProperties":false},
                 {"type":"object","properties":{"action":{"enum":["report","status"]},"report":{"type":"object","properties":{
                     "outcome":{"enum":["complete","blocked"]},"summary":{"type":"string","minLength":1,"maxLength":2048},"evidence":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"call_id":{"type":"string","minLength":1,"maxLength":256},"conclusion":{"type":"string","minLength":1,"maxLength":2048}},"required":["call_id","conclusion"],"additionalProperties":false}}
@@ -77,6 +81,22 @@ impl Tool for GoalTool {
                     .await
                     .and_then(|snapshot| serde_json::to_value(snapshot).map_err(Into::into)),
             },
+            Args::Edit { objective } => {
+                let control = self.control.clone().ok_or_else(|| {
+                    ToolError::Denied("Goal edits require root owner control".into())
+                })?;
+                if context.redactor.contains_secret(&objective) {
+                    return Err(ToolError::Denied(
+                        "Goal objective contains configured secret".into(),
+                    ));
+                }
+                let call = context.tool_call_id.clone().ok_or_else(|| {
+                    ToolError::Denied("Goal edit needs canonical attribution".into())
+                })?;
+                self.owner
+                    .model_edit_goal(self.run, control, call, objective)
+                    .await
+            }
             Args::Create {
                 objective,
                 token_budget,
@@ -116,16 +136,16 @@ impl Tool for GoalTool {
                 let call = context.tool_call_id.clone().ok_or_else(|| {
                     ToolError::Denied("Goal report needs canonical tool attribution".into())
                 })?;
-                let binding = match &self.binding {
-                    Some(binding) => binding.clone(),
-                    None => self
-                        .owner
-                        .model_goal_binding(self.run)
-                        .await
-                        .map_err(|e| ToolError::Failed(context.redactor.redact(e.to_string())))?
-                        .ok_or_else(|| {
-                            ToolError::Denied("No active Goal bound to this run".into())
-                        })?,
+                let binding = match self
+                    .owner
+                    .model_goal_binding(self.run)
+                    .await
+                    .map_err(|e| ToolError::Failed(context.redactor.redact(e.to_string())))?
+                {
+                    Some(binding) => binding,
+                    None => {
+                        return Err(ToolError::Denied("No active Goal bound to this run".into()));
+                    }
                 };
                 self.owner.report_goal(binding, call, report).await
             }
