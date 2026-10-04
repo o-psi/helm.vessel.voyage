@@ -299,6 +299,13 @@ pub enum HostBrowserTabOperation {
     Select,
     Close,
 }
+/// Opt-in mirror encodings advertised by the executing worker, never inferred
+/// from the client or supervisor version.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostBrowserMirrorFormat {
+    CssChunksV1,
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HostBrowserOperation {
@@ -316,6 +323,8 @@ pub enum HostBrowserOperation {
     Mirror {
         binding: HostBrowserBinding,
         since: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        format: Option<HostBrowserMirrorFormat>,
     },
     Detach {
         command_id: Uuid,
@@ -461,6 +470,34 @@ mod tests {
             ProcessRight::Observe
         );
     }
+    #[test]
+    fn mirror_format_is_opt_in_and_preserves_legacy_wire_shape() {
+        let id = Uuid::new_v4();
+        let binding = HostBrowserBinding {
+            incarnation: id,
+            browser_id: id,
+            attachment_id: id,
+            tab_id: id,
+            document_epoch: 1,
+            viewport_epoch: 1,
+            controller_epoch: 1,
+            capture_epoch: 1,
+        };
+        let legacy = serde_json::json!({"action":"mirror","binding":binding,"since":0});
+        let operation: HostBrowserOperation = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(operation.valid());
+        assert_eq!(serde_json::to_value(&operation).unwrap(), legacy);
+        assert_eq!(operation.required_right(), ProcessRight::Observe);
+        assert_eq!(operation.mutation_id(), None);
+        let mut negotiated = legacy;
+        negotiated["format"] = serde_json::json!("css_chunks_v1");
+        let operation: HostBrowserOperation = serde_json::from_value(negotiated.clone()).unwrap();
+        assert!(operation.valid());
+        assert_eq!(serde_json::to_value(operation).unwrap(), negotiated);
+        negotiated["format"] = serde_json::json!("unrecognized_encoding");
+        assert!(serde_json::from_value::<HostBrowserOperation>(negotiated).is_err());
+    }
+
     #[test]
     fn first_human_input_is_bounded_to_claimable_actions() {
         let id = Uuid::new_v4();

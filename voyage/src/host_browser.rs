@@ -23,11 +23,40 @@ const MAX_FRAME: usize = 4 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(25);
 type Pending = Arc<std::sync::Mutex<HashMap<Uuid, oneshot::Sender<Value>>>>;
 
+fn supported_mirror_formats(status: &Value) -> Vec<HostBrowserMirrorFormat> {
+    if status["mirror_formats"]
+        .as_array()
+        .is_some_and(|formats| formats.iter().any(|format| format == "css_chunks_v1"))
+    {
+        vec![HostBrowserMirrorFormat::CssChunksV1]
+    } else {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error(
     "Browser action refused before interaction ({0}); inspect the page for fresh visible elements"
 )]
 pub(crate) struct BeforeEffectRefusal(&'static str);
+
+#[derive(Debug, thiserror::Error)]
+#[error("Browser mirror observation failed ({0}); request a new bounded snapshot")]
+struct MirrorObservationFailure(&'static str);
+
+fn mirror_worker_reply(reply: Value) -> Result<Value> {
+    if reply["ok"] != true {
+        let code = match reply["error"]["code"].as_str() {
+            Some("page_too_large") => Some("page_too_large"),
+            Some("mirror_limit") => Some("mirror_limit"),
+            _ => None,
+        };
+        if let Some(code) = code {
+            return Err(MirrorObservationFailure(code).into());
+        }
+    }
+    worker_reply(reply)
+}
 
 fn worker_reply(reply: Value) -> Result<Value> {
     if reply["ok"] == true {
@@ -328,6 +357,7 @@ impl Worker {
         let received = tokio::time::timeout(DEADLINE, rx).await;
         guard.complete = true;
         match received {
+            Ok(Ok(reply)) if request["op"] == "mirror" => mirror_worker_reply(reply),
             Ok(Ok(reply)) => worker_reply(reply),
             _ => {
                 if effectful {
@@ -701,7 +731,7 @@ impl HostBrowser {
             .as_str()
             .is_some_and(|id| id == attachment.to_string());
         let disclose = !private || (controller && i.viewers.contains_key(&attachment));
-        json!({"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"viewport":if disclose {i.status["viewport"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"downloads":if controller && disclose {i.status["downloads"].clone()} else {json!([])},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
+        json!({"mirror_formats":supported_mirror_formats(&i.status),"available":self.launch.is_some(),"running":i.status["open"].as_bool().unwrap_or(false),"binding":self.binding(&i.status,attachment).ok(),"mode":i.status["mode"],"controller":i.status["controller"],"tabs":if disclose {i.status["tabs"].clone()} else {json!([])},"agent_active":i.status["agent_active"].as_bool().unwrap_or(false),"agent_action":if disclose {i.status["agent_action"].clone()} else {Value::Null},"agent_cursor":if disclose {i.status["agent_cursor"].clone()} else {Value::Null},"viewport":if disclose {i.status["viewport"].clone()} else {Value::Null},"page":if disclose {i.status["page"].clone()} else {Value::Null},"tab_details":if disclose {i.status["tab_details"].clone()} else {json!([])},"dialog":if disclose {i.status["dialog"].clone()} else {Value::Null},"downloads":if controller && disclose {i.status["downloads"].clone()} else {json!([])},"input_sequence":i.viewers.get(&attachment).map(|v| v.input_sequence).unwrap_or(0)})
     }
     // No payloads, URLs, SDP, private input or observations enter durable receipts.
     fn receipt(
@@ -817,7 +847,12 @@ impl HostBrowser {
                 .unwrap_or(Uuid::nil());
             return Ok(json!({"status":self.projection(attachment).await}));
         }
-        if let HostBrowserOperation::Mirror { binding, since } = &operation {
+        if let HostBrowserOperation::Mirror {
+            binding,
+            since,
+            format,
+        } = &operation
+        {
             let (worker, status) = {
                 let i = self.inner.lock().await;
                 let viewer = i
@@ -847,12 +882,20 @@ impl HostBrowser {
                     "value":{"reset":true,"cursor":0,"events":[]}}),
                 );
             }
+            if let Some(format) = format {
+                ensure!(
+                    supported_mirror_formats(&status).contains(format),
+                    "browser mirror format unavailable"
+                );
+            }
             let fence = self.fence.load(Ordering::Acquire);
-            let value = worker
-                .exchange(json!({"id":Uuid::new_v4(),"op":"mirror",
+            let mut request = json!({"id":Uuid::new_v4(),"op":"mirror",
                 "browser":status["browser"],"epochs":status["epochs"],
-                "viewer":binding.attachment_id,"since":since}))
-                .await?;
+                "viewer":binding.attachment_id,"since":since});
+            if let Some(format) = format {
+                request["format"] = serde_json::to_value(format)?;
+            }
+            let value = worker.exchange(request).await?;
             ensure!(
                 fence == self.fence.load(Ordering::Acquire),
                 "browser mirror fenced"

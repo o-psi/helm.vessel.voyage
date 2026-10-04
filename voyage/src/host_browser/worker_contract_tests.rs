@@ -11,6 +11,7 @@ impl Fixture {
 import sys,json,os,shutil
 home=os.environ['HOME']; temporary=sys.argv[3]
 status={'browser':'11111111-1111-4111-8111-111111111111','tab':'22222222-2222-4222-8222-222222222222','open':True,'mode':'agent','epochs':{'tab':1,'document':1,'viewport':1,'control':1,'capture':1},'tabs':[]}
+if os.path.exists(os.path.join(home,'css-chunks-supported')):status['mirror_formats']=['css_chunks_v1','unknown_fixture_format']
 for line in sys.stdin:
  q=json.loads(line); op=q.get('op'); result={'echo':q.get('payload'),'op':op}
  with open(os.path.join(home,'requests.jsonl'),'a') as f:f.write(json.dumps(q)+'\n')
@@ -463,6 +464,7 @@ async fn mirror_cursor_reset_and_attachment_authority_are_exact() {
     let mirror = HostBrowserOperation::Mirror {
         binding: binding.clone(),
         since: 41,
+        format: None,
     };
     let reply = host
         .human(mirror.clone(), socket, principal, None)
@@ -477,6 +479,7 @@ async fn mirror_cursor_reset_and_attachment_authority_are_exact() {
     assert_eq!(last["op"], "mirror");
     assert_eq!(last["viewer"], json!(binding.attachment_id));
     assert_eq!(last["since"], 41);
+    assert!(last.get("format").is_none());
     let count = fixture.requests().len();
     for (s, p) in [(Uuid::new_v4(), principal), (socket, Uuid::new_v4())] {
         assert_eq!(
@@ -494,6 +497,7 @@ async fn mirror_cursor_reset_and_attachment_authority_are_exact() {
             HostBrowserOperation::Mirror {
                 binding: stale,
                 since: 41,
+                format: None,
             },
             socket,
             principal,
@@ -505,6 +509,78 @@ async fn mirror_cursor_reset_and_attachment_authority_are_exact() {
     assert_eq!(reply["status"]["binding"], json!(binding));
     assert_eq!(fixture.requests().len(), count);
     host.close().await.unwrap();
+}
+
+#[test]
+fn mirror_size_diagnostics_cannot_classify_an_effect_as_safe_to_repeat() {
+    for code in ["page_too_large", "mirror_limit"] {
+        let reply = json!({"ok":false,"error":{"state":"unknown","code":code}});
+        let observation = mirror_worker_reply(reply.clone()).unwrap_err();
+        assert!(observation.is::<MirrorObservationFailure>());
+        assert!(!observation.is::<BeforeEffectRefusal>());
+        assert!(observation.to_string().contains(code));
+        let effect = worker_reply(reply).unwrap_err();
+        assert!(!effect.is::<BeforeEffectRefusal>());
+        assert_eq!(
+            effect.to_string(),
+            "browser operation refused or outcome unknown"
+        );
+    }
+    let observation =
+        mirror_worker_reply(json!({"ok":false,"error":{"code":"private diagnostic"}})).unwrap_err();
+    assert_eq!(
+        observation.to_string(),
+        "browser operation refused or outcome unknown"
+    );
+}
+
+#[tokio::test]
+async fn mirror_format_uses_the_retained_workers_actual_capability() {
+    for supported in [false, true] {
+        let fixture = Fixture::new();
+        if supported {
+            std::fs::write(fixture.root.path().join("css-chunks-supported"), b"").unwrap();
+        }
+        let host = fixture.host().await;
+        let socket = Uuid::new_v4();
+        let principal = Uuid::new_v4();
+        let binding = fixture.attach(&host, socket, principal).await;
+        let status = host.projection(binding.attachment_id).await;
+        assert_eq!(
+            status["mirror_formats"],
+            if supported {
+                json!(["css_chunks_v1"])
+            } else {
+                json!([])
+            }
+        );
+        let count = fixture.requests().len();
+        let result = host
+            .human(
+                HostBrowserOperation::Mirror {
+                    binding: binding.clone(),
+                    since: 0,
+                    format: Some(HostBrowserMirrorFormat::CssChunksV1),
+                },
+                socket,
+                principal,
+                None,
+            )
+            .await;
+        if supported {
+            assert!(result.is_ok());
+            let last = fixture.requests().pop().unwrap();
+            assert_eq!(last["format"], "css_chunks_v1");
+            assert_eq!(last["viewer"], json!(binding.attachment_id));
+        } else {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "browser mirror format unavailable"
+            );
+            assert_eq!(fixture.requests().len(), count);
+        }
+        host.close().await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -929,7 +1005,8 @@ async fn revoked_attached_authority_blocks_mirror_then_maintenance_disconnects()
         host.human(
             HostBrowserOperation::Mirror {
                 binding: binding.clone(),
-                since: 0
+                since: 0,
+                format: None,
             },
             socket,
             principal,

@@ -8,6 +8,24 @@ The parent admits at most four viewers with `join`. `disconnect` removes a viewe
 
 `mirror` is a read-only viewer request with a cursor. The injected `mirror-source.mjs` lazily records rrweb snapshots and changes in the main document and up to eight child frames. It keeps bounded events, can take a new full snapshot, and exposes node IDs to the worker through Playwright. Child events are read through the private Playwright pipe, never posted to website parent scripts. The worker compresses bounded event arrays, inlines captured image/font/style resources from a bounded host cache and sends localized visual fallback images for visible canvas/video or unsupported top-level iframe elements. No page content is written to worker receipts. The worker resolves element IDs on the current page or a short-lived frame document for click, fill, select, wheel and upload, checking live visibility/editability before each effect. Downloads are capped and associated with their owner.
 
+`status.mirror_formats` advertises the worker's optional `css_chunks_v1` encoding.
+An omitted `mirror.format` retains the legacy gzip event array. Negotiated mirrors
+return one atomic `gzip-chunks` reply containing an event array and a per-batch CSS
+dictionary. Exact CSS is restored at recognized fields before replay; stylesheet
+resource rewriting retains each document's URL base. Chunking changes neither
+website execution authority nor viewer admission. Each decoded chunk is at most
+512 KiB, with at most 16 chunks. Compact and expanded logical data share an 8 MiB
+aggregate bound across the top document and child frames; private-pipe and outer
+wire bounds remain 2.2 MB and 2.8 MB. Invalid or oversized data is refused rather
+than pruned or partially replayed. A retained old worker does not acquire the new
+format merely because the supervisor or client was upgraded.
+
+Compression work is registered before its first asynchronous operation, bounded
+and serialized per document, and fenced after each await. Stop observations retain
+pending work and byte obligations until their completion is observed. Private
+control, last-viewer disconnect and teardown clear retained CSS and discard stale
+assemblies; they do not claim outstanding compression already finished.
+
 The worker must never accept untrusted `config`, `policy`, executable paths or filesystem roots from an agent. Private/localhost browsing requires an explicit trusted origin grant even when public web access is enabled. CONNECT tunnels retain origin/address containment, not inspection of encrypted application messages. Browser profiles are temporary, never the user's ordinary browser profile. See the [public protocol](../../docs/host-browser-protocol.md) and [host-browser design](../../docs/host-browser.md).
 
 Agent `inspect` accepts bounded control/text offsets and an observed child `frame`.

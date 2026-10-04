@@ -57,16 +57,86 @@ function fenceSnapshot(event) {
     return event;
 }
 
-async function decodeMirror(value) {
-    if (value?.encoding !== 'gzip' || typeof value.data_base64 !== 'string' || value.data_base64.length > 4000000)
+// Enforce the decoded bound while consuming gzip, before allocating a full text.
+async function inflateMirror(value,limit=3000000) {
+    if(value?.encoding!=='gzip'||typeof value.data_base64!=='string'||value.data_base64.length>4000000)
         throw Error('invalid_mirror');
-    const raw = Uint8Array.from(atob(value.data_base64), char => char.charCodeAt(0));
-    const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const content = await new Response(stream).text();
-    if (bytes(content) > 3000000) throw Error('mirror_limit');
-    const events = JSON.parse(content);
-    if (!Array.isArray(events) || events.length > 1024) throw Error('invalid_mirror');
-    return events;
+    const raw=Uint8Array.from(atob(value.data_base64),char=>char.charCodeAt(0));
+    const reader=new Blob([raw]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+    const chunks=[];let size=0;
+    try{
+        while(true){
+            const {done,value:part}=await reader.read();if(done)break;
+            if(size+part.byteLength>limit)throw Error('mirror_limit');
+            chunks.push(part);size+=part.byteLength;
+        }
+    }catch(error){await reader.cancel().catch(()=>{});throw error;}
+    finally{reader.releaseLock();}
+    const result=new Uint8Array(size);let offset=0;
+    for(const chunk of chunks){result.set(chunk,offset);offset+=chunk.byteLength;}
+    return result;
+}
+const MIRROR_DOCUMENT_LIMIT=8*1024*1024;
+const MIRROR_CHUNK_LIMIT=512*1024;
+const cssMarker=value=>value&&typeof value==='object'&&!Array.isArray(value)
+    &&Object.keys(value).length===1&&Object.hasOwn(value,'$css');
+function restoreMirrorCss(payload,budget) {
+    if(!payload||!Array.isArray(payload.events)||payload.events.length>1024
+        ||payload.events.some(event=>!event||typeof event!=='object'||Array.isArray(event))
+        ||!Array.isArray(payload.css_dictionary)||payload.css_dictionary.length>20000)
+        throw Error('invalid_mirror_dictionary');
+    const dictionary=payload.css_dictionary;
+    if(dictionary.some(value=>typeof value!=='string'))throw Error('invalid_mirror_dictionary');
+    const lengths=dictionary.map(value=>bytes(JSON.stringify(value)));
+    let expanded=bytes(JSON.stringify(payload.events)),references=0,nodes=0,visited=0;
+    if(expanded>budget.remaining)throw Error('mirror_limit');
+    const stack=[{value:payload.events,parent:null,key:null,depth:0,style:false}];
+    while(stack.length){
+        const item=stack.pop(),value=item.value;
+        if(++visited>200000||item.depth>256)throw Error('mirror_complexity_limit');
+        if(!value||typeof value!=='object')continue;
+        if(cssMarker(value)){
+            const index=value.$css;
+            if(!Number.isSafeInteger(index)||index<0||index>=dictionary.length||++references>20000)
+                throw Error('invalid_mirror_reference');
+            if(!['_cssText','style','cssText','rule','replace','replaceSync'].includes(item.key)
+                &&!(item.key==='textContent'&&item.style))throw Error('invalid_mirror_reference_location');
+            expanded+=lengths[index]-bytes(JSON.stringify(value));
+            if(expanded>budget.remaining)throw Error('mirror_limit');
+            item.parent[item.key]=dictionary[index];continue;
+        }
+        if(Object.hasOwn(value,'$css'))throw Error('invalid_mirror_reference');
+        if(Number.isSafeInteger(value.id)&&Number.isSafeInteger(value.type)&&++nodes>20000)
+            throw Error('mirror_node_limit');
+        const style=item.style||value.tagName==='style';
+        for(const [key,child] of Object.entries(value)){
+            stack.push({value:child,parent:value,key,depth:item.depth+1,style});
+        }
+    }
+    budget.remaining-=expanded;
+    return payload.events;
+}
+export async function decodeBrowserMirror(value,budget={remaining:MIRROR_DOCUMENT_LIMIT,compactRemaining:MIRROR_DOCUMENT_LIMIT}) {
+    budget.compactRemaining??=MIRROR_DOCUMENT_LIMIT;
+    if(value?.encoding==='gzip-chunks'){
+        if(value.format!=='css_chunks_v1'||!Array.isArray(value.chunks)||value.chunks.length<1||value.chunks.length>16
+            ||!Number.isSafeInteger(value.total_bytes)||value.total_bytes<1||value.total_bytes>budget.compactRemaining)
+            throw Error('invalid_mirror_chunks');
+        budget.compactRemaining-=value.total_bytes;
+        const assembled=new Uint8Array(value.total_bytes);let offset=0;
+        for(const data_base64 of value.chunks){
+            const chunk=await inflateMirror({encoding:'gzip',data_base64},Math.min(MIRROR_CHUNK_LIMIT,assembled.length-offset));
+            if(!chunk.length||offset+chunk.length>assembled.length)throw Error('invalid_mirror_chunk_size');
+            assembled.set(chunk,offset);offset+=chunk.length;
+        }
+        if(offset!==assembled.length)throw Error('invalid_mirror_chunk_size');
+        return restoreMirrorCss(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(assembled)),budget);
+    }
+    const content=new TextDecoder('utf-8',{fatal:true}).decode(await inflateMirror(value,Math.min(3000000,budget.compactRemaining)));
+    const events=JSON.parse(content);
+    if(!Array.isArray(events)||events.length>1024)throw Error('invalid_mirror');
+    if(bytes(content)>budget.remaining)throw Error('mirror_limit');
+    budget.compactRemaining-=bytes(content);budget.remaining-=bytes(content);return events;
 }
 
 // A mount owns one authenticated attachment and one script-free replay iframe.
@@ -161,7 +231,7 @@ export class BrowserConnection {
         }
         for(const [id,picture] of frame.visualNodes)if(!present.has(id)){picture.remove();frame.visualNodes.delete(id);}
     }
-    async updateFrames(items,epoch=this.epoch,key=pageKey(this.status)){
+    async updateFrames(items,epoch=this.epoch,key=pageKey(this.status),decoded=null){
         const current=()=>!this.closed&&this.phase!=='disconnected'&&epoch===this.epoch&&key===pageKey(this.status);
         if(!this.frameLayer||!current())return;
         if(!Array.isArray(items)||items.length>8)throw Error('invalid_frames');
@@ -172,7 +242,7 @@ export class BrowserConnection {
             const parent=item.parent_frame_id?this.frames.get(item.parent_frame_id):{player:this.replayer,root:this.frameLayer};
             if(!parent?.player)continue;
             let frame=this.frames.get(item.frame_id);
-            const events=await decodeMirror(item);
+            const events=decoded?.get(item.frame_id)??await decodeBrowserMirror(item);
             if(!current())return;
             if(!frame||item.reset){
                 if(!events.some(event=>event?.type===2))throw Error('missing_frame_snapshot');
@@ -186,7 +256,7 @@ export class BrowserConnection {
             }
             if(frame.root.parentNode!==parent.root)parent.root.append(frame.root);
             frame.latestVisuals=Array.isArray(item.visuals)?item.visuals:[];
-            for(const event of events)frame.player.addEvent(fenceSnapshot(event));
+            for(const event of events)frame.player.addEvent(decoded?event:fenceSnapshot(event));
             const position=this.framePosition(item,parent);
             frame.root.hidden=!position;
             if(position){
@@ -267,24 +337,45 @@ export class BrowserConnection {
         if(!this.attached||!this.status?.running||this.closed||this.phase==='disconnected'||epoch!==this.epoch)return;
         const binding={...this.status.binding}, key=pageKey(this.status), since=this.cursor;
         const current=()=>!this.closed&&this.phase!=='disconnected'&&epoch===this.epoch&&key===pageKey(this.status);
-        const reply=await this.request({action:'mirror',binding,since},epoch);
+        const operation={action:'mirror',binding,since};
+        if(Array.isArray(this.status.mirror_formats)&&this.status.mirror_formats.includes('css_chunks_v1'))operation.format='css_chunks_v1';
+        const reply=await this.request(operation,epoch);
         if(!current())return;
         const value=reply.value;
-        if(!value||value.reset&&value.encoding!=='gzip'){
+        if(!value||value.reset&&!['gzip','gzip-chunks'].includes(value.encoding)){
             this.clearMirror();return;
         }
         if(!Number.isSafeInteger(value.cursor)||value.cursor<since&&!value.reset)throw Error('invalid_cursor');
-        const events=await decodeMirror(value);
+        if(value.encoding==='gzip-chunks'&&operation.format!=='css_chunks_v1')throw Error('unnegotiated_mirror_format');
+        const budget={remaining:MIRROR_DOCUMENT_LIMIT,compactRemaining:MIRROR_DOCUMENT_LIMIT};
+        const events=await decodeBrowserMirror(value,budget);
         if(!current())return;
+        const frames=value.frames||[],decodedFrames=new Map();
+        if(!Array.isArray(frames)||frames.length>8)throw Error('invalid_frames');
+        for(const frame of frames){
+            if(typeof frame.frame_id!=='string'||decodedFrames.has(frame.frame_id))throw Error('invalid_frame');
+            if(frame.encoding==='gzip-chunks'&&operation.format!=='css_chunks_v1')throw Error('unnegotiated_mirror_format');
+            decodedFrames.set(frame.frame_id,await decodeBrowserMirror(frame,budget));
+            if(!current())return;
+        }
+        if(!current())return;
+        if(value.reset&&!events.some(event=>event?.type===2))throw Error('missing_full_snapshot');
+        for(const frame of frames){
+            if(!Number.isSafeInteger(frame.host_node_id)||frame.host_node_id<=0
+                ||frame.parent_frame_id!=null&&typeof frame.parent_frame_id!=='string'
+                ||frame.reset&&!decodedFrames.get(frame.frame_id).some(event=>event?.type===2))throw Error('invalid_frame');
+        }
+        for(const event of events)fenceSnapshot(event);
+        for(const frameEvents of decodedFrames.values())for(const event of frameEvents)fenceSnapshot(event);
         if(value.reset){
             this.clearMirror();
             if(!events.some(event=>event?.type===2))throw Error('missing_full_snapshot');
             this.replayer=this.newPlayer(this.mirror);
         }
-        for(const event of events)this.replayer?.addEvent(fenceSnapshot(event));
+        for(const event of events)this.replayer?.addEvent(event);
         this.cursor=value.cursor;
         this.latestVisuals=Array.isArray(value.visuals)?value.visuals:[];
-        await this.updateFrames(value.frames||[],epoch,key);
+        await this.updateFrames(frames,epoch,key,decodedFrames);
         if(!current())return;
         this.onVisuals(this.latestVisuals,this.replayer);
     }

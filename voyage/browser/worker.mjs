@@ -2,19 +2,41 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import {createCssCodec} from './css-transport.mjs';
 import { chromium } from 'playwright-core';
 import { Journal, UUID, privateDir } from './journal.mjs';
 import { Refusal, refuse, digest, origin, networkProxy } from './security.mjs';
 
 // Host-validated literals only. Page-side parameter destructuring/iterators can
 // observe argument-array values, so the private key never travels in that form.
-export function recorderExpression(operation,key,generation,cursor=0,budget=2200000){
+const cssCodec=createCssCodec();
+export function decodeCssMirror(value,maxBytes=cssCodec.limit){
+  if(value?.format!=='css_chunks_v1'||value.encoding!=='gzip-chunks'||!Array.isArray(value.chunks)||!value.chunks.length||value.chunks.length>cssCodec.maxChunks||!Number.isSafeInteger(value.total_bytes)||value.total_bytes<=0||value.total_bytes>Math.min(cssCodec.limit,maxBytes))refuse('mirror_limit');
+  const buffer=Buffer.alloc(value.total_bytes);let offset=0;
+  for(const text of value.chunks){
+    if(typeof text!=='string'||text.length>2200000||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(text))refuse('mirror_limit');
+    const chunk=gunzipSync(Buffer.from(text,'base64'),{maxOutputLength:cssCodec.chunkBytes});
+    if(!chunk.length||offset+chunk.length>buffer.length)refuse('mirror_limit');chunk.copy(buffer,offset);offset+=chunk.length;
+  }
+  if(offset!==buffer.length)refuse('mirror_limit');
+  return cssCodec.unpack(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer)),maxBytes);
+}
+export function encodeCssMirror(events){
+  const packed=cssCodec.pack(events),buffer=Buffer.from(JSON.stringify(packed.payload));
+  if(buffer.length>cssCodec.limit)refuse('mirror_limit');
+  const chunks=[];for(let offset=0;offset<buffer.length;offset+=cssCodec.chunkBytes)chunks.push(gzipSync(buffer.subarray(offset,offset+cssCodec.chunkBytes),{level:3}).toString('base64'));
+  return {value:{encoding:'gzip-chunks',format:'css_chunks_v1',chunks,total_bytes:buffer.length},expanded_bytes:packed.expanded_bytes};
+}
+
+export function recorderExpression(operation,key,generation,cursor=0,budget=2200000,format=null){
   if(!UUID.test(key)||!Number.isSafeInteger(generation)||generation<0||!Number.isSafeInteger(cursor)||cursor<0||!Number.isSafeInteger(budget)||budget<0||budget>2200000)refuse('invalid_capture_permit');
   const target='this.__voyageMirror',literal=JSON.stringify(key);
   if(operation==='stop')return `${target}?${target}.stop(${literal},${generation}):({recorder_absent:true})`;
   if(operation!=='drain')refuse('invalid_capture_operation');
-  return `${target}&&${target}.enable(${literal},${generation})?${target}.drain(${cursor},${budget},${literal},${generation}):({error:'recorder_disabled'})`;
+  if(format!==null&&format!=='css_chunks_v1')refuse('unsupported_format');
+  const method=format==='css_chunks_v1'?'drainCss':'drain';
+  return `${target}&&${target}.enable(${literal},${generation})?${target}.${method}(${cursor},${budget},${literal},${generation}):({error:'recorder_disabled'})`;
 }
 
 class BeforeEffect extends Refusal {}
@@ -106,7 +128,7 @@ export class Worker {
     this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
   }
-  status(){return {viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,downloads:[...this.downloads].filter(([,d])=>d.owner===this.controller).map(([id,d])=>({id,name:d.name})),browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
+  status(){return {mirror_formats:['css_chunks_v1'],viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,downloads:[...this.downloads].filter(([,d])=>d.owner===this.controller).map(([id,d])=>({id,name:d.name})),browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){const epochs={...req.epochs};if(['join','mirror','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();this.agentFrames.clear();}
   advance(...keys){for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;this.frameVisuals.clear();}this.invalidate();}
@@ -240,7 +262,7 @@ export class Worker {
       this.context.on('page',p=>this.registerPage(p));
       const directory=path.dirname(fileURLToPath(import.meta.url));
       const vendor=await fs.readFile(path.join(directory,'rrweb-vendor.mjs'),'utf8');
-      const recorder=(await fs.readFile(path.join(directory,'mirror-source.mjs'),'utf8')).replace('__VOYAGE_CAPTURE_KEY__',this.recorderCapability);
+      const recorder=(await fs.readFile(path.join(directory,'mirror-source.mjs'),'utf8')).replace('__VOYAGE_CAPTURE_KEY__',this.recorderCapability).replaceAll('__VOYAGE_CSS_CODEC__',`(${createCssCodec.toString()})`);
       await this.context.addInitScript({content:`${vendor}\n;${recorder}`});
       const page=await this.context.newPage();await this.select(this.idFor(page));
       return null;
@@ -387,7 +409,7 @@ export class Worker {
       throw error;
     }
   }
-  async recorderCall(frame,operation,cursor=0,budget=2200000,generation=this.captureActivityGeneration){
+  async recorderCall(frame,operation,cursor=0,budget=2200000,generation=this.captureActivityGeneration,format=null){
     let session;const contexts=new Map();let stale=false,selected=null;
     try{
       const connection=frame?._connection;
@@ -408,7 +430,7 @@ export class Worker {
       await bounded(session.send('Runtime.enable'),1000);
       if(contexts.size!==1)refuse('observation_unavailable');selected=[...contexts.values()][0];
       if(typeof selected.uniqueId!=='string'||!selected.uniqueId)refuse('observation_unavailable');
-      const expression=recorderExpression(operation,this.recorderCapability,generation,cursor,budget);
+      const expression=recorderExpression(operation,this.recorderCapability,generation,cursor,budget,format);
       const result=await bounded(session.send('Runtime.evaluate',{expression,uniqueContextId:selected.uniqueId,returnByValue:true,awaitPromise:true,timeout:750}),1000);
       const after=await bounded(session.send('Page.getFrameTree'),1000);
       if(stale||frame.isDetached()||implementation._id!==frameId||contexts.get(selected.id)?.uniqueId!==selected.uniqueId||!contains(after.frameTree,frameId)||result.exceptionDetails)refuse('observation_unavailable');
@@ -451,17 +473,21 @@ export class Worker {
     this.recorderStopObserved=false;
     const generation=this.captureActivityGeneration;
     const captureGuard=()=>{if(generation!==this.captureActivityGeneration||!this.viewers.size)refuse('capture_fenced');this.viewer(req.viewer);};
+    const format=req.format??null;if(format!==null&&format!=='css_chunks_v1')refuse('unsupported_format');
     const since=number(req.since,0,Number.MAX_SAFE_INTEGER),page=this.page,stamp=this.epochs.capture;
     // Chromium pauses page evaluation while a JavaScript dialog is open.
     // Keep the read channel responsive so the human can dismiss that dialog.
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     captureGuard();
-    const value=await bounded(this.recorderCall(page.mainFrame(),'drain',since,2200000,generation),5000);
+    const value=await bounded(this.recorderCall(page.mainFrame(),'drain',since,2200000,generation,format),5000);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
+    let logical=0,compactTotal=0,mainEncoded=null;
+    if(format==='css_chunks_v1'){try{value.events=decodeCssMirror(value).events;}catch{refuse('mirror_limit');}}
     this.inlineAssets(value.events,page.url());
+    if(format==='css_chunks_v1'){try{logical=cssCodec.jsonBytes(value.events);mainEncoded=encodeCssMirror(value.events).value;compactTotal=mainEncoded.total_bytes;}catch{refuse('mirror_limit');}}
     const frameCursors=!value.reset&&since===viewer.mirrorCursor?new Map(viewer.frameCursors):new Map();
     const frames=[],nextCursors=new Map(),mirrored=new Set();let remainingMedia=2;
     // The site never receives a child's events. rrweb's cross-origin mode
@@ -478,28 +504,32 @@ export class Worker {
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
         captureGuard();
-        const child=await bounded(this.recorderCall(frame,'drain',cursor,550000,generation),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
+        const child=await bounded(this.recorderCall(frame,'drain',cursor,550000,generation,format),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
+        if(format==='css_chunks_v1'){try{child.events=decodeCssMirror(child,Math.min(cssCodec.limit-logical,cssCodec.limit-compactTotal)).events;}catch{refuse('mirror_limit');}}
         this.inlineAssets(child.events,frame.url());
-        const bytes=Buffer.from(JSON.stringify(child.events));
-        if(bytes.length>650000)continue;
+        const bytes=format===null?Buffer.from(JSON.stringify(child.events)):null;
+        if(bytes&&bytes.length>650000)continue;
+        let encoded=null;
+        if(format==='css_chunks_v1'){try{encoded=encodeCssMirror(child.events);}catch{refuse('mirror_limit');}logical+=encoded.expanded_bytes;compactTotal+=encoded.value.total_bytes;if(logical>cssCodec.limit||compactTotal>cssCodec.limit)refuse('mirror_limit');}
         captureGuard();
         const frameVisuals=remainingMedia?await bounded(this.captureFrameVisuals(frame,frameId),1800).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;return []; }):[];
         remainingMedia-=frameVisuals.length;
         frames.push({frame_id:frameId,parent_frame_id:parentId,host_node_id:hostId,
-          encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:child.cursor,reset:child.reset,visuals:frameVisuals});
+          ...(encoded?encoded.value:{encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64')}),cursor:child.cursor,reset:child.reset,visuals:frameVisuals});
         nextCursors.set(frameId,child.cursor);
         if(parent===page.mainFrame())mirrored.add(hostId);
-      }catch{}finally{await host?.dispose().catch(()=>{});}
+      }catch(error){if(format==='css_chunks_v1'&&error.code==='mirror_limit')throw error;}finally{await host?.dispose().catch(()=>{});}
     }
     for(const id of this.frameVisuals.keys())if(!nextCursors.has(id))this.frameVisuals.delete(id);
     captureGuard();
     const visuals=await bounded(this.captureVisuals(page,mirrored),5000).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;return this.visuals.filter(item=>!mirrored.has(item.id));});
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
-    const bytes=Buffer.from(JSON.stringify(value.events));
-    if(bytes.length>3000000)refuse('mirror_limit');
-    const result={encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64'),cursor:value.cursor,reset:value.reset,latest:value.latest,visuals,frames};
+    let encoded;
+    if(format==='css_chunks_v1')encoded=mainEncoded;
+    else{const bytes=Buffer.from(JSON.stringify(value.events));if(bytes.length>3000000)refuse('mirror_limit');encoded={encoding:'gzip',data_base64:gzipSync(bytes,{level:3}).toString('base64')};}
+    const result={...encoded,cursor:value.cursor,reset:value.reset,latest:value.latest,visuals,frames};
     if(Buffer.byteLength(JSON.stringify(result))>2800000)refuse('mirror_limit');
     viewer.mirrorCursor=value.cursor;viewer.frameCursors=nextCursors;
     return result;
