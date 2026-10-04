@@ -1,3 +1,5 @@
+#[allow(dead_code)]
+mod windows_contract;
 use anyhow::{Result, bail};
 
 #[cfg(target_os = "linux")]

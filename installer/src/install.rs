@@ -1,3 +1,6 @@
+#[cfg(windows)]
+#[allow(dead_code)]
+pub(crate) mod native_ntfs;
 #[allow(dead_code)]
 pub(crate) mod native_receipt;
 use anyhow::Result;
