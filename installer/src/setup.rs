@@ -42,10 +42,17 @@ impl Request {
                 && !self.target.owner_principal_id.is_nil(),
             "Missing setup identity"
         );
+        let origin = url::Url::parse(&self.target.helm_origin)?;
         ensure!(
-            self.target.helm_origin.starts_with("https://")
-                && !self.target.helm_origin.contains(['\r', '\n']),
-            "Setup requires the reviewed HTTPS Helm origin"
+            origin.scheme() == "https"
+                && origin.host_str().is_some()
+                && origin.username().is_empty()
+                && origin.password().is_none()
+                && origin.query().is_none()
+                && origin.fragment().is_none()
+                && origin.path() == "/"
+                && self.target.helm_origin == origin.origin().ascii_serialization(),
+            "Setup requires an exact normalized HTTPS origin"
         );
         ensure!(now_ms < self.expires_at_ms, "Setup review expired");
         for value in [
@@ -55,7 +62,10 @@ impl Request {
             &self.protected_facts_sha256,
         ] {
             ensure!(
-                value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                value.len() == 64
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
                 "Invalid setup digest"
             );
         }
@@ -79,13 +89,39 @@ pub struct Receipt {
     pub outcome_unknown: bool,
     pub cleanup_pending: bool,
 }
+impl Receipt {
+    /// Persisted facts remain valid independently of the admission deadline.
+    pub fn validate(&self) -> Result<()> {
+        self.request.validate(0)?;
+        match self.phase {
+            Phase::Complete => ensure!(
+                !self.outcome_unknown && !self.cleanup_pending,
+                "Incomplete completion receipt"
+            ),
+            Phase::Uncertain => ensure!(
+                self.effect_possible && self.outcome_unknown,
+                "Invalid uncertain receipt"
+            ),
+            Phase::RollbackRequired => ensure!(
+                self.effect_possible && self.cleanup_pending,
+                "Missing rollback obligation"
+            ),
+            Phase::Pending => ensure!(
+                self.effect_possible && self.outcome_unknown,
+                "Pending intent must conservatively retain possible effects"
+            ),
+        }
+        Ok(())
+    }
+}
 /// Immutable duplicate lookup precedes expiry validation. A completed receipt is
 /// not reinterpreted merely because its original admission window has expired.
 pub fn duplicate<'a>(request: &Request, receipts: &'a [Receipt]) -> Result<Option<&'a Receipt>> {
-    if let Some(receipt) = receipts
-        .iter()
-        .find(|entry| entry.request.command_id == request.command_id)
-    {
+    if let Some(receipt) = receipts.iter().find(|entry| {
+        entry.request.command_id == request.command_id
+            || entry.request.transaction_id == request.transaction_id
+    }) {
+        receipt.validate()?;
         ensure!(
             &receipt.request == request,
             "Setup command reused with different content"
