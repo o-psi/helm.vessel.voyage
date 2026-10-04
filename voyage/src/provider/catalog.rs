@@ -115,6 +115,13 @@ pub fn validate_models_for_display(
 ) -> Result<(), ProviderError> {
     validate_models(models, &[])?;
     for model in models {
+        if let Some(capacity) = &model.context_capacity {
+            for text in [&capacity.provenance, &capacity.model, &capacity.transport, &capacity.account_applicability] {
+                if contains_secret(text) { return Err(invalid()); }
+            }
+        }
+    }
+    for model in models {
         let fields = [&model.id, &model.display_name, &model.description]
             .into_iter()
             .chain(model.default_service_tier.iter())

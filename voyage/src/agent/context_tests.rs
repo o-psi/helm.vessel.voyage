@@ -90,6 +90,10 @@ impl RunCheckpoint for Checkpoint {
         }
         Ok(())
     }
+    async fn request_accounting(&self, status: &serde_json::Value) -> Result<(), CheckpointError> {
+        self.working.lock().unwrap().request_status = Some(status.clone());
+        Ok(())
+    }
     async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
         Ok(())
     }
@@ -447,6 +451,16 @@ async fn pressure_prepares_after_effect_without_replaying_it() {
     assert_eq!(outcome.answer, "done");
     assert_eq!(effects.load(Ordering::SeqCst), 1);
     assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        checkpoint
+            .working
+            .lock()
+            .unwrap()
+            .request_status
+            .as_ref()
+            .unwrap()["input_tokens"],
+        100
+    );
     assert!(checkpoint.working.lock().unwrap().generation > 0);
     assert!(
         outcome
