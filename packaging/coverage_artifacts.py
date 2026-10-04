@@ -21,15 +21,19 @@ def digest(path):
 
 
 def source_inventory(root):
-    # Include manifests and all Rust source, including untracked/generated source
-    # outside target. Source changes invalidate the selection, even dirty ones.
+    # Git's conservative tracked + nonignored untracked inventory includes SQL,
+    # prompts, assets and build scripts, not only Rust. External/generated compile
+    # inputs still require native provenance qualification.
+    result = subprocess.run(['git', '-C', str(root), 'ls-files', '-z',
+                             '--cached', '--others', '--exclude-standard'],
+                            capture_output=True, check=True, timeout=60)
     inventory = {}
-    for directory, dirs, files in os.walk(root):
-        dirs[:] = sorted(d for d in dirs if d not in ('target', '.git', '.local-git'))
-        for name in sorted(files):
-            if name.endswith('.rs') or name in ('Cargo.toml', 'Cargo.lock'):
-                p = Path(directory) / name
-                inventory[str(p.relative_to(root))] = digest(p)
+    for name in sorted(set(os.fsdecode(n) for n in result.stdout.split(b'\0') if n)):
+        p = root / name
+        require(p.is_file(), 'missing source input: ' + name)
+        require(p.resolve().is_relative_to(root), 'external source symlink: ' + name)
+        inventory[name] = digest(p)
+    require(inventory, 'empty source input inventory')
     return inventory
 
 
@@ -42,7 +46,10 @@ def select(metadata, messages, root):
     expected = {(p['id'], t['name'], tuple(t['kind']))
                 for p in packages.values() for t in p['targets']
                 if t.get('test', True) and 'custom-build' not in t['kind']}
-    seen, objects, tests = set(), {}, set()
+    seen, ordinary, objects, tests = set(), set(), {}, set()
+    expected_bins = {(p['id'], t['name'], tuple(t['kind']))
+                     for p in packages.values() for t in p['targets']
+                     if 'bin' in t['kind'] and not t.get('required-features')}
     finished = False
     target_root = Path(metadata.get('target_directory', root / 'target')).resolve()
     for m in messages:
@@ -57,6 +64,8 @@ def select(metadata, messages, root):
             seen.add(key)
         executable = m.get('executable')
         if executable:
+            if not m['profile']['test']:
+                ordinary.add(key)
             path = Path(executable).resolve()
             require(path.is_relative_to(target_root), 'executable outside Cargo target directory')
             require(path.is_file(), 'missing current executable: ' + str(path))
@@ -65,6 +74,7 @@ def select(metadata, messages, root):
                 tests.add(str(path))
     require(finished, 'missing successful build-finished record')
     require(expected <= seen, 'missing workspace test targets: ' + repr(sorted(expected-seen)))
+    require(expected_bins <= ordinary, 'missing ordinary workspace binaries: ' + repr(sorted(expected_bins-ordinary)))
     require(objects and tests, 'empty workspace executable/test selection')
     return {'schema': 1, 'workspace': str(root), 'sources': source_inventory(root),
             'objects': objects, 'test_objects': sorted(tests),
@@ -75,7 +85,7 @@ def select(metadata, messages, root):
                         for f in m.get('features', [])}) for p in sorted(members)}}
 
 
-def audit(manifest, detail, diagnostics, root):
+def audit(manifest, detail, diagnostics, root, participation=None):
     require(manifest['workspace'] == str(root), 'manifest checkout changed')
     require(manifest['sources'] == source_inventory(root), 'measured source changed')
     for name, sha in manifest['objects'].items():
@@ -94,6 +104,14 @@ def audit(manifest, detail, diagnostics, root):
         require(name not in logical, 'duplicate logical source: ' + name)
         logical.add(name)
     require(logical, 'empty source mapping inventory')
+    require(participation is not None, 'missing per-object mapping qualification')
+    require(set(participation) == set(manifest['objects']), 'incomplete object participation')
+    union = set()
+    for obj, mapped in participation.items():
+        require(mapped, 'object has no qualified mappings: ' + obj)
+        require(set(mapped) <= logical, 'object mappings absent from combined export')
+        union.update(mapped)
+    require(union == logical, 'combined export mapping inventory differs from objects')
     return {'objects': len(manifest['objects']), 'mapped_sources': len(logical),
             'source_fingerprint': hashlib.sha256(json.dumps(manifest['sources'],
                                     sort_keys=True).encode()).hexdigest()}
@@ -117,6 +135,7 @@ def main():
     a.add_argument('--manifest', type=Path, required=True)
     a.add_argument('--export', type=Path, required=True)
     a.add_argument('--diagnostics', type=Path, required=True)
+    a.add_argument('--participation', type=Path, required=True)
     for p in (s, e, a):
         p.add_argument('--source-root', type=Path, required=True)
     args = parser.parse_args()
@@ -133,7 +152,8 @@ def main():
         # Validate unchanged input before LLVM; a nonempty placeholder export
         # lets audit enforce the same source/object constraints.
         source = next(iter(manifest['sources']))
-        audit(manifest, {'data': [{'files': [{'filename': str(root / source)}]}]}, '', root)
+        audit(manifest, {'data': [{'files': [{'filename': str(root / source)}]}]}, '', root,
+              {obj: [source] for obj in manifest['objects']})
         require(args.profile.is_file(), 'missing explicitly merged current profile')
         profile_sha = digest(args.profile)
         command = [args.llvm_cov, 'export', '-instr-profile=' + str(args.profile),
@@ -144,12 +164,29 @@ def main():
             result = subprocess.run(command, stdout=out, stderr=err, check=False, timeout=600)
         require(digest(args.profile) == profile_sha, 'merged profile changed during export')
         require(result.returncode == 0, 'LLVM export failed; preserve evidence')
+        participation = {}
+        for index, obj in enumerate(manifest['objects']):
+            single = list(command[:4]) + ['-object', obj]
+            evidence = args.output.with_name(args.output.name + '.object-' + str(index))
+            errors = evidence.with_name(evidence.name + '.stderr')
+            with evidence.open('x') as out, errors.open('x') as err:
+                run = subprocess.run(single, stdout=out, stderr=err, timeout=600, check=False)
+            require(run.returncode == 0 and not errors.read_text().strip(),
+                    'per-object LLVM qualification failed')
+            data = json.loads(evidence.read_text())
+            require(len(data['data']) == 1, 'invalid per-object dataset')
+            participation[obj] = [str(Path(f['filename']).resolve().relative_to(root))
+                                  for f in data['data'][0]['files']]
+        proof = args.output.with_name(args.output.name + '.participation.json')
+        with proof.open('x') as out:
+            json.dump(participation, out, sort_keys=True)
         print(json.dumps(audit(manifest, json.loads(args.output.read_text()),
-                              args.diagnostics.read_text(), root), sort_keys=True))
+                              args.diagnostics.read_text(), root, participation), sort_keys=True))
     else:
         print(json.dumps(audit(json.loads(args.manifest.read_text()),
                               json.loads(args.export.read_text()),
-                              args.diagnostics.read_text(), root), sort_keys=True))
+                              args.diagnostics.read_text(), root,
+                              json.loads(args.participation.read_text())), sort_keys=True))
 
 
 if __name__ == '__main__':

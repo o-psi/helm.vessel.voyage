@@ -6,7 +6,11 @@ import subprocess
 import sys
 import unittest
 
-from coverage_artifacts import select, audit
+from coverage_artifacts import select, audit as actual_audit
+
+def audit(manifest, detail, diagnostics, root):
+    return actual_audit(manifest, detail, diagnostics, root,
+                        {obj: ["lib.rs"] for obj in manifest["objects"]})
 
 
 class SelectionTests(unittest.TestCase):
@@ -14,6 +18,8 @@ class SelectionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
+        subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
+        (self.root / '.gitignore').write_text('target/\nmanifest.json\ncurrent.profdata\nllvm-fixture\narguments.json\nexport.json*\nstderr\n')
         (self.root / 'lib.rs').write_text('fn current() {}')
         self.binary = self.root / 'target' / 'test'
         self.binary.parent.mkdir()
@@ -113,6 +119,27 @@ class SelectionTests(unittest.TestCase):
         original = output.read_bytes()
         self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
         self.assertEqual(output.read_bytes(), original)
+
+    def test_embedded_nonrust_mutation(self):
+        embedded = self.root / 'database.sql'
+        embedded.write_text('SELECT 1')
+        m = self.manifest()
+        embedded.write_text('SELECT 2')
+        with self.assertRaisesRegex(ValueError, 'source changed'):
+            audit(m, self.export, '', self.root)
+
+    def test_missing_ordinary_binary(self):
+        self.meta['packages'][0]['targets'].append(
+            {'name': 'runtime', 'kind': ['bin'], 'test': False})
+        with self.assertRaisesRegex(ValueError, 'missing ordinary'):
+            self.manifest()
+
+    def test_unqualified_mapping_subset_refused(self):
+        m = self.manifest()
+        with self.assertRaisesRegex(ValueError, 'mapping qualification'):
+            actual_audit(m, self.export, '', self.root)
+        with self.assertRaisesRegex(ValueError, 'incomplete object'):
+            actual_audit(m, self.export, '', self.root, {})
 
     def test_main_worktree_switch_refused(self):
         m = self.manifest()

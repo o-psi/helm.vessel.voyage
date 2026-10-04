@@ -55,7 +55,8 @@ python3 packaging/coverage_artifacts.py export --source-root "$PWD" \
   --output "$evidence/current-export.json" --diagnostics "$evidence/export.stderr"
 python3 packaging/coverage_artifacts.py audit --source-root "$PWD" \
   --manifest "$evidence/objects.json" --export "$evidence/current-export.json" \
-  --diagnostics "$evidence/export.stderr"
+  --diagnostics "$evidence/export.stderr" \
+  --participation "$evidence/current-export.json.participation.json"
 ```
 
 Export refuses to overwrite evidence and audits again after LLVM. Any LLVM
@@ -118,3 +119,23 @@ explicit-selection export/audit. The full qualification remains main/worktree/ma
 with all workspace tests; a tiny fixture, metadata-only selection, or successful
 synthetic checkout refusal does not replace those three native cohorts. Final
 integrated-source coverage is separately owned by the release coordinator.
+
+## Completeness guard revisions
+
+Source fingerprints now conservatively cover every Git-tracked and nonignored
+untracked file, including SQL, prompts, JavaScript/CSS and other embedded assets.
+External symlink inputs refuse. Ignored/generated inputs and external build inputs
+still require native compiler/build-script provenance review; Git source hashes
+alone never qualify them. All ordinary default-feature bin targets from metadata
+must have non-test executable artifacts, independently of complete test artifacts.
+Feature-gated binaries need an explicit matching feature policy; default scope is
+not expanded implicitly. Preserve their metadata in the qualification record.
+
+Export now runs an additional identical-profile/exclusion LLVM export for **each**
+selected object. Empty mappings, diagnostics, missing object participation, or a
+combined file inventory different from the union refuse publication. Per-object
+exports and their stderr are retained beside the combined export; the participation
+JSON is derived evidence, not a substitute for those exports. Offline audit must
+supply that participation record. This proves object/file participation, not that
+all cross-crate counters or ignored/generated source inputs are complete. Native
+three-cohort provenance/inventory comparison remains a mandatory gate.
