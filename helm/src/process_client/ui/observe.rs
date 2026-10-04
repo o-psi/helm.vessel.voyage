@@ -558,6 +558,16 @@ async fn refresh_observation(
                 .get("resource:cleanup")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
+            value["turns"] = scope
+                .entities
+                .get("run:turns")
+                .cloned()
+                .unwrap_or(serde_json::json!([]));
+            value["recovery_notice"] = scope
+                .entities
+                .get("resource:recovery_notice")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             value["observation_cursor"] = serde_json::json!(scope.cursor);
             if let Some(settings) = scope
                 .entities

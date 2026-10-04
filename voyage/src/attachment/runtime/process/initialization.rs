@@ -41,7 +41,7 @@ impl ManagedSessionOwner {
             let pending_cleanup = store.journal.list_session_summaries(None,100)?.sessions.into_iter().find(|summary|summary.id==store.session_id).and_then(|summary|summary.pending_cleanup_run);
             let fence = Fence { generation, session_id: store.session_id, incarnation };
             let message_offset=session.messages.len().saturating_sub(INITIAL_MESSAGES);
-            let total = 9_usize.checked_add(session.messages.len()-message_offset).context("entity count overflow")?;
+            let total = 11_usize.checked_add(session.messages.len()-message_offset).context("entity count overflow")?;
             let offset = usize::try_from(offset)?;
             anyhow::ensure!(offset <= total, "entity offset beyond scope");
             let end = total;
@@ -58,7 +58,9 @@ impl ManagedSessionOwner {
                     6 => (EntityKind::Resource, "session_resources".to_string(), store.journal.session_resources(store.session_id)?),
                     7 => (EntityKind::Usage, "usage".to_string(), serde_json::to_value(store.journal.delegated_usage(session.id)?)?),
                     8 => (EntityKind::Settings, "settings".to_string(), settings.clone()),
-                    _ => { let message = message_offset + index - 9; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
+                    9 => (EntityKind::Run, "turns".to_string(), json!(projection::turns(session))),
+                    10 => { let retained=store.journal.retained_cleanup(store.session_id)?; let uncertain=retained["run_ids"].as_array().is_some_and(|values|!values.is_empty()) || retained["resources"].as_array().is_some_and(|values|!values.is_empty()); (EntityKind::Resource,"recovery_notice".to_string(),json!(uncertain.then_some("Conversation ready to continue. Previous interrupted work has unknown effects; its unfinished commands were not repeated."))) },
+                    _ => { let message = message_offset + index - 11; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
                 };
                 anyhow::ensure!(serde_json::to_vec(&value)?.len() <= MAX_ENTITY_BYTES, "entity requires bounded content chunks");
                 events.push(InitializationEvent::Entity { fence: fence.clone(), sequence: index as u64, entity_kind, entity_id, value });
