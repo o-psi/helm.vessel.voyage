@@ -37,3 +37,92 @@ mod tests {
         assert!(serde_json::from_value::<ProfilePin>(forged).is_err());
     }
 }
+
+/// Public authority pin: never a bearer credential or client-asserted permission.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DestinationPin {
+    pub alias: String,
+    pub vessel_id: Uuid,
+    pub workspace: std::path::PathBuf,
+    pub grant: crate::process::GrantBinding,
+    pub rights: Vec<crate::process::ProcessRight>,
+    pub expires_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeSelection {
+    pub session_id: Uuid,
+    pub context: crate::process::GrantBinding,
+    pub expected_revision: u64,
+    pub destinations: Vec<DestinationPin>,
+}
+
+impl ScopeSelection {
+    /// Called with server-observed current context and destination pins. Never
+    /// union different Helm contexts, even when their principal IDs coincide.
+    pub fn validate(&self, current: &Self, now_ms: u64) -> Result<(), &'static str> {
+        if self.session_id.is_nil()
+            || self.session_id != current.session_id
+            || self.context != current.context
+            || self.expected_revision != current.expected_revision
+        {
+            return Err("scope context or revision changed");
+        }
+        if self.destinations.len() > 32 {
+            return Err("scope destination limit");
+        }
+        let mut aliases = std::collections::BTreeSet::new();
+        let mut vessels = std::collections::BTreeSet::new();
+        for pin in &self.destinations {
+            if pin.alias.is_empty()
+                || pin.alias.len() > 64
+                || !pin
+                    .alias
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                || !aliases.insert(&pin.alias)
+                || !vessels.insert(pin.vessel_id)
+                || pin.vessel_id.is_nil()
+                || !pin.workspace.is_absolute()
+                || pin.grant.grant_id.is_nil()
+                || pin.grant.principal_id.is_nil()
+                || pin.expires_at_ms <= now_ms
+                || pin.rights.is_empty()
+            {
+                return Err("invalid destination pin");
+            }
+            let permitted = current
+                .destinations
+                .iter()
+                .find(|p| {
+                    p.vessel_id == pin.vessel_id
+                        && p.workspace == pin.workspace
+                        && p.grant == pin.grant
+                        && p.alias == pin.alias
+                })
+                .ok_or("destination unavailable to current context")?;
+            if pin.expires_at_ms > permitted.expires_at_ms
+                || pin.rights.iter().any(|r| !permitted.rights.contains(r))
+            {
+                return Err("destination scope exceeds current context");
+            }
+        }
+        Ok(())
+    }
+
+    /// Existing destination scope may continue while a less privileged Helm
+    /// observes. Input/control must have every retained destination permission.
+    pub fn authorize_control(&self, current: &Self, now_ms: u64) -> Result<(), &'static str> {
+        if self.session_id != current.session_id {
+            return Err("scope session changed");
+        }
+        let candidate = Self {
+            context: current.context.clone(),
+            expected_revision: current.expected_revision,
+            ..self.clone()
+        };
+        candidate.validate(current, now_ms)
+    }
+}
