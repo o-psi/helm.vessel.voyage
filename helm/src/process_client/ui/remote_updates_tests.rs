@@ -121,3 +121,53 @@ async fn missing_updater_refuses_before_any_effect() {
     assert_eq!(task.await.unwrap().len(), 1);
     assert!(restored(client.id()).unwrap().is_none());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn historical_completed_receipt_does_not_establish_current_activation() {
+    let fixture = super::super::account_test_support::Fixture::new();
+    let operation = Uuid::new_v4();
+    let vessel = Uuid::new_v4();
+    let caps = json!({"vessel_id":vessel,"remote_updates":true,"features":["verified_user_updates"],"running_release":"a".repeat(64)});
+    let (client, task) = peer(
+        fixture.0.path(),
+        vec![
+            caps.clone(),
+            json!({"operation_id":operation,"phase":"complete","release_id":"b".repeat(64)}),
+            caps,
+        ],
+    )
+    .await;
+    assert!(
+        perform(&client, vec!["status".into(), operation.to_string()])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("historical")
+    );
+    assert_eq!(task.await.unwrap().len(), 3);
+    assert_eq!(restored(client.id()).unwrap(), Some([vessel, operation]));
+}
+#[tokio::test(flavor = "current_thread")]
+async fn stale_review_refuses_apply_before_mutation() {
+    let fixture = super::super::account_test_support::Fixture::new();
+    let operation = Uuid::new_v4();
+    let vessel = Uuid::new_v4();
+    let release = "b".repeat(64);
+    let caps = json!({"vessel_id":vessel,"remote_updates":true,"features":["verified_user_updates"],"running_release":"a".repeat(64)});
+    let receipt = json!({"operation_id":operation,"phase":"ready","release_id":release,"current_release":"a".repeat(64),"expires_at":0});
+    let (client, task) = peer(fixture.0.path(), vec![caps, receipt]).await;
+    assert!(
+        perform(
+            &client,
+            vec!["approve".into(), operation.to_string(), release]
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("expired")
+    );
+    let seen = task.await.unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[1]["op"], "update_status");
+    assert!(restored(client.id()).unwrap().is_none());
+}
