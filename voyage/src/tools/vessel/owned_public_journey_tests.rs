@@ -671,10 +671,11 @@ async fn wrong_chunk_bounds_revision_or_run_identity_refuse_without_partial_publ
 async fn creation_start_refusal_or_unknown_never_submits_and_retains_exact_resolution() {
     for unknown in [false, true] {
         let mut f = Fixture::new().await;
+        std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
         let submit_id = Uuid::new_v4();
         let start_id = Uuid::new_v4();
         let request = json!({"action":"create","command_id":submit_id,"session_id":start_id,
-            "workspace":"/workspace","config_path":"/host-base","settings":{"max_output_tokens":0},"task":"owned"});
+            "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"settings":{"max_output_tokens":0},"task":"owned"});
         let task = f.start(request.clone());
         let caps = f.peer.next().await;
         assert_eq!(caps.wire["op"], "capabilities");
@@ -709,10 +710,11 @@ async fn creation_start_refusal_or_unknown_never_submits_and_retains_exact_resol
 #[tokio::test]
 async fn creation_lost_start_response_keeps_wire_resolution_and_never_replays() {
     let mut f = Fixture::new().await;
+    std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
     let id = Uuid::new_v4();
     let start_id = Uuid::new_v4();
     let request = json!({"action":"create","command_id":id,"session_id":start_id,
-        "workspace":"/workspace","config_path":"/host-base","task":"owned"});
+        "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"task":"owned"});
     let task = f.start(request.clone());
     f.peer
         .next()
@@ -732,7 +734,10 @@ async fn creation_lost_start_response_keeps_wire_resolution_and_never_replays() 
         receipt["resolution_request"]["session_id"],
         start_id.to_string()
     );
-    assert_eq!(receipt["resolution_request"]["config_path"], "/host-base");
+    assert_eq!(
+        receipt["resolution_request"]["config_path"],
+        f.root.path().join("host-base").to_string_lossy().as_ref()
+    );
     assert_eq!(f.peer.count(), 2);
     f.finish().await;
 }
@@ -741,10 +746,11 @@ async fn creation_lost_start_response_keeps_wire_resolution_and_never_replays() 
 async fn creation_first_submit_has_distinct_identity_and_unknown_submit_is_not_replayed() {
     for lost_submit in [false, true] {
         let mut f = Fixture::new().await;
+        std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
         let id = Uuid::new_v4();
         let start_id = f.session;
         let request = json!({"action":"create","command_id":id,"session_id":start_id,
-            "workspace":"/workspace","config_path":"/host-base","task":"owned initial task"});
+            "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"task":"owned initial task"});
         let task = f.start(request.clone());
         f.peer
             .next()
