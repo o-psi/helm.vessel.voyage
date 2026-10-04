@@ -122,7 +122,14 @@ fn remote_frozen_resolution_is_schema_valid_and_preserves_destination_and_resets
         wire(root, start, &serde_json::to_value(command).unwrap()).unwrap();
         let request = receipt(root, submit).unwrap()["resolution_request"].clone();
         assert_eq!(request["target"], "remote-b");
-        assert_eq!(request["settings"], settings);
+        assert_eq!(
+            serde_json::from_value::<voyage_protocol::start_settings::StartSettings>(
+                request["settings"].clone()
+            )
+            .unwrap(),
+            serde_json::from_value::<voyage_protocol::start_settings::StartSettings>(settings)
+                .unwrap()
+        );
         crate::tools::schema::CompiledSchema::compile(&input_schema())
             .unwrap()
             .validate(&request)
@@ -133,4 +140,46 @@ fn remote_frozen_resolution_is_schema_valid_and_preserves_destination_and_resets
             matches!(serde_json::from_value::<Action>(typed).unwrap(),Action::ResolveCreate {command_id,..} if command_id == start)
         );
     }
+}
+
+#[test]
+fn preupgrade_nullbearing_wire_is_preserved_exactly_in_recovery() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let submit = Uuid::new_v4();
+    let start = Uuid::new_v4();
+    admit(
+        root,
+        submit,
+        &json!({"target":"remote-old","request":{"action":"create","session_id":start}}),
+    )
+    .unwrap();
+    // Literal prior-version wire, not generated through the current serializer.
+    let old = json!({"op":"start_settings","command_id":start,"session_id":start,"workspace":"/old",
+        "config_path":null,"binding":null,"settings":{"model":null,"max_output_tokens":0,
+        "context_window":null,"access_mode":null,"terminal_max_count":null,"terminal_max_unread_bytes":null,
+        "subagent_max_concurrency":null,"command_timeout_secs":null,"max_output_bytes":null}});
+    wire(root, start, &old).unwrap();
+    let typed: VesselCommand = serde_json::from_value(old.clone()).unwrap();
+    assert_eq!(serde_json::to_value(typed).unwrap(), old);
+    let recovered = receipt(root, submit).unwrap()["resolution_request"].clone();
+    assert_eq!(recovered["target"], "remote-old");
+    assert_eq!(recovered["settings"], old["settings"]);
+    crate::tools::schema::CompiledSchema::compile(&input_schema())
+        .unwrap()
+        .validate(&recovered)
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(root.join(format!("{start}.start_settings.command.json"))).unwrap()
+        )
+        .unwrap(),
+        old
+    );
+    let mut changed = old.clone();
+    changed["settings"]["max_output_tokens"] = json!(2048);
+    assert_ne!(
+        serde_json::to_value(serde_json::from_value::<VesselCommand>(changed).unwrap()).unwrap(),
+        old
+    );
 }
