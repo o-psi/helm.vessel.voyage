@@ -60,7 +60,8 @@ fn current(
     let bytes = dir
         .read_bounded(&name, MAX)?
         .ok_or_else(|| anyhow::anyhow!("destination context not provisioned"))?;
-    let mut context: ScopeSelection = serde_json::from_slice(&bytes)?;
+    let record: ProvisionRecord = serde_json::from_slice(&bytes)?;
+    let mut context = record.observed;
     ensure!(
         context.context == *binding && context.session_id == grant.session_id,
         "destination context identity mismatch"
@@ -205,6 +206,22 @@ pub(super) async fn provision(
         state.active.lock().await.is_none(),
         "provisioning requires idle Voyage"
     );
+    // Owner approves a destination selection, not an invented execution identity.
+    // Authenticate the exact existing local process grant before any remote read.
+    ensure!(
+        state.registration.peer_uids.is_none(),
+        "protected context provisioning requires identity-scoped broker adapter"
+    );
+    let root = state
+        .directory
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or_else(|| anyhow::anyhow!("supervised grant root unavailable"))?;
+    let grant_path = root
+        .join("access/grants")
+        .join(format!("{}.json", context.grant_id));
+    super::authorization::read_current(&grant_path, &context, state.registration.session_id)?;
+
     let directory = Directory::open(&state.directory.join("coordination-contexts"))?;
     let _lock = directory.lock()?;
     let operation = format!("receipt-{command_id}.json");
@@ -216,7 +233,7 @@ pub(super) async fn provision(
         );
         directory.publish(
             &format!("{}-{}.json", context.grant_id, context.revision),
-            &serde_json::to_vec(&prior.observed)?,
+            &serde_json::to_vec(&prior)?,
         )?;
         return Ok(
             json!({"command_id":command_id,"status":"context_provisioned","context":context}),
@@ -293,7 +310,7 @@ pub(super) async fn provision(
     directory.publish_new(&operation, &bytes)?;
     directory.publish(
         &format!("{}-{}.json", context.grant_id, context.revision),
-        &serde_json::to_vec(&observed)?,
+        &bytes,
     )?;
     Ok(json!({"command_id":command_id,"status":"context_provisioned","context":context}))
 }

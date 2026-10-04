@@ -271,7 +271,11 @@ pub(super) fn check_coordination_control(
 }
 
 #[cfg(unix)]
-fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Result<ProcessGrant> {
+pub(super) fn read_current(
+    path: &Path,
+    binding: &GrantBinding,
+    session: uuid::Uuid,
+) -> Result<ProcessGrant> {
     let grant: ProcessGrant = load_private(path)?;
     let now: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
