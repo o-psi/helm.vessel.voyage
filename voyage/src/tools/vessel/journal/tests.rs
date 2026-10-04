@@ -60,3 +60,33 @@ fn corruption_and_unsafe_paths_are_never_treated_as_missing_receipts() {
     assert!(receipt(root, id).is_err());
     assert_eq!(std::fs::read(outside).unwrap(), b"{}");
 }
+
+#[test]
+fn uncertain_create_receipt_exposes_exact_frozen_resolution_not_mutable_defaults() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let submit_id = Uuid::new_v4();
+    let start_id = Uuid::new_v4();
+    let intent = json!({"target":"local","request":{"action":"create","session_id":start_id,"task":"fixture"}});
+    admit(root, submit_id, &intent).unwrap();
+    assert!(receipt(root, submit_id).unwrap()["resolution_request"].is_null());
+    let command = VesselCommand::StartSettings {
+        command_id: start_id,
+        session_id: start_id,
+        workspace: "/workspace".into(),
+        config_path: None,
+        settings: serde_json::from_value(json!({"max_output_tokens":0,"reasoning_effort":null}))
+            .unwrap(),
+        binding: None,
+    };
+    wire(root, start_id, &serde_json::to_value(&command).unwrap()).unwrap();
+    let result = receipt(root, submit_id).unwrap();
+    assert_eq!(result["status"], "outcome_unknown");
+    let resolution = &result["resolution_request"];
+    assert_eq!(resolution["action"], "resolve_create");
+    assert_eq!(resolution["command_id"], start_id.to_string());
+    assert_eq!(resolution["settings"]["max_output_tokens"], 0);
+    assert!(resolution["settings"]["reasoning_effort"].is_null());
+    let action: Action = serde_json::from_value(resolution.clone()).unwrap();
+    assert!(matches!(action, Action::ResolveCreate { command_id, .. } if command_id == start_id));
+}

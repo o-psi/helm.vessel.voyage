@@ -124,6 +124,42 @@ fn metadata(root: &Path, id: Uuid) -> Result<Value, ToolError> {
         json!({"command_id":id,"target":intent["target"],"action":request["action"],"session_id":request["session_id"],"start_command_id": if request["action"] == "create" {request["session_id"].clone()} else {Value::Null}}),
     )
 }
+fn creation_resolution(root: &Path, metadata: &Value) -> Result<Value, ToolError> {
+    let Some(id) = metadata["start_command_id"].as_str() else {
+        return Ok(Value::Null);
+    };
+    let id: Uuid = id
+        .parse()
+        .map_err(|_| failed("invalid retained start identity"))?;
+    let path = root.join(format!("{id}.start_settings.command.json"));
+    if !path
+        .try_exists()
+        .map_err(|_| failed("cannot inspect retained start payload"))?
+    {
+        return Ok(Value::Null);
+    }
+    let command: VesselCommand =
+        serde_json::from_slice(&transport::private_read(&path, 4 * 1024 * 1024)?)
+            .map_err(|_| failed("invalid retained start payload"))?;
+    let VesselCommand::StartSettings {
+        command_id,
+        session_id,
+        workspace,
+        config_path,
+        settings,
+        binding,
+    } = command
+    else {
+        return Err(failed("retained start payload has wrong operation"));
+    };
+    if command_id != id || session_id != id {
+        return Err(failed("retained start identity mismatch"));
+    }
+    Ok(
+        json!({"action":"resolve_create","command_id":command_id,"session_id":session_id,
+        "workspace":workspace,"config_path":config_path,"settings":settings,"account":binding}),
+    )
+}
 pub(super) fn receipt(root: &Path, id: Uuid) -> Result<Value, ToolError> {
     let intent = root.join(format!("{id}.intent.json"));
     if !intent
@@ -133,6 +169,7 @@ pub(super) fn receipt(root: &Path, id: Uuid) -> Result<Value, ToolError> {
         return Ok(json!({"status":"not_found","command_id":id}));
     }
     let metadata = metadata(root, id)?;
+    let resolution_request = creation_resolution(root, &metadata)?;
     let result = root.join(format!("{id}.result.json"));
     if result
         .try_exists()
@@ -142,10 +179,12 @@ pub(super) fn receipt(root: &Path, id: Uuid) -> Result<Value, ToolError> {
             serde_json::from_slice(&transport::private_read(&result, 4 * 1024 * 1024)?).map_err(
                 |_| failed("incomplete Vessel result; outcome unknown, consult server receipt"),
             )?;
-        return Ok(json!({"intent":metadata,"result":result,"replayed":false}));
+        return Ok(
+            json!({"intent":metadata,"result":result,"resolution_request":resolution_request,"replayed":false}),
+        );
     }
     Ok(
-        json!({"status":"outcome_unknown", "intent":metadata, "replayed":false, "detail":"Durable intent exists without a confirmed result. Inspect the session or query its server receipt; never resubmit uncertain effects."}),
+        json!({"status":"outcome_unknown", "intent":metadata, "resolution_request":resolution_request, "replayed":false, "detail":"Durable intent exists without a confirmed result. Inspect the session or query its server receipt; never resubmit uncertain effects."}),
     )
 }
 pub(super) fn operations(root: &Path, offset: usize, limit: u32) -> Result<Value, ToolError> {

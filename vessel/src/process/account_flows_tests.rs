@@ -553,3 +553,67 @@ async fn account_command_scope_and_identity_validation_is_side_effect_free() {
     );
     assert!(s.registrations.lock().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn settings_resolution_fences_exact_request_without_account_or_launch() {
+    let f = Fixture::new();
+    let s = f.supervisor().await;
+    let command_id = Uuid::new_v4();
+    let session_id = Uuid::new_v4();
+    let settings = serde_json::from_value(json!({"max_output_tokens":0})).unwrap();
+    let resolve = VesselCommand::ResolveStartSettings {
+        command_id,
+        session_id,
+        workspace: f.0.clone(),
+        config_path: None,
+        settings,
+        binding: None,
+    };
+    let result = s
+        .host_accounts(resolve.clone(), Scope::Owner)
+        .await
+        .unwrap();
+    assert_eq!(result["status"], "not_admitted");
+    assert_eq!(
+        s.host_accounts(resolve.clone(), Scope::Owner)
+            .await
+            .unwrap()["status"],
+        "not_admitted"
+    );
+    let mut conflict = resolve.clone();
+    if let VesselCommand::ResolveStartSettings { settings, .. } = &mut conflict {
+        settings.max_output_tokens = Some(2048);
+    }
+    assert!(s.host_accounts(conflict, Scope::Owner).await.is_err());
+    assert!(s.registrations.lock().await.unwrap().is_empty());
+    assert!(
+        database::creation_receipt(&f.0, command_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(!f.0.join("account-launch").exists());
+    let VesselCommand::ResolveStartSettings {
+        workspace,
+        config_path,
+        settings,
+        binding,
+        ..
+    } = resolve
+    else {
+        unreachable!()
+    };
+    let start = VesselCommand::StartSettings {
+        command_id,
+        session_id,
+        workspace: workspace.clone(),
+        config_path: config_path.clone(),
+        settings: settings.clone(),
+        binding: binding.clone(),
+    };
+    assert!(
+        super::start::resolution_record(&f.0, "intent", command_id, &start, false)
+            .await
+            .unwrap()
+    );
+}

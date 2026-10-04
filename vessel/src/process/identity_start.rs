@@ -122,6 +122,14 @@ impl Supervisor {
                 config_path,
                 settings,
                 binding,
+            }
+            | VesselCommand::ResolveStartSettings {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+                settings,
+                binding,
             } => (
                 *command_id,
                 *session_id,
@@ -129,7 +137,7 @@ impl Supervisor {
                 config_path.clone(),
                 binding.clone(),
                 settings.clone(),
-                false,
+                matches!(command, VesselCommand::ResolveStartSettings { .. }),
             ),
             VesselCommand::StartAccount {
                 command_id,
@@ -186,7 +194,16 @@ impl Supervisor {
                 "session creation scope denied"
             );
         }
-        let original = if resolve {
+        let original = if matches!(command, VesselCommand::ResolveStartSettings { .. }) {
+            VesselCommand::StartSettings {
+                command_id,
+                session_id,
+                workspace: workspace.clone(),
+                config_path: base.clone(),
+                settings: settings.clone(),
+                binding: account.clone(),
+            }
+        } else if resolve {
             VesselCommand::StartAccount {
                 command_id,
                 session_id,
