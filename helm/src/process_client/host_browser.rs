@@ -1,6 +1,8 @@
 //! Voyage-owned browser viewer. Only private socket-bound browser operations cross this adapter.
 //! No local Chromium, general executor, payload journal, or HTTP fallback.
 use super::transport::Client;
+#[path = "host_browser_diagnostics.rs"]
+mod diagnostics;
 use anyhow::{Context, Result, ensure};
 use axum::{
     Json, Router,
@@ -10,6 +12,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use diagnostics::{Diagnostic, Failure};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
@@ -31,6 +34,7 @@ pub(crate) struct Status {
     pub summary: String,
     pub launcher: Option<PathBuf>,
     pub finished: bool,
+    diagnostic: Diagnostic,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Control {
@@ -55,6 +59,7 @@ impl Handle {
             summary: "Opening executing-host browser viewer".into(),
             launcher: None,
             finished: false,
+            diagnostic: Diagnostic::default(),
         });
         let (control, rx) = mpsc::channel(8);
         let stop = CancellationToken::new();
@@ -77,12 +82,14 @@ impl Handle {
             tx.send_modify(|s| {
                 s.finished = true;
                 s.launcher = None;
-                s.summary = if result.is_ok() {
-                    "Viewer detached; host browser is not implicitly closed"
-                } else {
-                    "Viewer unavailable or socket lost; unknown effects are not replayed"
+                if result.is_err() && s.diagnostic.failure.is_none() {
+                    s.diagnostic.failure = Some(Failure::Startup);
                 }
-                .into();
+                if s.diagnostic.failure.is_some() {
+                    s.summary = s.diagnostic.summary();
+                    return;
+                }
+                s.summary = "Viewer detached; host browser is not implicitly closed".into();
             });
             result
         });
@@ -241,7 +248,15 @@ impl Adapter {
         let read_only_mirror = matches!(&op, Op::Mirror { .. });
         let result = self.dispatch(op).await;
         // Unknown outcomes poison this viewer; opening a new viewer is an explicit human action.
-        if result.is_err() && !read_only_mirror {
+        if let Err(error) = &result
+            && !read_only_mirror
+        {
+            let failure = if error.downcast_ref::<super::transport::Refusal>().is_some() {
+                Failure::DispatchRefused
+            } else {
+                Failure::DispatchUnknown
+            };
+            self.status.send_modify(|s| s.diagnostic.fail(failure));
             self.stop.cancel();
         }
         let value = result?;
@@ -505,7 +520,7 @@ async fn run(
                 _ = stop.cancelled() => break,
                 changed = connection.changed() => {
                     let current = *connection.borrow_and_update();
-                    if changed.is_err() || current != observed { stop.cancel(); break; }
+                    if changed.is_err() || current != observed { status.send_modify(|s|s.diagnostic.fail(Failure::SocketChanged)); stop.cancel(); break; }
                 }
                 command = controls.recv() => {
                     let Some(command) = command else { break; };
@@ -514,12 +529,16 @@ async fn run(
                     if let Some(binding) = binding {
                         let command_id = Uuid::new_v4();
                         let op = match command { Control::Close => Op::Close {command_id,binding}, _ => Op::Control {command_id,binding,mode:match command { Control::Human=>Mode::Human, Control::Private=>Mode::Private, _=>Mode::Agent }} };
-                        a.exchange(op).await?;
+                        if let Err(error) = a.exchange(op).await {
+                            status.send_modify(|s| { s.diagnostic.failure.get_or_insert(Failure::ControlExchange); });
+                            return Err(error);
+                        }
                     } else { status.send_modify(|s|s.summary="Connect the viewer before requesting browser control or close".into()); }
                 }
                 completed = &mut server => {
                     let checked = viewer_server_completion(&completed, stop.is_cancelled());
                     completed_server = Some(completed);
+                    if checked.is_err() { status.send_modify(|s|s.diagnostic.fail(Failure::ServerEnded)); }
                     checked?;
                     break;
                 }
@@ -531,7 +550,7 @@ async fn run(
     // Detach is best effort on the original socket only. Never close the host browser on exit.
     let binding = a.binding.lock().unwrap().clone();
     if let Some(binding) = binding {
-        let _ = a
+        let detach = a
             .client
             .host_browser(
                 socket,
@@ -543,6 +562,7 @@ async fn run(
                 },
             )
             .await;
+        status.send_modify(|s| s.diagnostic.detach_reply_observed = Some(detach.is_ok()));
     }
     // A selected completion was consumed once above. Otherwise poll/await even
     // an already-finished task; is_finished alone is not a successful I/O result.
@@ -558,10 +578,26 @@ async fn run(
         }
     };
     let retirement = viewer_server_retirement(completion, abort_requested);
-    std::fs::remove_file(&launcher).context("Private launcher cleanup failed")?;
-    drop(_private);
-    std::fs::remove_dir(&root).context("Private viewer directory cleanup failed")?;
-    result.and(retirement.map(|_| ()))
+    if retirement.is_err() {
+        status.send_modify(|s| {
+            s.diagnostic
+                .failure
+                .get_or_insert(Failure::ServerRetirement);
+        });
+    }
+    let cleanup: Result<()> = (|| {
+        std::fs::remove_file(&launcher).context("Private launcher cleanup failed")?;
+        drop(_private);
+        std::fs::remove_dir(&root).context("Private viewer directory cleanup failed")?;
+        Ok(())
+    })();
+    status.send_modify(|s| {
+        s.diagnostic.local_cleanup_observed = cleanup.is_ok() && retirement.is_ok();
+        if cleanup.is_err() {
+            s.diagnostic.failure.get_or_insert(Failure::PrivateCleanup);
+        }
+    });
+    result.and(retirement.map(|_| ())).and(cleanup)
 }
 
 pub(super) async fn run_connected(client: Client, session: Uuid) -> Result<()> {
@@ -605,6 +641,7 @@ mod tests {
             summary: String::new(),
             launcher: None,
             finished: false,
+            diagnostic: Diagnostic::default(),
         });
         Adapter {
             client: Client::local(

@@ -22,7 +22,7 @@ env={'PATH':str(pathlib.Path(node).parent)+':/usr/bin:/bin','LANG':'C.UTF-8'}
 for k in ['HOME','XDG_DATA_HOME','XDG_CONFIG_HOME','XDG_STATE_HOME','XDG_CACHE_HOME']:
  p=E/k.lower();p.mkdir(mode=0o700);env[k]=str(p)
 stub=E/'bin';stub.mkdir();(stub/'xdg-open').write_text('#!/bin/sh\nexit 0\n');(stub/'xdg-open').chmod(0o700);env['PATH']=str(stub)+':'+env['PATH']
-work=E/'workspace';work.mkdir();directory=pathlib.Path(tempfile.mkdtemp(prefix='b-',dir=os.environ['BROWSER_PROBE_RUNTIME_ROOT']));(E/'vessel-path.txt').write_text(str(directory));(directory/'tmp').mkdir(mode=0o700);env['TMPDIR']=str(directory/'tmp');bodies=[];stage=0;mode=None;target=None;element=None;errors=[];children=[]
+work=E/'workspace';work.mkdir();directory=pathlib.Path(tempfile.mkdtemp(prefix='b-',dir=os.environ['BROWSER_PROBE_RUNTIME_ROOT']));(E/'vessel-path.txt').write_text(str(directory));(directory/'tmp').mkdir(mode=0o700);env['TMPDIR']=str(directory/'tmp');bodies=[];stage=0;mode=None;target=None;element=None;errors=[];children=[];fixture_stage="setup"
 def wait(f,seconds=30):
  end=time.monotonic()+seconds;last=None
  while time.monotonic()<end:
@@ -108,10 +108,14 @@ def local(data,endpoint='/api'):
 try:
  with (E/'setup.log').open('w') as log:
   p=subprocess.run([str(BIN/'helm'),'browser','setup'],env=env,cwd=work,stdout=log,stderr=log,timeout=150);assert p.returncode==0
+ fixture_stage="vessel_start"
  log=(E/'vessel.log').open('w');vessel=subprocess.Popen([str(BIN/'vessel'),'local-serve','--directory',str(directory),'--voyage-binary',str(BIN/'voyage')],env=env,cwd=work,stdout=log,stderr=log);children.append(vessel);wait(lambda:(directory/'process-http.json').exists());wait(lambda:request({'op':'catalogue'}) is not None)
+ fixture_stage="account_binding"
  binding={'account_id':account['id'],'connection_id':connection['id'],'identity_generation':account['identity_generation'],'connection_revision':connection['revision'],'transport':'openai_responses'}
  request({'op':'account_set_default','command_id':str(uuid.uuid4()),'workspace':str(work),'account':binding,'expected_revision':0})
+ fixture_stage="session_bootstrap"
  s=str(uuid.uuid4());request({'op':'start_settings','command_id':str(uuid.uuid4()),'session_id':s,'workspace':str(work),'settings':{'model':'gpt-4o','context_window':0,'command_timeout_secs':60,'access_mode':'unrestricted'},'binding':binding});submit(s,'bootstrap fixture');assert wait(lambda:terminal(s))['run']['state']=='completed';wait(lambda:request({'op':'inspect','session_id':s})['state']=='suspended');print('PASS suspended starting point',flush=True)
+ fixture_stage="viewer_start"
  blog=(E/'browser.log').open('wb')
  args=[str(BIN/'helm'),'connect','--directory',str(directory),'--no-start']
  if tui:
@@ -126,11 +130,13 @@ try:
   threading.Thread(target=drain,daemon=True).start();time.sleep(3);os.write(master,b'unsent draft marker');os.write(master,b'\x1b[17~')
  else:browser=subprocess.Popen(args+['browser',s],env=env,cwd=work,stdout=blog,stderr=blog)
  children.append(browser)
+ fixture_stage="local_consent"
  launch=wait(lambda:next(pathlib.Path(env['XDG_STATE_HOME']).glob('voyage/helm-browser/session-*/open.html'),None),40);launch_text=launch.read_text();url=html.unescape(re.search(r'url=([^\"]+)',launch_text)[1]);base=url.split('/#')[0];secret=url.split('#')[1]
  auth,headers=local({'secret':secret},'/session');cookie=headers['Set-Cookie'].split(';')[0];csrf=auth['csrf'];local({'op':'claim'});local({'op':'origin','url':site_url,'private_network':True});local({'op':'navigate','url':site_url});local({'op':'mode','mode':'agent','confirm_share':True});
  wait(lambda:json.loads(sqlite3.connect(directory/'sessions'/s/'journal/journal.sqlite3').execute('select state from browser_state where session_id=?',(s,)).fetchone()[0])['offer']['control']=='shared',30) if tui else wait(lambda:'Agent sharing enabled' in (E/'browser.log').read_text(),30);print('PASS explicit share resumes suspended voyage without replacing session',flush=True)
  socket_identity=remote_sockets(browser.pid);assert len(socket_identity)==1,socket_identity
  [(time.sleep(.5),local({'op':'state'})) for _ in range(6)]
+ fixture_stage="main_browser_run"
  main_run=submit(s,'main-browser-check')['run_id']
  end=time.monotonic()+90;done=None
  while time.monotonic()<end:
@@ -139,6 +145,7 @@ try:
   done=terminal(s,main_run)
   if done:break
   time.sleep(.15)
+ fixture_stage="main_browser_acceptance"
  assert done and done['run']['state']=='completed',(done,errors,(E/'browser.log').read_text());assert stage==5,(stage,errors);assert not errors,errors
  assert any(m.get('tool_output') and any(x.get('type')=='image' for x in m['tool_output']['content']) for m in done['messages']);print('PASS remote tool inspect/screenshot/click and real provider image pixels with canonical artifact',flush=True)
  local({'op':'mode','mode':'private'});local({'op':'navigate','url':site_url+'/private'});[(time.sleep(.5),local({'op':'state'})) for _ in range(14)];assert browser.poll() is None,(E/'browser.log').read_text();local({'op':'state'});private_run=submit(s,'private-browser-check')['run_id'];private=wait(lambda:terminal(s,private_run),30);assert private['run']['state']=='completed';assert any(x.get('call_id')=='private-fixture' for b in bodies for x in b.get('input',[]));assert 'PRIVATE_BROWSER_MARKER_234' not in json.dumps(bodies);print('PASS private-mode lease remains usable and model receives no private page content',flush=True)
@@ -154,8 +161,19 @@ try:
  assert reconciled.returncode==0,(reconciled.stdout,reconciled.stderr)
  assert 'Reconciled ' in reconciled.stdout and len(bodies)==before
  print('PASS cleanup reconciliation follows suspended owner with old inner bindings and no model/effect replay',flush=True)
+ fixture_stage="final_evidence"
  (E/'provider-bodies.json').write_text(json.dumps(bodies,indent=2));(E/'snapshot.json').write_text(json.dumps(done,indent=2));(E/'result.json').write_text(json.dumps({'passed':True,'session':s,'stage':stage}));print('ALL PASS',flush=True)
 finally:
+ # Snapshot before any signal/stop: teardown exits are not initiating failures.
+ failure=sys.exc_info()[0]
+ (E/'pre-teardown.json').write_text(json.dumps({
+  'version':1, 'fixture_stage':fixture_stage, 'provider_stage':stage,
+  'failure_category':('assertion' if failure is AssertionError else
+                      'connection_refused' if failure is ConnectionRefusedError else
+                      'fixture_error' if failure else None),
+  'owned_processes':[{'role':'vessel' if n==0 else 'helm_browser',
+                      'pid':p.pid,'returncode':p.poll()} for n,p in enumerate(children)]
+ },indent=2))
  (E/'provider-bodies.json').write_text(json.dumps(bodies,indent=2))
  (E/'errors.json').write_text(json.dumps(errors))
  # Stop the local Helm browser first, while its supervising Vessel is reachable.

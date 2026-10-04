@@ -268,6 +268,8 @@ async fn upload_failure_never_sends_and_unknown_submit_is_not_retried() {
     assert_eq!(calls, 1);
     assert_eq!(result["status"], "rejected");
     assert!(!result.to_string().contains("unsafe raw"));
+    assert_eq!(result["diagnostic_code"], "image_upload_transport_unknown");
+    assert_eq!(result["submission_outcome"], "not_dispatched");
     let mut calls = 0;
     let result = dispatch_with(Uuid::from_u128(74), command, &images, |request| {
         calls += 1;
@@ -281,4 +283,71 @@ async fn upload_failure_never_sends_and_unknown_submit_is_not_retried() {
     .await;
     assert!(result.is_err());
     assert_eq!(calls, 2);
+}
+
+#[tokio::test]
+async fn upload_diagnostics_are_fixed_and_do_not_echo_refusal_or_metadata() {
+    let images = vec![image()];
+    let draft = restore_draft(String::new(), None, &images).unwrap();
+    let command = prepare(submit(""), &draft, &images).unwrap();
+    let mut mismatch = images[0].metadata();
+    mismatch.width += 1;
+    for (response, code) in [
+        (
+            serde_json::json!({"status":"refused", "detail":"SECRET TOKEN"}),
+            "image_upload_refused",
+        ),
+        (
+            serde_json::json!({"status":"rejected", "detail":"SECRET TOKEN"}),
+            "image_upload_refused",
+        ),
+        (
+            serde_json::json!({"data_base64":"SECRET TOKEN"}),
+            "image_upload_metadata_invalid",
+        ),
+        (
+            serde_json::to_value(mismatch).unwrap(),
+            "image_upload_metadata_mismatch",
+        ),
+    ] {
+        let mut calls = 0;
+        let result = dispatch_with(Uuid::from_u128(74), command.clone(), &images, |request| {
+            assert!(matches!(request, VoyageCommand::UploadImage { .. }));
+            calls += 1;
+            ready(Ok(response.clone()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(result["diagnostic_code"], code);
+        assert_eq!(result["submission_outcome"], "not_dispatched");
+        assert!(!result.to_string().contains("SECRET TOKEN"));
+    }
+    let result = dispatch_with(Uuid::from_u128(74), command, &[], |_| {
+        panic!("local validation must not dispatch");
+        #[allow(unreachable_code)]
+        ready(Ok(serde_json::Value::Null))
+    })
+    .await
+    .unwrap();
+    assert_eq!(result["diagnostic_code"], "image_local_validation_failed");
+}
+
+#[tokio::test]
+async fn typed_upload_refusal_is_distinct_from_unknown_transport_without_error_text() {
+    let images = vec![image()];
+    let draft = restore_draft(String::new(), None, &images).unwrap();
+    let command = prepare(submit(""), &draft, &images).unwrap();
+    let mut calls = 0;
+    let result = dispatch_with(Uuid::from_u128(74), command, &images, |_| {
+        calls += 1;
+        ready(Err(anyhow::Error::new(
+            crate::process_client::transport::Refusal("SECRET TOKEN".into()),
+        )))
+    })
+    .await
+    .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(result["diagnostic_code"], "image_upload_refused");
+    assert!(!result.to_string().contains("SECRET TOKEN"));
 }
