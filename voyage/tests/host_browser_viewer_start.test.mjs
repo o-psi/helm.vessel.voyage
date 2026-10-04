@@ -105,20 +105,34 @@ test('a late explicit Check reply cannot replace a newer Disconnect',async()=>{
 });
 
 test('Disconnect during asynchronous top or child decoding cannot rebuild retired replay DOM',async()=>{
- const NativeResponse=globalThis.Response;
+ const NativeDecompressionStream=globalThis.DecompressionStream;
  for(const child of [false,true]){
   const f=fixture({running:true});let release,entered,rebuilds=0,visuals=0;
   try{
    await f.session.connect({start:false});clearTimeout(f.session.pollTimer);f.session.pollTimer=null;
    const gate=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
-   globalThis.Response=class extends NativeResponse {async text(){const text=await super.text();entered();await gate;return text;}};
-   const value={encoding:'gzip',data_base64:gzipSync(JSON.stringify([{type:2,data:{node:{id:1}}}])).toString('base64'),reset:true,cursor:1,latest:1,visuals:[]};
+   globalThis.DecompressionStream=class {
+    constructor(format){
+     const decompressor=new NativeDecompressionStream(format),reader=decompressor.readable.getReader();
+     this.writable=decompressor.writable;
+     this.readable=new ReadableStream({async pull(controller){
+      const result=await reader.read();
+      if(result.done){controller.close();return;}
+      entered();await gate;controller.enqueue(result.value);
+     },cancel:reason=>reader.cancel(reason)});
+    }
+   };
+   const snapshot={type:2,data:{node:{type:0,id:1,childNodes:[{type:2,id:2,tagName:'html',attributes:{},childNodes:[
+    {type:2,id:3,tagName:'head',attributes:{},childNodes:[]},
+    {type:2,id:4,tagName:'body',attributes:{},childNodes:[]},
+   ]}]}}};
+   const value={encoding:'gzip',data_base64:gzipSync(JSON.stringify([snapshot])).toString('base64'),reset:true,cursor:1,latest:1,visuals:[]};
    f.session.newPlayer=()=>{rebuilds++;return {addEvent(){},destroy(){}};};f.session.onVisuals=()=>{visuals++;};
    let pending;
    if(child){f.session.frameLayer={replaceChildren(){}};f.session.replayer={destroy(){}};pending=f.session.updateFrames([{...value,frame_id:'child',host_node_id:1}]);}
    else {const transport=f.session.transport;f.session.transport=async op=>({...await transport(op),value:op.action==='mirror'?value:null});pending=f.session.pull();}
    await started;f.session.disconnect();const clearedVisuals=visuals;release();await pending;
    assert.equal(rebuilds,0);assert.equal(visuals,clearedVisuals);assert.equal(f.session.frames.size,0);assert.equal(f.session.phase,'disconnected');
-  }finally{release?.();globalThis.Response=NativeResponse;f.session.dispose();}
+  }finally{release?.();globalThis.DecompressionStream=NativeDecompressionStream;f.session.dispose();}
  }
 });
