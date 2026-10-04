@@ -411,6 +411,14 @@ Recommended Linux system layout, subject to packaging conventions:
 | `/run/voyage/` | Protected discovery and authenticated local control endpoints |
 | Explicit per-identity runtime roots | Private journals, artifacts and runtime IPC; accessible only as designed |
 
+Protected Linux control records and directories reject special permission bits
+(setuid, setgid and sticky), as well as unsafe ownership and writable permissions.
+Runtime parents require exactly mode 0711 and per-voyage directories exactly
+0700, including those special bits. Descriptor revalidation refuses later mode
+changes; existing unsafe entries are not repaired to make admission succeed.
+Ordinary-UID regression fixtures exercise these checks; this is not native
+administrator/service adoption evidence.
+
 Do not execute a user-writable binary as root, including an existing per-user
 `current` link. Validate parents, symlinks, hardlinks, ownership and descriptor
 identity before publishing privileged paths. The systemd supervisor must retain
