@@ -21,7 +21,7 @@ import uuid
 # No user-site/PYTHONPATH startup or caller-provided import directory is used.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ui_journeys import launch, paste, screen, send, pty_helpers
+from ui_journeys import launch, paste, screen, send, pty_helpers, F2
 from host_browser import wait
 from host_browser_native_reopen import Reopen, exclusive, process_identity
 
@@ -59,6 +59,8 @@ def fixture_observation(catalogue, snapshot, item):
     matches = [entry for entry in catalogue if entry['session_id'] == item['id']]
     assert len(matches) == 1, 'fixture absent or ambiguous in authenticated catalogue'
     process = matches[0]
+    names = [entry for entry in catalogue if entry.get('name') == item['title']]
+    assert len(names) == 1 and names[0]['session_id'] == item['id'], 'fixture title does not uniquely identify the reviewed UUID'
     assert process.get('name') == item['title'] and process['workspace'] == item['workspace']
     assert str(uuid.UUID(process['incarnation'])) == process['incarnation'] and uuid.UUID(process['incarnation']).int
     assert not process.get('archive') and not process.get('deletion')
@@ -86,6 +88,20 @@ def settings_selection(frame, session, route_id):
     assert 'Source: last authenticated executing-host snapshot (not a new fetch).' in frame
     assert 'STALE:' not in frame and 'Authenticated settings snapshot unavailable.' not in frame
     return int(revision.group(1))
+
+
+def exact_fixture_picker(frame, title):
+    """Finder Enter is navigation only after the exact named row is selected.
+
+    The picker renders names rather than UUIDs. fixture_observation independently
+    binds this unique reviewed title to its UUID on the same authenticated route.
+    """
+    if 'Find voyages' not in frame or 'Search: '+title not in frame:
+        return False
+    rows = [line.strip().strip('│┃').strip() for line in frame.splitlines()]
+    selected = [line[2:].rstrip() for line in rows if line.startswith('> ')]
+    assert selected == [title], 'finder selected a different or ambiguous fixture title'
+    return True
 
 
 def bootstrap_native(client, item, config, metrics, capture, output, observe_fixture, discovery_check,
@@ -151,15 +167,24 @@ def bootstrap_native(client, item, config, metrics, capture, output, observe_fix
         value = wait_fn(checked, min(seconds, remaining))
         assert time.monotonic() < deadline, 'native bootstrap deadline exceeded'
         return value
-    observe(lambda:composer_ready(screen_fn(client)))
     intent = {'schema':1,'session_id':item['id'],'label':item['label'],'client':{'pid':client['pid'],'start_ticks':start},
               'route_id':route_id,'vessel_id':initial['vessel_id'],'socket_id':initial['socket_id'],
-              'meter_inode':list(pin),'state':'pending','actions':['use_exact_session','settings_read','dismiss_settings','f6']}
+              'meter_inode':list(pin),'state':'pending','actions':['find_exact_fixture','settings_read','dismiss_settings','f6']}
     exclusive(output/('native-'+item['label']+'-bootstrap-intent.json'), intent)
     result = {**intent,'state':'unknown','f6_dispatched':False}
     try:
-        current();paste_fn(client,'/use '+item['id']);send_fn(client,'\r')
-        observe(lambda:composer_ready(screen_fn(client)))
+        # F2 is supported navigation even while an unrelated voyage is running.
+        # No text or Enter is sent to that default voyage's active composer.
+        reviewed = observe_fixture();assert reviewed['session_id'] == item['id']
+        current();send_fn(client,F2)
+        observe(lambda:'Find voyages' in screen_fn(client),10)
+        current();assert 'Find voyages' in screen_fn(client)
+        paste_fn(client,item['title'])
+        observe(lambda:exact_fixture_picker(screen_fn(client),item['title']),10)
+        assert observe_fixture() == reviewed, 'reviewed fixture changed before finder navigation'
+        current();assert exact_fixture_picker(screen_fn(client),item['title'])
+        send_fn(client,'\r')
+        observe(lambda:'Find voyages' not in screen_fn(client) and composer_ready(screen_fn(client)))
         current();paste_fn(client,'/settings');send_fn(client,'\r')
         selected_revision = observe(lambda:settings_selection(screen_fn(client),item['id'],route_id))
         # Fresh normal catalogue/snapshot queries retain their own authenticated
@@ -181,7 +206,7 @@ def bootstrap_native(client, item, config, metrics, capture, output, observe_fix
         result['state'] = 'observed'
         return {'pid':client['pid'],'start_ticks':start,'label':'native-'+item['label'],'descendants':True}
     finally:
-        # Refusal/unknown is retained once; never type /use, settings or F6 again.
+        # Refusal/unknown is retained once; never repeat Find selection, settings or F6.
         exclusive(output/('native-'+item['label']+'-bootstrap-result.json'), result)
 
 
