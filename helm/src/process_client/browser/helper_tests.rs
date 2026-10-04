@@ -175,5 +175,24 @@ async fn malformed_output_disconnect_is_not_child_exit_evidence() {
         still_running,
         "reader disconnection must not attest child exit"
     );
-    shutdown.unwrap();
+    assert!(
+        shutdown.is_err(),
+        "disconnected IPC cannot attest graceful shutdown"
+    );
+    let exit = helper
+        .child
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .try_wait()
+        .unwrap();
+    assert!(
+        exit.is_some(),
+        "owned child exit must be independently observed after shutdown"
+    );
+    assert!(
+        helper.reader.lock().await.is_none(),
+        "reader task must be retired"
+    );
 }
