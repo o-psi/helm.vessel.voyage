@@ -123,7 +123,11 @@ the displayed version and Vessel verification of the exact prepared artifact.
 Prepare reserves a unique operation identity before launching a bounded transient
 systemd user service. Approval records the exact release hash and original
 installation. Repeated commands return the same receipt; an uncertain launch or
-lost response never automatically reapplies the update. A prepared review expires
+lost response never automatically reapplies the update. Ordinary-user receipt
+reads also bind the stored operation identity to its filename, including
+latest-status and pending-operation scans. A copied or misnamed receipt refuses
+before worker admission, reconciliation or discard; it is not treated as approval
+for another operation. A prepared review expires
 after one hour. Only one prepared or unresolved operation is admitted at a time.
 
 The updater runs outside the supervisor's service so replacing Vessel does not

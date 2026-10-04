@@ -482,3 +482,41 @@ fn gateway_credential_dropin_is_exact_private_owned_and_context_pinned() {
     assert!(credential_drop_in(&path, &unit).is_err());
     assert!(credential_drop_in(&path, &f.root.join("other.service")).is_err());
 }
+
+#[test]
+fn copied_recovery_receipt_refuses_apply_status_and_supersession_without_effects() {
+    let f = Fixture::new();
+    let record = Recovery {
+        review: review(&f),
+        phase: "complete".into(),
+        proof: None,
+    };
+    let other = "33333333-3333-4333-8333-333333333333";
+    let path = record_path(other).unwrap();
+    files::atomic_json(&path, &record).unwrap();
+    let before = fs::read(&path).unwrap();
+    assert!(
+        load_recovery(&path)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("identity conflict")
+    );
+    for request in [
+        vec!["status".into(), other.into()],
+        vec![
+            "apply".into(),
+            other.into(),
+            "--review".into(),
+            review_hash(&record.review).unwrap(),
+        ],
+    ] {
+        assert!(
+            run(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("identity conflict")
+        );
+        assert_eq!(fs::read(&path).unwrap(), before);
+    }
+}

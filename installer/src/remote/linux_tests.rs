@@ -938,3 +938,72 @@ fn immediate_rollback_and_reconciliation_share_exact_account_and_process_directo
     );
     f.done();
 }
+
+#[test]
+fn receipt_identity_conflict_refuses_requests_and_scans_without_effects() {
+    let _f = installation();
+    let original = record("ready");
+    let original_bytes = fs::read(path(OP).unwrap()).unwrap();
+    let other = "20000000-0000-4000-8000-000000000002";
+    files::atomic_json(&path(other).unwrap(), &original).unwrap();
+    let copied_bytes = fs::read(path(other).unwrap()).unwrap();
+    assert!(
+        load(other)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("identity conflict")
+    );
+    for request in [
+        args(&["status", other]),
+        args(&["status", "00000000-0000-0000-0000-000000000000"]),
+        args(&["prepare", other, "nightly"]),
+        args(&["apply", other, &"b".repeat(64)]),
+        args(&["discard", other]),
+        args(&["worker", "apply", other]),
+    ] {
+        assert!(
+            run(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("identity conflict")
+        );
+        assert_eq!(fs::read(path(OP).unwrap()).unwrap(), original_bytes);
+        assert_eq!(fs::read(path(other).unwrap()).unwrap(), copied_bytes);
+        assert_eq!(current().unwrap(), "a".repeat(64));
+    }
+    // Admission scans must fail closed even when the corrupt receipt is terminal.
+    let mut terminal = original;
+    terminal.phase = "complete".into();
+    files::atomic_json(&path(other).unwrap(), &terminal).unwrap();
+    fs::remove_file(path(OP).unwrap()).unwrap();
+    assert!(
+        run(&args(&["prepare", OP, "nightly"]))
+            .unwrap_err()
+            .to_string()
+            .contains("identity conflict")
+    );
+    assert!(!path(OP).unwrap().exists());
+}
+
+#[test]
+fn malformed_receipt_filename_refuses_latest_status_and_admission() {
+    let _f = installation();
+    let terminal = record("complete");
+    let malformed = root().unwrap().join("not-an-operation.json");
+    files::atomic_json(&malformed, &terminal).unwrap();
+    fs::remove_file(path(OP).unwrap()).unwrap();
+    for request in [
+        args(&["status", "00000000-0000-0000-0000-000000000000"]),
+        args(&["prepare", OP, "nightly"]),
+    ] {
+        assert!(
+            run(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid update identity")
+        );
+        assert!(!path(OP).unwrap().exists());
+        assert_eq!(current().unwrap(), "a".repeat(64));
+    }
+}

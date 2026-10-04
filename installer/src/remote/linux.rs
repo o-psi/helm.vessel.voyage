@@ -122,10 +122,20 @@ fn path(operation: &str) -> Result<PathBuf> {
     Ok(root()?.join(format!("{operation}.json")))
 }
 fn load(operation: &str) -> Result<Record> {
-    Ok(serde_json::from_slice(&files::read(
-        &path(operation)?,
-        65536,
-    )?)?)
+    load_path(&path(operation)?)
+}
+fn load_path(path: &std::path::Path) -> Result<Record> {
+    let operation = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .context("Invalid update receipt filename")?;
+    id(operation)?;
+    let record: Record = serde_json::from_slice(&files::read(path, 65536)?)?;
+    ensure!(
+        record.operation_id == operation,
+        "Update receipt identity conflict"
+    );
+    Ok(record)
 }
 fn save(record: &mut Record, phase: &str, message: &str) -> Result<()> {
     record.phase = phase.into();
@@ -732,7 +742,7 @@ pub(super) fn local_legacy_bootstrap(
             .extension()
             .is_some_and(|extension| extension == "json")
         {
-            let pending: Record = serde_json::from_slice(&files::read(&path, 65536)?)?;
+            let pending = load_path(&path)?;
             ensure!(
                 (forward_recovery::supersedes(&pending)?
                     || ![
@@ -1329,7 +1339,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
             for entry in fs::read_dir(root()?)? {
                 let p = entry?.path();
                 if p.extension().is_some_and(|v| v == "json") {
-                    let other: Record = serde_json::from_slice(&files::read(&p, 65536)?)?;
+                    let other = load_path(&p)?;
                     ensure!(
                         (forward_recovery::supersedes(&other)?
                             || ![
@@ -1380,7 +1390,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 for entry in fs::read_dir(root()?)? {
                     let p = entry?.path();
                     if p.extension().is_some_and(|v| v == "json") {
-                        records.push(serde_json::from_slice(&files::read(&p, 65536)?)?);
+                        records.push(load_path(&p)?);
                     }
                 }
                 records.sort_by_key(|r| r.created_at);
