@@ -49,6 +49,13 @@ fn mirror_worker_reply(reply: Value) -> Result<Value> {
         let code = match reply["error"]["code"].as_str() {
             Some("page_too_large") => Some("page_too_large"),
             Some("mirror_limit") => Some("mirror_limit"),
+            Some("operation_timeout") => Some("operation_timeout"),
+            Some("capture_fenced") => Some("capture_fenced"),
+            Some("capture_busy") => Some("capture_busy"),
+            Some("recorder_disabled") => Some("recorder_disabled"),
+            Some("viewer_missing") => Some("viewer_missing"),
+            Some("observation_unavailable") => Some("observation_unavailable"),
+            Some("worker_error") => Some("worker_error"),
             _ => None,
         };
         if let Some(code) = code {

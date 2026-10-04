@@ -39,6 +39,18 @@ For older or otherwise unmatched slots that lack this automatic proof, inspect t
 
 The Linux worker uses `voyage/browser/worker.mjs`, `mirror-source.mjs`, the vendored rrweb 2.1.6 runtime and its license, and `guardian.py`. The vendored runtime must expose `globalThis.rrweb` in both a classic script and a Vite-imported module; otherwise the Web viewer receives mirror data but cannot replay it. The shared viewer is `helm/browser-view/viewer.mjs` and `viewer.css`, loaded by both Helm clients. `packaging/browser_assets.py` inventories every shipped browser asset. The exact local checks and their scope are in [quality](quality.md). The GitHub issue holds the delivered commit, build artifact and remaining qualification evidence.
 
+### Read-only mirror failure diagnostics
+
+Mirror reads expose a fixed diagnostic code for page size and bounded observation
+failures: `page_too_large`, `mirror_limit`, `operation_timeout`, `capture_fenced`,
+`capture_busy`, `recorder_disabled`, `viewer_missing`, `observation_unavailable`
+and `worker_error`.
+The boundary emits only its own fixed message; worker text and state details remain
+withheld. Other codes keep the existing worker-reply classification and generic
+fallback. Input and lifecycle commands
+keep their existing receipt and unknown-outcome handling. A mirror failure does not
+authorize repeating an interaction or establish successful capture or cleanup.
+
 ### Agent inspection and interaction (#379)
 
 The `host_browser` tool uses the same Voyage-owned browser and authority fences.

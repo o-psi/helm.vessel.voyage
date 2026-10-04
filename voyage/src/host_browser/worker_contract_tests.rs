@@ -512,25 +512,55 @@ async fn mirror_cursor_reset_and_attachment_authority_are_exact() {
 }
 
 #[test]
-fn mirror_size_diagnostics_cannot_classify_an_effect_as_safe_to_repeat() {
-    for code in ["page_too_large", "mirror_limit"] {
-        let reply = json!({"ok":false,"error":{"state":"unknown","code":code}});
-        let observation = mirror_worker_reply(reply.clone()).unwrap_err();
-        assert!(observation.is::<MirrorObservationFailure>());
-        assert!(!observation.is::<BeforeEffectRefusal>());
-        assert!(observation.to_string().contains(code));
-        let effect = worker_reply(reply).unwrap_err();
-        assert!(!effect.is::<BeforeEffectRefusal>());
+fn mirror_diagnostics_cannot_classify_an_effect_as_safe_to_repeat() {
+    for code in [
+        "page_too_large",
+        "mirror_limit",
+        "operation_timeout",
+        "capture_fenced",
+        "capture_busy",
+        "recorder_disabled",
+        "viewer_missing",
+        "observation_unavailable",
+        "worker_error",
+    ] {
+        for state in ["unknown", "dispatched", "completed", "refused"] {
+            let reply = json!({"ok":false,"error":{"state":state,"code":code,"message":"private diagnostic"}});
+            let observation = mirror_worker_reply(reply.clone()).unwrap_err();
+            assert!(observation.is::<MirrorObservationFailure>());
+            assert!(!observation.is::<BeforeEffectRefusal>());
+            assert_eq!(
+                observation.to_string(),
+                format!(
+                    "Browser mirror observation failed ({code}); request a new bounded snapshot"
+                )
+            );
+            let effect = worker_reply(reply).unwrap_err();
+            assert!(!effect.is::<MirrorObservationFailure>());
+            assert_eq!(
+                effect.is::<BeforeEffectRefusal>(),
+                code == "observation_unavailable" && state == "refused"
+            );
+        }
+    }
+    for code in ["private diagnostic", "operation_timeout private", ""] {
+        let observation = mirror_worker_reply(
+            json!({"ok":false,"error":{"code":code,"state":"private state","message":"private message"}}),
+        )
+        .unwrap_err();
+        assert!(!observation.is::<MirrorObservationFailure>());
         assert_eq!(
-            effect.to_string(),
+            observation.to_string(),
             "browser operation refused or outcome unknown"
         );
     }
-    let observation =
-        mirror_worker_reply(json!({"ok":false,"error":{"code":"private diagnostic"}})).unwrap_err();
+    let successful = json!({"status":{"open":true},"value":{"cursor":7}});
     assert_eq!(
-        observation.to_string(),
-        "browser operation refused or outcome unknown"
+        mirror_worker_reply(
+            json!({"ok":true,"result":successful,"error":{"code":"operation_timeout"}})
+        )
+        .unwrap(),
+        successful
     );
 }
 
