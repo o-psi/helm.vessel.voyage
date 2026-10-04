@@ -37,7 +37,7 @@ impl ManagedSessionOwner {
                     5 => (EntityKind::Resource, "cleanup".to_string(), store.journal.cleanup_progress(store.session_id)?),
                     6 => (EntityKind::Resource, "session_resources".to_string(), store.journal.session_resources(store.session_id)?),
                     7 => (EntityKind::Usage, "usage".to_string(), serde_json::to_value(store.journal.delegated_usage(session.id)?)?),
-                    _ => { let message = index - 8; (EntityKind::Message, format!("message:{message}"), projection::page(&session.messages, message, 1)?.into_iter().next().context("missing message projection")?) }
+                    _ => { let message = index - 8; (EntityKind::Message, format!("message:{message}"), initial_message(&session.messages, message)?) }
                 };
                 anyhow::ensure!(serde_json::to_vec(&value)?.len() <= MAX_ENTITY_BYTES, "entity requires bounded content chunks");
                 events.push(InitializationEvent::Entity { fence: fence.clone(), sequence: index as u64, entity_kind, entity_id, value });
@@ -46,4 +46,16 @@ impl ManagedSessionOwner {
             Ok(json!({"version":3,"revision":saved.revision,"cursor":cursor,"events":events,"next_offset":end,"has_more":end<total}))
         }).await?
     }
+}
+
+fn initial_message(messages: &[crate::model::Message], index: usize) -> anyhow::Result<Value> {
+    let mut value = projection::page(messages, index, 1)?
+        .into_iter()
+        .next()
+        .context("missing message projection")?;
+    if serde_json::to_vec(&value)?.len() > MAX_ENTITY_BYTES {
+        let message = messages.get(index).context("missing message")?;
+        value = json!({"message_index":index,"role":message.role,"content":"","projection_truncated":true,"complete_message":"message_chunk","content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty()});
+    }
+    Ok(value)
 }
