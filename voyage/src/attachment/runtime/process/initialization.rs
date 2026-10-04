@@ -21,6 +21,7 @@ impl ManagedSessionOwner {
             let cursor = store.journal.observation_cursor(store.session_id)?;
             if offset > 0 { anyhow::ensure!(expected_revision == Some(saved.revision) && expected_cursor == Some(cursor), "initialization fence changed; discard staged generation"); }
             let session = &saved.session;
+            let pending_cleanup = store.journal.list_session_summaries(None,100)?.sessions.into_iter().find(|summary|summary.id==store.session_id).and_then(|summary|summary.pending_cleanup_run);
             let fence = Fence { generation, session_id: store.session_id, incarnation };
             let total = 9_usize.checked_add(session.messages.len()).context("entity count overflow")?;
             let offset = usize::try_from(offset)?;
@@ -30,7 +31,7 @@ impl ManagedSessionOwner {
             if offset == 0 { events.push(InitializationEvent::Begin { fence: fence.clone(), cursor }); }
             for index in offset..end {
                 let (entity_kind, entity_id, value) = match index {
-                    0 => (EntityKind::Session, "session".to_string(), json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"name":session.name,"model":session.model,"workspace":session.workspace,"total_messages":session.messages.len(),"message_offset":0,"history_truncated":false})),
+                    0 => (EntityKind::Session, "session".to_string(), json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"name":session.name,"model":session.model,"workspace":session.workspace,"total_messages":session.messages.len(),"message_offset":0,"history_truncated":false,"pending_cleanup_run":pending_cleanup})),
                     1 => (EntityKind::Lifecycle, "lifecycle".to_string(), store.journal.lifecycle_status(store.session_id)?),
                     2 => (EntityKind::Goal, "goal".to_string(), serde_json::to_value(store.journal.goal(store.session_id)?)?),
                     3 => (EntityKind::Resource, "retained_cleanup".to_string(), store.journal.retained_cleanup(store.session_id)?),
