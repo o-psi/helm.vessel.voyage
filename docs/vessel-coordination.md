@@ -99,7 +99,10 @@ is a meaningful refusal/incomplete result, not an empty permitted destination.
 Do not guess hidden IDs or assume a human Helm connection created a model route.
 The owning Voyage's trusted routes remain separate from human connections and
 participant bindings. A reply requires its own authorized return route; a local
-final answer never substitutes for delivery. Discovery does not establish the
+final answer never substitutes for delivery. Scoped submit and steering currently refuse a Voyage with configured remote
+model routes: even a full human connection is not explicit destination authority.
+This prevents borrowing owner routes, but is not the complete per-Voyage setup
+transaction or multi-Helm superset-control implementation. Discovery does not establish the
 full multi-Helm authority matrix or authorize execution on another host.
 
 All network actions also accept `target`. `operations` and a `receipt` without

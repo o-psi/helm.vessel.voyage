@@ -465,6 +465,12 @@ pub(super) async fn dispatch_admitted(
             prompt,
         } => {
             let _admission = state.admission.lock().await;
+            let config = state.config.read().await;
+            super::authorization::check_coordination_control(
+                &authorization,
+                config.vessel.enabled && !config.vessel.remotes.is_empty(),
+            )?;
+            drop(config);
             let request = SteeringAdmission {
                 parts,
                 coordination,
