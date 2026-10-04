@@ -29,10 +29,16 @@ export function encodeCssMirror(events){
   return {value:{encoding:'gzip-chunks',format:'css_chunks_v1',chunks,total_bytes:buffer.length},expanded_bytes:packed.expanded_bytes};
 }
 
-export function recorderExpression(operation,key,generation,cursor=0,budget=2200000,format=null){
+export function recorderExpression(operation,key,generation,cursor=0,budget=2200000,format=null,job=0){
   if(!UUID.test(key)||!Number.isSafeInteger(generation)||generation<0||!Number.isSafeInteger(cursor)||cursor<0||!Number.isSafeInteger(budget)||budget<0||budget>2200000)refuse('invalid_capture_permit');
   const target='this.__voyageMirror',literal=JSON.stringify(key);
   if(operation==='stop')return `${target}?${target}.stop(${literal},${generation}):({recorder_absent:true})`;
+  if(['beginCss','pollCss','cancelCss'].includes(operation)){
+    if(format!=='css_chunks_v1'||!Number.isSafeInteger(job)||job<0||operation!=='beginCss'&&job===0)refuse('invalid_capture_operation');
+    if(operation==='cancelCss')return `${target}?${target}.cancelCss(${job},${literal},${generation}):({retired:true,pending:false})`;
+    const invocation=operation==='beginCss'?`beginCss(${cursor},${budget},${literal},${generation})`:`pollCss(${job},${cursor},${budget},${literal},${generation})`;
+    return `${target}&&${target}.enable(${literal},${generation})?${target}.${invocation}:({error:'capture_fenced'})`;
+  }
   if(operation!=='drain')refuse('invalid_capture_operation');
   if(format!==null&&format!=='css_chunks_v1')refuse('unsupported_format');
   const method=format==='css_chunks_v1'?'drainCss':'drain';
@@ -409,7 +415,7 @@ export class Worker {
       throw error;
     }
   }
-  async recorderCall(frame,operation,cursor=0,budget=2200000,generation=this.captureActivityGeneration,format=null){
+  async recorderCall(frame,operation,cursor=0,budget=2200000,generation=this.captureActivityGeneration,format=null,job=0){
     let session;const contexts=new Map();let stale=false,selected=null;
     try{
       const connection=frame?._connection;
@@ -430,7 +436,7 @@ export class Worker {
       await bounded(session.send('Runtime.enable'),1000);
       if(contexts.size!==1)refuse('observation_unavailable');selected=[...contexts.values()][0];
       if(typeof selected.uniqueId!=='string'||!selected.uniqueId)refuse('observation_unavailable');
-      const expression=recorderExpression(operation,this.recorderCapability,generation,cursor,budget,format);
+      const expression=recorderExpression(operation,this.recorderCapability,generation,cursor,budget,format,job);
       const result=await bounded(session.send('Runtime.evaluate',{expression,uniqueContextId:selected.uniqueId,returnByValue:true,awaitPromise:true,timeout:750}),1000);
       const after=await bounded(session.send('Page.getFrameTree'),1000);
       if(stale||frame.isDetached()||implementation._id!==frameId||contexts.get(selected.id)?.uniqueId!==selected.uniqueId||!contains(after.frameTree,frameId)||result.exceptionDetails)refuse('observation_unavailable');
@@ -441,8 +447,14 @@ export class Worker {
     this.clearCssBatches();
     this.recorderStopObserved=false;
     const generation=++this.captureActivityGeneration;
-    let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
-    const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(this.recorderCall(frame,'stop',0,2200000,generation),1000))));
+    const deadline=Date.now()+5000;
+    const frames=[...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames());
+    const stopFrames=()=>Promise.allSettled(frames.map(frame=>bounded(this.recorderCall(frame,'stop',0,2200000,generation),1000)));
+    // Apply the page fence before waiting: a queued preparation timer must not
+    // start a fresh DOM capture while a previous stream is retiring.
+    let results=await stopFrames(),retired=true;
+    try{const remaining=deadline-Date.now();if(remaining<=0)throw Error();await bounded(Promise.allSettled([...this.captureTasks]),remaining);}catch{retired=false;}
+    if(results.some(result=>result.status!=='fulfilled'||result.value?.pending_events>0||result.value?.pending_bytes>0))results=await stopFrames();
     this.recorderStopObserved=retired&&!this.captureTaskUncertain&&this.cssCacheBytes===0&&this.cssBatchCache.size===0&&this.cssReads.size===0&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
     await this.publishCaptureObservation();
     this.frameVisuals.clear();
@@ -489,6 +501,68 @@ export class Worker {
     }
     return prepared;
   }
+  ownedRecorderCall(frame,operation,since,budget,generation,format,reads,job=0){
+    const call=Promise.resolve().then(()=>this.recorderCall(frame,operation,since,budget,generation,format,job));
+    reads?.add(call);this.captureTasks.add(call);
+    void call.finally(()=>this.captureTasks.delete(call)).catch(()=>{});
+    return call;
+  }
+  async retireRecorderJob(frame,job,generation,reads,identity){
+    const deadline=Date.now()+5000;
+    for(;;){
+      const remaining=deadline-Date.now();if(remaining<=0){this.captureTaskUncertain=true;return;}
+      if(identity&&(identity.context!==this.context||identity.page!==this.page||identity.document!==this.epochs.document||identity.frame!==this.frameId(frame)||frame.isDetached?.())){this.captureTaskUncertain=true;return;}
+      try{
+        const value=await bounded(this.ownedRecorderCall(frame,'cancelCss',0,2200000,Math.max(generation,this.captureActivityGeneration),'css_chunks_v1',reads,job),remaining);
+        if(value?.retired===true&&value.pending===false)return;
+        if(value?.error){this.captureTaskUncertain=true;return;}
+      }catch{this.captureTaskUncertain=true;return;}
+      await new Promise(resolve=>setTimeout(resolve,Math.min(20,Math.max(0,deadline-Date.now()))));
+    }
+  }
+  async recorderCssRead(frame,since,budget,generation,deadline,guard,reads){
+    let job=0;const identity={context:this.context,page:this.page,document:this.epochs.document,frame:this.frameId(frame)};
+    try{
+      for(;;){
+        guard();const remaining=deadline-Date.now();if(remaining<=0)refuse('observation_unavailable');
+        const operation=job?'pollCss':'beginCss';
+        const call=this.ownedRecorderCall(frame,operation,since,budget,generation,'css_chunks_v1',reads,job);
+        let value;
+        try{value=await bounded(call,remaining);}
+        catch(error){
+          if(operation==='beginCss'){
+            // A timed-out begin can still register a job before its late reply.
+            const late=call.then(value=>{
+              if(value?.pending===true&&Number.isSafeInteger(value.job)&&value.job>0)return this.retireRecorderJob(frame,value.job,generation,reads,identity);
+            });
+            reads?.add(late);this.captureTasks.add(late);
+            void late.finally(()=>this.captureTasks.delete(late)).catch(()=>{});
+          }
+          if(error.code==='observation_unavailable'){guard();const wait=Math.min(20,deadline-Date.now());if(wait<=0)throw error;await new Promise(resolve=>setTimeout(resolve,wait));guard();continue;}
+          throw error;
+        }
+        // Own the registration before a private/navigation fence can reject it.
+        if(value?.pending===true&&Number.isSafeInteger(value.job)&&value.job>0){if(job&&job!==value.job){this.captureTaskUncertain=true;refuse('mirror_limit');}job=value.job;}
+        if(value?.retired===true)job=0;
+        guard();
+        if(value?.error){if(value.error!=='observation_unavailable')refuse(value.error);}
+        else if(value?.value)return value.value;
+        else if(value?.pending===true&&Number.isSafeInteger(value.job)&&value.job>0){if(job&&job!==value.job)refuse('mirror_limit');job=value.job;}
+        else refuse('mirror_limit');
+        const wait=Math.min(20,deadline-Date.now());if(wait<=0)refuse('observation_unavailable');
+        await new Promise(resolve=>setTimeout(resolve,wait));guard();
+      }
+    }catch(error){if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;}
+    finally{
+      if(job){
+        // Resource retirement is separate from the original read deadline. It
+        // cannot return page data, start capture, or turn a late result into success.
+        const retirement=Promise.resolve().then(()=>this.retireRecorderJob(frame,job,generation,reads,identity));
+        this.captureTasks.add(retirement);
+        try{await retirement;}finally{this.captureTasks.delete(retirement);}
+      }
+    }
+  }
   async recorderRead(frame,since,budget,generation,format,deadline,guard,reads){
     for(;;){
       guard();const remaining=deadline-Date.now();if(remaining<=0)refuse('observation_unavailable');
@@ -518,7 +592,7 @@ export class Worker {
       const owned=entry;
       entry.promise=Promise.resolve().then(async()=>{
         try{
-          const value=await this.recorderRead(frame,since,budget,generation,format,deadline,sharedGuard,owned.reads);
+          const value=await this.recorderCssRead(frame,since,budget,generation,deadline,sharedGuard,owned.reads);
           // CSS drain contains encoded strings/scalars only. Legacy event arrays
           // remain per-reader because asset rewriting mutates those arrays.
           if(!value||typeof value!=='object'||Array.isArray(value))refuse('mirror_limit');
@@ -531,7 +605,7 @@ export class Worker {
         }finally{
           // A caller's deadline never abandons a late CDP operation. Keep this
           // producer owned until the original call and detach actually retire.
-          await Promise.allSettled([...owned.reads]);
+          let observed=-1;while(observed!==owned.reads.size){observed=owned.reads.size;await Promise.allSettled([...owned.reads]);}
           if(this.cssReads.get(key)===owned)this.cssReads.delete(key);
         }
       });

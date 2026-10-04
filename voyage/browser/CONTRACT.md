@@ -75,3 +75,18 @@ evaluation and 1 s CDP stages. No input is retried. Legacy mutable event arrays
 remain independent. Completed producers are removed rather than cached here.
 A late CDP call remains tracked through its actual session retirement even after
 a caller times out; stop/privacy fencing cannot claim zero pending work early.
+
+CSS recorder preparation uses private begin/poll jobs so a CDP call does not wait
+for the entire asynchronous gzip pipeline. The page registers a job and its
+pending-byte budget reservation before scheduling any capture (replaced by the
+actual compact byte count during serialization), with at most four jobs
+including retiring ones. Short polls disclose only pending status or the complete
+immutable encoded batch. Each job retains the exact cursor, budget, generation
+and capability; cancellation and generation changes discard completed payloads.
+The original 5 s main/2.5 s child read deadlines and 750 ms/1 s CDP limits remain.
+On expiry, tracked resource-only cancellation observes timer cancellation or
+actual stream retirement under the existing 5 s stop-retirement budget; it does
+not capture more DOM, return late page data, or extend a successful read deadline.
+A page stop fence is applied before waiting for old capture work. Pending streams
+remain counted until completion, and unresolved work prevents private/idle zero
+proof. Synchronous snapshot capture still must fit the original browser limits.

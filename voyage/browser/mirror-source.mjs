@@ -16,7 +16,7 @@
   let events = [], metadata = null;
   const cssCodec=typeof __VOYAGE_CSS_CODEC__==='function'?__VOYAGE_CSS_CODEC__():null;
   const Compressor=globalThis.CompressionStream;
-  let cssMode=false,cssSize=0,cssLane=Promise.resolve();const pendingCss=new Set();let encodedBatch=null;
+  let cssMode=false,cssSize=0,cssLane=Promise.resolve();const pendingCss=new Set();let encodedBatch=null;const cssJobs=new Map();let jobSequence=0;
   const compactEntry=event=>{
     const packed=cssCodec.pack([event]);
     return {event:packed.payload.events[0],css_dictionary:packed.payload.css_dictionary,expanded_bytes:packed.expanded_bytes,retained_bytes:cssCodec.jsonBytes(packed.payload)};
@@ -28,15 +28,22 @@
     if(bytes.length>cssCodec.limit)throw Error('css_transport_limit');
     const parts=[];
     for(let offset=0;offset<bytes.length;offset+=cssCodec.chunkBytes){
-      if(!enabled||generation!==captureGeneration)throw Error('capture_fenced');
+      if(token.cancelled||!enabled||generation!==captureGeneration)throw Error('capture_fenced');
       const compressed=new Uint8Array(await new Response(new Blob([bytes.subarray(offset,offset+cssCodec.chunkBytes)]).stream().pipeThrough(new Compressor('gzip'))).arrayBuffer());
-      if(!enabled||generation!==captureGeneration)throw Error('capture_fenced');
+      if(token.cancelled||!enabled||generation!==captureGeneration)throw Error('capture_fenced');
       let text='';for(let at=0;at<compressed.length;at+=8192)text+=String.fromCharCode(...compressed.subarray(at,at+8192));
       parts.push(btoa(text));
     }
     if(parts.length>cssCodec.maxChunks)throw Error('css_transport_limit');
     return {encoding:'gzip-chunks',format:'css_chunks_v1',chunks:parts,total_bytes:bytes.length};
   }
+
+  function cancelJob(job){
+    job.token.cancelled=true;if(job.value&&encodedBatch?.value===job.value)encodedBatch=null;job.value=null;
+    if(!job.started){clearTimeout(job.timer);pendingCss.delete(job.token);cssJobs.delete(job.id);job.resolve();}
+    else if(!pendingCss.has(job.token))cssJobs.delete(job.id);
+  }
+  function retireJobs(){for(const job of cssJobs.values())cancelJob(job);}
 
   function emit(event) {
     if (!enabled || unavailable || overflow) return;
@@ -78,7 +85,7 @@
   Object.defineProperty(globalThis,'__voyageMirror',{writable:false,configurable:false,value:Object.freeze({
     enable(key,generation){
       if(!authorized(key,generation))return false;
-      if(generation>captureGeneration){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;}
+      if(generation>captureGeneration){retireJobs();stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;}
       captureGeneration=generation;enabled=true;return true;
     },
     drain(since, budget = 2200000,key,generation) {
@@ -108,15 +115,16 @@
       }
       return {events:batch,cursor,reset,latest:sequence};
     },
-    async drainCss(since,budget=2200000,key,generation){
+    async drainCss(since,budget=2200000,key,generation,ownedToken=null){
       if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'recorder_disabled'};
       if(!cssCodec||typeof Compressor!=='function')return {error:'unsupported_format'};
       if(!Number.isSafeInteger(since)||since<0)return {error:'invalid_cursor'};
-      if(pendingCss.size>=4)return {error:'capture_busy'};
-      const token={bytes:0};pendingCss.add(token);let release;const preceding=cssLane;cssLane=new Promise(resolve=>{release=resolve;});
+      if(ownedToken&&!pendingCss.has(ownedToken))return {error:'capture_fenced'};
+      if(!ownedToken&&pendingCss.size>=4)return {error:'capture_busy'};
+      const token=ownedToken||{bytes:0,cancelled:false};pendingCss.add(token);let release;const preceding=cssLane;cssLane=new Promise(resolve=>{release=resolve;});
       try{
       await preceding;
-      if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
+      if(token.cancelled||!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
       if(!cssMode){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;unavailable=null;cssMode=true;}
       start();if(unavailable)return {error:unavailable};
       const first=events[0]?.sequence??sequence+1;
@@ -138,14 +146,55 @@
         const latest=sequence;
         const packed=cssCodec.combine(batch.map(entry=>({events:[entry.event],css_dictionary:entry.css_dictionary,expanded_bytes:entry.expanded_bytes})));
         const encoded=await chunks(packed.payload,generation,token,packed.compact_bytes);
-        if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
+        if(token.cancelled||!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
         const result={...encoded,cursor,reset,latest};
         if(JSON.stringify(result).length>budget)return {error:'mirror_limit'};
         Object.freeze(result.chunks);Object.freeze(result);
         if(sequence===latest&&enabled&&generation===captureGeneration)encodedBatch={key:cacheKey,value:result};
         return result;
-      }catch{return {error:!enabled||generation!==captureGeneration?'capture_fenced':'mirror_limit'};}
-      }finally{pendingCss.delete(token);release();}
+      }catch{return {error:token.cancelled||!enabled||generation!==captureGeneration?'capture_fenced':'mirror_limit'};}
+      }finally{if(!ownedToken)pendingCss.delete(token);release();}
+    },
+    beginCss(since,budget,key,generation){
+      if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
+      if(!Number.isSafeInteger(since)||since<0||!Number.isSafeInteger(budget)||budget<0||budget>2200000)return {error:'invalid_cursor'};
+      const cacheKey=JSON.stringify([generation,since,budget,sequence]);
+      if(cssMode&&encodedBatch?.key===cacheKey)return {value:encodedBatch.value,retired:true};
+      if(pendingCss.size>=4||cssJobs.size>=4||jobSequence===Number.MAX_SAFE_INTEGER)return {error:'capture_busy'};
+      const id=++jobSequence,token={bytes:budget,cancelled:false};
+      const job={id,since,budget,generation,token,started:false,value:null,error:null,resolve:null,timer:null};
+      job.retirement=new Promise(resolve=>{job.resolve=resolve;});
+      pendingCss.add(token);cssJobs.set(id,job);
+      job.timer=setTimeout(()=>{
+        job.started=true;
+        // The registered token owns all work before the first capture or await.
+        const work=globalThis.__voyageMirror.drainCss(since,budget,key,generation,token);
+        void work.then(value=>{
+          if(token.cancelled||!enabled||generation!==captureGeneration)job.error='capture_fenced';
+          else if(value?.error)job.error=value.error;
+          else job.value=value;
+        },()=>{job.error='mirror_limit';}).finally(()=>{
+          pendingCss.delete(token);
+          if(token.cancelled||generation!==captureGeneration)cssJobs.delete(id);
+          job.resolve();
+        });
+      },0);
+      return {job:id,pending:true};
+    },
+    pollCss(id,since,budget,key,generation){
+      if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
+      const job=cssJobs.get(id);
+      if(!job||job.generation!==generation||job.since!==since||job.budget!==budget)return {error:'capture_fenced'};
+      if(pendingCss.has(job.token))return {job:id,pending:true};
+      cssJobs.delete(id);
+      return job.error?{job:id,error:job.error,retired:true}:{job:id,value:job.value,retired:true};
+    },
+    cancelCss(id,key,generation){
+      if(key!==CAPABILITY||!Number.isSafeInteger(generation)||generation<0)return {error:'capture_fenced'};
+      const job=cssJobs.get(id);if(!job)return {retired:true,pending:false};
+      if(generation<job.generation)return {error:'capture_fenced'};
+      cancelJob(job);
+      return {pending:pendingCss.has(job.token),retired:!pendingCss.has(job.token)};
     },
     node(id) {
       return Number.isSafeInteger(id) && id > 0 ? library?.record?.mirror?.getNode(id) ?? null : null;
@@ -153,7 +202,7 @@
     id(node) { return library?.record?.mirror?.getId(node) ?? -1; },
     stop(key,generation) {
       if(!authorized(key,generation))return {error:'stale_capture_permit'};
-      captureGeneration=generation;enabled=false;
+      captureGeneration=generation;enabled=false;retireJobs();
       stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;
       return {recording:stop!==null,pending_events:events.length+pendingCss.size,pending_bytes:size+[...pendingCss].reduce((bytes,token)=>bytes+token.bytes,0)};
     },

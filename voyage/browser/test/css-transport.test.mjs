@@ -9,14 +9,14 @@ const codec=createCssCodec();
 const normalize=value=>JSON.parse(JSON.stringify(value));
 const css=(size,symbol='a')=>'body{--fixture:"'+symbol.repeat(size)+'";}';
 const full=()=>({type:2,data:{node:{type:0,id:1,childNodes:[{type:2,id:2,tagName:'html',attributes:{},childNodes:[{type:2,id:3,tagName:'head',attributes:{},childNodes:[...Array.from({length:5},(_,index)=>({type:2,id:index+4,tagName:'link',attributes:{href:`https://fixture.test/${index}/style.css`,_cssText:css(330215)},childNodes:[]})),{type:2,id:10,tagName:'style',attributes:{},childNodes:[{type:3,id:11,textContent:css(756433,'é')}]},{type:2,id:12,tagName:'link',attributes:{_cssText:css(458798)},childNodes:[]}]},{type:2,id:13,tagName:'body',attributes:{style:'color:red'},childNodes:[{type:3,id:14,textContent:'Visible body text'}]}]}]}}});
-async function recorder({Compressor=CompressionStream,snapshot=full()}={}){
- let emit,stopped=0;
- const record=options=>{emit=options.emit;emit({type:4,data:{href:'https://fixture.test/'}});emit(snapshot);return ()=>{stopped++;};};
+async function recorder({Compressor=CompressionStream,snapshot=full(),setTimer=setTimeout,clearTimer=clearTimeout}={}){
+ let emit,stopped=0,captures=0;
+ const record=options=>{captures++;emit=options.emit;emit({type:4,data:{href:'https://fixture.test/'}});emit(snapshot);return ()=>{stopped++;};};
  record.takeFullSnapshot=()=>emit(snapshot);
  const source=(await readFile(new URL('../mirror-source.mjs',import.meta.url),'utf8')).replace('__VOYAGE_CAPTURE_KEY__','fixture-key').replaceAll('__VOYAGE_CSS_CODEC__',`(${createCssCodec.toString()})`);
- const scope={rrweb:{record},TextEncoder,Blob,Response,CompressionStream:Compressor,btoa};
+ const scope={rrweb:{record},TextEncoder,Blob,Response,CompressionStream:Compressor,btoa,setTimeout:setTimer,clearTimeout:clearTimer};
  runInNewContext(source,scope);
- return {mirror:scope.__voyageMirror,emit:event=>emit(event),stopped:()=>stopped};
+ return {mirror:scope.__voyageMirror,emit:event=>emit(event),stopped:()=>stopped,captures:()=>captures};
 }
 test('large CSS snapshot round trips losslessly through recorder, worker and viewer',async()=>{
  const expected=full(),r=await recorder({snapshot:expected});r.mirror.enable('fixture-key',1);
@@ -79,7 +79,7 @@ test('worker applies negotiated format independently and refuses aggregate frame
  for(const viewer of [viewerA,viewerB])worker.viewers.set(viewer,{seq:0,mirrorCursor:0,frameCursors:new Map()});
  worker.captureVisuals=async()=>[];worker.captureFrameVisuals=async()=>[];
  let childEvents=[full()];
- worker.recorderCall=async frame=>({...encodeCssMirror(frame===main?[full()]:childEvents).value,cursor:9,reset:true,latest:9});
+ worker.recorderCall=async frame=>({value:{...encodeCssMirror(frame===main?[full()]:childEvents).value,cursor:9,reset:true,latest:9},retired:true});
  const a=await worker.mirror({viewer:viewerA,since:0,format:'css_chunks_v1'});
  const b=await worker.mirror({viewer:viewerB,since:0,format:'css_chunks_v1'});
  assert.deepEqual(a,b);assert.equal(a.frames.length,1);assert.equal(a.cursor,9);
@@ -127,7 +127,7 @@ test('worker rewritten cache is exact, immutable, asset-sensitive and retired at
 });
 test('only observation-unavailable reads retry within original bounded read and authority guard',async()=>{
  const worker=new Worker(),frame={};let reads=0,guards=0;
- worker.recorderCall=async()=>{reads++;if(reads===1)throw {code:'observation_unavailable'};return {ok:true};};
+ worker.recorderCall=async()=>{reads++;if(reads===1)throw {code:'observation_unavailable'};return {value:{ok:true},retired:true};};
  assert.deepEqual(await worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{guards++;}),{ok:true});assert.equal(reads,2);assert.ok(guards>=4);
  reads=0;worker.recorderCall=async()=>{reads++;throw {code:'operation_timeout'};};
  await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{}),error=>error.code==='operation_timeout');assert.equal(reads,1);
@@ -148,24 +148,24 @@ test('a concurrent capture fence never masks timeout or retires unknown capture 
 
 test('exact concurrent CSS readers share one immutable recorder producer with independent authority',async()=>{
  const worker=new Worker(),frame={},other={};let release,reads=0,first=true;
- worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {encoding:'gzip-chunks',chunks:['encoded'],cursor:1};};
+ worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {value:{encoding:'gzip-chunks',chunks:['encoded'],cursor:1},retired:true};};
  const one=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{if(!first)throw {code:'private'};},()=>{});
  const two=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{},()=>{});
  await new Promise(resolve=>setTimeout(resolve,0));assert.equal(reads,1);first=false;release();
  await assert.rejects(one,error=>error.code==='private');const value=await two;
  assert.ok(Object.isFrozen(value)&&Object.isFrozen(value.chunks));assert.equal(worker.cssReads.size,0);
- worker.recorderCall=async()=>{reads++;return {chunks:['new']};};
+ worker.recorderCall=async()=>{reads++;return {value:{chunks:['new']},retired:true};};
  await Promise.all([worker.mirrorRead(frame,1,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(other,1,2200000,0,'css_chunks_v1',1000,()=>{})]);assert.equal(reads,3);
 });
 test('CSS producer retirement remains owned after caller deadline and capture fence',async()=>{
  const worker=new Worker(),frame={};let release,reads=0;
- worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {chunks:['encoded']};};
+ worker.recorderCall=async()=>{reads++;await new Promise(resolve=>{release=resolve;});return {value:{chunks:['encoded']},retired:true};};
  const pending=worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',20,()=>{},()=>{});
  await assert.rejects(pending,error=>error.code==='operation_timeout');assert.equal(reads,1);assert.equal(worker.cssReads.size,1);assert.ok(worker.captureTasks.size>=1);assert.equal(worker.captureTaskUncertain,true);
  worker.captureActivityGeneration++;release();await Promise.allSettled([...worker.captureTasks]);assert.equal(worker.cssReads.size,0);assert.equal(worker.captureTasks.size,0);
 });
 test('CSS producer keys refuse generation/private changes and bound outstanding distinct reads',async()=>{
- const worker=new Worker();let release;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async()=>{await waiting;return {chunks:['encoded']};};
+ const worker=new Worker();let release;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async()=>{await waiting;return {value:{chunks:['encoded']},retired:true};};
  const tasks=Array.from({length:4},()=>worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{},()=>{}));
  await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{}),error=>error.code==='capture_busy');
  await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{throw {code:'private'};}),error=>error.code==='private');
@@ -176,13 +176,56 @@ test('legacy recorder reads stay independent rather than sharing mutable events'
  const values=await Promise.all([worker.mirrorRead(frame,0,1000,0,null,1000,()=>{}),worker.mirrorRead(frame,0,1000,0,null,1000,()=>{})]);assert.equal(calls,2);assert.notEqual(values[0],values[1]);
 });
 test('in-flight CSS key separates exact cursor and budget while legacy never joins',async()=>{
- const worker=new Worker(),frame={};let release,calls=0;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async()=>{calls++;await waiting;return {chunks:['encoded']};};
+ const worker=new Worker(),frame={};let release,calls=0;const waiting=new Promise(resolve=>{release=resolve;});worker.recorderCall=async(frame,operation)=>{calls++;await waiting;return operation==='drain'?{events:[]}:{value:{chunks:['encoded']},retired:true};};
  const reads=[worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,1,2200000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,0,550000,0,'css_chunks_v1',1000,()=>{}),worker.mirrorRead(frame,0,2200000,0,null,1000,()=>{})];
  await new Promise(resolve=>setTimeout(resolve,0));assert.equal(calls,4);assert.equal(worker.cssReads.size,3);release();await Promise.all(reads);assert.equal(worker.cssReads.size,0);
 });
 test('CSS sharing refuses mutable nested envelopes and expired callers before producer admission',async()=>{
- const worker=new Worker();let reads=0;worker.recorderCall=async()=>{reads++;return {chunks:['encoded'],nested:{events:[]}};};
+ const worker=new Worker();let reads=0;worker.recorderCall=async()=>{reads++;return {value:{chunks:['encoded'],nested:{events:[]}},retired:true};};
  await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1000,()=>{}),error=>error.code==='mirror_limit');assert.equal(worker.cssReads.size,0);
  const before=reads,now=Date.now;let clock=1000;Date.now=()=>clock;
  try{await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',1,()=>{clock=1002;}),error=>error.code==='observation_unavailable');assert.equal(reads,before);assert.equal(worker.cssReads.size,0);}finally{Date.now=now;}
+});
+
+test('begin/poll returns short pending observations through long compression and only a complete snapshot',async()=>{
+ let release,started;const gate=new Promise(resolve=>{release=resolve;}),began=new Promise(resolve=>{started=resolve;});
+ class Paused{constructor(){const gzip=new CompressionStream('gzip'),pause=new TransformStream({async transform(chunk,controller){started();await gate;controller.enqueue(chunk);}});this.writable=pause.writable;this.readable=pause.readable.pipeThrough(gzip);}}
+ const snapshot={type:2,data:{node:{type:0,id:1,childNodes:[]}}},r=await recorder({Compressor:Paused,snapshot});r.mirror.enable('fixture-key',1);
+ const begin=r.mirror.beginCss(0,2200000,'fixture-key',1);assert.equal(begin.pending,true);await began;
+ for(let n=0;n<4;n++){const value=r.mirror.pollCss(begin.job,0,2200000,'fixture-key',1);assert.equal(value.pending,true);assert.equal(value.value,undefined);}
+ const stop=r.mirror.stop('fixture-key',2);assert.ok(stop.pending_events>0&&stop.pending_bytes>0);assert.equal(r.mirror.cancelCss(begin.job,'fixture-key',2).retired,false);
+ r.mirror.enable('fixture-key',2);const queued=Array.from({length:3},()=>r.mirror.beginCss(0,2200000,'fixture-key',2));assert.ok(queued.every(value=>value.pending));assert.equal(r.mirror.beginCss(0,2200000,'fixture-key',2).error,'capture_busy');r.mirror.stop('fixture-key',2);
+ release();await new Promise(resolve=>setTimeout(resolve,20));assert.equal(r.mirror.cancelCss(begin.job,'fixture-key',2).retired,true);assert.equal(r.mirror.stop('fixture-key',2).pending_events,0);
+ assert.equal(r.mirror.pollCss(begin.job,0,2200000,'fixture-key',2).error,'capture_fenced');
+});
+test('page fence cancels queued capture before it starts; four-job cap includes retiring work',async()=>{
+ let callbacks=[],cleared=[];const r=await recorder({snapshot:{type:2,data:{node:{type:0,id:1,childNodes:[]}}},setTimer:fn=>{callbacks.push(fn);return callbacks.length;},clearTimer:id=>cleared.push(id)});r.mirror.enable('fixture-key',1);
+ const jobs=Array.from({length:4},()=>r.mirror.beginCss(0,2200000,'fixture-key',1));assert.equal(r.mirror.beginCss(0,2200000,'fixture-key',1).error,'capture_busy');
+ assert.equal(r.mirror.pollCss(jobs[0].job,0,2200000,'wrong-key',1).error,'capture_fenced');
+ assert.equal(r.mirror.stop('fixture-key',2).pending_events,0);assert.equal(cleared.length,4);for(const fn of callbacks)fn();await new Promise(resolve=>setTimeout(resolve,0));assert.equal(r.captures(),0);
+ for(const job of jobs){const value=r.mirror.cancelCss(job.job,'fixture-key',2);assert.equal(value.retired,true);assert.equal(value.value,undefined);}
+});
+test('CSS read owns a begin registration before private fence and cancels a late begin after deadline',async()=>{
+ const worker=new Worker(),frame={};let privateMode=false,cancels=0;
+ worker.recorderCall=async(frame,operation)=>{if(operation==='beginCss'){privateMode=true;return {job:1,pending:true};}if(operation==='cancelCss'){cancels++;return {pending:false,retired:true};}throw Error('unexpected poll');};
+ await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',1000,()=>{if(privateMode)throw {code:'private'};},()=>{}),error=>error.code==='private');assert.equal(cancels,1);assert.equal(worker.cssReads.size,0);
+ const lateWorker=new Worker();let release;lateWorker.recorderCall=async(frame,operation)=>{if(operation==='beginCss'){await new Promise(resolve=>{release=resolve;});return {job:2,pending:true};}if(operation==='cancelCss'){cancels++;return {pending:false,retired:true};}};
+ await assert.rejects(lateWorker.mirrorRead({},0,2200000,0,'css_chunks_v1',20,()=>{}),error=>error.code==='operation_timeout');assert.equal(lateWorker.cssReads.size,1);release();
+ while(lateWorker.captureTasks.size)await Promise.allSettled([...lateWorker.captureTasks]);assert.equal(cancels,2);assert.equal(lateWorker.cssReads.size,0);assert.equal(lateWorker.captureTaskUncertain,true);
+});
+test('worker applies the page stop fence before awaiting old capture retirement',async()=>{
+ const worker=new Worker();let release,fenced=false;const frame={};worker.tabs.set('tab',{isClosed:()=>false,frames:()=>[frame]});
+ const work=new Promise(resolve=>{release=resolve;});worker.captureTasks.add(work);worker.publishCaptureObservation=async()=>true;
+ worker.recorderCall=async(frame,operation)=>{assert.equal(operation,'stop');fenced=true;release();return {recording:false,pending_events:0,pending_bytes:0};};
+ await worker.stopMirrors();assert.equal(fenced,true);assert.equal(worker.recorderStopObserved,true);
+});
+
+test('ready CSS job returns a complete immutable batch, and cancellation discards an unconsumed result',async()=>{
+ const snapshot={type:2,data:{node:{type:0,id:1,childNodes:[]}}},r=await recorder({snapshot});r.mirror.enable('fixture-key',1);
+ const begin=r.mirror.beginCss(0,2200000,'fixture-key',1);let value;
+ for(let n=0;n<100;n++){value=r.mirror.pollCss(begin.job,0,2200000,'fixture-key',1);if(!value.pending)break;await new Promise(resolve=>setTimeout(resolve,5));}
+ assert.equal(value.retired,true);assert.ok(Object.isFrozen(value.value)&&Object.isFrozen(value.value.chunks));assert.deepEqual(decodeCssMirror(normalize(value.value)).events.at(-1),snapshot);
+ r.emit({type:3,data:{source:0,texts:[],attributes:[],removes:[],adds:[]}});const second=r.mirror.beginCss(0,2200000,'fixture-key',1);await new Promise(resolve=>setTimeout(resolve,30));
+ assert.equal(r.mirror.cancelCss(second.job,'fixture-key',1).retired,true);assert.equal(r.mirror.cancelCss(second.job,'fixture-key',1).value,undefined);
+ assert.equal(r.mirror.beginCss(0,2200000,'fixture-key',1).pending,true);r.mirror.stop('fixture-key',2);
 });
