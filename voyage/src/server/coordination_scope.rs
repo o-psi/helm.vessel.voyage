@@ -132,3 +132,45 @@ pub(super) async fn commit(
     storage.publish("journal.json", &bytes)?;
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn runtime_checkpoint_keeps_exact_scope_receipt_across_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = Directory::open(root.path()).unwrap();
+        let id = Uuid::new_v4();
+        let context = voyage_protocol::process::GrantBinding {
+            grant_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            revision: 7,
+        };
+        let selection = ScopeSelection {
+            session_id: Uuid::new_v4(),
+            context,
+            expected_revision: 0,
+            destinations: Vec::new(),
+        };
+        let mut journal = Journal {
+            revision: 1,
+            selected: Some(selection.clone()),
+            ..Default::default()
+        };
+        journal.receipts.insert(
+            id,
+            Receipt {
+                selection: selection.clone(),
+                result: json!({"command_id":id,"scope_revision":1}),
+            },
+        );
+        dir.publish("journal.json", &serde_json::to_vec(&journal).unwrap())
+            .unwrap();
+        drop(dir);
+        let reopened = Directory::open_existing(root.path()).unwrap();
+        let restored = load(&reopened).unwrap();
+        assert_eq!(restored.selected.unwrap(), selection);
+        assert_eq!(restored.receipts[&id].result["scope_revision"], 1);
+        assert_eq!(restored.receipts[&id].selection, selection);
+    }
+}
