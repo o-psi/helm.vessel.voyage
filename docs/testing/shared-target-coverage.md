@@ -24,7 +24,7 @@ collect the complete current compiler-artifact stream (including cached artifact
 # $evidence is a new ignored directory; $PWD is the measured checkout.
 # All commands here run in the already-authorized exclusive Cargo window.
 cargo metadata --no-deps --locked --format-version 1 > "$evidence/metadata.json"
-cargo test --workspace --locked --no-run --message-format=json -j 8 \
+cargo test --workspace --locked --no-run --message-format=json -j 2 \
   > "$evidence/artifacts.jsonl" 2> "$evidence/artifacts.stderr"
 # Check the Cargo exit status before continuing.
 python3 packaging/coverage_artifacts.py select --source-root "$PWD" \
@@ -89,3 +89,32 @@ current source mappings, every member/test target and all executed binaries; old
 manifests must reject replacement objects/source. Preserve caches and all foreign
 raw profiles. Missing toolchains or coverage tools are a real gate: do not install
 privileged dependencies, substitute a synthetic run or claim final-source coverage.
+
+## Serialized host run budget
+
+On the current 4-CPU/8-GiB host use `-j 2`, not the generic `-j 8`
+example. Instrumentation can substantially enlarge object/profile/report storage.
+Check free space before every cohort and after compilation; stop before exhaustion
+and retain existing evidence. Do not clean another cohort to obtain room. Run one
+cohort at a time with a two-hour compile/test deadline and a ten-minute LLVM export
+deadline (enforced by the export guard). A timeout is failed/incomplete admission,
+not passing tests; terminate the owned Cargo tree and observe cleanup before
+releasing the slot. Request a new budget rather than silently shortening tests.
+
+The installed cargo-llvm-cov 0.9.1 supports `show-env --sh`; `--export-prefix`
+is a deprecated alias. Capture this environment without compiling, but set both
+shared target variables and the checkout wrapper before capture: otherwise it
+selects the issue checkout's own `target`, not the coordinator's shared target.
+Use matching LLVM tools from the selected Rust toolchain, not distribution LLVM
+merely because it exists. The 0.9.1 report implementation adds test/example/bench,
+Cargo/Rust home, target/build directory, registry and rustc defaults plus any
+configured vendor paths. Capture the actual verbose command after the test run;
+do not hardcode a regex inferred from those categories. Its JSON export passes
+one `-object` argument per object, as the guard does. Its default object discovery
+scans executables and is intentionally not the authority for this shared target.
+
+For each cohort preserve a rejected/default verbose export separately, then
+explicit-selection export/audit. The full qualification remains main/worktree/main
+with all workspace tests; a tiny fixture, metadata-only selection, or successful
+synthetic checkout refusal does not replace those three native cohorts. Final
+integrated-source coverage is separately owned by the release coordinator.
