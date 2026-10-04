@@ -507,3 +507,34 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    #[test]
+    fn initialization_is_history_scoped_and_never_a_mutation() {
+        let public = crate::vessel::VoyageCommand::InitializeEntities {
+            generation: Uuid::new_v4(),
+            offset: 0,
+            limit: 64,
+            expected_revision: None,
+            expected_cursor: None,
+        };
+        assert!(public.requires_incarnation());
+        assert!(public.mutation_id().is_none());
+        let private = crate::process::RuntimeCommand::InitializeEntities {
+            generation: Uuid::new_v4(),
+            offset: 0,
+            limit: 64,
+            expected_revision: None,
+            expected_cursor: None,
+        };
+        assert!(private.observes_saved());
+        assert!(private.observes_suspended());
+        assert!(private.mutation_id().is_none());
+        assert_eq!(
+            crate::process::required_process_right(&private),
+            Some(crate::process::ProcessRight::History)
+        );
+    }
+}
