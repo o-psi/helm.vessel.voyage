@@ -1,6 +1,6 @@
 {
-  "measured_at_utc": "2026-10-04T02:52:59.681064+00:00",
-  "source_commit": "79009bc5d85e7fb6e868dc5a0d401147bea636b0",
+  "measured_at_utc": "2026-10-04T04:47:36.838170+00:00",
+  "source_commit": "af28c367ed6dd7ecb60ab33456e3845466d8168e",
   "dirty": false,
   "source_fingerprint_sha256": "004ab5fad77a295d8c6fef23ef1d55d309f331f57c7bfd966c36be4880249dc6",
   "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
@@ -8,7 +8,7 @@
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103storagecorrected5fe3a43aa2664c9b8db6dd544bd8aa22-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user background.slice MemoryMax=18G MemorySwapMax=0 effective umask 0077",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=llvm-cov LLVM_PROFDATA=llvm-profdata LLVM_PROFILE_FILE_NAME=v103releasefinalnext59c41dc9b1544042bbc4c745bf4fb95a-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd transient user unit MemoryMax=18G MemorySwapMax=0 effective umask 0077",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,16 +19,14 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Measured clean source 79009bc follows the negotiated CSS mirror codec and final browser-fixture correction; Rust/Cargo fingerprint 004ab5fa remained frozen throughout this measurement. JavaScript/Python journeys are separate.",
-    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. A preceding redundant --no-clean invocation was refused before compilation or tests; that record is preserved separately.",
-    "The shared cached storage library embedded three duplicate greeting-worktree source mappings despite byte-identical current sources. After the optimized build succeeded, only voyage-storage dev artifacts were invalidated once. Current storage and dependent test binaries were rebuilt with unchanged toolchain/flags; optimized release binary hashes were preserved.",
-    "The original mixed report, all 19 archived objects and prior profiles remain preserved. No mixed totals were published, no sources were excluded or hidden, and default exclusions are unchanged.",
-    "All 19 current Cargo workspace executables were inventoried and archived, including all 16 executed test binaries. The corrected report has exactly the same 546 default-scope source mappings as the prior qualified record.",
-    "Only 900 fresh measurement-prefix profiles were merged; all 6489 foreign profiles retained their original size and modification time.",
-    "The 42 actual zero-hash warnings were inspected with LLVM dump and match the previously audited dependency symbols only; no new or workspace mismatch was accepted.",
-    "Detailed JSON and LCOV reconcile all 546 files and 12512 function groups: 26020 aggregate gaps versus 23923 unique zero lines; difference 2097 = 146 maximum/union + 1978 overlap -27 shadowing. Scope and reachability claims are unchanged.",
-    "Test counts use each Cargo target final result; one nested fixture summary is not counted twice. Full test exit 0 and artifact/report audit exit 0.",
-    "Compared with the prior record, line coverage increased 0.03938497 percentage points (+178 covered/+153 total lines). All three measured percentages increased. Coverage measures execution, not correctness."
+    "Measured clean source af28c367 after the simultaneous-viewer capture fix and final focused regressions. Rust/Cargo fingerprint 004ab5fa remained unchanged; JavaScript/Python and production browser journeys are separate.",
+    "--no-report implies --no-clean in cargo-llvm-cov 0.9.1. Existing corrected workspace caches, earlier mixed reports and all prior raw profiles were preserved; no cache cleaning or scope reduction occurred.",
+    "All 19 current workspace executables and 16 executed test binaries were inventoried and archived. The default scope retains 546 source mappings.",
+    "Only 672 fresh measurement-prefix profiles were merged; all 7389 foreign profiles retained their original size and modification time.",
+    "The 42 actual zero-hash warnings were inspected with LLVM dump and match previously audited dependency symbols; no new or workspace mismatch was accepted.",
+    "Detailed JSON, LCOV and HTML were generated from the same archived current objects, and exact line/function reconciliation passed. Default exclusions are unchanged.",
+    "Test counts use each Cargo target final result; 1 nested fixture summary was not counted twice. Full test exit and artifact/report audit exit were zero.",
+    "Compared with the prior record, percentage-point changes are lines: +0.00145701, functions: +0.00000000, regions: +0.00308028. Coverage measures execution, not correctness."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
@@ -41,8 +39,8 @@
   "totals": {
     "lines": {
       "count": 137267,
-      "covered": 111247,
-      "percent": 81.04424224321943
+      "covered": 111249,
+      "percent": 81.04569925765115
     },
     "functions": {
       "count": 12512,
@@ -51,9 +49,9 @@
     },
     "regions": {
       "count": 227252,
-      "covered": 175435,
-      "notcovered": 51817,
-      "percent": 77.1984404977734
+      "covered": 175442,
+      "notcovered": 51810,
+      "percent": 77.20152077869503
     }
   }
 }
