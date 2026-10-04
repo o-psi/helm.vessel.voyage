@@ -709,7 +709,7 @@ export function mountBrowserViewer(root,options={}){
             recoveryAction.textContent=phase==='stopped'?'Start browser':'Check browser status';recoveryAction.disabled=connection.busy;
             recoveryAction.setAttribute('aria-label',recoveryAction.textContent);recoveryAction.title=recoveryAction.textContent;
         }
-        modeHint.textContent=privateControl?'Private: other viewers and agent capture are paused. Continue agent when finished.'
+        modeHint.textContent=phase==='stopped'?'This browser is stopped. Start a browser before browsing or entering text.':phase==='unavailable'?'Browsing is unavailable on this host.':privateControl?'Private: other viewers and agent capture are paused. Continue agent when finished.'
             :connection.controls?'You are browsing. Other connected viewers can see this page.'
             :'Click the page to browse. Choose Private before entering secrets.';
         compose.hidden=!connection.controls;composed.disabled=!connection.canInput;sendText.disabled=!connection.canInput||!composed.value;

@@ -16,14 +16,14 @@
   let events = [], metadata = null;
   const cssCodec=typeof __VOYAGE_CSS_CODEC__==='function'?__VOYAGE_CSS_CODEC__():null;
   const Compressor=globalThis.CompressionStream;
-  let cssMode=false,cssSize=0,cssLane=Promise.resolve();const pendingCss=new Set();
+  let cssMode=false,cssSize=0,cssLane=Promise.resolve();const pendingCss=new Set();let encodedBatch=null;
   const compactEntry=event=>{
     const packed=cssCodec.pack([event]);
     return {event:packed.payload.events[0],css_dictionary:packed.payload.css_dictionary,expanded_bytes:packed.expanded_bytes,retained_bytes:cssCodec.jsonBytes(packed.payload)};
   };
   const expanded=entry=>cssMode?cssCodec.unpack({events:[entry.event],css_dictionary:entry.css_dictionary}).events[0]:entry.event;
-  async function chunks(payload,generation,token){
-    token.bytes=cssCodec.jsonBytes(payload);
+  async function chunks(payload,generation,token,compactBytes){
+    token.bytes=compactBytes;
     const bytes=new TextEncoder().encode(JSON.stringify(payload));
     if(bytes.length>cssCodec.limit)throw Error('css_transport_limit');
     const parts=[];
@@ -46,6 +46,7 @@
     if (length > LIMIT) { unavailable = 'page_too_large'; events = []; size=0;cssSize=0;return; }
     if (size + length > LIMIT || events.length >= 1024 || cssMode&&cssSize+retained>cssCodec.limit) { overflow = true; return; }
     if (event.type === 4) metadata = item;
+    encodedBatch=null;
     const entry = {sequence: ++sequence, ...item};
     events.push(entry); size += length;cssSize+=retained;
   }
@@ -67,7 +68,7 @@
 
   function checkout() {
     if (!stop || unavailable) return;
-    events = []; size = 0; cssSize=0; overflow = false;
+    events = []; size = 0; cssSize=0; overflow = false;encodedBatch=null;
     library.record.takeFullSnapshot();
     if (!events.some(({event}) => event.type === 2)) unavailable = 'snapshot_unavailable';
   }
@@ -77,7 +78,7 @@
   Object.defineProperty(globalThis,'__voyageMirror',{writable:false,configurable:false,value:Object.freeze({
     enable(key,generation){
       if(!authorized(key,generation))return false;
-      if(generation>captureGeneration){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;}
+      if(generation>captureGeneration){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;}
       captureGeneration=generation;enabled=true;return true;
     },
     drain(since, budget = 2200000,key,generation) {
@@ -116,7 +117,7 @@
       try{
       await preceding;
       if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
-      if(!cssMode){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;unavailable=null;cssMode=true;}
+      if(!cssMode){stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;unavailable=null;cssMode=true;}
       start();if(unavailable)return {error:unavailable};
       const first=events[0]?.sequence??sequence+1;
       if(!events.some(({event})=>event.type===2)||overflow||(since&&since<first-1)||since>sequence)checkout();
@@ -124,18 +125,24 @@
       const reset=since===0||since<events[0].sequence-1;
       const index=events.findLastIndex(({event})=>event.type===2);
       const candidates=reset?(metadata?[{sequence:events[index].sequence-1,...metadata},...events.slice(index)]:events.slice(index)):events.filter(entry=>entry.sequence>since);
+      const cacheKey=JSON.stringify([generation,since,budget,sequence]);
+      if(encodedBatch?.key===cacheKey)return encodedBatch.value;
       const batch=[];let used=0,cursor=since,logical=2;
       try{
         for(const entry of candidates){
           const length=JSON.stringify(entry.event).length;
-          if(used+length>budget||logical+entry.expanded_bytes>cssCodec.limit){if(!batch.length)return {error:'event_too_large'};break;}
-          batch.push(expanded(entry));used+=length;logical+=entry.expanded_bytes;cursor=Math.max(cursor,entry.sequence);
+          if(used+length>budget||logical+entry.expanded_bytes-2+(batch.length?1:0)>cssCodec.limit){if(!batch.length)return {error:'event_too_large'};break;}
+          logical+=entry.expanded_bytes-2+(batch.length?1:0);batch.push(entry);used+=length;cursor=Math.max(cursor,entry.sequence);
         }
-        if(reset&&!batch.some(event=>event.type===2))return {error:'event_too_large'};
-        const packed=cssCodec.pack(batch),encoded=await chunks(packed.payload,generation,token);
+        if(reset&&!batch.some(entry=>entry.event.type===2))return {error:'event_too_large'};
+        const latest=sequence;
+        const packed=cssCodec.combine(batch.map(entry=>({events:[entry.event],css_dictionary:entry.css_dictionary,expanded_bytes:entry.expanded_bytes})));
+        const encoded=await chunks(packed.payload,generation,token,packed.compact_bytes);
         if(!enabled||key!==CAPABILITY||generation!==captureGeneration)return {error:'capture_fenced'};
-        const result={...encoded,cursor,reset,latest:sequence};
+        const result={...encoded,cursor,reset,latest};
         if(JSON.stringify(result).length>budget)return {error:'mirror_limit'};
+        Object.freeze(result.chunks);Object.freeze(result);
+        if(sequence===latest&&enabled&&generation===captureGeneration)encodedBatch={key:cacheKey,value:result};
         return result;
       }catch{return {error:!enabled||generation!==captureGeneration?'capture_fenced':'mirror_limit'};}
       }finally{pendingCss.delete(token);release();}
@@ -147,7 +154,7 @@
     stop(key,generation) {
       if(!authorized(key,generation))return {error:'stale_capture_permit'};
       captureGeneration=generation;enabled=false;
-      stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;
+      stop?.();stop=null;events=[];size=0;cssSize=0;overflow=false;metadata=null;encodedBatch=null;
       return {recording:stop!==null,pending_events:events.length+pendingCss.size,pending_bytes:size+[...pendingCss].reduce((bytes,token)=>bytes+token.bytes,0)};
     },
   })});

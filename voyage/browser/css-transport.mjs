@@ -39,6 +39,31 @@ export function createCssCodec(){
   const payload={events:visit(events),css_dictionary:dictionary};jsonBytes(payload);
   return {payload,expanded_bytes};
  }
+ function combine(packets){
+  if(!Array.isArray(packets)||packets.length>1024)fail();
+  const dictionary=[],indexes=new Map(),events=[];let expanded_bytes=2,references=0;
+  for(const packet of packets){
+   if(!packet||!Array.isArray(packet.events)||!Array.isArray(packet.css_dictionary)||!Number.isSafeInteger(packet.expanded_bytes)||packet.expanded_bytes<2)fail();
+   expanded_bytes+=packet.expanded_bytes-2+(events.length&&packet.events.length?1:0);if(expanded_bytes>LIMIT)fail();
+   const used=new Set();
+   const visit=(value,key='',style=false,depth=0)=>{
+    if(depth>MAX_DEPTH)fail();
+    if(value&&typeof value==='object'&&!Array.isArray(value)&&Object.hasOwn(value,'$css')){
+     if(Object.keys(value).length!==1||!(cssKeys.has(key)||key==='textContent'&&style)||!Number.isSafeInteger(value.$css)||value.$css<0||value.$css>=packet.css_dictionary.length||++references>MAX_ITEMS)fail();
+     const text=packet.css_dictionary[value.$css];if(typeof text!=='string')fail();used.add(value.$css);let index=indexes.get(text);
+     if(index===undefined){index=dictionary.length;indexes.set(text,index);dictionary.push(text);}return {$css:index};
+    }
+    if(!value||typeof value!=='object')return value;
+    const inside=style||value.tagName==='style';
+    if(Array.isArray(value))return value.map(child=>visit(child,'',inside,depth+1));
+    const result={};for(const [name,child] of Object.entries(value))Object.defineProperty(result,name,{value:visit(child,name,inside,depth+1),enumerable:true,writable:true,configurable:true});return result;
+   };
+   for(const event of packet.events)events.push(visit(event));
+   if(used.size!==packet.css_dictionary.length)fail();
+  }
+  const payload={events,css_dictionary:dictionary},compact_bytes=jsonBytes(payload);
+  return {payload,expanded_bytes,compact_bytes};
+ }
  function unpack(payload,maxBytes=LIMIT){
   if(!Number.isSafeInteger(maxBytes)||maxBytes<=0||maxBytes>LIMIT)fail();
   if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).length!==2||!Array.isArray(payload.events)||payload.events.length>1024||!Array.isArray(payload.css_dictionary)||payload.css_dictionary.length>MAX_ITEMS||payload.css_dictionary.some(value=>typeof value!=='string'))fail();
@@ -71,5 +96,5 @@ export function createCssCodec(){
   const events=visit(payload.events);if(used.size!==payload.css_dictionary.length)fail();
   return {events,expanded_bytes};
  }
- return Object.freeze({pack,unpack,jsonBytes,limit:LIMIT,chunkBytes:512*1024,maxChunks:16});
+ return Object.freeze({pack,combine,unpack,jsonBytes,limit:LIMIT,chunkBytes:512*1024,maxChunks:16});
 }

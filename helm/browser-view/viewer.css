@@ -105,3 +105,6 @@
 }
 @media(prefers-reduced-motion:reduce){.browser-next *{scroll-behavior:auto!important}}
 @media(forced-colors:active){.browser-next-status::before{background:CanvasText!important;box-shadow:none!important}.browser-next-tab>button[aria-pressed=true]{border-bottom:3px solid Highlight}}
+
+/* Disabled destructive actions are neutral, not low-opacity red warnings. */
+.browser-next .browser-next-danger:disabled{color:var(--bv-muted);opacity:1}

@@ -90,3 +90,56 @@ test('worker applies negotiated format independently and refuses aggregate frame
  assert.equal(worker.viewers.get(viewerA).mirrorCursor,prior);
  await assert.rejects(worker.mirror({viewer:viewerA,since:0,format:'invented'}),error=>error.code==='unsupported_format');
 });
+
+test('compact batch merge reindexes CSS losslessly and charges exact logical bytes',()=>{
+ const original=[{type:4,data:{href:'https://fixture.test/'}},full(),{type:3,data:{source:8,adds:[{rule:'a{color:red}',index:0}],replaceSync:'b{color:blue}'}}];
+ const packets=original.map(event=>{const packed=codec.pack([event]);return {...packed.payload,expanded_bytes:packed.expanded_bytes};});
+ const before=JSON.stringify(packets),merged=codec.combine(packets);
+ assert.equal(merged.expanded_bytes,codec.pack(original).expanded_bytes);
+ assert.deepEqual(codec.unpack(merged.payload).events,original);
+ assert.equal(JSON.stringify(packets),before);
+});
+test('two cold readers reuse one immutable encoding and all document fences invalidate it',async()=>{
+ let compressions=0;
+ class CountedCompressor{constructor(){compressions++;return new CompressionStream('gzip');}}
+ const r=await recorder({Compressor:CountedCompressor});r.mirror.enable('fixture-key',1);
+ const [a,b]=await Promise.all([r.mirror.drainCss(0,2200000,'fixture-key',1),r.mirror.drainCss(0,2200000,'fixture-key',1)]);
+ assert.equal(a,b);assert.equal(compressions,a.chunks.length);assert.ok(Object.isFrozen(a)&&Object.isFrozen(a.chunks));
+ const decoded=decodeCssMirror(normalize(a));
+ r.emit({type:3,data:{source:8,adds:[{rule:'a{color:red}',index:0}]}});
+ const changed=await r.mirror.drainCss(0,2200000,'fixture-key',1);assert.notEqual(changed,a);assert.equal(decodeCssMirror(normalize(changed)).events.length,decoded.events.length+1);
+ const checkout=await r.mirror.drainCss(Number.MAX_SAFE_INTEGER,2200000,'fixture-key',1);assert.notEqual(checkout,changed);
+ r.mirror.enable('fixture-key',2);const generation=await r.mirror.drainCss(0,2200000,'fixture-key',2);assert.notEqual(generation,checkout);
+ const stopped=r.mirror.stop('fixture-key',3);assert.equal(stopped.pending_bytes,0);assert.equal(stopped.pending_events,0);
+ assert.equal((await r.mirror.drainCss(0,2200000,'fixture-key',2)).error,'recorder_disabled');
+ r.mirror.enable('fixture-key',4);const restarted=await r.mirror.drainCss(0,2200000,'fixture-key',4);assert.notEqual(restarted,generation);
+});
+test('worker rewritten cache is exact, immutable, asset-sensitive and retired at capture stop',async()=>{
+ const worker=new Worker(),frame={},value=encodeCssMirror([full()]).value;let rewrites=0;
+ const original=worker.inlineAssets.bind(worker);worker.inlineAssets=(...args)=>{rewrites++;return original(...args);};
+ const a=worker.prepareCssBatch(value,frame,'https://fixture.test/',0,1,codec.limit);
+ const b=worker.prepareCssBatch(value,frame,'https://fixture.test/',0,1,codec.limit);
+ assert.equal(a,b);assert.equal(rewrites,1);assert.ok(Object.isFrozen(a.value.chunks));
+ worker.assetRevision++;const changed=worker.prepareCssBatch(value,frame,'https://fixture.test/',0,1,codec.limit);assert.notEqual(a,changed);assert.equal(rewrites,2);
+ worker.advance('control','capture');assert.equal(worker.cssBatchCache.size,0);assert.equal(worker.cssCacheBytes,0);
+ worker.prepareCssBatch(value,frame,'https://fixture.test/',worker.captureActivityGeneration,worker.epochs.capture,codec.limit);
+ worker.publishCaptureObservation=async()=>true;await worker.stopMirrors();assert.equal(worker.cssBatchCache.size,0);assert.equal(worker.cssCacheBytes,0);
+});
+test('only observation-unavailable reads retry within original bounded read and authority guard',async()=>{
+ const worker=new Worker(),frame={};let reads=0,guards=0;
+ worker.recorderCall=async()=>{reads++;if(reads===1)throw {code:'observation_unavailable'};return {ok:true};};
+ assert.deepEqual(await worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{guards++;}),{ok:true});assert.equal(reads,2);assert.ok(guards>=4);
+ reads=0;worker.recorderCall=async()=>{reads++;throw {code:'operation_timeout'};};
+ await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{}),error=>error.code==='operation_timeout');assert.equal(reads,1);
+ reads=0;worker.recorderCall=async()=>{reads++;throw {code:'observation_unavailable'};};let allowed=true;
+ await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',100,()=>{if(!allowed)throw {code:'capture_fenced'};allowed=false;}),error=>error.code==='capture_fenced');assert.equal(reads,1);
+ const began=Date.now();await assert.rejects(worker.mirrorRead(frame,0,2200000,0,'css_chunks_v1',40,()=>{}),error=>error.code==='observation_unavailable');assert.ok(Date.now()-began<100);
+});
+
+
+test('a concurrent capture fence never masks timeout or retires unknown capture work',async()=>{
+ const worker=new Worker();let reads=0,fenced=false;
+ worker.recorderCall=async()=>{reads++;fenced=true;throw {code:'operation_timeout'};};
+ await assert.rejects(worker.mirrorRead({},0,2200000,0,'css_chunks_v1',100,()=>{if(fenced)throw {code:'capture_fenced'};}),error=>error.code==='operation_timeout');
+ assert.equal(reads,1);assert.equal(worker.captureTaskUncertain,true);
+});

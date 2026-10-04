@@ -26,6 +26,16 @@ pending work and byte obligations until their completion is observed. Private
 control, last-viewer disconnect and teardown clear retained CSS and discard stale
 assemblies; they do not claim outstanding compression already finished.
 
+The recorder combines its compact event dictionaries without expanding CSS for
+each reader. Identical reads may reuse one encoded batch while the exact capture
+generation and event sequence remain current. The worker retains at most 2.8 MB
+of rewritten encoded batches, keyed by browser, tab, frame, capture and control
+identity, document URL, asset revision and exact batch content. Capture/control
+changes, recorder stop and asset changes invalidate this reuse. It never supplies
+an old page after a privacy fence. A read-only `observation_unavailable` may be
+retried within the original mirror deadline with fresh authority checks; an
+`operation_timeout` remains an uncertain observation and is not retried.
+
 The worker must never accept untrusted `config`, `policy`, executable paths or filesystem roots from an agent. Private/localhost browsing requires an explicit trusted origin grant even when public web access is enabled. CONNECT tunnels retain origin/address containment, not inspection of encrypted application messages. Browser profiles are temporary, never the user's ordinary browser profile. See the [public protocol](../../docs/host-browser-protocol.md) and [host-browser design](../../docs/host-browser.md).
 
 Agent `inspect` accepts bounded control/text offsets and an observed child `frame`.

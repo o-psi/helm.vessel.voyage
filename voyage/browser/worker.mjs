@@ -125,13 +125,13 @@ export class Worker {
   constructor(){
     this.captureObservationSequence=0;this.captureActivityGeneration=0;this.recorderStopObserved=false;this.capturePublication=Promise.resolve();this.captureTasks=new Set();this.captureTaskUncertain=false;this.recorderCapability=randomUUID();this.recorderSessionCleanups=new Set();
     this.browser=randomUUID();this.epochs={tab:1,document:1,viewport:1,control:1,capture:1};
-    this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;
+    this.mode='agent';this.controller=null;this.viewers=new Map();this.tabs=new Map();this.refs=new Map();this.refBindings=new WeakMap();this.agentFrames=new Map();this.downloads=new Map();this.assets=new Map();this.assetBytes=0;this.assetEffects=new Set();this.assetEpoch=0;this.assetRevision=0;this.cssBatchCache=new Map();this.cssCacheBytes=0;
     this.ordinary=Promise.resolve();this.urgent=Promise.resolve();this.admission=Promise.resolve();this.ephemeral=new Map();this.pending=0;this.fenceWaiters=new Set();this.closing=false;this.disconnected=false;this.effects=new Set();this.metadata=new Map();this.agentActive=0;this.agentAction=null;this.agentCursor=null;this.visuals=[];this.visualAt=0;this.frameVisuals=new Map();this.frameIds=new WeakMap();this.pageErrors=new WeakMap();
   }
   status(){return {mirror_formats:['css_chunks_v1'],viewport:{width:this.config?.width,height:this.config?.height},agent_action:this.mode==='agent'?this.agentAction:null,agent_cursor:this.mode==='agent'?this.agentCursor:null,agent_active:this.agentActive>0,page:this.metadata.get(this.active)||null,tab_details:[...this.tabs.keys()].map(id=>({id,...(this.metadata.get(id)||{})})),dialog:this.dialog?{type:this.dialog.type(),message:this.dialog.message().slice(0,1024)}:null,downloads:[...this.downloads].filter(([,d])=>d.owner===this.controller).map(([id,d])=>({id,name:d.name})),browser:this.browser,epochs:{...this.epochs},mode:this.mode,controller:this.controller,tabs:[...this.tabs.keys()],tab:this.active||null,viewers:[...this.viewers.keys()],open:!!this.task};}
   exact(req){const epochs={...req.epochs};if(['join','mirror','disconnect'].includes(req.op)){epochs.document=this.epochs.document;epochs.viewport=this.epochs.viewport;}if(req.browser!==this.browser||digest(epochs)!==digest(this.epochs))refuse('stale_binding');}
   invalidate(){for(const h of this.refs.values())void h.dispose().catch(()=>{});this.refs.clear();this.agentFrames.clear();}
-  advance(...keys){for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;this.frameVisuals.clear();}this.invalidate();}
+  advance(...keys){this.clearCssBatches();for(const k of keys)this.epochs[k]++;if(keys.some(k=>['tab','document','viewport','control','capture'].includes(k))){this.visuals=[];this.visualAt=0;this.frameVisuals.clear();}this.invalidate();}
   checkAgent(){if(this.mode!=='agent')refuse('agent_fenced');}
   guard(stamp){if(stamp!==this.epochs.control)refuse('control_fenced');}
   async request(req){
@@ -299,8 +299,8 @@ export class Worker {
       const body=await response.body();if(body.length>700000||epoch!==this.assetEpoch)return;
       const url=response.url();if(this.assets.has(url))return;
       const data=`data:${mime};base64,${body.toString('base64')}`;
-      while(this.assetBytes+data.length>12000000&&this.assets.size){const first=this.assets.keys().next().value;this.assetBytes-=this.assets.get(first).length;this.assets.delete(first);}
-      if(data.length<=12000000){this.assets.set(url,data);this.assetBytes+=data.length;}
+      while(this.assetBytes+data.length>12000000&&this.assets.size){const first=this.assets.keys().next().value;this.assetBytes-=this.assets.get(first).length;this.assets.delete(first);this.assetRevision++;this.clearCssBatches();}
+      if(data.length<=12000000){this.assets.set(url,data);this.assetBytes+=data.length;this.assetRevision++;this.clearCssBatches();}
     }catch{}
   }
   inlineAssets(events,base){
@@ -438,11 +438,12 @@ export class Worker {
     }finally{if(session)await bounded(session.detach(),1000).catch(()=>{this.captureTaskUncertain=true;});}
   }
   async stopMirrors(){
+    this.clearCssBatches();
     this.recorderStopObserved=false;
     const generation=++this.captureActivityGeneration;
     let retired=true;try{await bounded(Promise.allSettled([...this.captureTasks]),5000);}catch{retired=false;}
     const results=await Promise.allSettled([...this.tabs.values()].filter(page=>!page.isClosed()&&typeof page.frames==='function').flatMap(page=>page.frames().map(frame=>bounded(this.recorderCall(frame,'stop',0,2200000,generation),1000))));
-    this.recorderStopObserved=retired&&!this.captureTaskUncertain&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
+    this.recorderStopObserved=retired&&!this.captureTaskUncertain&&this.cssCacheBytes===0&&this.cssBatchCache.size===0&&generation===this.captureActivityGeneration&&results.length>0&&results.every(result=>result.status==='fulfilled'&&(result.value?.recorder_absent===true||(result.value?.recording===false&&result.value?.pending_events===0&&result.value?.pending_bytes===0)));
     await this.publishCaptureObservation();
     this.frameVisuals.clear();
     for(const viewer of this.viewers.values()){viewer.mirrorCursor=0;viewer.frameCursors.clear();}
@@ -468,6 +469,38 @@ export class Worker {
     });
     this.capturePublication=publish.catch(()=>{});return await publish;
   }
+  clearCssBatches(){this.cssBatchCache.clear();this.cssCacheBytes=0;}
+  prepareCssBatch(value,frame,url,generation,stamp,maxBytes){
+    const key=digest([this.browser,this.active,this.frameId(frame),generation,stamp,this.epochs.control,this.mode,this.assetEpoch,this.assetRevision,url,
+      value.encoding,value.format,value.cursor,value.reset,value.latest,value.total_bytes,value.chunks]);
+    const cached=this.cssBatchCache.get(key);
+    if(cached){if(cached.expanded_bytes>maxBytes||cached.value.total_bytes>maxBytes)refuse('mirror_limit');return cached;}
+    let prepared;
+    try{
+      const decoded=decodeCssMirror(value,maxBytes);this.inlineAssets(decoded.events,url);prepared=encodeCssMirror(decoded.events);
+      if(prepared.expanded_bytes>maxBytes||prepared.value.total_bytes>maxBytes)refuse('mirror_limit');
+    }catch{refuse('mirror_limit');}
+    Object.freeze(prepared.value.chunks);Object.freeze(prepared.value);Object.freeze(prepared);
+    const size=Buffer.byteLength(JSON.stringify(prepared.value));
+    // One worker-wide bounded cache; entries retain encoded bytes only.
+    if(size<=2800000){
+      while(this.cssCacheBytes+size>2800000&&this.cssBatchCache.size){const first=this.cssBatchCache.keys().next().value;this.cssCacheBytes-=this.cssBatchCache.get(first).cache_bytes;this.cssBatchCache.delete(first);}
+      const entry=Object.freeze({...prepared,cache_bytes:size});this.cssBatchCache.set(key,entry);this.cssCacheBytes+=size;return entry;
+    }
+    return prepared;
+  }
+  async mirrorRead(frame,since,budget,generation,format,limit,guard){
+    const deadline=Date.now()+limit;
+    for(;;){
+      guard();const remaining=deadline-Date.now();if(remaining<=0)refuse('observation_unavailable');
+      try{
+        const value=await bounded(this.recorderCall(frame,'drain',since,budget,generation,format),remaining);
+        guard();if(value?.error!=='observation_unavailable')return value;
+      }catch(error){if(error.code==='operation_timeout'){this.captureTaskUncertain=true;throw error;}guard();if(error.code!=='observation_unavailable')throw error;}
+      const wait=Math.min(20,deadline-Date.now());if(wait<=0)refuse('observation_unavailable');
+      await new Promise(resolve=>setTimeout(resolve,wait));guard();
+    }
+  }
   async mirror(req){
     const viewer=this.viewer(req.viewer);this.requireOpen();
     this.recorderStopObserved=false;
@@ -480,14 +513,14 @@ export class Worker {
     if(this.dialog){viewer.mirrorCursor=since;viewer.frameCursors.clear();return {encoding:'gzip',data_base64:gzipSync(Buffer.from('[]')).toString('base64'),cursor:since,reset:false,latest:since,visuals:[],frames:[]};}
     if(!since&&this.assetEffects.size)await bounded(Promise.allSettled([...this.assetEffects]),1000).catch(()=>{});
     captureGuard();
-    const value=await bounded(this.recorderCall(page.mainFrame(),'drain',since,2200000,generation,format),5000);
+    const guarded=()=>{captureGuard();if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');};
+    const value=await this.mirrorRead(page.mainFrame(),since,2200000,generation,format,5000,guarded);
     if(stamp!==this.epochs.capture||page!==this.page)refuse('capture_fenced');
     this.viewer(req.viewer);
     if(value?.error)refuse(value.error);
     let logical=0,compactTotal=0,mainEncoded=null;
-    if(format==='css_chunks_v1'){try{value.events=decodeCssMirror(value).events;}catch{refuse('mirror_limit');}}
-    this.inlineAssets(value.events,page.url());
-    if(format==='css_chunks_v1'){try{logical=cssCodec.jsonBytes(value.events);mainEncoded=encodeCssMirror(value.events).value;compactTotal=mainEncoded.total_bytes;}catch{refuse('mirror_limit');}}
+    if(format==='css_chunks_v1'){const prepared=this.prepareCssBatch(value,page.mainFrame(),page.url(),generation,stamp,cssCodec.limit);logical=prepared.expanded_bytes;mainEncoded=prepared.value;compactTotal=mainEncoded.total_bytes;}
+    else this.inlineAssets(value.events,page.url());
     const frameCursors=!value.reset&&since===viewer.mirrorCursor?new Map(viewer.frameCursors):new Map();
     const frames=[],nextCursors=new Map(),mirrored=new Set();let remainingMedia=2;
     // The site never receives a child's events. rrweb's cross-origin mode
@@ -504,14 +537,13 @@ export class Worker {
         if(parentId&&!nextCursors.has(parentId))continue;
         const cursor=frameCursors.get(frameId)||0;
         captureGuard();
-        const child=await bounded(this.recorderCall(frame,'drain',cursor,550000,generation,format),2500).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
+        const child=await this.mirrorRead(frame,cursor,550000,generation,format,2500,guarded).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;throw error;});
         if(child?.error)continue;
-        if(format==='css_chunks_v1'){try{child.events=decodeCssMirror(child,Math.min(cssCodec.limit-logical,cssCodec.limit-compactTotal)).events;}catch{refuse('mirror_limit');}}
-        this.inlineAssets(child.events,frame.url());
+        if(format===null)this.inlineAssets(child.events,frame.url());
         const bytes=format===null?Buffer.from(JSON.stringify(child.events)):null;
         if(bytes&&bytes.length>650000)continue;
         let encoded=null;
-        if(format==='css_chunks_v1'){try{encoded=encodeCssMirror(child.events);}catch{refuse('mirror_limit');}logical+=encoded.expanded_bytes;compactTotal+=encoded.value.total_bytes;if(logical>cssCodec.limit||compactTotal>cssCodec.limit)refuse('mirror_limit');}
+        if(format==='css_chunks_v1'){encoded=this.prepareCssBatch(child,frame,frame.url(),generation,stamp,Math.min(cssCodec.limit-logical,cssCodec.limit-compactTotal));logical+=encoded.expanded_bytes;compactTotal+=encoded.value.total_bytes;if(logical>cssCodec.limit||compactTotal>cssCodec.limit)refuse('mirror_limit');}
         captureGuard();
         const frameVisuals=remainingMedia?await bounded(this.captureFrameVisuals(frame,frameId),1800).catch(error=>{if(error.code==='operation_timeout')this.captureTaskUncertain=true;return []; }):[];
         remainingMedia-=frameVisuals.length;
