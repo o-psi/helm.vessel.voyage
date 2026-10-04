@@ -24,6 +24,7 @@ pub(crate) struct GoalTool {
     pub run: uuid::Uuid,
     pub binding: Option<GoalReportContext>,
     pub control: Option<GoalControl>,
+    pub meter: Option<std::sync::Arc<crate::provider::goal_meter::GoalMeter>>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -91,9 +92,18 @@ impl Tool for GoalTool {
                 let call = context.tool_call_id.clone().ok_or_else(|| {
                     ToolError::Denied("Goal creation needs canonical attribution".into())
                 })?;
-                self.owner
+                let result = self
+                    .owner
                     .model_create_goal(self.run, control, call, objective, token_budget)
-                    .await
+                    .await;
+                if result.is_ok()
+                    && let Some(meter) = &self.meter
+                {
+                    meter
+                        .configure_token_quota(token_budget)
+                        .map_err(|e| ToolError::Failed(context.redactor.redact(e.to_string())))?;
+                }
+                result
             }
             Args::Report { report } | Args::Status { report } => {
                 let encoded = serde_json::to_string(&report)

@@ -354,6 +354,7 @@ impl ManagedSessionOwner {
         &self,
         run: Uuid,
         control: Option<crate::tools::goal::GoalControl>,
+        meter: Option<Arc<GoalMeter>>,
     ) -> anyhow::Result<Option<Arc<dyn crate::tools::Tool>>> {
         let shared = self.store.clone();
         let binding = tokio::task::spawn_blocking(move || {
@@ -369,6 +370,7 @@ impl ManagedSessionOwner {
                 run,
                 binding,
                 control,
+                meter,
             }) as Arc<dyn crate::tools::Tool>
         }))
     }

@@ -2486,6 +2486,12 @@ fn owner_root_can_create_active_goal_with_optional_budget_without_replacing() {
         .checkpoint_canonical_at(&guard, run.id, &messages, &Usage::default(), 1100)
         .unwrap();
     let incarnation = Uuid::new_v4();
+    assert_eq!(
+        journal
+            .begin_goal_meter(&guard, run.command_id, incarnation, 1100)
+            .unwrap(),
+        Some((u64::MAX, u64::MAX))
+    );
     journal
         .model_create_goal(
             &guard,

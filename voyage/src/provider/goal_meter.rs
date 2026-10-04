@@ -33,7 +33,7 @@ impl Totals {
 #[derive(Debug)]
 pub struct GoalMeter {
     totals: Mutex<Totals>,
-    token_allowance: u64,
+    token_allowance: std::sync::atomic::AtomicU64,
     time_allowance: Duration,
     started: Instant,
     observer: Option<Arc<dyn Observer>>,
@@ -86,6 +86,28 @@ pub(crate) struct Measurement {
 }
 
 impl GoalMeter {
+    pub(super) fn token_allowance(&self) -> u64 {
+        self.token_allowance
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+    /// Root creation may only tighten the current already-observed meter.
+    pub(crate) fn configure_token_quota(&self, quota: Option<u64>) -> anyhow::Result<()> {
+        let Some(quota) = quota else {
+            return Ok(());
+        };
+        anyhow::ensure!(quota > 0, "explicit token quota must be positive");
+        let totals = self
+            .totals
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Goal meter poisoned"))?;
+        // The explicit creation run belongs to this objective; its existing
+        // observations are charged once, never refunded by quota activation.
+        self.token_allowance
+            .fetch_min(quota, std::sync::atomic::Ordering::AcqRel);
+        drop(totals);
+        Ok(())
+    }
+
     /// Request cancellation at the time limit, then await the same execution
     /// future through cleanup. Never drop work merely because its budget ended.
     pub(crate) async fn finish_with_deadline<T>(
@@ -113,7 +135,7 @@ impl GoalMeter {
             .lock()
             .map_err(|_| anyhow::anyhow!("Goal usage is unavailable"))?;
         anyhow::ensure!(
-            !t.uncertain || self.token_allowance == u64::MAX,
+            !t.uncertain || self.token_allowance() == u64::MAX,
             "Goal usage is incomplete for a configured token quota"
         );
         anyhow::ensure!(!t.cleanup_unobserved(), "Goal child cleanup is unobserved");
@@ -121,7 +143,7 @@ impl GoalMeter {
             t.input
                 .checked_add(t.output)
                 .and_then(|used| used.checked_add(t.reserved))
-                .is_some_and(|used| used < self.token_allowance),
+                .is_some_and(|used| used < self.token_allowance()),
             "Goal token limit reached"
         );
         anyhow::ensure!(!self.remaining_time().is_zero(), "Goal time limit reached");
@@ -149,7 +171,7 @@ impl GoalMeter {
     ) -> Arc<Self> {
         Arc::new(Self {
             totals: Mutex::new(Totals::default()),
-            token_allowance,
+            token_allowance: std::sync::atomic::AtomicU64::new(token_allowance),
             time_allowance,
             started: Instant::now(),
             observer,
@@ -183,17 +205,17 @@ impl GoalMeter {
             .checked_add(t.output)
             .and_then(|used| used.checked_add(t.reserved))
             .ok_or_else(refused)?;
-        if (t.uncertain && self.token_allowance != u64::MAX)
+        if (t.uncertain && self.token_allowance() != u64::MAX)
             || t.cleanup_unobserved()
-            || used >= self.token_allowance
+            || used >= self.token_allowance()
             || self.started.elapsed() >= self.time_allowance
         {
             return Err(refused());
         }
         // This caps requested output. Input size and provider billing are known
         // only after dispatch; this is an observed-usage stop, not a billing cap.
-        let remaining = (self.token_allowance - used).min(u64::from(u32::MAX)) as u32;
-        if self.token_allowance != u64::MAX {
+        let remaining = (self.token_allowance() - used).min(u64::from(u32::MAX)) as u32;
+        if self.token_allowance() != u64::MAX {
             request.max_tokens = Some(request.max_tokens.unwrap_or(remaining).min(remaining));
         }
         t.in_flight = t.in_flight.checked_add(1).ok_or_else(refused)?;

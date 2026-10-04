@@ -48,8 +48,11 @@ without that quota, missing aggregate token telemetry alone does not terminate
 intent. Removing the quota is an explicit owner budget change, not replacement
 of the objective. A successful run does not complete the Goal.
 
-Newly admitted Goal turns install a local provider meter shared across cloned
-child configurations. A private journal observer records each request before
+Newly admitted turns install a local provider meter shared across cloned child
+configurations. Ordinary root-owner conversation is initially unbudgeted, so an
+explicit in-run Goal creation can tighten the same meter without resetting already
+observed usage or rebuilding providers. No token output cap is injected while the
+quota is unset. A private journal observer records each request before
 dispatch and persists cumulative usage before forwarding it to the agent. Request
 IDs, ordered revisions and terminal records prevent reset, reordering, decreasing
 counts and cross-incarnation reuse. Checkpoint failure stops dispatch or delivery;

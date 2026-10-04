@@ -393,7 +393,7 @@ impl Journal {
             ],
         )?;
         tx.execute(
-            "INSERT INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
+            "INSERT OR IGNORE INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
             params![run.command_id.to_string(), incarnation.to_string(), now],
         )?;
         commit(tx, &self.commit_fence)?;

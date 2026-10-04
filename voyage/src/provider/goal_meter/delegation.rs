@@ -93,7 +93,7 @@ impl GoalMeter {
                 return Ok(prior.budget.clone());
             }
             ensure!(
-                (!t.uncertain || self.token_allowance == u64::MAX)
+                (!t.uncertain || self.token_allowance() == u64::MAX)
                     && !t.cleanup_unobserved()
                     && t.allocations.len() < 128,
                 "Goal allocations are unavailable or exhausted"
@@ -103,7 +103,7 @@ impl GoalMeter {
                 .checked_add(t.output)
                 .and_then(|v| v.checked_add(t.reserved))
                 .context("Goal usage overflow")?;
-            let tokens = (self.token_allowance.saturating_sub(used) / 2).min(10_000_000);
+            let tokens = (self.token_allowance().saturating_sub(used) / 2).min(10_000_000);
             ensure!(
                 tokens > 0 && !self.remaining_time().is_zero(),
                 "Goal budget cannot allocate child work"
