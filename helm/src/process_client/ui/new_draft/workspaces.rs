@@ -71,6 +71,14 @@ pub(super) async fn validate_live(client: &Client, saved: &Saved) -> Result<()> 
     let allowed = authorized(client)?;
     let chosen = select(&allowed, &saved.workspace.to_string_lossy())?;
     let metadata = client.request(VesselCommand::Capabilities).await?;
+    if matches!(saved.start, Some(VesselCommand::StartAccount { .. })) {
+        anyhow::ensure!(
+            metadata["features"]
+                .as_array()
+                .is_some_and(|features| features.iter().any(|feature| feature == "account_start")),
+            "This Vessel lacks account_start. Draft retained. Owner: use /update status to review updater readiness; older hosts need an administrator bootstrap. Scoped access cannot update the installation."
+        );
+    }
     let connection = client.managed().context("Managed connection required")?;
     anyhow::ensure!(
         metadata["vessel_id"] == connection.vessel_id.to_string(),
