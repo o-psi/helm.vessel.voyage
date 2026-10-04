@@ -64,3 +64,14 @@ counts only and clears them on control fences. Effects add typed `key`, native
 `select`/`check`, `double_click`, reference-to-reference `drag`, and `history`
 (back/forward/reload). These retain the existing journal, network policy and control
 fences; they do not accept arbitrary evaluation/CDP or retry uncertain outcomes.
+
+Concurrent `css_chunks_v1` reads with the exact same browser, context, page,
+frame, document/control/capture epochs, capture generation, cursor and byte budget
+share one in-flight recorder/CDP producer. At most four distinct producers are
+retained. Each reader checks its own viewer/private authority before and after
+waiting; encoded strings and chunk arrays are immutable. The first producer and
+each caller retain their original deadlines, including the 750 ms browser
+evaluation and 1 s CDP stages. No input is retried. Legacy mutable event arrays
+remain independent. Completed producers are removed rather than cached here.
+A late CDP call remains tracked through its actual session retirement even after
+a caller times out; stop/privacy fencing cannot claim zero pending work early.
