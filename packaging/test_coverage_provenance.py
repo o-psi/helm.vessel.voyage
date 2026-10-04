@@ -47,3 +47,21 @@ class ClosureTests(unittest.TestCase):
                 fingerprint_closure(a, sha(a), nodes)
             with self.assertRaisesRegex(ValueError, 'unknown'):
                 fingerprint_closure(a, sha(a), {})
+
+class AcquisitionTests(unittest.TestCase):
+    def test_identity_acquisition_and_ambiguity(self):
+        from coverage_provenance import acquire_fingerprints
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            a, b = root / 'a', root / 'b'
+            a.mkdir(); b.mkdir()
+            (a / 'lib-a').write_text((1).to_bytes(8, 'little').hex())
+            (b / 'lib-b').write_text((2).to_bytes(8, 'little').hex())
+            (a / 'lib-a.json').write_text(json.dumps({'rustflags': [], 'deps': [[9, 'b', False, 2]]}))
+            (b / 'lib-b.json').write_text(json.dumps({'rustflags': [], 'deps': []}))
+            nodes = acquire_fingerprints(root)
+            self.assertEqual(len(nodes), 2)
+            (b / 'lib-copy').write_text((2).to_bytes(8, 'little').hex())
+            (b / 'lib-copy.json').write_text((b / 'lib-b.json').read_text())
+            with self.assertRaisesRegex(ValueError, 'ambiguous'):
+                acquire_fingerprints(root)

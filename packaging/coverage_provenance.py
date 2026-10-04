@@ -102,3 +102,45 @@ def validate(manifest, evidence, root):
                     require(key in manifest['sources'] and sha(p) == manifest['sources'][key],
                             'unqualified build-script source')
     return sorted(checked)
+
+
+def acquire_fingerprints(directory):
+    """Recover exact Cargo dependency edges from adjacent identity markers.
+
+    Cargo stores a 16-hex fingerprint next to each JSON; dep tuple's last
+    integer is its little-endian u64 identity. Ambiguous identities refuse.
+    All discovered nodes remain evidence, never boolean attestations.
+    """
+    directory = Path(directory)
+    candidates = []
+    for path in sorted(directory.glob('*/*.json')):
+        marker = path.with_suffix('')
+        if not marker.is_file():
+            continue
+        text = marker.read_text().strip()
+        require(re.fullmatch('[0-9a-fA-F]{16}', text) is not None,
+                'unsupported Cargo identity marker')
+        identity = int.from_bytes(bytes.fromhex(text), 'little')
+        data = json.loads(path.read_text())
+        if 'deps' not in data or 'rustflags' not in data:
+            continue
+        candidates.append((path.resolve(), identity, data))
+    require(candidates, 'no Cargo fingerprint producers')
+    nodes = {}
+    for path, identity, data in candidates:
+        edges = []
+        for dep in data['deps']:
+            require(isinstance(dep, list) and len(dep) == 4 and isinstance(dep[3], int),
+                    'unsupported Cargo dependency tuple')
+            matches = [(p, d) for p, i, d in candidates if i == dep[3]]
+            require(len(matches) == 1, 'unknown or ambiguous Cargo producer identity')
+            producer = matches[0][0]
+            edges.append({'cargo_dependency': dep, 'path': str(producer),
+                          'sha256': sha(producer)})
+        nodes[str(path)] = {'sha256': sha(path), 'identity': identity,
+                            'marker': str(path.with_suffix('')),
+                            'marker_sha256': sha(path.with_suffix('')),
+                            'dependencies': edges}
+    for path, node in nodes.items():
+        fingerprint_closure(path, node['sha256'], nodes)
+    return nodes
