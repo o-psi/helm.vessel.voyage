@@ -30,6 +30,7 @@ impl Fixture {
             identity_enrollment_starts: Mutex::new(HashMap::new()),
             assignment_locks: Mutex::new(HashMap::new()),
             lifecycle_locks: Mutex::new(HashMap::new()),
+            suspended_observations: Default::default(),
             registrations: super::super::database::Registrations::new(directory.clone()),
             directory,
         };

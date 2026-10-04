@@ -632,7 +632,16 @@ history, using the current Vessel runtime binary. Conversation summaries label s
 Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
 uses the time-based styling and compact title presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
-serve suspended observations without waking an executor. On the privileged Linux
+serve suspended observations without waking an executor. Ordinary-owner, unscoped suspended
+snapshots are coalesced and retained in a bounded 512-entry cache (at most 128 KiB
+per entry), invalidated by registration, journal/WAL, cleanup marker, explicit
+configuration and workspace availability changes, with a 60-second maximum age.
+Scoped and execution-identity-bound reads always use the authorized helper;
+history and event reads are not snapshot-cache projections. Helm retains
+successful saved hydration even without an event cursor, invalidates it on
+catalogue/owner/selection changes and applies failure backoff in fallback mode.
+Legacy peers without catalogue metadata refresh saved details at most once per
+minute rather than polling the whole retained catalogue every 750 ms. On the privileged Linux
 path, ordinary automatic wake additionally requires same-boot protected successful
 guardian cleanup without a stop request or reason and positive original-UID fenced
 suspension evidence. It rechecks the configured host identity, saved execution

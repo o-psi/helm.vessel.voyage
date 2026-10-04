@@ -6,6 +6,100 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 use voyage_protocol::process::*;
 
+// Only unscoped, ordinary-owner snapshots are reusable. Scoped/privileged
+// requests must pass through Voyage's current grant/identity validation.
+#[derive(Default)]
+pub(super) struct ObservationCache {
+    entries: Mutex<std::collections::HashMap<Uuid, Arc<Mutex<Option<CachedSnapshot>>>>>,
+}
+struct CachedSnapshot {
+    identity: String,
+    response: RuntimeResponse,
+    observed: std::time::Instant,
+}
+
+impl ObservationCache {
+    async fn entry(&self, session: Uuid) -> Arc<Mutex<Option<CachedSnapshot>>> {
+        let mut entries = self.entries.lock().await;
+        // Bounded retention. Never evict an in-flight entry: doing so would
+        // split concurrent callers into two owners of the same hydration.
+        if entries.len() >= 512 && !entries.contains_key(&session) {
+            let evict = entries
+                .iter()
+                .find(|(_, value)| Arc::strong_count(value) == 1)
+                .map(|(id, _)| *id);
+            if let Some(id) = evict {
+                entries.remove(&id);
+            }
+        }
+        entries.entry(session).or_default().clone()
+    }
+}
+
+fn snapshot_identity(directory: &Path, registration: &ProcessRegistration) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let mut identity = serde_json::to_string(registration).ok()?;
+    for name in [
+        "registration.json",
+        "workspace-recreated.json",
+        "stopped.json",
+        "runtime.sock",
+        "journal/journal.sqlite3",
+        "journal/journal.sqlite3-wal",
+        "journal/journal.sqlite3-journal",
+    ] {
+        match std::fs::symlink_metadata(directory.join(name)) {
+            Ok(m) => identity.push_str(&format!(
+                "/{name}:{}:{}:{}:{}:{}:{}",
+                m.ino(),
+                m.len(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.ctime(),
+                m.ctime_nsec()
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                identity.push_str(&format!("/{name}:absent"))
+            }
+            Err(_) => return None,
+        }
+    }
+    if let Some(path) = &registration.config_path {
+        let m = std::fs::symlink_metadata(path).ok()?;
+        identity.push_str(&format!(
+            "/config:{}:{}:{}:{}:{}:{}",
+            m.ino(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec()
+        ));
+    }
+    // Workspace restoration and its checkout guard are snapshot facts too.
+    for path in [
+        registration.workspace.clone(),
+        registration.workspace.join(".git"),
+    ] {
+        match std::fs::symlink_metadata(path) {
+            Ok(m) => identity.push_str(&format!(
+                "/workspace:{}:{}:{}:{}:{}:{}",
+                m.ino(),
+                m.len(),
+                m.mtime(),
+                m.mtime_nsec(),
+                m.ctime(),
+                m.ctime_nsec()
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                identity.push_str("/workspace:absent")
+            }
+            Err(_) => return None,
+        }
+    }
+    Some(identity)
+}
+
 fn browser_may_prepare(command: &RuntimeCommand) -> bool {
     matches!(
         command,
@@ -37,6 +131,34 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        let cacheable = authorization.is_none()
+            && registration.peer_uids.is_none()
+            && matches!(command, RuntimeCommand::Snapshot)
+            && super::recovery::suspended(directory, registration);
+        let entry = if cacheable {
+            Some(
+                self.suspended_observations
+                    .entry(registration.session_id)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let mut cached = match &entry {
+            Some(entry) => Some(entry.lock().await),
+            None => None,
+        };
+        let identity = cacheable
+            .then(|| snapshot_identity(directory, registration))
+            .flatten();
+        if let (Some(cached), Some(identity)) = (&cached, &identity) {
+            if let Some(snapshot) = cached.as_ref().filter(|snapshot| {
+                &snapshot.identity == identity
+                    && snapshot.observed.elapsed() < Duration::from_secs(60)
+            }) {
+                return Ok(snapshot.response.clone());
+            }
+        }
         let response = observe(
             Some(&self.directory),
             directory,
@@ -48,6 +170,22 @@ impl Supervisor {
         #[cfg(target_os = "linux")]
         if registration.peer_uids.is_some() {
             super::database::bound_observer_identity(&self.directory, registration).await?;
+        }
+        if response.error.is_none()
+            && serde_json::to_vec(&response).is_ok_and(|bytes| bytes.len() <= 128 * 1024)
+            && super::recovery::suspended(directory, registration)
+        {
+            if let (Some(cached), Some(identity)) = (&mut cached, identity) {
+                // Opening SQLite may checkpoint its WAL. A changed fingerprint
+                // is deliberately not cached; the next read establishes stability.
+                if snapshot_identity(directory, registration).as_ref() == Some(&identity) {
+                    **cached = Some(CachedSnapshot {
+                        identity,
+                        response: response.clone(),
+                        observed: std::time::Instant::now(),
+                    });
+                }
+            }
         }
         Ok(response)
     }

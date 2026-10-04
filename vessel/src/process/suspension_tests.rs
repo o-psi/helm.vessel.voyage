@@ -290,3 +290,202 @@ sys.stdout.buffer.write(struct.pack('>I',len(payload))+payload)
         );
     }
 }
+
+#[tokio::test]
+async fn suspended_snapshots_coalesce_and_invalidate_without_caching_scoped_reads() {
+    let f = Fixture::new();
+    let supervisor = Arc::new(f.supervisor().await);
+    let r = f.registration();
+    let directory = registry::directory(&f.0, r.session_id);
+    registry::private_directory(&directory).unwrap();
+    let marker = directory.join("stopped.json");
+    let stopped = serde_json::json!({"session_id":r.session_id,"incarnation":r.incarnation,"cleanup_observed":true,"suspended":true});
+    super::super::access::store::save(&marker, &stopped).unwrap();
+    let launches = f.0.join("launches");
+    std::fs::write(&launches, "").unwrap();
+    let source = format!(
+        r#"#!/usr/bin/env python3
+import json, struct, sys, time
+with open({launches:?}, 'a') as log: log.write('observe\n')
+n = struct.unpack('>I', sys.stdin.buffer.read(4))[0]
+r = json.loads(sys.stdin.buffer.read(n))
+time.sleep(0.05)
+v = dict(protocol=1, session_id=r['session_id'], incarnation=r['incarnation'], outcome_unknown=False, resumed_from=None, result={{'revision':1}}, error=None)
+b = json.dumps(v).encode(); sys.stdout.buffer.write(struct.pack('>I', len(b)) + b)
+"#
+    );
+    std::fs::write(&supervisor.binary, source).unwrap();
+    std::fs::set_permissions(&supervisor.binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut readers = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let supervisor = supervisor.clone();
+        let r = r.clone();
+        let directory = directory.clone();
+        readers.spawn(async move {
+            supervisor
+                .observe_current(&directory, &r, RuntimeCommand::Snapshot, None)
+                .await
+                .unwrap()
+        });
+    }
+    while let Some(result) = readers.join_next().await {
+        assert_eq!(result.unwrap().result["revision"], 1);
+    }
+    assert_eq!(
+        std::fs::read_to_string(&launches).unwrap().lines().count(),
+        1
+    );
+    // An atomic lifecycle marker replacement invalidates even identical content.
+    super::super::access::store::save(&marker, &stopped).unwrap();
+    supervisor
+        .observe_current(&directory, &r, RuntimeCommand::Snapshot, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&launches).unwrap().lines().count(),
+        2
+    );
+    let binding = GrantBinding {
+        grant_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        revision: 1,
+    };
+    for _ in 0..2 {
+        supervisor
+            .observe_current(
+                &directory,
+                &r,
+                RuntimeCommand::Snapshot,
+                Some(binding.clone()),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(&launches).unwrap().lines().count(),
+        4
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(marker).unwrap()).unwrap(),
+        stopped
+    );
+}
+
+#[test]
+fn saved_snapshot_fingerprint_detects_journal_and_configuration_replacement() {
+    let f = Fixture::new();
+    let mut r = f.registration();
+    let journal = f.0.join("journal");
+    std::fs::create_dir(&journal).unwrap();
+    r.config_path = Some(f.0.join("config"));
+    std::fs::write(r.config_path.as_ref().unwrap(), "old").unwrap();
+    let original = snapshot_identity(&f.0, &r).unwrap();
+    std::fs::write(journal.join("journal.sqlite3-wal"), "change").unwrap();
+    let changed = snapshot_identity(&f.0, &r).unwrap();
+    assert_ne!(original, changed);
+    std::fs::write(r.config_path.as_ref().unwrap(), "new configuration").unwrap();
+    assert_ne!(changed, snapshot_identity(&f.0, &r).unwrap());
+    r.incarnation = Uuid::new_v4();
+    assert_ne!(original, snapshot_identity(&f.0, &r).unwrap());
+}
+
+#[tokio::test]
+async fn cache_retention_is_bounded_and_does_not_split_inflight_hydration() {
+    let cache = ObservationCache::default();
+    let pinned_id = Uuid::new_v4();
+    let pinned = cache.entry(pinned_id).await;
+    for _ in 0..1024 {
+        drop(cache.entry(Uuid::new_v4()).await);
+    }
+    assert!(cache.entries.lock().await.len() <= 512);
+    assert!(Arc::ptr_eq(&pinned, &cache.entry(pinned_id).await));
+}
+
+// Bounded process-level measurement, isolated from providers and installed
+// services. The peer counts actual observer execs; it is not a real journal cost
+// benchmark and must never be reported as native whole-product qualification.
+#[tokio::test]
+async fn retained_257_two_client_observer_spawn_measurement() {
+    fn child_cpu() -> f64 {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+        assert_eq!(
+            unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, usage.as_mut_ptr()) },
+            0
+        );
+        let usage = unsafe { usage.assume_init() };
+        usage.ru_utime.tv_sec as f64
+            + usage.ru_utime.tv_usec as f64 / 1_000_000.0
+            + usage.ru_stime.tv_sec as f64
+            + usage.ru_stime.tv_usec as f64 / 1_000_000.0
+    }
+    let f = Fixture::new();
+    let supervisor = f.supervisor().await;
+    let launches = f.0.join("launches");
+    std::fs::write(&launches, "").unwrap();
+    let source = format!(
+        r#"#!/usr/bin/env python3
+import json, struct, sys
+with open({launches:?}, 'a') as log: log.write('observe\n')
+n = struct.unpack('>I', sys.stdin.buffer.read(4))[0]; r = json.loads(sys.stdin.buffer.read(n))
+v = dict(protocol=1, session_id=r['session_id'], incarnation=r['incarnation'], outcome_unknown=False, resumed_from=None, result={{'revision':1}}, error=None)
+b = json.dumps(v).encode(); sys.stdout.buffer.write(struct.pack('>I', len(b)) + b)
+"#
+    );
+    std::fs::write(&supervisor.binary, source).unwrap();
+    std::fs::set_permissions(&supervisor.binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut records = Vec::new();
+    for _ in 0..257 {
+        let mut r = f.registration();
+        r.executable = Some(supervisor.binary.clone());
+        let directory = registry::directory(&f.0, r.session_id);
+        registry::private_directory(&directory).unwrap();
+        super::super::access::store::save(&directory.join("stopped.json"), &serde_json::json!({"session_id":r.session_id,"incarnation":r.incarnation,"cleanup_observed":true,"suspended":true})).unwrap();
+        records.push((directory, r));
+    }
+    let cpu = child_cpu();
+    let start = std::time::Instant::now();
+    for _ in 0..2 {
+        for (directory, r) in &records {
+            observe(None, directory, r, RuntimeCommand::Snapshot, None)
+                .await
+                .unwrap();
+        }
+    }
+    let before_cpu = child_cpu() - cpu;
+    let before_elapsed = start.elapsed().as_secs_f64();
+    let before = std::fs::read_to_string(&launches).unwrap().lines().count();
+    assert_eq!(before, 514);
+    let cpu = child_cpu();
+    let start = std::time::Instant::now();
+    for (directory, r) in &records {
+        supervisor
+            .observe_current(directory, r, RuntimeCommand::Snapshot, None)
+            .await
+            .unwrap();
+    }
+    let hydration_cpu = child_cpu() - cpu;
+    let hydration_elapsed = start.elapsed().as_secs_f64();
+    let hydrated = std::fs::read_to_string(&launches).unwrap().lines().count();
+    assert_eq!(hydrated - before, 257);
+    let cpu = child_cpu();
+    let start = std::time::Instant::now();
+    // Four seconds of two clients probing the unchanged 257-entry catalogue.
+    while start.elapsed() < Duration::from_secs(4) {
+        for _ in 0..2 {
+            for (directory, r) in &records {
+                supervisor
+                    .observe_current(directory, r, RuntimeCommand::Snapshot, None)
+                    .await
+                    .unwrap();
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let after_cpu = child_cpu() - cpu;
+    let after_elapsed = start.elapsed().as_secs_f64();
+    let after = std::fs::read_to_string(&launches).unwrap().lines().count() - hydrated;
+    assert_eq!(after, 0);
+    println!(
+        "257-entry synthetic observer measurement: before=514 spawns/{before_elapsed:.3}s child_cpu={before_cpu:.6}s; hydrate=257 spawns/{hydration_elapsed:.3}s child_cpu={hydration_cpu:.6}s; unchanged two-client after={after} spawns/{after_elapsed:.3}s child_cpu={after_cpu:.6}s"
+    );
+}

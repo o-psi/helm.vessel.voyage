@@ -239,3 +239,119 @@ async fn catalogue_watcher_checkpoints_before_hydration_and_recovers_gaps() {
             .is_err()
     );
 }
+
+// The legacy (no catalogue metadata/event stream) path used to observe every
+// saved voyage every 750 ms, twice during its first fallback round.
+#[tokio::test]
+async fn fallback_hydrates_257_saved_voyages_once_even_without_snapshot_cursors() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let entries = (0..257)
+        .map(|_| (Uuid::new_v4(), Uuid::new_v4()))
+        .collect::<Vec<_>>();
+    let snapshots = Arc::new(AtomicUsize::new(0));
+    let count = snapshots.clone();
+    let server = Server::new(move |command| Ok(match command {
+        VesselCommand::Capabilities => json!({"features":[]}),
+        VesselCommand::Catalogue => json!(entries.iter().map(|(session, incarnation)| json!({"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"suspended"})).collect::<Vec<_>>()),
+        VesselCommand::Voyage(request) => {
+            let incarnation = entries.iter().find(|(id,_)| *id == request.session_id).unwrap().1;
+            if matches!(request.command, VoyageCommand::Snapshot) { count.fetch_add(1, Ordering::SeqCst); }
+            json!({"session_id":request.session_id,"incarnation":incarnation,"result":{"session_id":request.session_id,"model":"synthetic","revision":1,"messages":[]}})
+        },
+        _ => json!({}),
+    })).await;
+    let (sender, mut receiver) = mpsc::channel(1024);
+    let drain = tokio::spawn(async move { while receiver.recv().await.is_some() {} });
+    let (_selection, selected) = tokio::sync::watch::channel(None);
+    let job = spawn(server.client.clone(), server.target.route, sender, selected);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while snapshots.load(Ordering::SeqCst) < 257 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    job.abort();
+    let _ = job.await;
+    drain.abort();
+    let _ = drain.await;
+    assert_eq!(snapshots.load(Ordering::SeqCst), 257);
+}
+
+#[tokio::test]
+async fn fallback_observation_failures_obey_backoff_instead_of_double_polling() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let snapshots = Arc::new(AtomicUsize::new(0));
+    let count = snapshots.clone();
+    let server = Server::new(move |command| match command {
+        VesselCommand::Capabilities => Ok(json!({"features":[]})),
+        VesselCommand::Catalogue => Ok(json!([{"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"suspended"}])),
+        VesselCommand::Voyage(request) if matches!(request.command, VoyageCommand::Snapshot) => { count.fetch_add(1, Ordering::SeqCst); Err("unavailable".into()) },
+        _ => Ok(json!({})),
+    }).await;
+    let (sender, mut receiver) = mpsc::channel(32);
+    let drain = tokio::spawn(async move { while receiver.recv().await.is_some() {} });
+    let (_selection, selected) = tokio::sync::watch::channel(None);
+    let job = spawn(server.client.clone(), server.target.route, sender, selected);
+    tokio::time::sleep(Duration::from_millis(1700)).await;
+    job.abort();
+    let _ = job.await;
+    drain.abort();
+    let _ = drain.await;
+    assert_eq!(snapshots.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn fallback_invalidates_saved_hydration_on_rename_and_owner_transition() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let session = Uuid::new_v4();
+    let owners = [Uuid::new_v4(), Uuid::new_v4()];
+    let phase = Arc::new(AtomicUsize::new(0));
+    let current = phase.clone();
+    let snapshots = Arc::new(AtomicUsize::new(0));
+    let count = snapshots.clone();
+    let server = Server::new(move |command| {
+        let stage = current.load(Ordering::SeqCst);
+        let incarnation = owners[usize::from(stage == 2)];
+        Ok(match command {
+            VesselCommand::Capabilities => json!({"features":[]}),
+            VesselCommand::Catalogue => json!([{"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"suspended","name":if stage == 0 {"old"} else {"new"}}]),
+            VesselCommand::Voyage(request) => {
+                if matches!(request.command, VoyageCommand::Snapshot) { count.fetch_add(1, Ordering::SeqCst); }
+                json!({"session_id":session,"incarnation":incarnation,"result":{"session_id":session,"model":"synthetic","revision":stage+1,"messages":[],"observation_cursor":stage+1}})
+            },
+            _ => json!({}),
+        })
+    }).await;
+    let (sender, mut receiver) = mpsc::channel(32);
+    let drain = tokio::spawn(async move { while receiver.recv().await.is_some() {} });
+    let (_selection, selected) = tokio::sync::watch::channel(None);
+    let job = spawn(server.client.clone(), server.target.route, sender, selected);
+    for stage in 0..3 {
+        phase.store(stage, Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while snapshots.load(Ordering::SeqCst) < stage + 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    job.abort();
+    let _ = job.await;
+    drain.abort();
+    let _ = drain.await;
+    assert_eq!(snapshots.load(Ordering::SeqCst), 3);
+}
