@@ -531,6 +531,8 @@ case!(
             fs::read(root().join("data/helm/accounts/registry.json")).unwrap(),
             before
         );
+        fs::remove_file(root().join("helper-request.bin")).unwrap();
+        fs::remove_file(root().join("helper-response.bin")).unwrap();
         unavailable(
             dispatch(&f.request(IdentityHelperOperation::PrepareLaunch {
                 scope: scope(&f.workspace),

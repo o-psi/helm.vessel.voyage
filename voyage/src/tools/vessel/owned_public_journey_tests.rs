@@ -721,7 +721,8 @@ async fn preparation_is_exact_read_and_not_creation_or_resolution() {
     let packet = f.peer.next().await;
     assert_eq!(packet.wire["op"], "prepare_start_settings");
     assert_eq!(packet.wire["binding"], account);
-    assert_eq!(packet.wire["settings"], request["settings"]);
+    assert_eq!(packet.wire["settings"]["max_output_tokens"], 0);
+    assert_eq!(packet.wire["settings"]["reasoning_effort"], Value::Null);
     assert!(packet.wire.get("command_id").is_none());
     packet.ok(json!({"execution_authorized":false,"account":account,
         "workspace":"/destination/work","settings":request["settings"]}));

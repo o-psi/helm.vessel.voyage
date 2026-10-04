@@ -121,6 +121,7 @@ fn ordinary_preview(
 
 /// Single atomic checkpoint contains current scope AND exact command receipts.
 /// Callers hold the Voyage lifecycle lock and supply server-observed authority.
+#[cfg(test)]
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ScopeJournal {
@@ -128,12 +129,14 @@ pub(super) struct ScopeJournal {
     pub selected: Option<voyage_protocol::coordination_scope::ScopeSelection>,
     receipts: std::collections::BTreeMap<uuid::Uuid, ScopeReceipt>,
 }
+#[cfg(test)]
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScopeReceipt {
     selection: voyage_protocol::coordination_scope::ScopeSelection,
     result: Value,
 }
+#[cfg(test)]
 impl ScopeJournal {
     pub(super) fn commit(
         path: &std::path::Path,
@@ -215,8 +218,8 @@ mod scope_tests {
     }
     #[test]
     fn exact_atomic_scope_receipts_survive_all_client_disconnects() {
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("scope.json");
+        let root = super::super::test_support::Fixture::new();
+        let path = root.0.join("scope.json");
         let observed = current();
         let id = Uuid::new_v4();
         let receipt = ScopeJournal::commit(&path, id, observed.clone(), &observed, 1).unwrap();

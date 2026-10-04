@@ -492,11 +492,21 @@ fn input_schema() -> Value {
             branch["properties"]["session_id"]["type"] = json!("string");
         }
     }
+    schema["properties"]["account"]["properties"]["transport"] =
+        json!({"enum":["openai_responses","openai_chat","chatgpt_oauth","xai_oauth","anthropic"]});
+    let discovery_account = schema["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["properties"]["action"]["const"] == "create")
+        .unwrap()["properties"]["account"]
+        .clone();
     for branch in schema["oneOf"].as_array_mut().unwrap() {
         if matches!(
             branch["properties"]["action"]["const"].as_str(),
             Some("account_models" | "prepare")
         ) {
+            branch["properties"]["account"] = discovery_account.clone();
             if branch["properties"]["action"]["const"] == "account_models" {
                 branch["properties"]["account"]["type"] = json!("object");
             }
@@ -891,6 +901,20 @@ async fn perform(
             .await
         }
         Action::Capabilities => t.exchange(VesselCommand::Capabilities).await,
+        Action::Prepare {
+            workspace,
+            settings,
+            account,
+            profile,
+        } => {
+            t.exchange(VesselCommand::PrepareStartSettings {
+                workspace,
+                settings,
+                binding: account,
+                profile,
+            })
+            .await
+        }
         Action::Accounts {
             workspace,
             transport,
