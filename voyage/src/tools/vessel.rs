@@ -160,6 +160,13 @@ enum Action {
         workspace: PathBuf,
         account: voyage_protocol::accounts::AccountBinding,
     },
+    Prepare {
+        workspace: PathBuf,
+        #[serde(default)]
+        settings: voyage_protocol::start_settings::StartSettings,
+        account: Option<voyage_protocol::accounts::AccountBinding>,
+        profile: Option<voyage_protocol::coordination_scope::ProfilePin>,
+    },
     Controls {
         session_id: Uuid,
         run_id: Option<Uuid>,
@@ -351,6 +358,7 @@ fn input_schema() -> Value {
             "wait_ms":{"type":"integer","minimum":0,"maximum":30000},
             "section":{"enum":["models","policy"]},
             "query":{"type":"string","pattern":"\\S","maxLength":4096,"description":"Nonblank; at most 4096 UTF-8 bytes."},
+            "profile":{"type":"object","additionalProperties":false,"required":["profile_id","revision"],"properties":{"profile_id":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":0}}},
             "transport":{"enum":["openai_responses","openai_chat","chatgpt_oauth","xai_oauth","anthropic"]},
             "workspace":{"type":"string"},"config_path":{"type":["string","null"]},
             "settings":create_settings_schema(),"account": {"type":["object","null"],"additionalProperties":false,"required":["account_id","connection_id","identity_generation","connection_revision","transport"],"properties":{
@@ -365,6 +373,11 @@ fn input_schema() -> Value {
         &[
             ("routes", &[], &[]),
             ("capabilities", &[], &[]),
+            (
+                "prepare",
+                &["workspace"],
+                &["settings", "account", "profile"],
+            ),
             ("accounts", &["workspace"], &["transport"]),
             ("profiles", &["workspace"], &[]),
             ("account_defaults", &["workspace"], &[]),
@@ -480,8 +493,13 @@ fn input_schema() -> Value {
         }
     }
     for branch in schema["oneOf"].as_array_mut().unwrap() {
-        if branch["properties"]["action"]["const"] == "account_models" {
-            branch["properties"]["account"]["type"] = json!("object");
+        if matches!(
+            branch["properties"]["action"]["const"].as_str(),
+            Some("account_models" | "prepare")
+        ) {
+            if branch["properties"]["action"]["const"] == "account_models" {
+                branch["properties"]["account"]["type"] = json!("object");
+            }
             branch["properties"]["account"]["properties"]["transport"] = json!({"enum":["openai_responses","openai_chat","chatgpt_oauth","xai_oauth","anthropic"]});
         }
     }
@@ -525,7 +543,8 @@ impl Tool for VesselTool {
             .map_err(|e| invalid(&format!("invalid Vessel action arguments: {e}")))?;
         super::action_schema::reject_extra_fields(&arguments, &action)?;
         match &action {
-            Action::Accounts { workspace, .. }
+            Action::Prepare { workspace, .. }
+            | Action::Accounts { workspace, .. }
             | Action::Profiles { workspace }
             | Action::AccountDefaults { workspace }
             | Action::AccountModels { workspace, .. }

@@ -41,6 +41,7 @@ identity/version and actual route capabilities/rights.
 | Action | Required arguments beyond `action` | Optional arguments |
 | --- | --- | --- |
 | `routes`, `capabilities` | None | `target` |
+| `prepare` | `workspace` | `settings`, `account`, `profile` |
 | `accounts` | `workspace` | `transport` |
 | `profiles`, `account_defaults` | `workspace` | — |
 | `account_models` | `workspace`, `account` | — |
@@ -61,6 +62,25 @@ identity/version and actual route capabilities/rights.
 | `cancel` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision` | — |
 | `rename` | `session_id`, `command_id`, `expected_revision`, `name` | — |
 | `archive`, `restore` | `session_id`, `command_id`, `expected_revision` | — |
+
+### Review before launch
+
+`prepare` uses an exact account binding or a profile pin (`profile_id`, catalogue
+`revision`) and portable `settings` for an absolute destination workspace. Account
+and profile cannot both be selected. The destination rechecks Create (Lifecycle
+for a session grant) and AccountUse before returning its Vessel UUID, canonical
+workspace, exact account and validated portable preferences. Profile preferences
+fill only omitted model/reasoning/tier values; explicit null clears an optional
+preference. Protected installation previews run in a dropped-identity helper,
+never by loading account credentials in the supervisor.
+
+The preview has `execution_authorized: false`: it is not a reservation, consent,
+creation receipt or proof that a future launch will succeed. It writes no frozen
+launch file and makes no inference request. Use the observed preferences and
+binding with `create`; current account/workspace/grant checks still apply. Do not
+resolve an uncertain creation by preparing again; reconcile its original exact
+start identity instead. The preview alone does not pin mutable defaults through
+creation or satisfy the full setup transaction acceptance gate.
 
 ### Target-host setup discovery
 

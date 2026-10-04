@@ -639,6 +639,13 @@ pub enum VesselCommand {
         workspace: PathBuf,
         account: crate::accounts::AccountBinding,
     },
+    /// Read-only validated preference preview; never a creation receipt.
+    PrepareStartSettings {
+        workspace: PathBuf,
+        settings: crate::start_settings::StartSettings,
+        binding: Option<crate::accounts::AccountBinding>,
+        profile: Option<crate::coordination_scope::ProfilePin>,
+    },
     StartSettings {
         command_id: Uuid,
         session_id: Uuid,

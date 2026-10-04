@@ -709,3 +709,24 @@ async fn setup_discovery_uses_exact_scoped_commands_without_launch_or_journal() 
     assert!(!f.journal_root().exists());
     f.finish().await;
 }
+
+#[tokio::test]
+async fn preparation_is_exact_read_and_not_creation_or_resolution() {
+    let mut f = Fixture::new().await;
+    let account = json!({"account_id":Uuid::new_v4(),"connection_id":Uuid::new_v4(),
+        "identity_generation":2,"connection_revision":3,"transport":"anthropic"});
+    let request = json!({"action":"prepare","workspace":"/destination/work",
+        "account":account,"settings":{"max_output_tokens":0,"reasoning_effort":null}});
+    let task = f.start(request.clone());
+    let packet = f.peer.next().await;
+    assert_eq!(packet.wire["op"], "prepare_start_settings");
+    assert_eq!(packet.wire["binding"], account);
+    assert_eq!(packet.wire["settings"], request["settings"]);
+    assert!(packet.wire.get("command_id").is_none());
+    packet.ok(json!({"execution_authorized":false,"account":account,
+        "workspace":"/destination/work","settings":request["settings"]}));
+    let value = done(task).await.unwrap();
+    assert_eq!(value["execution_authorized"], false);
+    assert!(!f.journal_root().exists());
+    f.finish().await;
+}
