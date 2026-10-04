@@ -4,6 +4,11 @@ use anyhow::Result;
 
 pub(super) const COMMANDS: &[(&str, &str, &str)] = &[
     (
+        "update",
+        "Review owner-approved Vessel self-update",
+        "status [UUID] | prepare nightly | approve UUID EXACT_RELEASE_HASH | discard UUID",
+    ),
+    (
         "execution",
         "Review execution identity and administrator authorization",
         "identities | prepare ID REVISION | check | approve | cancel | revoke | review REVIEW_UUID",

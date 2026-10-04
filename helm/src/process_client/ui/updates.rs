@@ -28,7 +28,8 @@ impl App {
             | Update::Event { target, .. }
             | Update::Snapshot { target, .. }
             | Update::Command { target, .. } => Some(target.route),
-            Update::InboxAttention { route, .. }
+            Update::RemoteUpdate { route, .. }
+            | Update::InboxAttention { route, .. }
             | Update::FirstSend { route, .. }
             | Update::Catalogue { route, .. }
             | Update::RouteError { route, .. }
@@ -55,10 +56,15 @@ impl App {
     }
 
     fn apply_update(&mut self, update: Update) {
+        if let Update::RemoteUpdate { result, .. } = update {
+            self.status = result.unwrap_or_else(|error| error);
+            return;
+        }
         for view in self.views.values() {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::RemoteUpdate { .. } => unreachable!(),
             Update::Execution {
                 target,
                 incarnation,

@@ -16,6 +16,10 @@ use voyage_protocol::vessel::{ProcessInfo, VesselEventSubscription, VoyageComman
 mod catalogue_watch;
 
 pub enum Update {
+    RemoteUpdate {
+        route: Route,
+        result: Result<String, String>,
+    },
     Execution {
         target: Target,
         incarnation: uuid::Uuid,

@@ -30,6 +30,7 @@ mod operator_bridge;
 mod paste;
 mod previews;
 mod reconcile;
+mod remote_updates;
 mod routes;
 mod run_controls;
 mod transcript;
