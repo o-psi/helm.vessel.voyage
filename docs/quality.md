@@ -91,6 +91,18 @@ cargo test -p vessel --locked gateway_ipc -j 8
 cargo test -p vessel --locked gateway_route -j 8
 ```
 
+The installer lifecycle journal also has offline ordinary-UID regression checks:
+
+```sh
+cargo test -p voyage-installer --locked system_install::lifecycle::tests -j 8
+```
+
+Retained rollback admission must match the entire candidate installation record,
+not only its archive ID: account facts, effective unit bytes, credential provisioner,
+public origin and activation intent remain pinned. A same-release replacement is
+not evidence that the reviewed transition is still current. These fixtures do not
+mutate accounts or system services and do not qualify native deployment.
+
 These tests do not run a root supervisor or unprivileged network gateway. A
 separate disposable Ubuntu VM test is required for actual peer identities,
 public routing and failure/restart behavior; the exact fixture commands and

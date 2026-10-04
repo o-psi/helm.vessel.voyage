@@ -195,6 +195,13 @@ fn completed(op: &Operation) -> Result<()> {
     );
     Ok(())
 }
+fn retained_candidate_matches(op: &Operation, current: &Record) -> Result<bool> {
+    let Some(candidate) = &op.candidate else {
+        return Ok(false);
+    };
+    Ok(serde_json::to_value(candidate)? == serde_json::to_value(current)?)
+}
+
 fn rollback_eligible(op: &Operation, current: &Record) -> Result<()> {
     completed(op)?;
     ensure!(
@@ -202,10 +209,7 @@ fn rollback_eligible(op: &Operation, current: &Record) -> Result<()> {
             && !op.candidate_start_attempted
             && op.previous.phase == "inactive"
             && current.phase == "inactive"
-            && op
-                .candidate
-                .as_ref()
-                .is_some_and(|r| r.release == current.release),
+            && retained_candidate_matches(op, current)?,
         "rollback refused: candidate may have opened persistent state; schema compatibility review is required"
     );
     Ok(())
@@ -403,10 +407,7 @@ pub(crate) fn run_reviewed(args: &[String], expected: Option<&str>) -> Result<()
                     && op.phase == "complete"
                     && op.previous.phase == "active"
                     && old.record.phase == "active"
-                    && op
-                        .candidate
-                        .as_ref()
-                        .is_some_and(|r| r.release == old.record.release),
+                    && retained_candidate_matches(&op, &old.record)?,
                 "rollback is not a retained completed source transition"
             );
             compatible_manifests(&retained_manifest(&op.previous)?, &old.manifest)?;
@@ -707,6 +708,37 @@ mod tests {
         assert!(completed(&active).is_ok());
         assert!(rollback_eligible(&active, active.candidate.as_ref().unwrap()).is_err());
     }
+    #[test]
+    fn retained_candidate_requires_exact_units_accounts_and_activation_intent() {
+        let op = operation("complete", false);
+        let current = op.candidate.as_ref().unwrap();
+        assert!(retained_candidate_matches(&op, current).unwrap());
+        for field in [
+            "version",
+            "execution_home",
+            "gateway_origin",
+            "credential_unit_sha256",
+            "root_unit",
+            "gateway_unit",
+        ] {
+            let mut changed = serde_json::to_value(current).unwrap();
+            changed[field] = "replaced".into();
+            let changed: Record = serde_json::from_value(changed).unwrap();
+            assert!(!retained_candidate_matches(&op, &changed).unwrap(), "{field}");
+            assert!(rollback_eligible(&op, &changed).is_err(), "{field}");
+        }
+        let mut changed = current.clone();
+        changed.gateway_uid += 1;
+        assert!(rollback_eligible(&op, &changed).is_err());
+        changed = current.clone();
+        changed.start_requested = true;
+        assert!(rollback_eligible(&op, &changed).is_err());
+        let active = operation("complete", true);
+        let mut changed = active.candidate.as_ref().unwrap().clone();
+        changed.gateway_unit.push_str("\nchanged");
+        assert!(!retained_candidate_matches(&active, &changed).unwrap());
+    }
+
     #[test]
     fn journal_rejects_changed_schema_unsafe_inode_and_inconsistent_attempt() {
         let fixture = Fixture::new();
