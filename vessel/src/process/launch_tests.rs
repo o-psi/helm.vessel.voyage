@@ -160,3 +160,62 @@ fn native_root_launch_drops_to_ordinary_user_without_regain() {
         );
     }
 }
+
+#[test]
+fn malformed_reviewed_identity_refuses_before_host_lookup() {
+    let base = host_identity(&std::env::var("USER").unwrap());
+    validate_identity(&base).unwrap();
+    let mut cases = Vec::new();
+    let mut identity = base.clone();
+    identity.identity.id = Uuid::nil();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.account_context.id = Uuid::nil();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.user_name.clear();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.user_name.push('\0');
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from(std::ffi::OsStr::from_bytes(b"/home/fixture\0"));
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from("relative");
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from("/home/../root");
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = vec![identity.gid];
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = vec![u32::MAX, u32::MAX];
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = (1..=65).collect();
+    cases.push(identity);
+    for identity in cases {
+        assert!(
+            validate_identity(&identity)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid configured execution identity")
+        );
+    }
+}
+
+#[test]
+fn reviewed_group_order_is_not_host_authority() {
+    let mut identity = host_identity(&std::env::var("USER").unwrap());
+    identity.supplementary_groups.reverse();
+    validate_identity(&identity).unwrap();
+}
+
+#[test]
+fn disabled_identity_remains_available_for_nonexecuting_host_validation() {
+    let mut identity = host_identity(&std::env::var("USER").unwrap());
+    identity.enabled = false;
+    validate_identity(&identity).unwrap();
+}
