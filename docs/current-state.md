@@ -1262,3 +1262,10 @@ bounded explicit provider-rejection recovery remain distinct. A model-callable r
 durable projection receipts. Both Helm clients expose request-scoped read-only accounting (TUI operator
 header and Web refresh panel); broader transport counter qualification and
 final-source coverage remain pending. See [configuration](configuration.md#working-context-compaction).
+
+Pressure preparation has an explicit `[context_pressure]` token policy for enabled
+capacity, reserve, safety and target occupancy. Absent applicable input counting
+still prevents a pressure trigger; a policy override is not a tokenizer. Model
+compaction optionally pins projection generation and refuses stale projections.
+These follow-up policy/generation changes require their own focused verification;
+prior focused results do not qualify subsequently edited source.

@@ -422,6 +422,7 @@ pub struct Agent {
     system_prompt: String,
     max_tokens: u32,
     context_window: usize,
+    pressure_policy: crate::context::PressurePolicy,
     completion_coordinator: Option<crate::completion::runtime::Coordinator>,
     completion_gate: Option<gate::GateResources>,
     temperature: Option<f32>,
@@ -635,6 +636,7 @@ impl Agent {
             system_prompt,
             max_tokens,
             context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
+            pressure_policy: Default::default(),
             request_context_status: tokio::sync::RwLock::new(serde_json::json!({"scope":"unknown","input_tokens":null,"enabled_capacity":null,"remaining_tokens":null,"generation":0})),
             completion_coordinator: None,
             completion_gate: None,
@@ -761,6 +763,11 @@ impl Agent {
             None,
         )
         .await
+    }
+
+    pub fn with_pressure_policy(mut self, policy: crate::context::PressurePolicy) -> Self {
+        self.pressure_policy = policy;
+        self
     }
 
     pub fn with_context_window(mut self, limit: usize) -> Self {
@@ -1225,6 +1232,10 @@ impl Agent {
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
                 let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, &mut provider_recovery).await;
+                {
+                    let mut status = self.request_context_status.write().await;
+                    status["generation"] = serde_json::json!(working_context.generation);
+                }
                 working_context.request_status = Some(self.request_context_status().await);
                 match result {
                     Ok(provider_attempts::RequestOutcome::Completed(response)) => break *response,
@@ -1450,8 +1461,10 @@ impl Agent {
                             status["scope"] = serde_json::json!("last measured dispatched request; current next request not yet counted");
                             Ok(crate::tools::ToolReport::text(status.to_string()))
                         },
-                        Ok(crate::context::control::Control::Compact { retain, notes }) => {
-                            if let Some(checkpoint) = checkpoint {
+                        Ok(crate::context::control::Control::Compact { retain, notes, generation }) => {
+                            if generation.is_some_and(|g| g != working_context.generation) {
+                                Err(crate::tools::ToolError::Denied("stale projection generation; inspect context status".into()))
+                            } else if let Some(checkpoint) = checkpoint {
                                 let mut next = working_context.clone();
                                 match next.compact(&history, retain) {
                                     Err(_) => Err(crate::tools::ToolError::Failed("projection validation failed".into())),
@@ -1683,14 +1696,15 @@ impl Agent {
         self.check_current_policy()?;
         // Only the adapter can count its final encoding. Bounded failure leaves
         // occupancy unknown; bytes and billing are never a pressure fallback.
-        let pressure = gate::guarded(
+        let mut pressure = gate::guarded(
             tokio::time::timeout(self.context.timeout, self.provider.request_pressure(&request)), cancel,
         ).await?.ok().flatten();
+        if let Some(pressure) = &mut pressure { self.pressure_policy.apply(pressure); }
         *self.request_context_status.write().await = if let Some(pressure) = &pressure {
             serde_json::json!({"scope":"exact outgoing request before dispatch", "model":request.model,
                 "input_tokens":pressure.input_tokens,"enabled_capacity":pressure.enabled_capacity,
                 "remaining_tokens":pressure.remaining(),"reserve_tokens":pressure.reserve_tokens,
-                "safety_tokens":pressure.safety_tokens,"method":pressure.method,"complete":pressure.complete,
+                "target_tokens":self.pressure_policy.target_tokens,"safety_tokens":pressure.safety_tokens,"method":pressure.method,"complete":pressure.complete,
                 "observed_at_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis())})
         } else { serde_json::json!({"scope":"outgoing request count unavailable", "model":request.model,
             "input_tokens":null,"enabled_capacity":null,"remaining_tokens":null,"method":"unknown"}) };
@@ -1700,7 +1714,10 @@ impl Agent {
                 checkpoint.request_accounting(&status)), cancel)
                 .await?.map_err(|_| CheckpointError)??;
         }
-        if let Some(pressure) = pressure && pressure.should_prepare() {
+        if let Some(mut pressure) = pressure && self.pressure_policy.needs_reduction(&pressure) {
+            if let Some(target) = self.pressure_policy.target_tokens {
+                pressure.enabled_capacity = pressure.enabled_capacity.map(|n| n.min(target));
+            }
             return Ok(provider_attempts::RequestOutcome::Pressure(pressure));
         }
         // Compare the actual post-redaction, tool-replay and explicit-limit projection.

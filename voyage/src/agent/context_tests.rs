@@ -626,3 +626,49 @@ async fn measured_irreducible_task_is_preserved_without_unchanged_dispatch() {
         "Preserve mandatory task"
     );
 }
+
+struct StaleControl;
+#[async_trait]
+impl Provider for StaleControl {
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let mut message = Message::new(Role::Assistant, "done");
+        if !request.messages.iter().any(|m| m.role == Role::Tool) {
+            message.tool_calls.push(ToolCall {
+                id: "stale-context".into(),
+                name: "context".into(),
+                arguments: serde_json::json!({"action":"compact","retain":1,"generation":99}),
+            });
+        } else {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.role == Role::Tool
+                        && m.content.contains("stale projection generation"))
+            );
+        }
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn stale_generation_refuses_without_projection_change() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, checkpoint) = fixture(root.path(), false);
+    agent.provider = Box::new(StaleControl);
+    agent
+        .run_checkpointed(
+            vec![],
+            "continue".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.working.lock().unwrap().generation, 0);
+}

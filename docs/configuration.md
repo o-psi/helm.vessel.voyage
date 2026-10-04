@@ -787,3 +787,17 @@ operator forms show optional request scope/count method; Helm Web provides a
 read-only refresh panel. Idle status is explicitly uncounted. Last measured
 request facts are checkpointed with the working projection and tagged as prior
 request data after restart, never presented as next-request occupancy.
+
+### Explicit request-pressure policy
+
+The `[context_pressure]` configuration table accepts `enabled_capacity`,
+`reserve_tokens`, `safety_tokens` and `target_tokens` (all token quantities).
+Absent capacity/reserve stay unknown; a positive enabled-capacity override is an
+operator assertion, not endpoint proof. A provider-reported narrower capacity
+wins. An explicit reserve can fill unknown headroom or increase provider reserve,
+never lower it. Safety margin defaults to zero additional tokens; no universal
+percentage is invented. A positive target below capacity gives a lower target
+occupancy. It changes the trigger, not advertised enabled capacity. Every changed
+projection is recounted; repeated compaction at equal strength is a no-op and
+irreducible pressure stops without redispatch. `context.compact` optionally pins
+`generation`; stale generations refuse without changing canonical history.
