@@ -244,6 +244,17 @@ async fn perform(
     ))
 }
 impl App {
+    pub(super) fn recover_remote_update(&mut self, route: Route) {
+        match restored(self.clients[route].id()) {
+            Ok(Some(_)) => {
+                let _ = self.remote_update_command(route, "/update status");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.status = format!("Retained update recovery refused: {error}");
+            }
+        }
+    }
     pub(super) fn remote_update_command(&mut self, route: Route, text: &str) -> Result<()> {
         ensure!(
             self.clients.available(route),

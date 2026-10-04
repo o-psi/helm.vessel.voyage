@@ -222,7 +222,11 @@ impl App {
                 }
             }
             Update::Catalogue { route, processes } => {
+                let recovering = !self.clients.available(route);
                 self.clients.mark_available(route);
+                if recovering {
+                    self.recover_remote_update(route);
+                }
                 self.vessel_state(route, vessels::ConnectionState::Connected);
                 for process in processes.into_iter().take(256) {
                     if self.new_drafts.contains_key(&process.session_id) {
