@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {constants} from 'node:fs';
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
+import {pathToFileURL,fileURLToPath} from 'node:url';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {performance} from 'node:perf_hooks';
@@ -109,7 +109,8 @@ async function until(predicate,ms=30000){const deadline=performance.now()+ms;whi
 function failureLocations(error){
  // Retain only coordinates in this reviewed source, never error messages,
  // assertion operands, URLs, launcher paths or other stack-frame contents.
- const source=import.meta.url.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const escaped=value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const source='(?:'+escaped(import.meta.url)+'|'+escaped(fileURLToPath(import.meta.url))+')';
  const frame=new RegExp('^\\s+at (?:[^\\n]*\\()?'+source+':([0-9]+):([0-9]+)\\)?$');
  return typeof error?.stack==='string'?error.stack.split('\n').slice(1).flatMap(line=>{
   const match=frame.exec(line);return match?[{source:'host_browser_production.mjs',line:Number(match[1]),column:Number(match[2])}]:[];
@@ -120,7 +121,11 @@ async function nativeFailureDiagnostics(items,states){
   const value={index,running:typeof state.status?.running==='boolean'?state.status.running:null,
    mode:['agent','human','private'].includes(state.status?.mode)?state.status.mode:null,
    overflow:state.overflow===true,operations:state.native_operations.map(operation=>({...operation})),
-   operations_truncated:state.native_operations_truncated,viewer_state:null};
+   operations_truncated:state.native_operations_truncated,viewer_state:null,
+   navigation:state.navigation_diagnostic?{...state.navigation_diagnostic}:null,
+   heartbeat:state.heartbeat_diagnostic?{...state.heartbeat_diagnostic}:null,
+   last_heartbeat_failure:state.heartbeat_failure?{...state.heartbeat_failure}:null,
+   unknown_operations:state.unknown_operations.map(value=>({...value}))};
   for(const key of ['browser_starts','browser_closes','pending_effects','unknown','refused','confirmed'])
    value[key]=Number.isSafeInteger(state[key])&&state[key]>=0?state[key]:null;
   const item=items.find(item=>item.state===state);
@@ -203,7 +208,7 @@ function nativeReceiptClaim(operation){
 }
 function observation(page,session,socketUrl,{native=false}={}){
  const state={status:null,snapshot:null,pending:new Map(),effects:new Set(),native_claims:new Map(),browser_starts:0,browser_closes:0,pending_effects:0,confirmed:0,unknown:0,refused:0,
-  connections:0,hellos:0,duplicate_effect:false,overflow:false,native_operations:[],native_operations_truncated:false,
+  connections:0,hellos:0,duplicate_effect:false,overflow:false,native_operations:[],native_operations_truncated:false,unknown_operations:[],heartbeat_diagnostic:null,heartbeat_failure:null,navigation_diagnostic:null,
   traffic:{sent_bytes:0,received_bytes:0,sent_frames:0,received_frames:0}};
  tracked.set(page,state);
  const accept=(operation,reply)=>{
@@ -226,29 +231,38 @@ function observation(page,session,socketUrl,{native=false}={}){
  if(native){
   const operationDiagnostics=new WeakMap();
   page.on('request',request=>{
-   const url=new URL(request.url());if(url.pathname!=='/operation'||url.hostname!=='127.0.0.1')return;
+   const url=new URL(request.url());if(url.hostname!=='127.0.0.1')return;
+   if(url.pathname==='/alive'){state.heartbeat_diagnostic={observed_at_ms:Date.now(),http_status:null,request_failed:false};return;}
+   if(url.pathname!=='/operation')return;
    const body=request.postData();if(!body||body.length>256*1024){state.overflow=true;return;}
    try{const op=JSON.parse(body);
-    if(state.native_operations.length<16){
+    {
      const diagnostic={action:['status','start','attach','control','detach','close','mirror','input','receipt','dialog'].includes(op.action)?op.action:'other',http_status:null};
      // Exact non-secret command fences let the host correlate an unknown Start
      // with its durable receipt without retaining input or request payloads.
      if(uuid(op.command_id))diagnostic.command_id=op.command_id;
+     if(op.action==='input'&&['history','click','surface_click','fill','select','wheel','upload','frame_element','download','key','text','scroll','resize','dialog','navigate','tab'].includes(op.input?.type))diagnostic.input_type=op.input.type;
+     diagnostic.observed_at_ms=Date.now();
+     if(state.navigation_diagnostic?.stage==='click_go'&&op.action==='input'&&op.input?.type==='navigate'&&uuid(op.command_id))state.navigation_diagnostic.command_id=op.command_id;
      if(op.action==='start'&&uuid(op.incarnation))diagnostic.incarnation=op.incarnation;
      if(op.action==='start'&&Number.isSafeInteger(op.expected_revision)&&op.expected_revision>=0)diagnostic.expected_revision=op.expected_revision;
+     if(state.native_operations.length===16){state.native_operations.shift();state.native_operations_truncated=true;}
      state.native_operations.push(diagnostic);operationDiagnostics.set(request,diagnostic);
-    }else state.native_operations_truncated=true;
+    }
     if(op.action==='start')state.browser_starts++;if(op.action==='close')state.browser_closes++;sent(op);state.pending.set(request,{action:op.action,command_id:op.command_id,claim:nativeReceiptClaim(op)});if(state.pending.size>64)state.overflow=true;}catch{state.overflow=true;}
   });
-  page.on('requestfailed',request=>{const op=state.pending.get(request);if(op&&effect(op.action)){state.unknown++;state.pending_effects--;}state.pending.delete(request);});
+  page.on('requestfailed',request=>{const endpoint=new URL(request.url());if(endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/alive'){state.heartbeat_diagnostic={observed_at_ms:Date.now(),http_status:null,request_failed:true};state.heartbeat_failure={...state.heartbeat_diagnostic};}const op=state.pending.get(request);if(op&&effect(op.action)){state.unknown++;state.pending_effects--;const diagnostic=operationDiagnostics.get(request);if(diagnostic){diagnostic.request_failed=true;state.unknown_operations.push({...diagnostic});if(state.unknown_operations.length>16)state.unknown_operations.shift();}}state.pending.delete(request);});
   page.on('response',async response=>{
    const diagnostic=operationDiagnostics.get(response.request()),status=response.status();
+   const endpoint=new URL(response.url());if(endpoint.hostname==='127.0.0.1'&&endpoint.pathname==='/alive'){state.heartbeat_diagnostic={observed_at_ms:Date.now(),http_status:Number.isInteger(status)&&status>=100&&status<=599?status:null,request_failed:false};if(!response.ok())state.heartbeat_failure={...state.heartbeat_diagnostic};}
    if(diagnostic&&Number.isInteger(status)&&status>=100&&status<=599)diagnostic.http_status=status;
    const op=state.pending.get(response.request());if(!op)return;
-   try{if(!response.ok()){if(effect(op.action))state.unknown++;return;}
+   try{if(!response.ok()){if(effect(op.action)){state.unknown++;const diagnostic=operationDiagnostics.get(response.request());if(diagnostic){state.unknown_operations.push({...diagnostic});if(state.unknown_operations.length>16)state.unknown_operations.shift();}}return;}
     const body=await response.body();if(body.length>4*1024*1024){state.overflow=true;return;}
-    accept(op,JSON.parse(body).result);
-   }catch{if(effect(op.action))state.unknown++;}
+    const reply=JSON.parse(body).result;
+    if(effect(op.action)&&reply?.outcome_unknown===true){const diagnostic=operationDiagnostics.get(response.request());if(diagnostic){state.unknown_operations.push({...diagnostic,reply_outcome_unknown:true});if(state.unknown_operations.length>16)state.unknown_operations.shift();}}
+    accept(op,reply);
+   }catch{if(effect(op.action)){state.unknown++;const diagnostic=operationDiagnostics.get(response.request());if(diagnostic){state.unknown_operations.push({...diagnostic,reply_unavailable:true});if(state.unknown_operations.length>16)state.unknown_operations.shift();}}}
    finally{if(state.pending.delete(response.request())&&effect(op.action))state.pending_effects--;}
   });
  }else page.on('websocket',socket=>{
@@ -352,11 +366,20 @@ const mirror=page=>page.frameLocator('.browser-next-mirror iframe');
 async function ready(page){await until(async()=>!tracked.get(page)?.pending_effects&&
  await page.locator('.browser-next-frames').getAttribute('data-control')==='true');}
 export async function loaded(page,site){await mirror(page).locator(site.ready_selector).filter({visible:true}).first().waitFor({state:'visible'});}
-async function navigate(page,url,marker){await ready(page);const old=tracked.get(page).status.binding.document_epoch;
- await page.getByRole('textbox',{name:'Website address',exact:true}).fill(url);
- await page.getByRole('button',{name:'Go to address',exact:true}).click();
- await until(()=>tracked.get(page).status?.page_url===url&&tracked.get(page).status.binding.document_epoch>old);
- await loaded(page,{ready_selector:marker});await ready(page);}
+async function navigate(page,url,marker){
+ const state=tracked.get(page);
+ const mark=stage=>{const binding=state.status?.binding;state.navigation_diagnostic={
+  ...state.navigation_diagnostic,stage,reviewed_url_sha256:hash(url),
+  document_epoch:Number.isSafeInteger(binding?.document_epoch)?binding.document_epoch:null,
+  page_matches_reviewed:state.status?.page_url===url,pending_effects:state.pending_effects,unknown:state.unknown,refused:state.refused};};
+ state.navigation_diagnostic=null;mark('await_control_before');await ready(page);
+ const old=state.status.binding.document_epoch;
+ mark('fill_address');await page.getByRole('textbox',{name:'Website address',exact:true}).fill(url);
+ mark('click_go');await page.getByRole('button',{name:'Go to address',exact:true}).click();
+ mark('await_url_epoch');await until(()=>state.status?.page_url===url&&state.status.binding.document_epoch>old);
+ mark('await_visible_marker');await loaded(page,{ready_selector:marker});
+ mark('await_control_after');await ready(page);mark('complete');}
+
 async function mode(page,name,state){await page.getByRole('button',{name,exact:true}).click();await viewer(page).waitFor({state:'visible'});
  await page.waitForFunction(state=>document.querySelector('.host-browser-viewer')?.dataset.state===state,state);}
 async function excluded(page){await page.waitForFunction(()=>document.querySelector('.browser-next-mirror iframe')===null);
@@ -853,6 +876,7 @@ report.zero_viewer_idle={...idleEvidence,...idleReconnected,host:idleCost,host_l
   report.status=measurementsComplete&&report.zero_viewer_idle?.observed===true?'passed':'interaction_passed_measurements_incomplete';stage('complete');
  }catch(error){report.status='failed_or_incomplete';report.failure_category=error instanceof assert.AssertionError?'acceptance_not_observed':'bounded_operation_failed';
   report.failure_locations=failureLocations(error);
+  for(const state of nativeStates){if(state.navigation_diagnostic)Object.assign(state.navigation_diagnostic,{failure_observed_at_ms:Date.now(),pending_effects:state.pending_effects,unknown:state.unknown,refused:state.refused});}
   report.native_failure_diagnostics=await nativeFailureDiagnostics(native,nativeStates);
  }finally{
   report.cleanup.close_attempted=[...attempted];report.cleanup.remote_cleanup_unresolved=report.cleanup.host?.sessions?.every(s=>s.complete)!==true;
