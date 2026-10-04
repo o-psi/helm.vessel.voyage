@@ -188,14 +188,17 @@ impl Manifest {
             }
         }
         let arch = std::env::consts::ARCH;
+        #[cfg(target_os = "linux")]
+        let accepted = vec![
+            format!("linux-{arch}"),
+            format!("{arch}-unknown-linux-gnu"),
+            format!("{arch}-unknown-linux-musl"),
+        ];
+        #[cfg(target_os = "macos")]
+        let accepted = vec![format!("macos-{arch}"), format!("{arch}-apple-darwin")];
         ensure!(
-            [
-                format!("linux-{arch}"),
-                format!("{arch}-unknown-linux-gnu"),
-                format!("{arch}-unknown-linux-musl")
-            ]
-            .contains(&self.target),
-            "Release target does not match this Linux host"
+            accepted.contains(&self.target),
+            "Release target does not match this host"
         );
         ensure!(
             self.binaries

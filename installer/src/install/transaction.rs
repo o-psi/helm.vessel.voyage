@@ -18,7 +18,13 @@ pub fn install(options: Options) -> Result<Report> {
     files::private_directory(&l.root)?;
     let _lock = files::lock(&l.root.join("lock"))?;
     let mut j = l.journal()?;
+    #[cfg(target_os = "linux")]
     recover(&l, &mut j)?;
+    #[cfg(target_os = "macos")]
+    ensure!(
+        j.pending.is_none(),
+        "Unresolved native installation receipt; inspect before retry"
+    );
     validate(&l, &j, options.replace_existing)?;
     let report = l.report(&id, &manifest.version, &j)?;
     files::directory(&l.root.join("releases"))?;
@@ -30,8 +36,12 @@ pub fn install(options: Options) -> Result<Report> {
     Ok(report)
 }
 pub fn rollback(dry_run: bool) -> Result<Report> {
-    rollback_inner(dry_run, None)
+    #[cfg(target_os = "linux")]
+    return rollback_inner(dry_run, None);
+    #[cfg(target_os = "macos")]
+    return rollback_native(dry_run);
 }
+#[cfg(target_os = "linux")]
 pub(super) fn rollback_restored_legacy(
     guard: &crate::legacy::Guard,
     expected_current: &str,
@@ -39,6 +49,7 @@ pub(super) fn rollback_restored_legacy(
 ) -> Result<Report> {
     rollback_inner(false, Some((guard, expected_current, expected_previous)))
 }
+#[cfg(target_os = "linux")]
 fn rollback_inner(
     dry_run: bool,
     restored: Option<(&crate::legacy::Guard, &str, &str)>,
@@ -90,6 +101,7 @@ fn rollback_inner(
     publish(&l, &mut j, &id)?;
     Ok(report)
 }
+#[cfg(target_os = "linux")]
 fn legacy_rollback_admission(manifest: &Manifest, staging: &std::path::Path) -> Result<()> {
     if manifest.update_compatibility.is_none()
         && manifest.version.trim_start_matches('v') == "1.0.2"
@@ -174,5 +186,33 @@ fn recover(l: &Layout, j: &mut Journal) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests;
+
+#[cfg(target_os = "macos")]
+fn rollback_native(dry_run: bool) -> Result<Report> {
+    let l = Layout::get()?;
+    if !dry_run {
+        files::private_directory(&l.root)?;
+    }
+    let _lock = if dry_run {
+        None
+    } else {
+        Some(files::lock(&l.root.join("lock"))?)
+    };
+    let mut j = l.journal()?;
+    ensure!(
+        j.pending.is_none(),
+        "Unresolved installation blocks rollback; inspect pending receipt"
+    );
+    let id = j.previous.clone().context("No previous verified release")?;
+    let manifest = l.verify(&id)?;
+    validate(&l, &j, false)?;
+    let report = l.report(&id, &manifest.version, &j)?;
+    if !dry_run {
+        j.pending = Some(id.clone());
+        l.save(&j)?;
+        publish(&l, &mut j, &id)?;
+    }
+    Ok(report)
+}

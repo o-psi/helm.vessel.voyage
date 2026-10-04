@@ -6,6 +6,15 @@ use std::{
     path::{Component, Path},
 };
 
+#[cfg(target_os = "linux")]
+const EXCHANGE: u32 = libc::RENAME_EXCHANGE;
+#[cfg(target_os = "linux")]
+const NOREPLACE: u32 = libc::RENAME_NOREPLACE;
+#[cfg(target_os = "macos")]
+const EXCHANGE: u32 = libc::RENAME_SWAP;
+#[cfg(target_os = "macos")]
+const NOREPLACE: u32 = libc::RENAME_EXCL;
+
 pub fn check_path(path: &Path, uid: u32) -> Result<()> {
     if !path.is_absolute()
         || path
@@ -71,19 +80,19 @@ pub(crate) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Res
     output.write_all(content.as_bytes())?;
     output.sync_all()?;
     if let Some(expected) = expected {
-        rename(&temporary, path, libc::RENAME_EXCHANGE)?;
+        rename(&temporary, path, EXCHANGE)?;
         let displaced = read(&temporary);
         if displaced.as_deref().ok() != Some(expected) {
             // Restore the displaced user edit. Keep the other inode as evidence,
             // including any edit made concurrently after our initial exchange.
-            rename(&temporary, path, libc::RENAME_EXCHANGE)?;
+            rename(&temporary, path, EXCHANGE)?;
             File::open(parent)?.sync_all()?;
             bail!(
                 "Service unit changed concurrently; restored its contents and retained {}",
                 temporary.display()
             );
         }
-    } else if let Err(error) = rename(&temporary, path, libc::RENAME_NOREPLACE) {
+    } else if let Err(error) = rename(&temporary, path, NOREPLACE) {
         let _ = fs::remove_file(&temporary);
         return Err(error.context("Service unit appeared concurrently; refusing replacement"));
     }
@@ -93,9 +102,9 @@ pub(crate) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Res
 pub(crate) fn remove_reviewed(path: &Path, expected: &str) -> Result<()> {
     let parent = path.parent().context("Unit path has no parent")?;
     let backup = temporary(parent, "removed")?;
-    rename(path, &backup, libc::RENAME_NOREPLACE)?;
+    rename(path, &backup, NOREPLACE)?;
     if read(&backup)?.as_str() != expected {
-        let restored = rename(&backup, path, libc::RENAME_NOREPLACE);
+        let restored = rename(&backup, path, NOREPLACE);
         bail!(
             "Service unit changed concurrently; preserved {} (restoration: {})",
             backup.display(),
@@ -128,6 +137,7 @@ fn read(path: &Path) -> Result<String> {
     file.take(16385).read_to_string(&mut value)?;
     Ok(value)
 }
+#[cfg(target_os = "linux")]
 fn rename(from: &Path, to: &Path, flags: u32) -> Result<()> {
     let from = std::ffi::CString::new(from.as_os_str().as_encoded_bytes())?;
     let to = std::ffi::CString::new(to.as_os_str().as_encoded_bytes())?;
@@ -146,6 +156,16 @@ fn rename(from: &Path, to: &Path, flags: u32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[path = "files_tests.rs"]
 mod tests;
+
+#[cfg(target_os = "macos")]
+fn rename(from: &Path, to: &Path, flags: u32) -> Result<()> {
+    let from = std::ffi::CString::new(from.as_os_str().as_encoded_bytes())?;
+    let to = std::ffi::CString::new(to.as_os_str().as_encoded_bytes())?;
+    if unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), flags) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}

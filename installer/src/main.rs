@@ -144,14 +144,26 @@ fn run() -> Result<bool> {
     }
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), options.start, false) {
-        if report.changed && report.current_release.is_some() {
-            install::rollback(false)
-                .context("service configuration failed and binary rollback also failed")?;
-            return Err(
-                error.context("service configuration failed; previous binary release restored")
-            );
+        #[cfg(target_os = "macos")]
+        {
+            // Registration/readiness failure can follow candidate state access.
+            // Never select older binaries over possibly migrated storage blindly.
+            if let Some(source) = options.prepared.as_mut() {
+                source.retain();
+            }
+            return Err(error.context("Native activation uncertain; release and source retained. Inspect launchd/state before rollback"));
         }
-        return Err(error.context("binaries installed; service configuration failed"));
+        #[cfg(not(target_os = "macos"))]
+        {
+            if report.changed && report.current_release.is_some() {
+                install::rollback(false)
+                    .context("service configuration failed and binary rollback also failed")?;
+                return Err(
+                    error.context("service configuration failed; previous binary release restored")
+                );
+            }
+            return Err(error.context("binaries installed; service configuration failed"));
+        }
     }
     println!(
         "{} complete: {}",

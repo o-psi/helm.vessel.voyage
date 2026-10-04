@@ -1,18 +1,20 @@
+#[allow(dead_code)]
+pub(crate) mod native_receipt;
 use anyhow::Result;
 use std::path::PathBuf;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod files;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod layout;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod links;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod release;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod status;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod transaction;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod version;
 
 pub struct Options {
@@ -29,22 +31,22 @@ pub struct Report {
     pub actions: Vec<String>,
 }
 pub fn run(options: Options) -> Result<Report> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         transaction::install(options)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = options;
         anyhow::bail!("Installation is currently supported on Linux")
     }
 }
 pub fn rollback(dry_run: bool) -> Result<Report> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         transaction::rollback(dry_run)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = dry_run;
         anyhow::bail!("Installation is currently supported on Linux")
@@ -53,11 +55,11 @@ pub fn rollback(dry_run: bool) -> Result<Report> {
 
 /// Hold across binary publication, service activation and any compensating rollback.
 pub struct OperationLock {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     _file: std::fs::File,
 }
 pub fn operation_lock() -> Result<OperationLock> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let layout = layout::Layout::get()?;
         files::private_directory(&layout.root)?;
@@ -65,18 +67,18 @@ pub fn operation_lock() -> Result<OperationLock> {
             _file: files::lock(&layout.root.join("operation.lock"))?,
         })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         anyhow::bail!("Installation is currently supported on Linux")
     }
 }
 
 pub fn status() -> Result<Vec<String>> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         status::inspect()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         anyhow::bail!("Installation inspection is currently supported on Linux")
     }

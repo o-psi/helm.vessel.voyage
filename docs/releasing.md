@@ -113,8 +113,11 @@ observed cleanup. Preserve independent Voyage ownership and never claim a dead
 process survived a restart. Linux packaging fixtures, cross-compilation and a
 hosted green build are not native passes. Verify the downloaded archive and
 checksum, exact source/version identity and browser inventory separately. Native
-bootstrap acquisition and service lifecycle remain unimplemented gates, not
-features provided by the archive helper. Stable release publication is out of
+bootstrap acquisition and complete service lifecycle remain acceptance gates, not
+features provided by the archive helper. The macOS source path uses user launchd
+and versioned Unix installation, but is not supported until native compilation,
+security, upgrade compensation and lifecycle evidence pass. Windows native
+service hosting and transactional installation remain implementation gates. Stable release publication is out of
 scope. Native public publication must remain blocked until #363 acceptance is
 actually met.
 

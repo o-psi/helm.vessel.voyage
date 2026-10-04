@@ -1582,3 +1582,18 @@ and browser hashes, exact source identity, invalid inputs and overwrite refusal.
 Native build candidates remain disabled in `nightly.yml`; hosted automation stays
 build-only. Actual native lifecycle/security checks and downloaded public archive
 verification remain mandatory gates in #363, independent of these fixtures.
+
+### Native source contract fixtures (#363)
+
+After acquiring the exclusive shared build slot, run:
+
+```sh
+RUSTC=/home/helm/.cargo/bin/rustc cargo test -p voyage-installer --locked native_receipt -- --nocapture
+RUSTC=/home/helm/.cargo/bin/rustc cargo test -p voyage-installer --locked service::launchd::tests -- --nocapture
+```
+
+Use the host's actual toolchain path instead of the example when different.
+These Linux/source tests exercise receipt admission and launchd rendering only;
+they do not execute launchd, SCM or native installation. Native activation refuses
+while Vessel's process supervisor remains Linux-only. Rust source/test changes
+also require the centrally coordinated final workspace coverage measurement.

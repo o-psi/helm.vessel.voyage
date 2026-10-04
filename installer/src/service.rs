@@ -2,8 +2,11 @@ use anyhow::{Result, bail};
 
 #[cfg(target_os = "linux")]
 pub(crate) mod command;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) mod files;
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+#[allow(dead_code)]
+mod launchd;
 #[cfg(target_os = "linux")]
 mod lifecycle;
 #[cfg(target_os = "linux")]
@@ -19,7 +22,9 @@ pub fn manage(command: &str, args: &[String]) -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     return lifecycle::manage(command);
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return launchd::manage(command);
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = command;
         bail!("Service management is supported only on Linux with systemd user services")
@@ -34,11 +39,19 @@ pub fn preview(bin: &std::path::Path, start: bool) -> Result<String> {
 pub fn configure(bin: &std::path::Path, start: bool, dry_run: bool) -> Result<()> {
     systemd::configure(bin, start, dry_run)
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn preview(bin: &std::path::Path, start: bool) -> Result<String> {
+    launchd::preview(bin, start)
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn preview(_bin: &std::path::Path, _start: bool) -> Result<String> {
     bail!("Service management requires Linux systemd user services")
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+pub fn configure(bin: &std::path::Path, start: bool, dry_run: bool) -> Result<()> {
+    launchd::configure(bin, start, dry_run)
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn configure(_bin: &std::path::Path, _start: bool, _dry_run: bool) -> Result<()> {
     bail!("Service management requires Linux systemd user services")
 }
