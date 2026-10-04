@@ -199,6 +199,13 @@ impl Provider for AnthropicProvider {
                     ProviderError::InvalidResponse("Anthropic model omitted id".into())
                 })?;
                 let mut model = ModelInfo::minimal(id);
+                model.context_capacity = Some(super::ContextCapacity {
+                    default_tokens: item.get("context_window").and_then(Value::as_u64).filter(|n| *n > 0),
+                    maximum_tokens: item.get("max_context_window").and_then(Value::as_u64).filter(|n| *n > 0),
+                    enabled_tokens: None, provenance: "model-list advertisement; retrieve exact model before use".into(),
+                    observed_at_ms: super::catalog::now_ms(), model: id.into(), transport: "anthropic".into(),
+                    account_applicability: "executing account and endpoint only".into(),
+                });
                 model.input_modalities = super::multimodal::discovered_modalities(item)?;
                 model.display_name =
                     super::catalog::optional_text(item, "display_name", id)?.to_owned();
