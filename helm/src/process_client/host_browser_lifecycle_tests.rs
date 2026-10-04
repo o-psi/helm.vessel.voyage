@@ -540,13 +540,15 @@ async fn mirror_refusal_retains_viewer_and_current_bound_private_control() {
     let task = live.submit(&Op::Mirror {
         binding: binding.clone(),
         since: 7,
+        format: None,
     });
     let (id, op) = live.command().await;
     assert_eq!(
         op,
         Op::Mirror {
             binding: binding.clone(),
-            since: 7
+            since: 7,
+            format: None,
         }
     );
     live.peer
@@ -796,6 +798,7 @@ async fn invalid_live_intents_and_foreign_owner_never_reach_the_bound_socket() {
         Op::Mirror {
             binding: foreign,
             since: 0,
+            format: None,
         },
         Op::Start {
             command_id: Uuid::new_v4(),

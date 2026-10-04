@@ -282,7 +282,15 @@ async fn unknown_read_only_mirror_failure_does_not_authorize_replay_or_poison_un
     let binding = current_binding(&a);
     let a = Arc::new(a);
     let worker = a.clone();
-    let task = tokio::spawn(async move { worker.exchange(Op::Mirror { binding, since: 0 }).await });
+    let task = tokio::spawn(async move {
+        worker
+            .exchange(Op::Mirror {
+                binding,
+                since: 0,
+                format: None,
+            })
+            .await
+    });
     let (id, _) = peer.command().await;
     send(
         &mut peer.socket,
@@ -340,7 +348,15 @@ async fn stale_binding_refusal_occurs_before_transport_and_preserves_current_own
     let owner = *a.owner.lock().unwrap();
     let mut binding = current_binding(&a);
     binding.incarnation = Uuid::new_v4();
-    assert!(a.exchange(Op::Mirror { binding, since: 0 }).await.is_err());
+    assert!(
+        a.exchange(Op::Mirror {
+            binding,
+            since: 0,
+            format: None
+        })
+        .await
+        .is_err()
+    );
     assert_eq!(*a.owner.lock().unwrap(), owner);
     assert!(!a.stop.is_cancelled());
     assert!(
