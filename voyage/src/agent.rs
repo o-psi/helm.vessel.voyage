@@ -1465,6 +1465,12 @@ impl Agent {
                             if generation.is_some_and(|g| g != working_context.generation) {
                                 Err(crate::tools::ToolError::Denied("stale projection generation; inspect context status".into()))
                             } else if let Some(checkpoint) = checkpoint {
+                                // Count complete groups only: the triggering control result
+                                // has not yet been recorded. This comparison scope ends before
+                                // the pending assistant/tool group, not the next dispatch.
+                                let count_history = &history[..history.len().saturating_sub(1)];
+                                let before = self.measure_projection(count_history, &working_context,
+                                    &active_model, workspace.as_deref(), &extension_guidance, &cancel).await?;
                                 let mut next = working_context.clone();
                                 match next.compact(&history, retain) {
                                     Err(_) => Err(crate::tools::ToolError::Failed("projection validation failed".into())),
@@ -1472,11 +1478,17 @@ impl Agent {
                                         gate::guarded(tokio::time::timeout(context.timeout,
                                             checkpoint.save_working_context(&next)), &cancel)
                                             .await?.map_err(|_| CheckpointError)??;
+                                        let after = self.measure_projection(count_history, &next,
+                                            &active_model, workspace.as_deref(), &extension_guidance, &cancel).await?;
                                         working_context = next;
                                         Ok(crate::tools::ToolReport::text(serde_json::json!({
                                             "status":if changed > 0 {"applied"} else {"no_op"},
                                             "generation":working_context.generation,"changed_messages":changed,
-                                            "before_tokens":null,"after_tokens":null,
+                                            "before_tokens":before.as_ref().filter(|p| p.complete).and_then(|p| p.input_tokens),
+                                            "after_tokens":after.as_ref().filter(|p| p.complete).and_then(|p| p.input_tokens),
+                                            "count_scope":"completed canonical prefix before triggering control group; not next-request occupancy",
+                                            "before_method":before.as_ref().map(|p| p.method.as_str()),
+                                            "after_method":after.as_ref().map(|p| p.method.as_str()),
                                             "notes":notes,"notes_authority":"model-authored untrusted working data",
                                             "canonical_history":"retained"
                                         }).to_string()))
@@ -1611,6 +1623,26 @@ impl Agent {
         }
         self.sink.emit(AgentEvent::AssistantTextDelta(text)).await;
         Ok(())
+    }
+
+    /// Read-only provider accounting comparison, with the same redaction/replay
+    /// rules. No tool is dispatched and no prior request usage is reused.
+    async fn measure_projection(
+        &self, history: &[Message], working: &crate::context::WorkingContext,
+        model: &str, workspace: Option<&str>, extensions: &str, cancel: &CancellationToken,
+    ) -> Result<Option<crate::context::RequestPressure>, AgentError> {
+        let mut messages = working.project(history).map_err(|_| CheckpointError)?;
+        messages.insert(0, Message::new(crate::model::Role::System,
+            self.effective_system_prompt(workspace, extensions)));
+        let mut request = ModelRequest { model:model.into(),messages,tools:self.tool_inventory(),
+            temperature:self.temperature,reasoning_effort:self.reasoning_effort.clone(),
+            service_tier:self.service_tier.clone(),max_tokens:(self.max_tokens>0).then_some(self.max_tokens) };
+        for message in &mut request.messages { crate::provider::redact_message(message,&self.context.redactor)?; }
+        for tool in &mut request.tools { crate::provider::redact_tool_definition(tool,&self.context.redactor)?; }
+        tool_replay::project_interrupted_calls(&mut request.messages);
+        self.check_current_policy()?;
+        Ok(gate::guarded(tokio::time::timeout(self.context.timeout,
+            self.provider.request_pressure(&request)),cancel).await?.ok().flatten())
     }
 
     async fn stream_with_retry(

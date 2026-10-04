@@ -473,6 +473,19 @@ async fn pressure_prepares_after_effect_without_replaying_it() {
 struct ControlProvider(AtomicUsize);
 #[async_trait]
 impl Provider for ControlProvider {
+    async fn request_pressure(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<crate::context::RequestPressure> {
+        Some(crate::context::RequestPressure {
+            enabled_capacity: Some(10000),
+            input_tokens: Some(request.messages.len() as u64 * 10),
+            complete: true,
+            method: "offline message-framing oracle".into(),
+            reserve_tokens: Some(100),
+            safety_tokens: 0,
+        })
+    }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         let step = self.0.fetch_add(1, Ordering::SeqCst);
         let mut message = Message::new(Role::Assistant, "continued");
@@ -496,10 +509,17 @@ impl Provider for ControlProvider {
             let receipt: serde_json::Value = serde_json::from_str(&receipts[0].content).unwrap();
             assert_eq!(receipt["status"], "no_op");
             assert_eq!(receipt["generation"], 0);
-            assert!(receipt["before_tokens"].is_null());
+            assert_eq!(receipt["before_tokens"], receipt["after_tokens"]);
+            assert!(receipt["before_tokens"].as_u64().is_some());
+            assert!(
+                receipt["count_scope"]
+                    .as_str()
+                    .unwrap()
+                    .contains("not next-request")
+            );
             assert_eq!(receipt["notes"], "boundary");
             let status: serde_json::Value = serde_json::from_str(&receipts[1].content).unwrap();
-            assert!(status["input_tokens"].is_null());
+            assert!(status["input_tokens"].as_u64().is_some());
         }
         Ok(ModelResponse {
             message,

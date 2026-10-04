@@ -801,3 +801,11 @@ occupancy. It changes the trigger, not advertised enabled capacity. Every change
 projection is recounted; repeated compaction at equal strength is a no-op and
 irreducible pressure stops without redispatch. `context.compact` optionally pins
 `generation`; stale generations refuse without changing canonical history.
+
+Model compaction receipts measure before/after input when an applicable provider
+counter is available. The comparison uses the completed canonical prefix before
+the triggering control group (not a malformed half-group), with runtime schemas,
+instructions, redaction and replay projection. The receipt labels this scope and
+both count methods; it is not the occupancy of the next request, which additionally
+contains the control receipt and fresh runtime state and is counted independently.
+Counter failure yields null rather than reusing billing or prior request usage.
