@@ -1233,6 +1233,7 @@ os._exit(0)
         identity_enrollment_starts: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         assignment_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         lifecycle_locks: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+        suspended_observations: Default::default(),
         registrations: database::Registrations::new(control.clone()),
     };
     let supervisor = new_supervisor();

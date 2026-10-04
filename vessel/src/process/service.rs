@@ -34,6 +34,7 @@ pub(super) struct Supervisor {
         Mutex<HashMap<Uuid, tokio::sync::watch::Receiver<super::identity_enrollment::Started>>>,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
+    pub(super) suspended_observations: super::suspension::ObservationCache,
     pub(super) registrations: super::database::Registrations,
 }
 
@@ -114,6 +115,7 @@ pub async fn serve_configured(
         registrations: super::database::Registrations::new(directory.clone()),
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
+        suspended_observations: Default::default(),
     });
     #[cfg(target_os = "linux")]
     let mut scope_authority = super::scope_authority::start(&directory)?;
