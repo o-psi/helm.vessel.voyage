@@ -39,6 +39,8 @@ def fingerprint_closure(path, expected_sha, nodes, visiting=None, done=None):
     require(sha(Path(path)) == expected_sha, 'dependency fingerprint changed')
     node = nodes.get(path)
     require(node is not None, 'unknown fingerprint producer')
+    if 'marker' in node:
+        require(sha(Path(node['marker'])) == node['marker_sha256'], 'producer identity marker changed')
     data = json.loads(Path(path).read_text())
     require(isinstance(data.get('deps'), list) and 'rustflags' in data,
             'unsupported Cargo fingerprint')
@@ -144,3 +146,19 @@ def acquire_fingerprints(directory):
     for path, node in nodes.items():
         fingerprint_closure(path, node['sha256'], nodes)
     return nodes
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fingerprint-directory', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    args = parser.parse_args()
+    nodes = acquire_fingerprints(args.fingerprint_directory)
+    with args.output.open('x') as output:
+        json.dump({'fingerprints': nodes}, output, indent=2, sort_keys=True)
+        output.write('\n')
+
+
+if __name__ == '__main__':
+    main()

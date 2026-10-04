@@ -164,3 +164,31 @@ Duplicate source files within a per-object export now refuse; repeated files
 across distinct objects are expected generic instantiations, not automatically
 foreign maps. Compare function/region inventories in the full union against the
 current compiler set and retained prior full report, investigating counter loss.
+
+### Read-only producer acquisition command
+
+After the supervisor's frozen-source instrumented compilation, acquire retained
+Cargo producer identity evidence without another Cargo invocation:
+
+```sh
+python3 packaging/coverage_provenance.py \
+  --fingerprint-directory "$CARGO_TARGET_DIR/debug/.fingerprint" \
+  --output "$evidence/fingerprint-producers.json"
+```
+
+The output is exclusively created. Unknown/ambiguous dependency fingerprint
+identities and cycles refuse; marker and JSON hashes are retained and revalidated.
+This reads Cargo's retained output, not a dependency cache-cleaning operation.
+Scope acquisition to the actual compiler-artifact set before qualification: a
+shared directory may contain historical producers with colliding identities,
+which the conservative acquisition refuses rather than guessing.
+
+The command is currently a **producer graph collector**, not complete executable
+input evidence acquisition. `export --input-provenance` additionally needs an
+`objects` record for each selected executable: exact object hash, matching
+compiler dep-info path/hash and fingerprint path/hash. These bindings must come
+from current compiler artifact/invocation evidence, not filename guesses.
+Generated, ignored or external dep-info inputs still refuse. Registry lock and
+configuration qualification and automatic object/producer binding remain
+unfinished acceptance gates. Do not use the collector output alone to claim a
+passing workspace export or native source-switch qualification.
