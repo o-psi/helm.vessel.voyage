@@ -119,7 +119,7 @@ fn parse(text: &str, state: &GoalSnapshot) -> Result<Option<GoalAction>> {
             };
             ensure!(
                 limits.valid(),
-                "Limits: runs 1–1000, tokens 1–10000000, seconds 1–86400, no-progress turns 1–10"
+                "Optional quotas: zero means unset; runs ≤1000, tokens ≤10000000, seconds ≤86400, no-progress turns ≤10"
             );
             GoalAction::Edit {
                 goal_id: goal.id,

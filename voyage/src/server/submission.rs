@@ -216,7 +216,7 @@ pub(super) async fn submit(
     };
     // Ordinary owner conversation can explicitly create a Goal. Delegated,
     // coordinated and operator work never acquires human Goal control.
-    config.goal_control = if authorization.owner_connection
+    config.goal_control = if (authorization.owner_connection || authorization.grant.is_none())
         && budget.is_none()
         && coordination.is_none()
         && operator.is_none()
