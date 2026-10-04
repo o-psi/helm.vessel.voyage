@@ -39,7 +39,7 @@ impl std::fmt::Debug for AuthoritySource {
     }
 }
 impl AuthoritySource {
-    fn current(&self) -> Result<ProcessGrant> {
+    pub(super) fn current(&self) -> Result<ProcessGrant> {
         match self {
             Self::UserFile {
                 path,

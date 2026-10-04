@@ -115,7 +115,9 @@ impl ScopeSelection {
     /// Existing destination scope may continue while a less privileged Helm
     /// observes. Input/control must have every retained destination permission.
     pub fn authorize_control(&self, current: &Self, now_ms: u64) -> Result<(), &'static str> {
-        if self.session_id != current.session_id {
+        if self.session_id != current.session_id
+            || self.context.principal_id != current.context.principal_id
+        {
             return Err("scope session changed");
         }
         let candidate = Self {

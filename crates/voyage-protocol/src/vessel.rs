@@ -186,6 +186,11 @@ pub enum VoyageCommand {
         expires_at_ms: u64,
         access: String,
     },
+    CoordinationScopeRead,
+    CoordinationScopeCommit {
+        command_id: Uuid,
+        selection: crate::coordination_scope::ScopeSelection,
+    },
     Configure {
         command_id: Uuid,
         expected_revision: u64,
@@ -409,6 +414,7 @@ impl VoyageCommand {
             | Self::OperatorTool { command_id, .. }
             | Self::Github { command_id, .. }
             | Self::SetAccess { command_id, .. }
+            | Self::CoordinationScopeCommit { command_id, .. }
             | Self::Configure { command_id, .. }
             | Self::WorkflowSubmit { command_id, .. }
             | Self::ExecuteTool { command_id, .. }

@@ -245,6 +245,9 @@ mod scope_tests {
         selected.validate(&ac, 1).unwrap();
         selected.authorize_control(&ac, 1).unwrap();
         assert!(selected.authorize_control(&ac, 100).is_err());
+        let mut foreign = ac.clone();
+        foreign.context.principal_id = Uuid::new_v4();
+        assert!(selected.authorize_control(&foreign, 1).is_err());
         let mut forged = ac.clone();
         forged.context.revision += 1;
         assert!(selected.validate(&forged, 1).is_err());

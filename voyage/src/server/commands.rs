@@ -34,6 +34,13 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::CoordinationScopeRead => {
+            super::coordination_scope::read(state, &authorization).await
+        }
+        RuntimeCommand::CoordinationScopeCommit {
+            command_id,
+            selection,
+        } => super::coordination_scope::commit(state, &authorization, command_id, selection).await,
         RuntimeCommand::GoalRead => Ok(serde_json::to_value(state.owner.goal().await?)?),
         RuntimeCommand::WorkspaceFile { path } => {
             let config = state.config.read().await.clone();
