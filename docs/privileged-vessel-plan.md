@@ -433,6 +433,14 @@ administrator right. End-user authenticated authority must survive forwarding.
 
 ## 5. Safe launch and cross-identity IPC
 
+Common supervisor observation and forwarding entry points resolve bound runtime
+coordinates from the protected catalogue/layout, not caller-supplied legacy
+registration paths. Bound scoped IPC uses the explicit control-root authority
+route. Saved-state fallback requires protected guardian cleanup observation;
+child-written stopped markers alone never select the privileged helper. The
+ordinary user-scope path and its existing saved-state behavior remain separate.
+
+
 A protected launch specification comes from authoritative supervisor metadata,
 not from a runtime-writable registration, workspace config or request-supplied
 executable. Pin release, identity, workspace, runtime root, account scope, policy
