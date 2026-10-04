@@ -1,5 +1,6 @@
 //! Deterministic project discovery. Repository content is evidence, never executable setup.
 mod guidance;
+pub mod host_setup;
 mod storage;
 use crate::{Config, config::AccessMode};
 use anyhow::{Result, bail};
