@@ -146,6 +146,20 @@ enum ControlSection {
 enum Action {
     Routes,
     Capabilities,
+    Accounts {
+        workspace: PathBuf,
+        transport: Option<voyage_protocol::accounts::Transport>,
+    },
+    Profiles {
+        workspace: PathBuf,
+    },
+    AccountDefaults {
+        workspace: PathBuf,
+    },
+    AccountModels {
+        workspace: PathBuf,
+        account: voyage_protocol::accounts::AccountBinding,
+    },
     Controls {
         session_id: Uuid,
         run_id: Option<Uuid>,
@@ -337,6 +351,7 @@ fn input_schema() -> Value {
             "wait_ms":{"type":"integer","minimum":0,"maximum":30000},
             "section":{"enum":["models","policy"]},
             "query":{"type":"string","pattern":"\\S","maxLength":4096,"description":"Nonblank; at most 4096 UTF-8 bytes."},
+            "transport":{"enum":["openai_responses","openai_chat","chatgpt_oauth","xai_oauth","anthropic"]},
             "workspace":{"type":"string"},"config_path":{"type":["string","null"]},
             "settings":create_settings_schema(),"account": {"type":["object","null"],"additionalProperties":false,"required":["account_id","connection_id","identity_generation","connection_revision","transport"],"properties":{
                 "account_id":{"type":"string","format":"uuid"},"connection_id":{"type":"string","format":"uuid"},
@@ -350,6 +365,10 @@ fn input_schema() -> Value {
         &[
             ("routes", &[], &[]),
             ("capabilities", &[], &[]),
+            ("accounts", &["workspace"], &["transport"]),
+            ("profiles", &["workspace"], &[]),
+            ("account_defaults", &["workspace"], &[]),
+            ("account_models", &["workspace", "account"], &[]),
             ("controls", &["session_id", "section"], &["run_id"]),
             ("operations", &[], &["offset", "limit"]),
             ("list", &[], &["offset", "limit"]),
@@ -460,6 +479,12 @@ fn input_schema() -> Value {
             branch["properties"]["session_id"]["type"] = json!("string");
         }
     }
+    for branch in schema["oneOf"].as_array_mut().unwrap() {
+        if branch["properties"]["action"]["const"] == "account_models" {
+            branch["properties"]["account"]["type"] = json!("object");
+            branch["properties"]["account"]["properties"]["transport"] = json!({"enum":["openai_responses","openai_chat","chatgpt_oauth","xai_oauth","anthropic"]});
+        }
+    }
     schema
 }
 
@@ -470,7 +495,7 @@ impl Tool for VesselTool {
             output_schema: None,
             annotations: None,
             name: "vessel".into(),
-            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). provider_attempts pages durable provider diagnostics separately from messages (limit 1..32); follow next_read with its revision. history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create inherits initiating portable settings and current live access by default; settings overrides them, config_path selects a host base, and account selects an exact target-host binding. Credentials and roots are not copied. Target must support start_settings. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
+            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). provider_attempts pages durable provider diagnostics separately from messages (limit 1..32); follow next_read with its revision. history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Accounts, profiles and account_defaults read permitted target-host metadata for an absolute workspace; account_models validates an exact target-host binding and may perform a bounded provider metadata read, never inference. Account enrollment, credential values and profile mutation are not exposed. Discovery does not grant launch authority. Create inherits initiating portable settings and current live access by default; settings overrides them, config_path selects a host base, and account selects an exact target-host binding. Credentials and roots are not copied. Target must support start_settings. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: input_schema(),
         }
     }
@@ -500,6 +525,16 @@ impl Tool for VesselTool {
             .map_err(|e| invalid(&format!("invalid Vessel action arguments: {e}")))?;
         super::action_schema::reject_extra_fields(&arguments, &action)?;
         match &action {
+            Action::Accounts { workspace, .. }
+            | Action::Profiles { workspace }
+            | Action::AccountDefaults { workspace }
+            | Action::AccountModels { workspace, .. }
+                if !workspace.is_absolute() =>
+            {
+                return Err(invalid(
+                    "discovery workspace must be an absolute target-host path",
+                ));
+            }
             Action::Search { query, .. } => text(query, 4096)?,
             Action::HistorySearch { pattern, .. } => {
                 history::compile(pattern)?;
@@ -837,6 +872,25 @@ async fn perform(
             .await
         }
         Action::Capabilities => t.exchange(VesselCommand::Capabilities).await,
+        Action::Accounts {
+            workspace,
+            transport,
+        } => {
+            t.exchange(VesselCommand::Accounts {
+                workspace,
+                transport,
+            })
+            .await
+        }
+        Action::Profiles { workspace } => t.exchange(VesselCommand::Profiles { workspace }).await,
+        Action::AccountDefaults { workspace } => {
+            t.exchange(VesselCommand::AccountDefaults { workspace })
+                .await
+        }
+        Action::AccountModels { workspace, account } => {
+            t.exchange(VesselCommand::AccountModels { workspace, account })
+                .await
+        }
         Action::List { offset, limit }
         | Action::Search {
             query: _,

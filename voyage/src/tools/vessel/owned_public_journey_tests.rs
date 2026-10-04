@@ -666,3 +666,46 @@ async fn wrong_chunk_bounds_revision_or_run_identity_refuse_without_partial_publ
         f.finish().await;
     }
 }
+
+#[tokio::test]
+async fn setup_discovery_uses_exact_scoped_commands_without_launch_or_journal() {
+    let mut f = Fixture::new().await;
+    let binding = json!({"account_id":Uuid::new_v4(),"connection_id":Uuid::new_v4(),
+        "identity_generation":4,"connection_revision":8,"transport":"xai_oauth"});
+    for action in ["accounts", "profiles", "account_defaults", "account_models"] {
+        let mut request = json!({"action":action,"workspace":"/destination/work"});
+        if action == "accounts" {
+            request["transport"] = json!("xai_oauth");
+        }
+        if action == "account_models" {
+            request["account"] = binding.clone();
+        }
+        let task = f.start(request.clone());
+        let packet = f.peer.next().await;
+        assert_eq!(packet.wire["op"], action);
+        assert_eq!(packet.wire["workspace"], request["workspace"]);
+        if action == "account_models" {
+            assert_eq!(packet.wire["account"], binding);
+        }
+        assert!(packet.wire.get("configuration").is_none());
+        assert!(packet.wire.get("command_id").is_none());
+        packet.ok(json!({"items":["SYNTHETIC-PRIVATE"],"revision":8}));
+        let value = done(task).await.unwrap();
+        assert_eq!(value["revision"], 8);
+        assert_no_secret(&value);
+    }
+    let task = f.start(json!({"action":"accounts","workspace":"/destination/work"}));
+    f.peer.next().await.refused(false);
+    let value = done(task).await.unwrap();
+    assert_eq!(value["status"], "refused");
+    assert_no_secret(&value);
+    let calls = f.peer.count();
+    assert!(
+        done(f.start(json!({"action":"profiles","workspace":"relative"})))
+            .await
+            .is_err()
+    );
+    assert_eq!(f.peer.count(), calls);
+    assert!(!f.journal_root().exists());
+    f.finish().await;
+}

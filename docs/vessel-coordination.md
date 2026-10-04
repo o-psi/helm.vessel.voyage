@@ -41,6 +41,9 @@ identity/version and actual route capabilities/rights.
 | Action | Required arguments beyond `action` | Optional arguments |
 | --- | --- | --- |
 | `routes`, `capabilities` | None | `target` |
+| `accounts` | `workspace` | `transport` |
+| `profiles`, `account_defaults` | `workspace` | — |
+| `account_models` | `workspace`, `account` | — |
 | `list`, `operations` | None | `offset`, `limit` |
 | `search` | `query` | `offset`, `limit` |
 | `inspect` | `session_id` | — |
@@ -58,6 +61,26 @@ identity/version and actual route capabilities/rights.
 | `cancel` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision` | — |
 | `rename` | `session_id`, `command_id`, `expected_revision`, `name` | — |
 | `archive`, `restore` | `session_id`, `command_id`, `expected_revision` | — |
+
+### Target-host setup discovery
+
+Use an absolute **target-host** workspace with `accounts`, `profiles` and
+`account_defaults`. These use the existing public, scope-checked catalogue:
+account-use/enrollment and workspace rights remain enforced by the destination.
+`account_models` takes the complete returned binding (account/connection IDs,
+identity generation, connection revision and transport). It validates that binding
+before a bounded provider model-metadata read; it is not an inference request.
+These actions do not expose credential values, enroll accounts, mutate profiles,
+choose an arbitrary host configuration or expand a grant. A profile is metadata,
+not a launch authorization; do not copy its roots or permissions into a child.
+
+A denied catalogue, stale binding, unavailable provider or oversized observation
+is a meaningful refusal/incomplete result, not an empty permitted destination.
+Do not guess hidden IDs or assume a human Helm connection created a model route.
+The owning Voyage's trusted routes remain separate from human connections and
+participant bindings. A reply requires its own authorized return route; a local
+final answer never substitutes for delivery. Discovery does not establish the
+full multi-Helm authority matrix or authorize execution on another host.
 
 All network actions also accept `target`. `operations` and a `receipt` without
 `session_id` read the owning voyage's private local journal and do not contact a
