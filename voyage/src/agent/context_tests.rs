@@ -583,3 +583,46 @@ async fn model_control_cancellation_after_persistence_stops_followup() {
         .unwrap_err();
     assert!(matches!(error, AgentError::Cancelled));
 }
+
+struct Irreducible(Arc<AtomicUsize>);
+#[async_trait]
+impl Provider for Irreducible {
+    async fn request_pressure(&self, _: &ModelRequest) -> Option<crate::context::RequestPressure> {
+        Some(crate::context::RequestPressure {
+            enabled_capacity: Some(100),
+            input_tokens: Some(100),
+            complete: true,
+            method: "offline irreducible oracle".into(),
+            reserve_tokens: Some(10),
+            safety_tokens: 0,
+        })
+    }
+    async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(ProviderError::ContextLength)
+    }
+}
+#[tokio::test]
+async fn measured_irreducible_task_is_preserved_without_unchanged_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, checkpoint) = fixture(root.path(), false);
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    agent.provider = Box::new(Irreducible(dispatches.clone()));
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Preserve mandatory task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::ContextExhausted(_)));
+    assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        error.recovery().unwrap().messages[0].content,
+        "Preserve mandatory task"
+    );
+}
