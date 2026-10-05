@@ -606,3 +606,72 @@ async fn decision_values_and_cursor_share_agent_insertion_mutex() {
         "complete"
     );
 }
+
+#[tokio::test]
+async fn decision_insertion_races_atomic_values_and_replay_barrier() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let mut run = admitted(&state).await;
+    run.register_local_cleanup().await.unwrap();
+    run.start_operator().await.unwrap();
+    let run_id = run.record().await.unwrap().id;
+    let incarnation = state.registration.incarnation;
+    for _ in 0..16 {
+        let id = Uuid::new_v4();
+        let owner = state.owner.clone();
+        let insert = tokio::spawn(async move {
+            owner
+                .create_decision(
+                    run_id,
+                    incarnation,
+                    id,
+                    expiry() as i64,
+                    json!({"kind":"approval","action":"atomic race"}),
+                )
+                .await
+                .unwrap();
+        });
+        let (values, cursor) = state.owner.decisions_at_cursor(incarnation).await.unwrap();
+        insert.await.unwrap();
+        let visible = values
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value["decision_id"] == id.to_string());
+        if !visible {
+            let replay = state.owner.live_observations(cursor, 128).await.unwrap();
+            assert!(
+                replay["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event["kind"] == "decision"),
+                "insertion omitted below the returned barrier"
+            );
+        }
+        state.owner.finish_decision(id, "cancelled").await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn completed_initialization_slots_do_not_refuse_fifth_quick_refresh() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    for _ in 0..8 {
+        let page = call(
+            &state,
+            RuntimeCommand::InitializeEntities {
+                generation: Uuid::new_v4(),
+                offset: 0,
+                limit: 64,
+                expected_revision: None,
+                expected_cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page["has_more"], false);
+        assert_eq!(
+            page["events"].as_array().unwrap().last().unwrap()["kind"],
+            "complete"
+        );
+    }
+}
