@@ -50,8 +50,9 @@ access failure, see [host access checks](#host-access-checks).
 ## Install the current user-scoped release
 
 For published stable downloads, use [Download a published version](#download-a-published-version).
-Current browser use needs the [public nightly](#public-nightly-installation)
-and a separately configured secure connection. Installation does not include
+Browser assets are included in stable v1.0.3 and the
+[public nightly](#public-nightly-installation). Browser use also needs a separately
+configured secure connection. Installation does not include
 an AI account or credit.
 
 With no action, the bundled installer opens an interactive review/apply/cancel
@@ -74,8 +75,8 @@ build can pass their build directory explicitly with `--bin-dir`.
 The same operations are available without a terminal:
 
 ```sh
-voyage-installer install --bin-dir /absolute/release/bin --dry-run --start
-voyage-installer install --bin-dir /absolute/release/bin --start
+/absolute/release/bin/voyage-installer install --bin-dir /absolute/release/bin --dry-run --start
+/absolute/release/bin/voyage-installer install --bin-dir /absolute/release/bin --start
 ```
 
 If an old unmanaged command occupies `~/.local/bin`, review its replacement and
@@ -87,6 +88,27 @@ Executables are stored in private, immutable release directories. Commands in
 `~/.local/bin` resolve through one release pointer, so switching versions keeps the
 four programs together. Ensure `~/.local/bin` is on PATH; the installer does not
 rewrite shell startup files.
+
+## Upgrading an older installer
+
+For an installation originally made with v1.0.2, use the current bootstrap or the
+installer from the newly extracted full bundle. The old installed
+`voyage-installer upgrade --dev` can install newer binaries while dropping
+compatibility fields it does not recognize when copying their manifest. This
+leaves a later Web update unable to verify rollback compatibility.
+
+```sh
+curl -fsSLo install.sh https://raw.githubusercontent.com/o-psi/helm.vessel.voyage/main/install.sh
+sh install.sh upgrade --start
+# Explicitly choose development builds only when wanted:
+VOYAGE_VERSION=nightly sh install.sh upgrade --start
+```
+
+These commands execute the downloaded bundle's installer. When specifying a
+local bundle, invoke `/absolute/new-release/bin/voyage-installer`, rather than an
+older executable found on PATH, and retain its sibling `release.json` and assets.
+Recovery-aware installers can recover an omitted declaration from the
+exact verified original public nightly; see [metadata recovery](../docs/remote-updates.md#ordinary-rollback-format-admission-and-legacy-limits).
 
 ## Public nightly installation
 
@@ -125,7 +147,7 @@ installation unchanged and explains the explicit alternatives.
 voyage-installer upgrade --start --dry-run
 voyage-installer upgrade --start
 voyage-installer upgrade --dev --start
-voyage-installer upgrade --bin-dir /absolute/new-release/bin --start
+/absolute/new-release/bin/voyage-installer upgrade --bin-dir /absolute/new-release/bin --start
 voyage-installer rollback --start --dry-run
 voyage-installer rollback --start
 voyage-installer status
@@ -192,7 +214,7 @@ unsafe entries before running the bundled installer:
 
 ```sh
 sh install.sh
-VOYAGE_VERSION=v1.0.2 sh install.sh install --start
+VOYAGE_VERSION=v1.0.3 sh install.sh install --start
 VOYAGE_RELEASE_DIR=/absolute/extracted-release sh install.sh install --start
 ```
 
@@ -216,7 +238,7 @@ cd /path/to/your/project && helm
 ```
 Replace the project placeholder; no shell startup file is modified.
 
-The pinned example selects v1.0.2; omit `VOYAGE_VERSION` to resolve latest. Download setup
+The pinned example selects v1.0.3; omit `VOYAGE_VERSION` to resolve latest. Download setup
 requires published GitHub release assets, `curl` and Python 3.11 or later. Local
 release setup works before publication. Checksums establish integrity against the
 HTTPS-delivered manifest, not independent release signing. Temporary downloads are

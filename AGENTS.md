@@ -263,6 +263,11 @@ The Rust workspace currently contains `helm/`, `vessel/`, `voyage/`, `installer/
 [docs/implementation.md](docs/implementation.md) for target delivery order.
 Check both ends when changing wire contracts. The installer supports Linux
 versioned installation, upgrades, rollback and user-service provisioning.
+For installation or upgrade from an older release, execute the current verified
+bundle's installer (or the current shell bootstrap), not an older installer from
+PATH against new files. Keep the bundle manifest and browser assets together;
+older installers can omit newly introduced metadata fields. See
+[older installer upgrades](installer/README.md#upgrading-an-older-installer).
 Follow [remote updates](docs/remote-updates.md) when changing owner-approved
 self-updates (including the quiescent legacy handover and the maintained
 `installer/src/legacy_update.py` snapshot/proof entry point): preserve pinned review, exact durable receipts, independent updater

@@ -112,8 +112,8 @@ separation lets you disconnect the interface while execution continues. See the
 
 The current published installer provides a Linux user-scoped installation. Its
 prebuilt path requires Linux x86-64, glibc 2.39+, Python 3.11+, curl and a systemd
-user session. Browser setup currently uses a public development nightly and an
-operator-configured authenticated HTTPS/WSS endpoint.
+user session. Browser assets ship in stable v1.0.3 and public development nightlies.
+Setup uses an operator-configured authenticated HTTPS/WSS endpoint.
 
 The intended host-administration setup is a privileged Vessel supervisor with a
 separate unprivileged public gateway and explicitly authorized execution

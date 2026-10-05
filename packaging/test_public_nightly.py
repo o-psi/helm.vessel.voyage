@@ -19,6 +19,7 @@ TARGET = 'x86_64-unknown-linux-gnu'
 NAME = f'voyage-{VERSION}-{TARGET}'
 ASSET = NAME + '.tar.gz'
 API = 'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases?per_page=100'
+PINNED_API = f'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/tags/nightly-{VERSION}'
 BASE = f'https://github.com/o-psi/helm.vessel.voyage/releases/download/nightly-{VERSION}/'
 
 
@@ -64,18 +65,118 @@ class PublicNightlyTests(unittest.TestCase):
 
     def fetch(self, url, path, label, limit):
         self.requests.append(url)
-        data = json.dumps([self.release]).encode() if url == API else self.files[url]
+        if url == API:
+            data = json.dumps([self.release]).encode()
+        elif url == PINNED_API:
+            data = json.dumps(self.release).encode()
+        else:
+            data = self.files[url]
         self.assertLessEqual(len(data), limit)
         path.write_bytes(data)
 
     def acquire(self):
         return self.worker['nightly'](TARGET)
 
+    def acquire_pinned(self, version=VERSION, target=TARGET):
+        return self.worker['pinned_nightly'](target, version)
+
     def test_anonymous_full_archive(self):
         binaries, description = self.acquire()
         self.assertTrue((binaries.parent / 'share/voyage/browser/worker.mjs').is_file())
         self.assertIn(SOURCE, description)
         self.assertEqual(set(self.requests), {API, BASE + ASSET, BASE + ASSET + '.sha256'})
+
+    def test_exact_public_tag_retains_older_version_without_latest_lookup_or_execution(self):
+        for asset in self.release['assets']:
+            asset['browser_download_url'] = 'https://untrusted.example/archive'
+        binaries, description = self.acquire_pinned()
+        self.assertIn(VERSION, description)
+        self.assertIn(SOURCE, description)
+        self.assertEqual(self.requests, [PINNED_API, BASE + ASSET, BASE + ASSET + '.sha256'])
+        self.assertTrue((binaries.parent / 'share/voyage/browser/worker.mjs').is_file())
+        self.assertFalse((self.root / 'args').exists())
+
+    def test_exact_tag_rejects_invalid_versions_before_network(self):
+        for version in ('', 'nightly-' + VERSION, 'v' + VERSION, '1.0.2',
+                        '1.0.2-nightly.2026092.123.1', '1.0.2-nightly.202609270.123.1',
+                        '1.0.2-nightly.20260927..1', VERSION + '/../../latest',
+                        VERSION + '\n', VERSION.replace('123', '\u0661\u0662\u0663'),
+                        '1' * 129 + '.0.2-nightly.20260927.123.1'):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(self.worker['Failure'], 'Invalid pinned'):
+                    self.acquire_pinned(version)
+        self.assertEqual(self.requests, [])
+
+    def test_exact_tag_rejects_unsupported_target_before_network(self):
+        with self.assertRaisesRegex(self.worker['Failure'], 'Linux x86-64'):
+            self.acquire_pinned(target='aarch64-unknown-linux-gnu')
+        self.assertEqual(self.requests, [])
+
+    def test_exact_tag_missing_release_never_falls_back(self):
+        def missing(url, path, label, limit):
+            self.requests.append(url)
+            raise self.worker['Failure']('Exact tag unavailable')
+        self.worker['fetch'] = missing
+        with self.assertRaisesRegex(self.worker['Failure'], 'Exact tag unavailable'):
+            self.acquire_pinned()
+        self.assertEqual(self.requests, [PINNED_API])
+
+    def test_exact_tag_rejects_changed_release_metadata_without_asset_downloads(self):
+        for changes in ({'draft': True}, {'prerelease': False},
+                        {'tag_name': 'nightly-1.0.2-nightly.20260928.124.1'},
+                        {'tag_name': None}, {'draft': 0}, {'prerelease': 1}):
+            with self.subTest(changes=changes), patch.dict(self.release, changes):
+                with self.assertRaisesRegex(self.worker['Failure'], 'metadata mismatch'):
+                    self.acquire_pinned()
+        self.assertTrue(all(url == PINNED_API for url in self.requests))
+
+    def test_exact_tag_rejects_nonobject_metadata(self):
+        def invalid(url, path, label, limit):
+            self.requests.append(url)
+            path.write_text('[]')
+        self.worker['fetch'] = invalid
+        with self.assertRaisesRegex(self.worker['Failure'], 'metadata mismatch'):
+            self.acquire_pinned()
+        self.assertEqual(self.requests, [PINNED_API])
+
+    def test_exact_tag_missing_assets_refused(self):
+        self.release['assets'] = []
+        with self.assertRaisesRegex(self.worker['Failure'], 'asset missing'):
+            self.acquire_pinned()
+        self.assertEqual(self.requests, [PINNED_API])
+
+    def test_exact_tag_requires_exact_source_commit(self):
+        self.release['target_commitish'] = 'main'
+        with self.assertRaisesRegex(self.worker['Failure'], 'exact source'):
+            self.acquire_pinned()
+        self.assertEqual(self.requests, [PINNED_API])
+
+    def test_exact_tag_checksum_mismatch_refused_before_extraction(self):
+        self.files[BASE + ASSET + '.sha256'] = f'{"0" * 64}  {ASSET}\n'.encode()
+        with self.assertRaisesRegex(self.worker['Failure'], 'checksum mismatch'):
+            self.acquire_pinned()
+        self.assertFalse((self.root / NAME).exists())
+
+    def test_exact_tag_source_mismatch_refused(self):
+        self.make_archive(source='b' * 40)
+        with self.assertRaisesRegex(self.worker['Failure'], 'inventory mismatch'):
+            self.acquire_pinned()
+
+    def test_exact_tag_version_mismatch_refused(self):
+        self.make_archive(version='1.0.2-nightly.20260928.124.1')
+        with self.assertRaisesRegex(self.worker['Failure'], 'inventory mismatch'):
+            self.acquire_pinned()
+
+    def test_exact_tag_browser_missing_refused(self):
+        self.make_archive(browser=False)
+        with self.assertRaisesRegex(self.worker['Failure'], 'inventory mismatch'):
+            self.acquire_pinned()
+
+    def test_exact_tag_unsafe_archive_refused(self):
+        self.make_archive(unsafe=True)
+        with self.assertRaisesRegex(self.worker['Failure'], 'Unsafe'):
+            self.acquire_pinned()
+        self.assertFalse((self.root / 'escape').exists())
 
     def test_absent_draft_or_stable_refused(self):
         for changes in ({'draft': True}, {'prerelease': False}, {'tag_name': 'v1.0.1'}):

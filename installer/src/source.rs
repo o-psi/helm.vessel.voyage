@@ -63,6 +63,35 @@ pub fn prepare(source: Source, cancelled: &AtomicBool) -> Result<Prepared> {
     }
 }
 
+/// Recover metadata from one exact public nightly, without executing its binaries.
+pub fn prepare_pinned_nightly(version: &str, cancelled: &AtomicBool) -> Result<Prepared> {
+    fn digits(value: &str) -> bool {
+        !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+    }
+    let valid = version.len() <= 128
+        && version
+            .split_once("-nightly.")
+            .is_some_and(|(base, nightly)| {
+                let base: Vec<_> = base.split('.').collect();
+                let nightly: Vec<_> = nightly.split('.').collect();
+                base.len() == 3
+                    && base.into_iter().all(digits)
+                    && nightly.len() == 3
+                    && nightly[0].len() == 8
+                    && nightly.into_iter().all(digits)
+            });
+    anyhow::ensure!(valid, "Invalid pinned public nightly version");
+    #[cfg(target_os = "linux")]
+    {
+        linux::prepare_pinned_nightly(version, cancelled)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cancelled;
+        anyhow::bail!("Automatic upgrades currently support Linux only")
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn prepare_public(source: Source, cancelled: &AtomicBool, home: PathBuf) -> Result<Prepared> {
     linux::prepare_at(source, cancelled, home, true)
@@ -129,12 +158,33 @@ mod linux {
     }
 
     pub(super) fn prepare(source: Source, cancelled: &AtomicBool) -> Result<Prepared> {
+        prepare_for_version(source, cancelled, None)
+    }
+
+    pub(super) fn prepare_pinned_nightly(
+        version: &str,
+        cancelled: &AtomicBool,
+    ) -> Result<Prepared> {
+        prepare_for_version(Source::Nightly, cancelled, Some(version))
+    }
+
+    fn prepare_for_version(
+        source: Source,
+        cancelled: &AtomicBool,
+        pinned_version: Option<&str>,
+    ) -> Result<Prepared> {
         ensure!(!cancelled.load(Ordering::Relaxed), "Upgrade cancelled");
         #[cfg(test)]
         let home = crate::fixture_tests::root().context("source test requires isolated fixture")?;
         #[cfg(not(test))]
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is required")?);
-        prepare_at(source, cancelled, home, false)
+        prepare_at_inner(
+            source,
+            cancelled,
+            home,
+            pinned_version.is_some(),
+            pinned_version,
+        )
     }
 
     pub(super) fn prepare_at(
@@ -142,6 +192,16 @@ mod linux {
         cancelled: &AtomicBool,
         home: PathBuf,
         public_only: bool,
+    ) -> Result<Prepared> {
+        prepare_at_inner(source, cancelled, home, public_only, None)
+    }
+
+    fn prepare_at_inner(
+        source: Source,
+        cancelled: &AtomicBool,
+        home: PathBuf,
+        public_only: bool,
+        pinned_version: Option<&str>,
     ) -> Result<Prepared> {
         ensure!(!cancelled.load(Ordering::Relaxed), "Upgrade cancelled");
         let cache = home.join(".cache/voyage/upgrades");
@@ -195,9 +255,10 @@ mod linux {
                 },
             )
             .args(["-I", "-c", acquire])
-            .arg(match source {
-                Source::Latest => "latest",
-                Source::Nightly => "nightly",
+            .arg(match (source, pinned_version) {
+                (_, Some(_)) => "nightly-pinned",
+                (Source::Latest, None) => "latest",
+                (Source::Nightly, None) => "nightly",
             })
             .arg(&prepared.root)
             .arg(if public_only {
@@ -210,6 +271,9 @@ mod linux {
             .stderr(log)
             .current_dir(&prepared.root)
             .process_group(0);
+        if let Some(version) = pinned_version {
+            command.arg(version);
+        }
         let mut child = command
             .spawn()
             .context("Automatic upgrades require Python 3.11+; could not start acquisition")?;
@@ -311,3 +375,74 @@ impl Drop for Cancellation {
 #[cfg(all(test, target_os = "linux"))]
 #[path = "source_tests.rs"]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+mod pinned_nightly_tests {
+    use super::*;
+    use crate::fixture_tests::{Fixture, set_acquire};
+
+    #[test]
+    fn exact_nightly_validation_and_precancellation_have_no_acquisition_effects() {
+        let fixture = Fixture::new();
+        for version in [
+            "",
+            "1.0.2",
+            "nightly-1.0.2-nightly.20261004.123.1",
+            "v1.0.2-nightly.20261004.123.1",
+            "1.0.2-nightly.2026104.123.1",
+            "1.0.2-nightly.202610004.123.1",
+            "1.0.2-nightly.20261004..1",
+            "1.0.2-nightly.20261004.123.1/../../latest",
+            "1.0.2-nightly.20261004.123.1\n",
+            "1.0.2-nightly.20261004.١٢٣.1",
+        ] {
+            assert!(
+                prepare_pinned_nightly(version, &AtomicBool::new(false))
+                    .err()
+                    .unwrap()
+                    .to_string()
+                    .contains("Invalid pinned")
+            );
+        }
+        assert!(
+            prepare_pinned_nightly("1.0.2-nightly.20261004.123.1", &AtomicBool::new(true)).is_err()
+        );
+        assert!(!fixture.root.join(".cache").exists());
+    }
+
+    #[test]
+    fn pinned_nightly_uses_exact_public_argument_and_never_executes_old_binaries() {
+        let fixture = Fixture::new();
+        set_acquire(
+            r#"
+import sys,json,pathlib,hashlib,platform,os
+assert sys.argv[1]=='nightly-pinned'
+assert sys.argv[3]=='public'
+assert sys.argv[4]=='1.0.3-nightly.20261004.37172574432.1'
+assert os.environ['PATH']=='/usr/bin:/bin'
+assert 'GH_TOKEN' not in os.environ and 'GITHUB_TOKEN' not in os.environ
+root=pathlib.Path(sys.argv[2]); binary=root/'bin'; binary.mkdir()
+hashes={}
+for name in ['helm','vessel','voyage','voyage-installer']:
+ p=binary/name; p.write_bytes(b'not an executable image'); p.chmod(0o700)
+ hashes[name]={'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
+(root/'release.json').write_text(json.dumps({'schema_version':1,'version':sys.argv[4],'target':'linux-'+platform.machine(),'binaries':hashes}))
+(root/'prepared.json').write_text(json.dumps({'bin_dir':str(binary),'description':'exact '+sys.argv[4]}))
+"#,
+        );
+        let prepared = prepare_pinned_nightly(
+            "1.0.3-nightly.20261004.37172574432.1",
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.description,
+            "exact 1.0.3-nightly.20261004.37172574432.1"
+        );
+        let staging = prepared.staging_root().to_owned();
+        assert!(staging.starts_with(&fixture.root));
+        drop(prepared);
+        assert!(!staging.exists());
+        cleanup_result().unwrap();
+    }
+}

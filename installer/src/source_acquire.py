@@ -175,6 +175,29 @@ def nightly(target):
     if not candidates:
         raise Failure('No public nightly is available. Wait for nightly publication; no fallback was installed.')
     _, chosen, version = max(candidates, key=lambda item: item[0])
+    return download_nightly(chosen, version, target)
+
+
+def pinned_nightly(target, version):
+    if (not isinstance(version, str) or len(version) > 128
+            or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-nightly\.[0-9]{8}\.[0-9]+\.[0-9]+', version)):
+        raise Failure('Invalid pinned public nightly version.')
+    if target != 'x86_64-unknown-linux-gnu':
+        raise Failure('Nightly downloads currently support Linux x86-64 only.')
+    tag = 'nightly-' + version
+    metadata = ROOT / 'pinned-nightly.json'
+    # Resolve this exact canonical tag, including older archives absent from the list.
+    # No credentials, latest selection or metadata-supplied URL is consulted.
+    fetch(f'https://api.github.com/repos/o-psi/helm.vessel.voyage/releases/tags/{tag}',
+          metadata, 'Resolve exact public nightly', 1048576)
+    chosen = json.loads(metadata.read_text())
+    if (not isinstance(chosen, dict) or chosen.get('tag_name') != tag
+            or chosen.get('prerelease') is not True or chosen.get('draft') is not False):
+        raise Failure('Pinned public nightly release metadata mismatch.')
+    return download_nightly(chosen, version, target)
+
+
+def download_nightly(chosen, version, target):
     commit = chosen.get('target_commitish', '')
     if not re.fullmatch(r'[0-9a-f]{40}', str(commit)):
         raise Failure('Nightly release lacks an exact source commit.')
@@ -215,9 +238,14 @@ def execute():
     os.environ['GH_PROMPT_DISABLED'] = '1'
     AUTHENTICATED = MODE == 'latest' and (len(sys.argv) < 4 or sys.argv[3] != 'public') and github_login()
     target = f'{arch}-unknown-linux-gnu'
-    if MODE not in ('latest', 'nightly'):
+    if MODE not in ('latest', 'nightly', 'nightly-pinned'):
         raise Failure('Unsupported acquisition mode.')
-    binaries, description = {'latest': latest, 'nightly': nightly}[MODE](target)
+    if MODE == 'nightly-pinned':
+        if len(sys.argv) != 5:
+            raise Failure('Pinned public nightly version is required.')
+        binaries, description = pinned_nightly(target, sys.argv[4])
+    else:
+        binaries, description = {'latest': latest, 'nightly': nightly}[MODE](target)
     for name in BINARIES:
         if not (binaries / name).is_file():
             raise Failure(f'Release is missing {name}.')

@@ -19,6 +19,19 @@ The exact declarations are retained separately from the legacy package ID and
 rechecked before publication; old ready receipts without those pins refuse apply.
 Missing declarations are unknown compatibility, not permission to migrate.
 
+When an older installer omitted a public nightly's declaration while copying its
+manifest, preparation automatically downloads the **exact installed nightly**
+from its canonical published tag. It verifies the archive checksum/source and
+requires the complete release identity, binary and browser-asset inventory to
+match the actual installed files. The recovered original declaration is pinned
+separately in the durable update receipt; the historical installed manifest and
+persistent state remain unchanged. Apply rechecks that manifest's exact bytes,
+every installed file and the pinned contract before publication. This is metadata
+recovery, not database migration or a guessed rollback promise. A missing original
+package/declaration, changed file or unreadable candidate writer still refuses
+before installation. Already running older updaters require a current installer
+bootstrap before this preparation behavior is available.
+
 The shipped v1.0.2 Web updater invokes its installed old installer, which has no
 handoff to the candidate implementation. Use the normal public `install.sh install`
 or `install.sh upgrade` entry with the current verified bundle (or invoke that

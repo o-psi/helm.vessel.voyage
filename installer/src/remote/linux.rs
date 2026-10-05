@@ -23,6 +23,13 @@ struct Gateway {
     unit: String,
     definition: String,
 }
+#[derive(Clone, Serialize, Deserialize)]
+struct RecoveredInstalledContract {
+    declaration: crate::install::release::UpdateCompatibility,
+    published_identity: String,
+    installed_manifest_sha256: String,
+    provenance: String,
+}
 #[derive(Serialize, Deserialize)]
 struct Record {
     operation_id: String,
@@ -41,6 +48,8 @@ struct Record {
     gateways: Vec<Gateway>,
     #[serde(default)]
     contracts_sha256: Option<[String; 2]>,
+    #[serde(default)]
+    recovered_installed_contract: Option<RecoveredInstalledContract>,
     #[serde(default)]
     supervisor_activation: Option<service::Activation>,
     #[serde(default)]
@@ -131,7 +140,21 @@ fn save(record: &mut Record, phase: &str, message: &str) -> Result<()> {
     record.phase = phase.into();
     record.message = message.into();
     record.updated_at = now();
+    ensure!(
+        serde_json::to_vec_pretty(record)?.len() <= 65536,
+        "Update receipt exceeds its observation limit"
+    );
     files::atomic_json(&path(&record.operation_id)?, record)
+}
+fn save_preparation_failure(record: &mut Record, message: &str) -> Result<()> {
+    // Preparation never changes services or installation. Its rejected review
+    // payload is not an effect obligation and must not make status unreadable.
+    // Keep source/staging identities so observed cleanup remains possible.
+    record.gateways.clear();
+    record.supervisor_activation = None;
+    record.contracts_sha256 = None;
+    record.recovered_installed_contract = None;
+    save(record, "failed", message)
 }
 fn output(record: &Record) -> Result<()> {
     // Internal paths and subprocess diagnostics never cross the public connection.
@@ -392,6 +415,68 @@ fn installed_manifest(identity: &str) -> Result<Manifest> {
     Ok(manifest)
 }
 
+// Older installers dropped fields they did not know when copying release.json.
+// Recover only a publisher-owned declaration for the exact installed bytes;
+// never rewrite the historical manifest or infer an old reader from the target.
+fn validate_recovered_contract(
+    installed: &Manifest,
+    recovered: &RecoveredInstalledContract,
+    identity: &str,
+) -> Result<Manifest> {
+    ensure!(
+        installed.update_compatibility.is_none()
+            && installed.id()? == identity
+            && recovered.published_identity == identity,
+        "Original published package does not match the installed release"
+    );
+    let release = installation_root()?.join("releases").join(identity);
+    ensure!(
+        files::hash(&release.join("release.json"))? == recovered.installed_manifest_sha256,
+        "Installed release metadata changed after compatibility review"
+    );
+    let mut effective = installed.clone();
+    effective.update_compatibility = Some(recovered.declaration.clone());
+    effective.verify(&release)?;
+    Ok(effective)
+}
+
+fn recover_installed_contract(
+    installed: &Manifest,
+    identity: &str,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<RecoveredInstalledContract> {
+    let installed_manifest_sha256 = files::hash(
+        &installation_root()?
+            .join("releases")
+            .join(identity)
+            .join("release.json"),
+    )?;
+    let published = source::prepare_pinned_nightly(&installed.version, cancelled)
+        .context("Cannot recover rollback information from the original published package; installation remains unchanged")?;
+    let original = Manifest::inspect(&published.bin_dir)?;
+    ensure!(
+        original.id()? == identity && installed.id()? == identity,
+        "Original published package does not match the installed release"
+    );
+    let recovered = RecoveredInstalledContract {
+        published_identity: original.id()?,
+        declaration: original.update_compatibility.context("Original published package has no rollback declaration; installation remains unchanged")?,
+        installed_manifest_sha256,
+        provenance: published.description.clone(),
+    };
+    validate_recovered_contract(installed, &recovered, identity)?;
+    Ok(recovered)
+}
+
+fn effective_installed_contract(record: &Record, installed: &Manifest) -> Result<Manifest> {
+    match &record.recovered_installed_contract {
+        Some(recovered) => {
+            validate_recovered_contract(installed, recovered, &record.current_release)
+        }
+        None => Ok(installed.clone()),
+    }
+}
+
 fn verified_service(unit: &str, release: &std::path::Path) -> Result<()> {
     ensure!(
         systemctl(&["show", unit, "--property=ActiveState", "--value"])?.trim() == "active",
@@ -519,13 +604,7 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
         &cancel.flag,
     )?;
     let manifest = Manifest::inspect(&prepared.bin_dir)?;
-    let installed: Manifest = serde_json::from_slice(&files::read(
-        &installation_root()?
-            .join("releases")
-            .join(&record.current_release)
-            .join("release.json"),
-        1024 * 1024,
-    )?)?;
+    let installed = installed_manifest(&record.current_release)?;
     if let (Ok(old), Ok(new)) = (
         semver::Version::parse(installed.version.trim_start_matches('v')),
         semver::Version::parse(manifest.version.trim_start_matches('v')),
@@ -596,8 +675,16 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
             contract_id(&manifest)?,
         ]);
     } else {
-        rollback_formats(&installed, &manifest)?;
-        record.contracts_sha256 = Some([contract_id(&installed)?, contract_id(&manifest)?]);
+        if installed.update_compatibility.is_none() {
+            record.recovered_installed_contract = Some(recover_installed_contract(
+                &installed,
+                &record.current_release,
+                &cancel.flag,
+            )?);
+        }
+        let previous = effective_installed_contract(record, &installed)?;
+        rollback_formats(&previous, &manifest)?;
+        record.contracts_sha256 = Some([contract_id(&previous)?, contract_id(&manifest)?]);
     }
     // Exercise the candidate loader before approval; no unit has been changed.
     let mut check = Command::new(prepared.bin_dir.join("vessel"));
@@ -775,6 +862,7 @@ pub(super) fn local_legacy_bootstrap(
             format!("legacy-quiescent:{previous}"),
             contract_id(&candidate)?,
         ]),
+        recovered_installed_contract: None,
         supervisor_activation: Some(activation),
         legacy_mode: true,
         legacy_proof: None,
@@ -1012,10 +1100,11 @@ fn apply_worker(record: &mut Record) -> Result<()> {
             "Legacy contract approval changed"
         );
     } else {
-        rollback_formats(&installed, &candidate)?;
+        let previous = effective_installed_contract(record, &installed)?;
+        rollback_formats(&previous, &candidate)?;
         ensure!(
             record.contracts_sha256.as_ref()
-                == Some(&[contract_id(&installed)?, contract_id(&candidate)?]),
+                == Some(&[contract_id(&previous)?, contract_id(&candidate)?]),
             "Persistent format declarations changed or were not pinned before approval; no publication performed"
         );
     }
@@ -1298,15 +1387,11 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                     "Update could not be confirmed: {detail}. Check installation and services before another update; it was not replayed."
                 )
             };
-            save(
-                &mut record,
-                if action == "prepare" {
-                    "failed"
-                } else {
-                    "unconfirmed"
-                },
-                &message,
-            )?;
+            if action == "prepare" {
+                save_preparation_failure(&mut record, &message)?;
+            } else {
+                save(&mut record, "unconfirmed", &message)?;
+            }
         }
         return result;
     }
@@ -1359,6 +1444,7 @@ pub(super) fn run(args: &[String]) -> Result<()> {
                 staging_root: None,
                 gateways: Vec::new(),
                 contracts_sha256: None,
+                recovered_installed_contract: None,
                 supervisor_activation: None,
                 legacy_mode: false,
                 legacy_proof: None,
@@ -1547,6 +1633,7 @@ mod tests {
             staging_root: None,
             gateways: vec![],
             contracts_sha256: None,
+            recovered_installed_contract: None,
             supervisor_activation: None,
             legacy_mode: false,
             legacy_proof: None,

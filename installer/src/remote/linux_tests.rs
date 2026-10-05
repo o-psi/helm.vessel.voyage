@@ -40,6 +40,7 @@ fn record(phase: &str) -> Record {
         staging_root: None,
         gateways: vec![],
         contracts_sha256: None,
+        recovered_installed_contract: None,
         supervisor_activation: None,
         legacy_mode: false,
         legacy_proof: None,
@@ -291,8 +292,33 @@ fn declare_contract(bin: &std::path::Path) {
 }
 
 fn installed_release(f: &Fixture, r: &mut Record) -> PathBuf {
-    let bin = crate::fixture_tests::release(f, "candidate", "1.0.0");
+    installed_release_version(f, r, "1.0.0")
+}
+fn installed_release_version(f: &Fixture, r: &mut Record, version: &str) -> PathBuf {
+    let bin = crate::fixture_tests::release(f, "candidate", version);
     declare_contract(&bin);
+    if version.contains("-nightly.") {
+        let root = bin.parent().unwrap();
+        let mut manifest = Manifest::inspect(&bin).unwrap();
+        for name in [
+            "worker.mjs",
+            "guardian.py",
+            "package.json",
+            "package-lock.json",
+            "node_modules/playwright-core/package.json",
+        ] {
+            let asset = format!("share/voyage/browser/{name}");
+            files::private_directory(root.join(&asset).parent().unwrap()).unwrap();
+            files::write_new(&root.join(&asset), b"// original browser fixture").unwrap();
+            manifest.assets.insert(
+                asset.clone(),
+                crate::install::release::Binary {
+                    sha256: files::hash(&root.join(asset)).unwrap(),
+                },
+            );
+        }
+        files::atomic_json(&root.join("release.json"), &manifest).unwrap();
+    }
     let manifest = Manifest::inspect(&bin).unwrap();
     let identity = manifest.id().unwrap();
     let install = installation_root().unwrap();
@@ -665,7 +691,7 @@ fn legacy_unknown_rollback_contract_is_refused_before_review_publication_or_unit
     acquisition(&bin);
     f.call(LIST, "[]");
     let error = prepare_worker(&mut r).unwrap_err().to_string();
-    assert!(error.contains("legacy migration/backup plan"));
+    assert!(error.contains("Cannot recover rollback information"));
     assert_eq!(current().unwrap(), r.current_release);
     assert!(
         r.release_id.as_deref() != Some(Manifest::inspect(&bin).unwrap().id().unwrap().as_str())
@@ -677,6 +703,144 @@ fn legacy_unknown_rollback_contract_is_refused_before_review_publication_or_unit
             .next()
             .is_none()
     );
+    f.done();
+}
+
+fn lost_nightly_contract(f: &Fixture, r: &mut Record) -> (PathBuf, PathBuf, Vec<u8>) {
+    let release = installed_release_version(f, r, "1.0.3-nightly.20261004.100.1");
+    let path = release.join("release.json");
+    let original: Manifest = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let published = f.root.join("original-published");
+    original.stage(&release.join("bin"), &published).unwrap();
+    let mut lost = original;
+    lost.update_compatibility = None;
+    files::atomic_json(&path, &lost).unwrap();
+    (release, published.join("bin"), fs::read(path).unwrap())
+}
+fn acquisition_with_original(candidate: &std::path::Path, original: &std::path::Path) {
+    crate::fixture_tests::set_acquire(&format!(
+        r#"
+import json,pathlib,shutil,sys
+assert sys.argv[1] in ('nightly','nightly-pinned')
+source=pathlib.Path({}) if sys.argv[1]=='nightly' else pathlib.Path({})
+if sys.argv[1]=='nightly-pinned':
+    assert sys.argv[3]=='public'
+    assert sys.argv[4]=='1.0.3-nightly.20261004.100.1'
+root=pathlib.Path(sys.argv[2])
+shutil.copytree(source.parent, root, dirs_exist_ok=True)
+(root/'prepared.json').write_text(json.dumps({{'bin_dir':str(root/'bin'),'description':'offline exact original package'}}))
+"#,
+        serde_json::to_string(&candidate.to_string_lossy()).unwrap(),
+        serde_json::to_string(&original.to_string_lossy()).unwrap(),
+    ));
+}
+
+#[test]
+fn omitted_nightly_contract_is_recovered_and_applied_without_rewriting_original_metadata() {
+    let f = installation();
+    let mut r = record("preparing");
+    let (previous, original, historical) = lost_nightly_contract(&f, &mut r);
+    let bin = candidate(&f, "1.0.3-nightly.20261004.101.1", "printf 1", "exit 0");
+    acquisition_with_original(&bin, &original);
+    f.call(LIST, "[]");
+    inactive_plan(&f);
+    prepare_worker(&mut r).unwrap();
+    assert_eq!(r.phase, "ready");
+    assert!(r.recovered_installed_contract.is_some());
+    assert_eq!(fs::read(previous.join("release.json")).unwrap(), historical);
+    // The recovered original download was temporary. Only the candidate is kept.
+    assert_eq!(
+        fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+            .unwrap()
+            .count(),
+        1
+    );
+    r = load(OP).unwrap();
+    f.call(LIST, "[]");
+    inactive_plan(&f);
+    inactive_plan(&f);
+    f.call(&["daemon-reload"], "");
+    f.effective(true);
+    apply_worker(&mut r).unwrap();
+    assert_eq!(r.phase, "complete");
+    assert_eq!(Some(current().unwrap()), r.release_id);
+    assert_eq!(fs::read(previous.join("release.json")).unwrap(), historical);
+    assert_eq!(
+        fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+            .unwrap()
+            .count(),
+        0
+    );
+    f.done();
+}
+
+#[test]
+fn recovered_contract_refuses_changed_manifest_binary_inventory_or_reader_before_publication() {
+    for variant in 0..6 {
+        let f = installation();
+        let mut r = record("preparing");
+        let (previous, original, historical) = lost_nightly_contract(&f, &mut r);
+        let bin = candidate(&f, "1.0.3-nightly.20261004.101.1", "printf 1", "exit 0");
+        acquisition_with_original(&bin, &original);
+        f.call(LIST, "[]");
+        inactive_plan(&f);
+        prepare_worker(&mut r).unwrap();
+        let recovered = r.recovered_installed_contract.as_mut().unwrap();
+        match variant {
+            0 => {
+                let mut bytes = historical.clone();
+                bytes.push(b'\n');
+                fs::write(previous.join("release.json"), bytes).unwrap();
+            }
+            1 => fs::write(previous.join("bin/voyage"), b"changed installed bytes").unwrap(),
+            2 => {
+                recovered.published_identity = "f".repeat(64);
+            }
+            3 => {
+                recovered
+                    .declaration
+                    .formats
+                    .insert("catalogue_read".into(), vec![1]);
+            }
+            4 => {
+                recovered.declaration.schema_version = 99;
+            }
+            _ => fs::write(
+                previous.join("share/voyage/browser/worker.mjs"),
+                b"changed browser worker",
+            )
+            .unwrap(),
+        }
+        assert!(apply_worker(&mut r).is_err(), "variant {variant}");
+        assert_eq!(current().unwrap(), r.current_release);
+        assert_eq!(r.phase, "ready");
+        cleanup_staging(&mut r).unwrap();
+        f.done();
+    }
+}
+
+#[test]
+fn different_original_package_is_refused_during_recovery_and_both_downloads_retire() {
+    let f = installation();
+    let mut r = record("preparing");
+    let (previous, _, historical) = lost_nightly_contract(&f, &mut r);
+    let bin = candidate(&f, "1.0.3-nightly.20261004.101.1", "printf 1", "exit 0");
+    acquisition_with_original(&bin, &bin);
+    f.call(LIST, "[]");
+    let error = prepare_worker(&mut r).unwrap_err().to_string();
+    assert!(
+        error.contains("Original published package does not match"),
+        "{error}"
+    );
+    assert_eq!(current().unwrap(), r.current_release);
+    assert_eq!(fs::read(previous.join("release.json")).unwrap(), historical);
+    assert_eq!(
+        fs::read_dir(f.root.join(".cache/voyage/upgrades"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(r.staging_root.is_none());
     f.done();
 }
 
@@ -936,5 +1100,23 @@ fn immediate_rollback_and_reconciliation_share_exact_account_and_process_directo
         )
         .is_err()
     );
+    f.done();
+}
+
+#[test]
+fn oversized_preparation_review_keeps_a_readable_failure_and_never_overwrites_the_receipt() {
+    let f = installation();
+    let mut r = record("preparing");
+    let original = fs::read(path(OP).unwrap()).unwrap();
+    r.gateways.push(Gateway {
+        unit: "review.service".into(),
+        definition: "x".repeat(65536),
+    });
+    assert!(save(&mut r, "ready", "prepared").is_err());
+    assert_eq!(fs::read(path(OP).unwrap()).unwrap(), original);
+    save_preparation_failure(&mut r, "Preparation refused before installation").unwrap();
+    assert_eq!(load(OP).unwrap().phase, "failed");
+    assert!(load(OP).unwrap().gateways.is_empty());
+    assert_eq!(current().unwrap(), r.current_release);
     f.done();
 }

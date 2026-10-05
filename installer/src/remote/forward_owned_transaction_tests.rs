@@ -237,6 +237,7 @@ impl Owned {
             staging_root: None,
             gateways: vec![],
             contracts_sha256: None,
+            recovered_installed_contract: None,
             supervisor_activation: None,
             legacy_mode: false,
             legacy_proof: None,

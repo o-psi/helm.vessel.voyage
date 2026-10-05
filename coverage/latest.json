@@ -1,14 +1,14 @@
 {
-  "measured_at_utc": "2026-10-04T17:25:29.696173+00:00",
-  "source_commit": "c19f04092a1964ee7f7f5e7e4cc39775da03b957",
-  "dirty": false,
-  "source_fingerprint_sha256": "b78a261b28304a0a587060b3f82586ac399e74de1f15b2ea94fae70f4d7ab577",
-  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo path,NUL,exact bytes,NUL",
+  "measured_at_utc": "2026-10-05T01:10:28.760422+00:00",
+  "source_commit": "351da38e8cb366344a9f29c68a6a91296d52b3a4",
+  "dirty": true,
+  "source_fingerprint_sha256": "a08d82344642fff61a11cdd5289e2c33a255f6ef08e677c49043b83329c68be0",
+  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/Cargo paths plus installer/src/source_acquire.py,NUL,exact bytes,NUL",
   "platform": "Linux-7.2.5-4-omarchy-x86_64-with-glibc2.44",
   "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
   "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET RUSTC=$PINNED_TOOLCHAIN/usr/bin/rustc RUSTDOC=$PINNED_TOOLCHAIN/usr/bin/rustdoc LLVM_COV=$PINNED_TOOLCHAIN/usr/bin/llvm-cov LLVM_PROFDATA=$PINNED_TOOLCHAIN/usr/bin/llvm-profdata LLVM_PROFILE_FILE_NAME=v103final17f56eb9429b409f9ce50af7e41cb16c-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user background.slice MemoryMax=18G MemoryHigh=16G MemorySwapMax=0 CPUQuota=400% Nice=10; umask 0077",
+  "command": "CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET RUSTC=$PINNED_TOOLCHAIN/usr/bin/rustc RUSTDOC=$PINNED_TOOLCHAIN/usr/bin/rustdoc LLVM_COV=$PINNED_TOOLCHAIN/usr/bin/llvm-cov LLVM_PROFDATA=$PINNED_TOOLCHAIN/usr/bin/llvm-profdata LLVM_PROFILE_FILE_NAME=update43520261004-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 2; systemd user MemoryMax=12G MemoryHigh=10G MemorySwapMax=0 CPUQuota=200% Nice=10; umask 0077",
   "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
   "exclusions": [
     "Doctests",
@@ -19,37 +19,54 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Measured clean consolidated sourcec19f040 after mirror diagnostics and bounded capture coalescing. Exact Rust/Cargo fingerprintb78a261b remained frozen through tests and audit; Python/JavaScript/browser gates are separate.",
-    "One measurement used private Arch Rust1.98.1/LLVM22.1.8, existing corrected shared cache and a fresh own-prefix profile set. No cache or foreign-profile cleaning occurred.",
-    "All19 current executable objects/16 executed test binaries and546 source mappings were validated; detailed JSON/LCOV line accounting reconciled every mapped file. No guest-worktree maps or narrowed exclusions accepted.",
-    "The42 actual zero-hash dependency warnings matched reviewed dependency symbols; all9304 foreign profiles were preserved.",
-    "Compared with previous899: line total+7 and covered+8; region total+14 and covered+16; function total unchanged and covered-1. Line percentage+0.0016956364 points, function-0.0079923274 points, region+0.0022854298 points. Small execution variation and the explicit fixed-code branches are recorded without scope narrowing.",
+    "Measured the final updater compatibility recovery edits against base351da38 with an explicit dirty-tree fingerprint. This fingerprint includes the embedded acquisition worker; the base commit alone is not the measured source.",
+    "One final default-feature workspace test cohort; exact-tag Python acquisition checks are separate. Existing cached artifacts and all foreign raw profiles were preserved.",
+    "All19 current objects/16 executed test binaries and546 source mappings were validated and archived. Every detailed JSON/LCOV line counter reconciled; no scope/exclusion narrowing.",
+    "The42 zero-hash dependency warnings matched the previously audited symbols; all10191 existing foreign profiles remained byte/mtime unchanged.",
+    "Compared with previous record: lines: covered111240\u2192111406, total137274\u2192137437, percent delta+0.024675 points; functions: covered10048\u219210062, total12512\u219212525, percent delta+0.028424 points; regions: covered175422\u2192175652, total227266\u2192227503, percent delta+0.020687 points.",
     "Default features; ignored/live-provider tests and doctests excluded. No branch or native macOS/Windows qualification implied."
   ],
   "workspace_executables": 19,
   "executed_test_binaries": 16,
   "source_files": 546,
   "tests": {
-    "passed": 3114,
+    "passed": 3120,
     "failed": 0,
     "ignored": 10
   },
   "totals": {
-    "lines": {
-      "count": 137274,
-      "covered": 111240,
-      "percent": 81.03501027142795
+    "branches": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
     },
     "functions": {
-      "count": 12512,
-      "covered": 10048,
-      "percent": 80.30690537084399
+      "count": 12525,
+      "covered": 10062,
+      "percent": 80.33532934131736
+    },
+    "instantiations": {
+      "count": 28151,
+      "covered": 14353,
+      "percent": 50.98575539057227
+    },
+    "lines": {
+      "count": 137437,
+      "covered": 111406,
+      "percent": 81.0596855286422
+    },
+    "mcdc": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
     },
     "regions": {
-      "count": 227266,
-      "covered": 175422,
-      "notcovered": 51844,
-      "percent": 77.18796476375701
+      "count": 227503,
+      "covered": 175652,
+      "notcovered": 51851,
+      "percent": 77.20865219359744
     }
   }
 }
