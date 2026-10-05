@@ -148,15 +148,49 @@ def acquire_fingerprints(directory):
     return nodes
 
 
+def bind_objects(manifest, invocations, nodes):
+    """Bind selected objects to captured compiler invocations, never basename guesses.
+
+    Invocation records must be captured at compilation by a forwarding recorder;
+    this function does not claim a manually supplied record is compiler evidence.
+    """
+    objects = {}
+    for obj, digest in manifest['objects'].items():
+        matches = [v for v in invocations if str(Path(v['executable']).resolve()) == obj]
+        require(len(matches) == 1, 'missing or ambiguous executable compiler invocation')
+        invocation = matches[0]
+        require(invocation['exit_status'] == 0, 'compiler invocation failed')
+        require(any('instrument-coverage' in arg for arg in invocation['argv']),
+                'compiler invocation not instrumented')
+        fingerprint = str(Path(invocation['fingerprint']).resolve())
+        require(fingerprint in nodes, 'compiler producer absent from acquired closure')
+        dep = Path(invocation['dep_info']).resolve()
+        require(dep.is_file(), 'compiler dep-info absent')
+        objects[obj] = {'object_sha256': digest, 'dep_info': str(dep),
+                        'dep_info_sha256': sha(dep), 'fingerprint': fingerprint,
+                        'fingerprint_sha256': sha(Path(fingerprint)),
+                        'build_scripts': invocation.get('build_scripts', [])}
+    return {'objects': objects, 'fingerprints': nodes}
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fingerprint-directory', type=Path, required=True)
+    parser.add_argument('--manifest', type=Path)
+    parser.add_argument('--invocations', type=Path)
+    parser.add_argument('--source-root', type=Path)
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     nodes = acquire_fingerprints(args.fingerprint_directory)
+    result = {'fingerprints': nodes}
+    if args.manifest or args.invocations:
+        require(args.manifest and args.invocations and args.source_root, 'binding requires manifest, invocations and source root')
+        manifest = json.loads(args.manifest.read_text())
+        result = bind_objects(manifest, json.loads(args.invocations.read_text()), nodes)
+        validate(manifest, result, args.source_root)
     with args.output.open('x') as output:
-        json.dump({'fingerprints': nodes}, output, indent=2, sort_keys=True)
+        json.dump(result, output, indent=2, sort_keys=True)
         output.write('\n')
 
 

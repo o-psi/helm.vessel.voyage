@@ -65,3 +65,17 @@ class AcquisitionTests(unittest.TestCase):
             (b / 'lib-copy.json').write_text((b / 'lib-b.json').read_text())
             with self.assertRaisesRegex(ValueError, 'ambiguous'):
                 acquire_fingerprints(root)
+
+class BindingTests(unittest.TestCase):
+    def test_missing_ambiguous_and_uninstrumented(self):
+        from coverage_provenance import bind_objects
+        with tempfile.TemporaryDirectory() as directory:
+            obj = str(Path(directory) / 'binary')
+            manifest = {'objects': {obj: 'hash'}}
+            with self.assertRaisesRegex(ValueError, 'missing or ambiguous'):
+                bind_objects(manifest, [], {})
+            invocation = {'executable': obj, 'exit_status': 0, 'argv': ['rustc']}
+            with self.assertRaisesRegex(ValueError, 'not instrumented'):
+                bind_objects(manifest, [invocation], {})
+            with self.assertRaisesRegex(ValueError, 'ambiguous'):
+                bind_objects(manifest, [invocation, invocation], {})
