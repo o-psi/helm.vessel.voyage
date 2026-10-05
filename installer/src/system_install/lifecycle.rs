@@ -167,11 +167,11 @@ fn validate_operation(op: &Operation) -> Result<()> {
             );
         }
         ensure!(
-            op.kind != "upgrade"
+            !matches!(op.kind.as_str(), "upgrade" | "rollback" | "start")
                 || candidate.phase != "active"
                 || op.phase != "complete"
                 || op.candidate_start_attempted,
-            "completed active upgrade lacks durable startup attempt"
+            "completed active transition lacks durable startup attempt"
         );
     }
     ensure!(
@@ -195,6 +195,13 @@ fn completed(op: &Operation) -> Result<()> {
     );
     Ok(())
 }
+fn retained_candidate_matches(op: &Operation, current: &Record) -> Result<bool> {
+    let Some(candidate) = &op.candidate else {
+        return Ok(false);
+    };
+    Ok(serde_json::to_value(candidate)? == serde_json::to_value(current)?)
+}
+
 fn rollback_eligible(op: &Operation, current: &Record) -> Result<()> {
     completed(op)?;
     ensure!(
@@ -202,10 +209,7 @@ fn rollback_eligible(op: &Operation, current: &Record) -> Result<()> {
             && !op.candidate_start_attempted
             && op.previous.phase == "inactive"
             && current.phase == "inactive"
-            && op
-                .candidate
-                .as_ref()
-                .is_some_and(|r| r.release == current.release),
+            && retained_candidate_matches(op, current)?,
         "rollback refused: candidate may have opened persistent state; schema compatibility review is required"
     );
     Ok(())
@@ -308,16 +312,45 @@ fn stop() -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
-fn publish(next: &Record, previous: &Record) -> Result<()> {
+fn publish_units(
+    root: &Path,
+    expected_uid: u32,
+    next: &Record,
+    previous: &Record,
+    reload: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    // Check both reviewed definitions before the first write. Partial publication
+    // or reload failure remains in the durable publishing phase, never complete.
+    for (name, expected) in [
+        (ROOT_UNIT, &previous.root_unit),
+        (GATEWAY_UNIT, &previous.gateway_unit),
+    ] {
+        let path = root.join(name);
+        service::files::check_path(&path, expected_uid)?;
+        let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file() && metadata.uid() == expected_uid && metadata.nlink() == 1,
+            "system unit is not an exclusively owned regular file: {name}"
+        );
+        ensure!(
+            fs::read_to_string(&path)? == *expected,
+            "system unit changed: {name}"
+        );
+    }
     for (name, content, expected) in [
         (ROOT_UNIT, &next.root_unit, &previous.root_unit),
         (GATEWAY_UNIT, &next.gateway_unit, &previous.gateway_unit),
     ] {
-        service::files::check_path(&Path::new(UNIT_ROOT).join(name), 0)?;
-        service::files::replace(&Path::new(UNIT_ROOT).join(name), content, Some(expected))?;
+        service::files::replace(&root.join(name), content, Some(expected))?;
     }
-    ctl(&["daemon-reload"])?;
-    Ok(())
+    reload()
+}
+
+fn publish(next: &Record, previous: &Record) -> Result<()> {
+    publish_units(Path::new(UNIT_ROOT), 0, next, previous, || {
+        ctl(&["daemon-reload"])?;
+        Ok(())
+    })
 }
 fn save(record: &Record) -> Result<()> {
     files::atomic_json(Path::new(CONFIG), record)?;
@@ -403,10 +436,7 @@ pub(crate) fn run_reviewed(args: &[String], expected: Option<&str>) -> Result<()
                     && op.phase == "complete"
                     && op.previous.phase == "active"
                     && old.record.phase == "active"
-                    && op
-                        .candidate
-                        .as_ref()
-                        .is_some_and(|r| r.release == old.record.release),
+                    && retained_candidate_matches(&op, &old.record)?,
                 "rollback is not a retained completed source transition"
             );
             compatible_manifests(&retained_manifest(&op.previous)?, &old.manifest)?;
@@ -619,6 +649,81 @@ mod tests {
         }
     }
     #[test]
+    fn every_interrupted_publication_phase_refuses_automatic_replay() {
+        let fixture = Fixture::new();
+        for phase in [
+            "prepared",
+            "staging",
+            "stopping",
+            "publishing",
+            "saving",
+            "activating",
+            "unresolved-activation",
+            "restoring-compatible-source",
+        ] {
+            let op = operation(phase, true);
+            files::atomic_json(&fixture.journal(), &op).unwrap();
+            let retained = read_operation_at(&fixture.journal(), unsafe { libc::geteuid() })
+                .unwrap()
+                .unwrap();
+            assert!(completed(&retained).is_err(), "{phase}");
+            assert!(rollback_eligible(&retained, retained.candidate.as_ref().unwrap()).is_err());
+        }
+        for kind in ["upgrade", "rollback", "start"] {
+            let mut op = operation("complete", true);
+            op.kind = kind.into();
+            op.candidate_start_attempted = false;
+            assert!(validate_operation(&op).is_err(), "{kind}");
+        }
+    }
+
+    #[test]
+    fn unit_publication_preflights_both_definitions_and_retains_reload_failure() {
+        let fixture = Fixture::new();
+        let previous = record('a', "inactive");
+        let mut candidate = record('b', "inactive");
+        candidate.root_unit = "candidate root".into();
+        candidate.gateway_unit = "candidate gateway".into();
+        let root = fixture.0.join(ROOT_UNIT);
+        let gateway = fixture.0.join(GATEWAY_UNIT);
+        fs::write(&root, &previous.root_unit).unwrap();
+        fs::write(&gateway, "concurrent replacement").unwrap();
+        let uid = unsafe { libc::geteuid() };
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                panic!("changed gateway must refuse before reload")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        fs::write(&gateway, &previous.gateway_unit).unwrap();
+        let alias = fixture.0.join("gateway-alias");
+        fs::hard_link(&gateway, &alias).unwrap();
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                panic!("hardlinked gateway must refuse before reload")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        fs::remove_file(alias).unwrap();
+        assert!(
+            publish_units(&fixture.0, uid, &candidate, &previous, || {
+                anyhow::bail!("injected daemon reload failure")
+            })
+            .is_err()
+        );
+        assert_eq!(fs::read_to_string(&root).unwrap(), candidate.root_unit);
+        assert_eq!(
+            fs::read_to_string(&gateway).unwrap(),
+            candidate.gateway_unit
+        );
+        publish_units(&fixture.0, uid, &previous, &candidate, || Ok(())).unwrap();
+        assert_eq!(fs::read_to_string(&root).unwrap(), previous.root_unit);
+        assert_eq!(fs::read_to_string(&gateway).unwrap(), previous.gateway_unit);
+    }
+
+    #[test]
     fn installer_default_identity_preserves_explicit_account_without_root_or_primary_group() {
         let mut explicit = record('a', "inactive");
         explicit.execution_groups = vec![1000, 1002, 1003];
@@ -707,6 +812,40 @@ mod tests {
         assert!(completed(&active).is_ok());
         assert!(rollback_eligible(&active, active.candidate.as_ref().unwrap()).is_err());
     }
+    #[test]
+    fn retained_candidate_requires_exact_units_accounts_and_activation_intent() {
+        let op = operation("complete", false);
+        let current = op.candidate.as_ref().unwrap();
+        assert!(retained_candidate_matches(&op, current).unwrap());
+        for field in [
+            "version",
+            "execution_home",
+            "gateway_origin",
+            "credential_unit_sha256",
+            "root_unit",
+            "gateway_unit",
+        ] {
+            let mut changed = serde_json::to_value(current).unwrap();
+            changed[field] = "replaced".into();
+            let changed: Record = serde_json::from_value(changed).unwrap();
+            assert!(
+                !retained_candidate_matches(&op, &changed).unwrap(),
+                "{field}"
+            );
+            assert!(rollback_eligible(&op, &changed).is_err(), "{field}");
+        }
+        let mut changed = current.clone();
+        changed.gateway_uid += 1;
+        assert!(rollback_eligible(&op, &changed).is_err());
+        changed = current.clone();
+        changed.start_requested = true;
+        assert!(rollback_eligible(&op, &changed).is_err());
+        let active = operation("complete", true);
+        let mut changed = active.candidate.as_ref().unwrap().clone();
+        changed.gateway_unit.push_str("\nchanged");
+        assert!(!retained_candidate_matches(&active, &changed).unwrap());
+    }
+
     #[test]
     fn journal_rejects_changed_schema_unsafe_inode_and_inconsistent_attempt() {
         let fixture = Fixture::new();
@@ -929,6 +1068,7 @@ pub(super) fn start_reviewed_system(args: &[String]) -> Result<()> {
         candidate_start_attempted: false,
     };
     operation.candidate.as_mut().unwrap().phase = "active".into();
+    operation.candidate.as_mut().unwrap().start_requested = true;
     write_operation(&operation)?;
     operation.phase = "activating".into();
     operation.candidate_start_attempted = true;
@@ -939,8 +1079,11 @@ pub(super) fn start_reviewed_system(args: &[String]) -> Result<()> {
         write_operation(&operation)?;
         return Err(error);
     }
-    plan.record.phase = "active".into();
-    plan.record.start_requested = true;
+    plan.record = operation
+        .candidate
+        .as_ref()
+        .context("start candidate missing")?
+        .clone();
     save(&plan.record)?;
     operation.phase = "complete".into();
     write_operation(&operation)?;

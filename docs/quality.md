@@ -91,6 +91,25 @@ cargo test -p vessel --locked gateway_ipc -j 8
 cargo test -p vessel --locked gateway_route -j 8
 ```
 
+The installer lifecycle journal also has offline ordinary-UID regression checks:
+
+```sh
+cargo test -p voyage-installer --locked system_install::lifecycle::tests -j 8
+```
+
+Retained rollback admission must match the entire candidate installation record,
+not only its archive ID: account facts, effective unit bytes, credential provisioner,
+public origin and activation intent remain pinned. A same-release replacement is
+not evidence that the reviewed transition is still current. These fixtures do not
+mutate accounts or system services and do not qualify native deployment.
+
+Gateway regressions additionally cover disconnected/missing endpoints, truncated and
+zero-length payloads, unknown/private pairing envelope fields and stale Vessel
+identity grants. Pairing preflight uses an empty struct variant so serde actually
+rejects unknown fields (unit variants ignore them despite `deny_unknown_fields`).
+The installer readiness fixture pins the public reply to the protected supervisor
+identity rather than accepting an unrelated healthy user gateway.
+
 These tests do not run a root supervisor or unprivileged network gateway. A
 separate disposable Ubuntu VM test is required for actual peer identities,
 public routing and failure/restart behavior; the exact fixture commands and
@@ -590,6 +609,10 @@ in the designated disposable native Linux fixture.
 The ignored `system_service::tests::native_systemd_accepts_pinned_root_and_ordinary_gateway_units`
 test requires that fixture, an explicit `VOYAGE_DISPOSABLE_ROOT_FIXTURE=1`, and
 `systemd-analyze verify`; it checks unit syntax, not activation or rollback.
+Before activation, also extract the generated gateway `ExecStart` arguments and
+pass them to the actual reviewed Vessel binary with `--help`. This parser-only
+check must accept the explicit `--public-origin` option and its reviewed origin;
+unit syntax alone cannot detect a missing CLI option. It starts no service.
 The ignored `install::release::system_tests::root_staged_release_is_readable_by_an_ordinary_runtime_and_retains_browser_assets`
 test requires the same disposable root fixture. It creates and removes a fresh
 `/opt/voyage` in that fixture and verifies ordinary execution/read access and

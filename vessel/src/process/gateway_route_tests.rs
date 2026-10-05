@@ -88,7 +88,21 @@ async fn system_pipe_constructs_only_granted_commands_and_keeps_pairing_separate
     .await;
     assert!(denied.error.is_some());
     assert_eq!(denied.result, Value::Null);
-    let discovery = call(supervisor, gateway_ipc::GatewayRequest::PairPreflight).await;
+    let stale = call(
+        supervisor.clone(),
+        gateway_ipc::GatewayRequest::Command {
+            auth: gateway_ipc::GrantAuth {
+                expected_vessel_id: Some(Uuid::new_v4()),
+                ..auth.clone()
+            },
+            command: VesselCommand::Capabilities,
+        },
+    )
+    .await;
+    assert!(stale.error.is_some());
+    assert!(!stale.outcome_unknown);
+    assert_eq!(stale.result, Value::Null);
+    let discovery = call(supervisor, gateway_ipc::GatewayRequest::PairPreflight {}).await;
     assert!(discovery.error.is_none());
     assert_eq!(discovery.result["protocol"], 1);
     assert!(discovery.result["vessel_id"].is_string());

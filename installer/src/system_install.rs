@@ -424,12 +424,29 @@ fn preflight() -> Result<()> {
         .context("gateway response has no body")?
         + 4;
     let value: serde_json::Value = serde_json::from_slice(&data[body..])?;
+    let expected: serde_json::Value = serde_json::from_slice(&files::read(
+        &Path::new(CONTROL).join("identity/key.json"),
+        65536,
+    )?)?;
+    validate_preflight_identity(&value, &expected)
+}
+
+fn validate_preflight_identity(
+    value: &serde_json::Value,
+    expected: &serde_json::Value,
+) -> Result<()> {
+    let id = |value: &serde_json::Value| {
+        value
+            .get("vessel_id")
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| uuid_shape(id))
+            .map(str::to_owned)
+    };
+    // A healthy but unrelated user gateway must not qualify the root service.
     ensure!(
         value.get("protocol").and_then(serde_json::Value::as_u64) == Some(1)
-            && value
-                .get("vessel_id")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|id| !id.is_empty()),
+            && id(expected).is_some()
+            && id(value) == id(expected),
         "gateway preflight identity is unavailable"
     );
     Ok(())
@@ -897,6 +914,21 @@ fn status() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gateway_readiness_requires_exact_protected_supervisor_identity() {
+        let expected = serde_json::json!({"vessel_id":"11111111-1111-4111-8111-111111111111"});
+        let ready =
+            serde_json::json!({"protocol":1,"vessel_id":"11111111-1111-4111-8111-111111111111"});
+        super::validate_preflight_identity(&ready, &expected).unwrap();
+        for value in [
+            serde_json::json!({"protocol":1,"vessel_id":"22222222-2222-4222-8222-222222222222"}),
+            serde_json::json!({"protocol":1,"vessel_id":"not-an-identity"}),
+            serde_json::json!({"protocol":2,"vessel_id":expected["vessel_id"]}),
+        ] {
+            assert!(super::validate_preflight_identity(&value, &expected).is_err());
+        }
+        assert!(super::validate_preflight_identity(&ready, &serde_json::json!({})).is_err());
+    }
     use super::*;
     fn parse(args: &[&str]) -> Result<Options> {
         Options::parse(&args.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>())
