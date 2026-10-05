@@ -324,6 +324,17 @@ cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-di
 cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary.json
 ```
 
+For a shared target, the default report's executable glob is not authoritative.
+After the passing unchanged-source test run, select and audit the current Cargo
+compiler-artifact executable set using
+[`packaging/coverage_artifacts.py`](packaging/coverage_artifacts.py) and the exact
+[shared-target procedure](docs/testing/shared-target-coverage.md). Export only
+that complete set with the current explicitly merged profile and unchanged tool
+exclusions. Preserve rejected default reports. Refuse foreign/duplicate maps,
+changed objects/source and LLVM diagnostics; do not publish unaudited mixed totals.
+The source-switch qualification and final-source measurement remain actual gates,
+not claims established by the existence of this tooling.
+
 Check the test command's exit status before proceeding. On test failure, a report
 may still be generated with `cargo llvm-cov report --html --output-dir
 target/coverage-report`; record the failures and do not describe report generation
