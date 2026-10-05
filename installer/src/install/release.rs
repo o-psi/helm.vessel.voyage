@@ -99,6 +99,26 @@ fn mode(path: &Path, expected: u32, directory: bool) -> Result<()> {
     Ok(())
 }
 impl Manifest {
+    /// The retained Debian12 ELF adaptation has a local package label, while
+    /// its four verified programs still identify the shipped legacy reader.
+    pub(crate) fn is_legacy_v102(&self, root: &Path) -> Result<bool> {
+        match self.version.trim_start_matches('v') {
+            "1.0.2" => Ok(true),
+            "1.0.2-debian12-isolated-glibc" => {
+                self.verify(root)?;
+                ensure!(
+                    super::version::inspect(&root.join("bin"))? == "1.0.2",
+                    "Adapted legacy release must contain four verified v1.0.2 programs"
+                );
+                Ok(true)
+            }
+            value if value.starts_with("1.0.2-") => {
+                anyhow::bail!("Unknown legacy v1.0.2 adaptation requires a qualified handover")
+            }
+            _ => Ok(false),
+        }
+    }
+
     pub fn inspect(bin: &Path) -> Result<Self> {
         files::safe(bin)?;
         let mut binaries = BTreeMap::new();
@@ -553,3 +573,7 @@ mod system_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "legacy_release_tests.rs"]
+mod legacy_release_tests;

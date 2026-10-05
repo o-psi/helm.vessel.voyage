@@ -47,6 +47,24 @@ not repair its execution path.
 
 ### Supported quiescent v1.0.2 handover
 
+Owners retained from before guardian support may use journal9's original
+observed stop receipts. This admission requires their exact identity and receipt
+shape, recognized cleanup tables, observed local/resource cleanup, no remote or
+assignment attestation, and empty observed cleanup progress. Missing guardian
+records for other journal cohorts, pending/attested cleanup, unknown schemas or
+changed identities refuse. Existing guardian records still require their full
+witness; forward recovery does not use this legacy exception. No guardian record
+is invented, no historical journal is upgraded during preparation, and held
+snapshot/account/canonical proofs remain unchanged.
+
+The established Debian12 isolated-glibc package label
+`v1.0.2-debian12-isolated-glibc` uses this same handover only when its
+retained manifest hashes verify and all four executables report exactly
+`1.0.2`. Its historical manifest is unchanged. Unknown adaptations, mixed
+versions and changed executable bytes refuse; the same admission applies to
+legacy rollback and mixed-installation recovery. This recognition does not
+qualify other platform/loader changes or grant system-service authority.
+
 The shipped v1.0.2 supervisor accepts catalogue schema 1 and Voyage journal
 schemas through 12. This is a format-breaking legacy handover: preparation uses
 the installed trusted helper to observe its catalogue, requires a managed active

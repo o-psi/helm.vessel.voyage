@@ -51,7 +51,7 @@ fn rollback_inner(
             .as_deref()
             .context("No previous release available")?;
         let manifest = l.verify(id)?;
-        legacy_rollback_admission(&manifest, &l.root)?;
+        legacy_rollback_admission(&manifest, &l.release(id), &l.root)?;
         validate(&l, &j, false)?;
         return l.report(id, &manifest.version, &j);
     }
@@ -75,14 +75,14 @@ fn rollback_inner(
         ensure!(
             id == expected_previous
                 && j.current.as_deref() == Some(expected_current)
-                && manifest.version.trim_start_matches('v') == "1.0.2"
+                && manifest.is_legacy_v102(&l.release(&id))?
                 && manifest.update_compatibility.is_none()
                 && guard.proof.state == crate::service::state_directory()?,
             "Held legacy rollback release or namespace changed"
         );
         guard.verify_restored_held()?;
     } else {
-        legacy_rollback_admission(&manifest, &l.root)?;
+        legacy_rollback_admission(&manifest, &l.release(&id), &l.root)?;
     }
     let report = l.report(&id, &manifest.version, &j)?;
     j.pending = Some(id.clone());
@@ -90,10 +90,12 @@ fn rollback_inner(
     publish(&l, &mut j, &id)?;
     Ok(report)
 }
-fn legacy_rollback_admission(manifest: &Manifest, staging: &std::path::Path) -> Result<()> {
-    if manifest.update_compatibility.is_none()
-        && manifest.version.trim_start_matches('v') == "1.0.2"
-    {
+fn legacy_rollback_admission(
+    manifest: &Manifest,
+    release: &std::path::Path,
+    staging: &std::path::Path,
+) -> Result<()> {
+    if manifest.update_compatibility.is_none() && manifest.is_legacy_v102(release)? {
         let state = crate::service::state_directory()?;
         if state.join("catalogue.sqlite3").try_exists()? {
             crate::legacy::eligible(&state, &crate::legacy::accounts()?, staging).context(

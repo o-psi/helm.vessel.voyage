@@ -728,7 +728,7 @@ fn prepare(operation: &str, arguments: &[String]) -> Result<()> {
     );
     let old_manifest = installed_manifest(&old)?;
     ensure!(
-        old_manifest.version.trim_start_matches('v') == "1.0.2"
+        old_manifest.is_legacy_v102(&installation_root()?.join("releases").join(&old))?
             && old_manifest.update_compatibility.is_none(),
         "Recovery supports only the proved legacy metadata state"
     );

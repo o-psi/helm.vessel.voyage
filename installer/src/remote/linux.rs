@@ -626,7 +626,11 @@ fn prepare_worker(record: &mut Record) -> Result<()> {
         );
     }
     if installed.update_compatibility.is_none()
-        && installed.version.trim_start_matches('v') == "1.0.2"
+        && installed.is_legacy_v102(
+            &installation_root()?
+                .join("releases")
+                .join(&record.current_release),
+        )?
     {
         manifest
             .update_compatibility
@@ -748,8 +752,8 @@ fn local_legacy_context(
         return Ok(None);
     };
     let installed = installed_manifest(current)?;
-    if installed.version.trim_start_matches('v') != "1.0.2"
-        || installed.update_compatibility.is_some()
+    if installed.update_compatibility.is_some()
+        || !installed.is_legacy_v102(&installation_root()?.join("releases").join(current))?
     {
         return Ok(None);
     }
@@ -1087,8 +1091,11 @@ fn apply_worker(record: &mut Record) -> Result<()> {
     let installed = installed_manifest(&record.current_release)?;
     if record.legacy_mode {
         ensure!(
-            installed.version.trim_start_matches('v') == "1.0.2"
-                && installed.update_compatibility.is_none(),
+            installed.is_legacy_v102(
+                &installation_root()?
+                    .join("releases")
+                    .join(&record.current_release)
+            )? && installed.update_compatibility.is_none(),
             "Legacy installation identity changed"
         );
         ensure!(

@@ -67,7 +67,48 @@ def guardian_idle(directory):
     try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
     finally:os.close(fd)
 
-def inventory(state, db, journal_ceiling=12, formats=None):
+def legacy_stopped_cleanup(stopped, journal, session, incarnation):
+    # Only the pre-guardian journal9 cohort is admitted. Its original observed
+    # receipts remain byte-pinned; no new guardian witness is manufactured.
+    if (journal.execute('SELECT version FROM attachment_schema WHERE id=1').fetchone() != (9,)
+        or set(stopped) != {'archive','cleanup_observed','deletion','incarnation','session_id','suspended'}
+        or stopped['cleanup_observed'] is not True
+        or stopped['session_id'] != session or stopped['incarnation'] != incarnation
+        or type(stopped['suspended']) is not bool):
+        raise ValueError('unsupported pre-guardian stopped receipt')
+    columns = {
+        'local_cleanup_obligations': ['run_id','session_id','installation_id','principal_id','confirmation'],
+        'remote_cleanup_attestations': ['run_id','installation_id','principal_id'],
+        'process_assignment_local_cleanup': ['run_id'],
+        'process_cleanup_progress': ['session_id','run_id','record'],
+        'process_session_resources': ['id','session_id','run_id','kind','state'],
+    }
+    for name, expected in columns.items():
+        if (journal.execute('SELECT type FROM sqlite_master WHERE name=?',(name,)).fetchone() != ('table',)
+            or [r[1] for r in journal.execute('PRAGMA table_info('+name+')')] != expected):
+            raise ValueError('pre-guardian cleanup schema is unknown')
+    if (journal.execute("SELECT count(*) FROM local_cleanup_obligations WHERE session_id IS NULL OR session_id<>? OR confirmation IS NULL OR confirmation<>'observed'",(session,)).fetchone() != (0,)
+        or journal.execute("SELECT count(*) FROM process_session_resources WHERE session_id IS NULL OR session_id<>? OR state IS NULL OR state<>'observed'",(session,)).fetchone() != (0,)
+        or journal.execute('SELECT count(*) FROM remote_cleanup_attestations').fetchone() != (0,)
+        or journal.execute('SELECT count(*) FROM process_assignment_local_cleanup').fetchone() != (0,)):
+        raise ValueError('pre-guardian cleanup is pending or attested, not observed')
+    for name in ('local_cleanup_obligations','process_session_resources'):
+        if journal.execute('SELECT count(*) FROM '+name+' c LEFT JOIN runs r ON c.run_id=r.id WHERE r.id IS NULL OR r.session_id<>? OR r.active<>0',(session,)).fetchone() != (0,):
+            raise ValueError('pre-guardian cleanup belongs to an unknown or active run')
+    for owner, run, encoded in journal.execute('SELECT session_id,run_id,record FROM process_cleanup_progress'):
+        record = json.loads(encoded)
+        if (journal.execute('SELECT session_id,active FROM runs WHERE id=?',(run,)).fetchone() != (session,0)
+            or owner != session or set(record) != {'pending','phase','reason','retryable','run_id'}
+            or record['run_id'] != run or record['pending'] != [] or record['phase'] != 'observed'
+            or record['reason'] is not None or record['retryable'] is not False):
+            raise ValueError('pre-guardian cleanup progress is not observed')
+    deletion = stopped['deletion']
+    if deletion is not None and (not isinstance(deletion,dict) or deletion.get('session_id') != session
+        or deletion.get('deleted') is not True or deletion.get('cleanup') != 'observed'
+        or deletion.get('status') != 'applied'):
+        raise ValueError('pre-guardian deletion cleanup is not observed')
+
+def inventory(state, db, journal_ceiling=12, formats=None, legacy_stopped=False):
     rows = db.execute('SELECT session_id,registration FROM voyages ORDER BY session_id').fetchall()
     if len(rows) > 4096: raise ValueError('ordinary voyage bound exceeded')
     sessions = []
@@ -79,18 +120,24 @@ def inventory(state, db, journal_ceiling=12, formats=None):
             raise ValueError('legacy update requires ordinary registrations')
         directory = state/'sessions'/session
         stopped = json.loads(checked(directory/'stopped.json', 65536))
-        guardian = json.loads(checked(directory/('guardian-'+registration['incarnation']+'.json'),65536))
         guardian_idle(directory)
-        if set(guardian)!={'session_id','incarnation','boot_id','cleanup_observed'}:
-            raise ValueError('strict guardian evidence unavailable')
-        uuid.UUID(guardian['boot_id'])
-        current_boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-        guardian_clean=guardian['cleanup_observed'] is True or guardian['boot_id']!=current_boot
-        if stopped.get('session_id')!=session or stopped.get('incarnation')!=registration['incarnation'] or stopped.get('cleanup_observed') is not True or not guardian_clean:
-            raise ValueError('ordinary voyage cleanup is not observed')
-        if any(record.get('session_id') != session or record.get('incarnation') != registration['incarnation'] for record in (stopped, guardian)):
-            raise ValueError('ordinary voyage cleanup is not observed')
         journal = database(directory/'journal/journal.sqlite3')
+        marker=directory/('guardian-'+registration['incarnation']+'.json')
+        if os.path.lexists(marker):
+            guardian = json.loads(checked(marker,65536))
+            if set(guardian)!={'session_id','incarnation','boot_id','cleanup_observed'}:
+                raise ValueError('strict guardian evidence unavailable')
+            uuid.UUID(guardian['boot_id'])
+            current_boot=pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+            guardian_clean=guardian['cleanup_observed'] is True or guardian['boot_id']!=current_boot
+            if not guardian_clean or guardian.get('session_id')!=session or guardian.get('incarnation')!=registration['incarnation']:
+                raise ValueError('ordinary voyage cleanup is not observed')
+        elif legacy_stopped:
+            legacy_stopped_cleanup(stopped,journal,session,registration['incarnation'])
+        else:
+            raise ValueError('strict guardian evidence unavailable')
+        if stopped.get('cleanup_observed') is not True or stopped.get('session_id')!=session or stopped.get('incarnation')!=registration['incarnation']:
+            raise ValueError('ordinary voyage cleanup is not observed')
         version = journal.execute('SELECT version FROM attachment_schema WHERE id=1').fetchone()[0]
         owned=journal.execute('SELECT count(*) FROM sessions WHERE id=?',(session,)).fetchone()[0]
         if owned!=1:
@@ -258,9 +305,9 @@ def projection_matches(state, db):
         if normalized(saved) != normalized(projected):
             raise ValueError('ordinary registration projection changed')
 
-def evidence(state, accounts, db, journal_ceiling=12, observe_formats=False):
+def evidence(state, accounts, db, journal_ceiling=12, observe_formats=False, legacy_stopped=False):
     formats={'journal_schemas':set(), 'process_protocols':set()} if observe_formats else None
-    sessions=inventory(state,db,journal_ceiling,formats)
+    sessions=inventory(state,db,journal_ceiling,formats,legacy_stopped)
     result=dict(canonical_sha256=canonical(db), state_sha256=tree_digest(state,True),
                 accounts_sha256=tree_digest(accounts), sessions=sessions, session_count=len(sessions))
     if formats is not None:
@@ -277,7 +324,7 @@ def run(action,state,accounts,stage):
     if version not in (1,2): raise ValueError('unsupported legacy catalogue source')
     forward=action.startswith('forward-')
     if forward and version!=2:raise ValueError('forward recovery requires existing schema 2')
-    current=evidence(state,accounts,db,20 if forward else 12,forward)
+    current=evidence(state,accounts,db,20 if forward else 12,forward,not forward)
     if forward:
         current['recovery_mode']='forward-existing-schema2'
         current['review_state_sha256']=notification_review_tree(state)

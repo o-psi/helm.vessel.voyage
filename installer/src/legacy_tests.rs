@@ -554,3 +554,133 @@ fn held_restored_pointer_refuses_snapshot_mutation_foreign_namespace_and_forward
         f.done();
     }
 }
+
+#[test]
+fn adapted_legacy_rollback_refuses_migrated_state_without_changing_the_pointer() {
+    let f = Fixture::new();
+    let (state, _, _) = setup(&f);
+    let old = crate::fixture_tests::release(&f, "adapted-old", "1.0.2");
+    let mut manifest = crate::install::release::Manifest::inspect(&old).unwrap();
+    manifest.version = "v1.0.2-debian12-isolated-glibc".into();
+    std::fs::write(
+        old.parent().unwrap().join("release.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    crate::install::run(crate::install::Options {
+        bin_dir: old,
+        replace_existing: false,
+        dry_run: false,
+    })
+    .unwrap();
+    let candidate = crate::fixture_tests::release(&f, "adapted-next", "1.0.3");
+    let next = crate::install::run(crate::install::Options {
+        bin_dir: candidate,
+        replace_existing: false,
+        dry_run: false,
+    })
+    .unwrap()
+    .release;
+    sql(
+        &state,
+        include_str!("../../vessel/src/process/database_v2_migration.sql"),
+    );
+    for dry_run in [true, false] {
+        assert!(
+            crate::install::rollback(dry_run)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("migrated or active state")
+        );
+        assert_eq!(
+            std::fs::read_link(f.root.join("install/current")).unwrap(),
+            f.root.join("install/releases").join(&next)
+        );
+    }
+    f.done();
+}
+
+#[test]
+fn pre_guardian_journal9_requires_original_observed_receipts_and_never_fabricates_a_witness() {
+    for variant in 0..21 {
+        let f = Fixture::new();
+        let (state, accounts, stage) = setup(&f);
+        let session = state.join("sessions/11111111-1111-4111-8111-111111111111");
+        let marker = session.join("guardian-22222222-2222-4222-8222-222222222222.json");
+        std::fs::remove_file(&marker).unwrap();
+        let script = r#"
+import json,pathlib,sqlite3,sys
+root=pathlib.Path(sys.argv[1]); variant=int(sys.argv[2]); session=root.name
+run='55555555-5555-4555-8555-555555555555'
+db=sqlite3.connect(root/'journal/journal.sqlite3')
+db.executescript('UPDATE attachment_schema SET version=9; CREATE TABLE remote_cleanup_attestations(run_id TEXT PRIMARY KEY,installation_id TEXT NOT NULL,principal_id TEXT NOT NULL); CREATE TABLE process_assignment_local_cleanup(run_id TEXT PRIMARY KEY); CREATE TABLE process_cleanup_progress(session_id TEXT PRIMARY KEY,run_id TEXT NOT NULL,record TEXT NOT NULL); CREATE TABLE process_session_resources(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,state TEXT);')
+db.execute('INSERT INTO runs VALUES(?,?,?,?)',(run,session,'{}',0))
+db.execute('INSERT INTO local_cleanup_obligations VALUES(?,?,?,?,?)',(run,session,'local','actor','observed'))
+db.execute('INSERT INTO process_session_resources VALUES(?,?,?,?,?)',(run,session,run,'root_terminals','observed'))
+record={'run_id':run,'phase':'observed','pending':[],'reason':None,'retryable':False}
+db.execute('INSERT INTO process_cleanup_progress VALUES(?,?,?)',(session,run,json.dumps(record)))
+stopped_path=root/'stopped.json';stopped=json.loads(stopped_path.read_text())
+if variant==1:db.execute("UPDATE process_session_resources SET state='pending'")
+elif variant==2:stopped['cleanup_observed']=False
+elif variant==3:db.execute('UPDATE attachment_schema SET version=12')
+elif variant==4:db.execute("UPDATE local_cleanup_obligations SET confirmation='operator_attested'")
+elif variant==5:record['phase']='blocked'
+elif variant==6:record['pending']=['unknown resource']
+elif variant==7:db.execute('INSERT INTO remote_cleanup_attestations VALUES(?,?,?)',(run,'local','actor'))
+elif variant==8:db.execute('INSERT INTO process_assignment_local_cleanup VALUES(?)',(run,))
+elif variant==9:stopped['unknown']=True
+elif variant==10:stopped['incarnation']=run
+elif variant==11:db.execute('UPDATE process_session_resources SET state=NULL')
+elif variant==12:db.execute('DROP TABLE process_session_resources')
+elif variant==13:db.execute('UPDATE process_session_resources SET session_id=?',(run,))
+elif variant==14:db.execute('UPDATE local_cleanup_obligations SET confirmation=NULL')
+elif variant==15:record['retryable']=True
+elif variant==16:record['run_id']=session
+elif variant==17:
+ marker=root/'guardian-22222222-2222-4222-8222-222222222222.json'
+ marker.symlink_to(root/'missing')
+elif variant==19:db.execute('UPDATE runs SET active=1')
+elif variant==20:db.execute('DELETE FROM runs')
+elif variant==18:
+ (root/'guardian-22222222-2222-4222-8222-222222222222.json').write_text(json.dumps({'session_id':session,'incarnation':stopped['incarnation'],'boot_id':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'cleanup_observed':False}))
+db.execute('UPDATE process_cleanup_progress SET record=?',(json.dumps(record),));db.commit();db.close()
+stopped_path.write_text(json.dumps(stopped))
+"#;
+        crate::service::command::run(
+            Path::new("/usr/bin/python3"),
+            &[
+                "-I",
+                "-c",
+                script,
+                session.to_str().unwrap(),
+                &variant.to_string(),
+            ],
+            None,
+        )
+        .unwrap();
+        if variant == 0 {
+            let original = files::read(&session.join("stopped.json"), 65536).unwrap();
+            eligible(&state, &accounts, &stage).unwrap();
+            let held = begin(&state, &accounts, &stage).unwrap();
+            held.verify().unwrap();
+            assert!(!marker.exists());
+            assert_eq!(
+                files::read(&session.join("stopped.json"), 65536).unwrap(),
+                original
+            );
+            drop(held);
+            sql(
+                &state,
+                include_str!("../../vessel/src/process/database_v2_migration.sql"),
+            );
+            assert!(forward_evidence(&state, &accounts, &stage).is_err());
+        } else {
+            assert!(
+                eligible(&state, &accounts, &stage).is_err(),
+                "variant {variant}"
+            );
+        }
+        f.done();
+    }
+}
