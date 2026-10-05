@@ -124,6 +124,11 @@ integrated-source coverage is separately owned by the release coordinator.
 
 Source fingerprints now conservatively cover every Git-tracked and nonignored
 untracked file, including SQL, prompts, JavaScript/CSS and other embedded assets.
+Inventory uses ordinary Git in normal clones and linked worktrees. In the primary
+workspace with reserved `.git`, it uses the existing `scripts/local-git` wrapper
+when available, otherwise explicit `.local-git/worktree.git` and checkout arguments.
+It verifies the selected checkout root and never initializes, replaces or repairs
+Git metadata. Missing source inputs remain a refusal, including tracked deletions.
 External symlink inputs refuse. Ignored/generated inputs and external build inputs
 still require native compiler/build-script provenance review; Git source hashes
 alone never qualify them. All ordinary default-feature bin targets from metadata

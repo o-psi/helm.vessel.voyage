@@ -1,12 +1,13 @@
 import copy
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import subprocess
 import sys
 import unittest
 
-from coverage_artifacts import select, audit as actual_audit
+from coverage_artifacts import select, source_inventory, inventory_git, audit as actual_audit
 
 def audit(manifest, detail, diagnostics, root):
     return actual_audit(manifest, detail, diagnostics, root,
@@ -42,6 +43,71 @@ class SelectionTests(unittest.TestCase):
         m = self.manifest()
         self.assertEqual(list(m['objects']), [str(self.binary)])
         self.assertEqual(audit(m, self.export, '', self.root)['objects'], 1)
+
+    def test_ordinary_inventory_includes_tracked_and_untracked_embedded_sources(self):
+        subprocess.run(['git', '-C', str(self.root), 'add', 'lib.rs', '.gitignore'], check=True)
+        (self.root / 'database.sql').write_text('SELECT 1')
+        inventory = source_inventory(self.root)
+        self.assertEqual(set(inventory), {'.gitignore', 'lib.rs', 'database.sql'})
+        self.assertEqual(inventory_git(self.root), ['git', '-C', str(self.root)])
+
+    def test_reserved_primary_inventory_uses_existing_metadata_without_replacing_git(self):
+        subprocess.run(['git', '-C', str(self.root), 'add', 'lib.rs', '.gitignore'], check=True)
+        local = self.root / '.local-git'
+        local.mkdir()
+        metadata = local / 'worktree.git'
+        shutil.move(self.root / '.git', metadata)
+        reserved = self.root / '.git'
+        reserved.mkdir()
+        marker = reserved / 'reserved'
+        marker.write_text('reserved directory; not Git metadata')
+        with (self.root / '.gitignore').open('a') as ignore:
+            ignore.write('.local-git/\n')
+        index = (metadata / 'index').read_bytes()
+        head = (metadata / 'HEAD').read_bytes()
+        inventory = source_inventory(self.root)
+        self.assertEqual(set(inventory), {'.gitignore', 'lib.rs'})
+        self.assertEqual(inventory_git(self.root),
+                         ['git', '--git-dir=' + str(metadata), '--work-tree=' + str(self.root)])
+        self.assertEqual(marker.read_text(), 'reserved directory; not Git metadata')
+        self.assertEqual(set(reserved.iterdir()), {marker})
+        self.assertEqual((metadata / 'index').read_bytes(), index)
+        self.assertEqual((metadata / 'HEAD').read_bytes(), head)
+
+    def test_linked_worktree_inventory_uses_ordinary_git(self):
+        subprocess.run(['git', '-C', str(self.root), 'add', 'lib.rs', '.gitignore'], check=True)
+        subprocess.run(['git', '-C', str(self.root), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+                        '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'fixture'], check=True)
+        linked = self.root / 'target' / 'linked checkout'
+        subprocess.run(['git', '-C', str(self.root), 'worktree', 'add', '--detach',
+                        str(linked)], check=True, capture_output=True)
+        self.assertTrue((linked / '.git').is_file())
+        self.assertEqual(set(source_inventory(linked)), {'.gitignore', 'lib.rs'})
+        self.assertEqual(inventory_git(linked), ['git', '-C', str(linked)])
+
+    def test_reserved_primary_honors_existing_wrapper(self):
+        local = self.root / '.local-git'
+        local.mkdir()
+        shutil.move(self.root / '.git', local / 'worktree.git')
+        (self.root / '.git').mkdir()
+        with (self.root / '.gitignore').open('a') as ignore:
+            ignore.write('.local-git/\n')
+        scripts = self.root / 'scripts'
+        scripts.mkdir()
+        wrapper = scripts / 'local-git'
+        wrapper.write_text('#!/bin/sh\nexec git --git-dir=.local-git/worktree.git --work-tree=. "$@"\n')
+        wrapper.chmod(0o700)
+        self.assertEqual(inventory_git(self.root), [str(wrapper)])
+        self.assertEqual(set(source_inventory(self.root)), {'.gitignore', 'lib.rs', 'scripts/local-git'})
+
+    def test_missing_checkout_metadata_refuses_without_initializing(self):
+        nested = self.root / 'target' / 'not a checkout'
+        nested.mkdir()
+        with self.assertRaisesRegex(ValueError, 'no usable existing Git metadata'):
+            source_inventory(nested)
+        self.assertFalse((nested / '.git').exists())
+        self.assertFalse((nested / '.local-git').exists())
 
     def test_missing_target_and_failed_build(self):
         for messages in (self.messages[1:], self.messages[:-1],

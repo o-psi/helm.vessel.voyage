@@ -21,13 +21,39 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def inventory_git(root):
+    """Select existing checkout metadata without creating or repairing it."""
+    root = Path(root).resolve()
+    ordinary = ['git', '-C', str(root)]
+
+    def belongs_to_checkout(command):
+        result = subprocess.run(command + ['rev-parse', '--show-toplevel'],
+                                cwd=root, capture_output=True, timeout=60)
+        return (result.returncode == 0
+                and Path(os.fsdecode(result.stdout).strip()).resolve() == root)
+
+    if belongs_to_checkout(ordinary):
+        return ordinary
+    metadata = root / '.local-git' / 'worktree.git'
+    require(metadata.is_dir(), 'checkout has no usable existing Git metadata')
+    wrapper = root / 'scripts' / 'local-git'
+    if wrapper.exists():
+        require(wrapper.is_file() and os.access(wrapper, os.X_OK),
+                'existing local Git wrapper is not executable')
+        command = [str(wrapper)]
+    else:
+        command = ['git', '--git-dir=' + str(metadata), '--work-tree=' + str(root)]
+    require(belongs_to_checkout(command), 'existing Git metadata belongs to another checkout')
+    return command
+
+
 def source_inventory(root):
     # Git's conservative tracked + nonignored untracked inventory includes SQL,
     # prompts, assets and build scripts, not only Rust. External/generated compile
     # inputs still require native provenance qualification.
-    result = subprocess.run(['git', '-C', str(root), 'ls-files', '-z',
+    result = subprocess.run(inventory_git(root) + ['ls-files', '-z',
                              '--cached', '--others', '--exclude-standard'],
-                            capture_output=True, check=True, timeout=60)
+                            cwd=root, capture_output=True, check=True, timeout=60)
     inventory = {}
     for name in sorted(set(os.fsdecode(n) for n in result.stdout.split(b'\0') if n)):
         p = root / name
