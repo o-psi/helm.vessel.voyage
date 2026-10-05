@@ -15,7 +15,7 @@ pub(super) struct Layout {
 }
 impl Layout {
     pub(super) fn get() -> Result<Self> {
-        #[cfg(test)]
+        #[cfg(all(test, target_os = "linux"))]
         if let Some(root) = crate::fixture_tests::required_root()? {
             return Ok(Self {
                 root: root.join("install"),

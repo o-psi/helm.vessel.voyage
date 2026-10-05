@@ -123,6 +123,7 @@ pub fn lock(path: &Path) -> Result<File> {
     Ok(f)
 }
 
+#[cfg(target_os = "linux")]
 pub fn exchange(left: &Path, right: &Path) -> Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let a = CString::new(left.as_os_str().as_bytes())?;
@@ -151,4 +152,17 @@ pub fn private_directory(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn exchange(left: &Path, right: &Path) -> Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let left = CString::new(left.as_os_str().as_bytes())?;
+    let right_name = CString::new(right.as_os_str().as_bytes())?;
+    ensure!(
+        unsafe { libc::renamex_np(left.as_ptr(), right_name.as_ptr(), libc::RENAME_SWAP) } == 0,
+        "Cannot atomically exchange installation paths: {}",
+        std::io::Error::last_os_error()
+    );
+    sync(right)
 }

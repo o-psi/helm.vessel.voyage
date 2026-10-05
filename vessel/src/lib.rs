@@ -5,3 +5,7 @@ pub mod origin;
 pub mod process;
 
 pub mod duplex;
+
+/// Native ordinary ownership/registration contracts; backend remains unqualified.
+#[allow(dead_code)]
+pub mod native;

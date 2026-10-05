@@ -404,3 +404,14 @@ only the compact summary, without local paths, credentials or test diagnostics.
 - Documentation-only changes need the documentation checks described above, not
   Rust compilation. Run the checks required by the changed surface once; repeat
   only after relevant edits, failures or new evidence warrants it.
+
+## Native nightly preparation
+
+The target-aware nightly archive entry point is
+[`packaging/archive_nightly.py`](packaging/archive_nightly.py). Native candidate
+jobs in [`nightly.yml`](.github/workflows/nightly.yml) remain disabled pending
+#363 native compilation, installer and security gates. They do not establish
+public native support. Keep the [native publication gates](docs/releasing.md#native-nightly-preparation-363)
+and [offline fixture commands](docs/quality.md#native-nightly-archive-preparation-363)
+aligned with changes to these entry points. Do not enable native publication on
+source fixtures or hosted compilation alone.
