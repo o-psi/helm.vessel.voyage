@@ -167,11 +167,11 @@ fn validate_operation(op: &Operation) -> Result<()> {
             );
         }
         ensure!(
-            op.kind != "upgrade"
+            !matches!(op.kind.as_str(), "upgrade" | "rollback" | "start")
                 || candidate.phase != "active"
                 || op.phase != "complete"
                 || op.candidate_start_attempted,
-            "completed active upgrade lacks durable startup attempt"
+            "completed active transition lacks durable startup attempt"
         );
     }
     ensure!(
@@ -648,6 +648,35 @@ mod tests {
             fs::remove_dir_all(&self.0).unwrap();
         }
     }
+    #[test]
+    fn every_interrupted_publication_phase_refuses_automatic_replay() {
+        let fixture = Fixture::new();
+        for phase in [
+            "prepared",
+            "staging",
+            "stopping",
+            "publishing",
+            "saving",
+            "activating",
+            "unresolved-activation",
+            "restoring-compatible-source",
+        ] {
+            let op = operation(phase, true);
+            files::atomic_json(&fixture.journal(), &op).unwrap();
+            let retained = read_operation_at(&fixture.journal(), unsafe { libc::geteuid() })
+                .unwrap()
+                .unwrap();
+            assert!(completed(&retained).is_err(), "{phase}");
+            assert!(rollback_eligible(&retained, retained.candidate.as_ref().unwrap()).is_err());
+        }
+        for kind in ["upgrade", "rollback", "start"] {
+            let mut op = operation("complete", true);
+            op.kind = kind.into();
+            op.candidate_start_attempted = false;
+            assert!(validate_operation(&op).is_err(), "{kind}");
+        }
+    }
+
     #[test]
     fn unit_publication_preflights_both_definitions_and_retains_reload_failure() {
         let fixture = Fixture::new();

@@ -134,23 +134,37 @@ async fn read_frame_inner<T: DeserializeOwned>(
     stream: &mut UnixStream,
     first_deadline: bool,
 ) -> Result<Option<T>> {
+    read_frame_bounded(stream, first_deadline, DEADLINE).await
+}
+
+async fn read_frame_bounded<T: DeserializeOwned>(
+    stream: &mut UnixStream,
+    first_deadline: bool,
+    deadline: Duration,
+) -> Result<Option<T>> {
+    let expires = tokio::time::Instant::now() + deadline;
     let mut length = [0u8; 4];
     let first = if first_deadline {
-        timeout(DEADLINE, stream.read(&mut length[..1])).await??
+        tokio::time::timeout_at(expires, stream.read(&mut length[..1])).await??
     } else {
         stream.read(&mut length[..1]).await?
     };
     if first == 0 {
         return Ok(None);
     }
-    timeout(DEADLINE, stream.read_exact(&mut length[1..])).await??;
+    let expires = if first_deadline {
+        expires
+    } else {
+        tokio::time::Instant::now() + deadline
+    };
+    tokio::time::timeout_at(expires, stream.read_exact(&mut length[1..])).await??;
     let size = u32::from_be_bytes(length) as usize;
     ensure!(
         (1..=MAX_VESSEL_BODY).contains(&size),
         "system gateway frame exceeds limit"
     );
     let mut bytes = vec![0u8; size];
-    timeout(DEADLINE, stream.read_exact(&mut bytes)).await??;
+    tokio::time::timeout_at(expires, stream.read_exact(&mut bytes)).await??;
     Ok(Some(serde_json::from_slice(&bytes)?))
 }
 
@@ -222,6 +236,19 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn stalled_payload_is_bounded_even_on_persistent_browser_pipe() {
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+        writer.write_all(&16u32.to_be_bytes()).await.unwrap();
+        writer.write_all(b"{}").await.unwrap();
+        let response =
+            read_frame_bounded::<Message>(&mut reader, false, Duration::from_millis(20)).await;
+        assert!(response.is_err());
+        // A timed-out partial frame is not an empty/successful message. The
+        // owning socket handler must retire this connection, never restart it.
+        drop(writer);
     }
 
     #[tokio::test]
