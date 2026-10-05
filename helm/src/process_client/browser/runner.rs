@@ -88,7 +88,21 @@ pub(super) async fn run(
     let private = crate::attachment::local_actor::storage::Directory::open(&root)?;
     let _ownership = private.lock()?;
     status.send_modify(|s|s.summary="Starting local Chromium: requires Node 24+, installed executable and a working Chromium sandbox".into());
-    let helper = Helper::start(&assets.join("helper.mjs")).await?;
+    let mut diagnostic = super::diagnostics::Diagnostic {
+        version: 1,
+        ..Default::default()
+    };
+    let helper = match Helper::start(&assets.join("helper.mjs")).await {
+        Ok(helper) => helper,
+        Err(error) => {
+            diagnostic.failure_phase = Some(super::diagnostics::Phase::Startup);
+            status.send_modify(|s| s.summary = diagnostic.summary());
+            // Failure to retain diagnostics must not overwrite the initiating error.
+            let _ = journal::diagnostic(&root, &diagnostic);
+            return Err(error);
+        }
+    };
+    let mut phase = super::diagnostics::Phase::Startup;
     let mut notices = helper.events();
     let mut binding = BrowserBinding {
         session_id: session,
@@ -148,12 +162,14 @@ pub(super) async fn run(
                     biased;
                     _ = stop.cancelled() => break,
                     changed = connection.changed() => {
+                        phase = super::diagnostics::Phase::SocketObservation;
                         ensure!(changed.is_ok() && *connection.borrow() == initial_socket,
                             "Vessel socket changed or disconnected; local sharing requires explicit restart");
                     }
                     _ = work_ready.notified() => {pending_needed=true;},
-                    _ = stopped.cancelled() => anyhow::bail!("Local browser process stopped; effects may be unknown"),
+                    _ = stopped.cancelled() => { phase = super::diagnostics::Phase::HelperTransportObservation; anyhow::bail!("Local browser transport disconnected; effects may be unknown"); },
                     event = notices.recv() => {
+                        phase = super::diagnostics::Phase::ControlObservation;
                         match event {
                             Ok(value) if value["event"] == "control" => {
                                 update_control(&client,&helper,&value,&mut binding,&mut offered,&mut current_control,status,&root,initial_socket).await?;
@@ -169,15 +185,18 @@ pub(super) async fn run(
                         }
                     }
                     _ = tick.tick() => {
+                        phase = super::diagnostics::Phase::SocketObservation;
                         ensure!(*connection.borrow() == initial_socket, "Vessel socket changed; sharing fenced");
                         if last_heartbeat.elapsed()>=Duration::from_secs(1) {
                             // A successful socket command proves the remote grant is still current.
                             if offered && last_renewal.elapsed()>=Duration::from_secs(2) {
                                 binding.expires_at_ms=now()+10_000;
+                            phase = super::diagnostics::Phase::LeaseRenewal;
                                 set_control(&client,&binding,current_control).await?;
                                 last_renewal=tokio::time::Instant::now();
                             }
                             let heartbeat=if offered {json!({"op":"heartbeat","binding":binding})} else {json!({"op":"heartbeat"})};
+                            phase = super::diagnostics::Phase::HelperHeartbeat;
                             let local=helper.call(heartbeat,Duration::from_secs(2)).await?;
                             update_control(&client,&helper,&local,&mut binding,&mut offered,&mut current_control,status,&root,initial_socket).await?;
                             last_heartbeat=tokio::time::Instant::now();
@@ -197,15 +216,18 @@ pub(super) async fn run(
                             }));
                         }
                         if event_worker.as_ref().is_some_and(|job|job.is_finished()) {
+                            phase = super::diagnostics::Phase::NotificationObservation;
                             event_worker.take().unwrap().await.context("Browser notification task failed")??;
                             anyhow::bail!("Browser notification worker stopped");
                         }
                         if action.as_ref().is_some_and(|job|job.is_finished()) {
+                            phase = super::diagnostics::Phase::ActionCompletion;
                             action.take().unwrap().await.context("Browser dispatch task failed")??;
                             if current_control==BrowserControl::Shared {status.send_modify(|s|s.summary="Agent sharing enabled. Browser results remain in the Voyage conversation".into());}
                             pending_needed=true;
                         }
                         if pending.as_ref().is_some_and(|job|job.is_finished()) {
+                            phase = super::diagnostics::Phase::PendingObservation;
                             let reply=pending.take().unwrap().await.context("Browser pending observation task failed")??;
                             if let BrowserReply::Pending { requests }=reply
                                 && let Some(request)=requests.into_iter().next().filter(|r|current_control==BrowserControl::Shared
@@ -227,11 +249,18 @@ pub(super) async fn run(
             }
             Ok(())
         }.await;
+        diagnostic.failure_phase = outcome.as_ref().err().map(|_| phase);
+        diagnostic.socket_unchanged = Some(*connection.borrow() == initial_socket);
+        diagnostic.helper_transport_disconnected = Some(stopped.is_cancelled());
         // Local fence first, then inform remote. The latter can fail during a partition.
         action_stop.cancel();
         controller.abort();
         let _=controller.await;
         let local_fence=helper.call(json!({"op":"control","mode":"private"}),Duration::from_secs(2)).await;
+        diagnostic.local_fence_observed = local_fence.is_ok();
+        if local_fence.is_err() && diagnostic.failure_phase.is_none() {
+            diagnostic.failure_phase = Some(super::diagnostics::Phase::LocalFence);
+        }
         if let Ok(value)=&local_fence {
             binding.controller_epoch=value["epoch"].as_u64().unwrap_or(binding.controller_epoch);
             binding.capture_epoch=value["capture_epoch"].as_u64().unwrap_or(binding.controller_epoch);
@@ -248,10 +277,21 @@ pub(super) async fn run(
         }
         outcome.and(local_fence.map(|_|()))
     }.await;
+    if result.is_err() && diagnostic.failure_phase.is_none() {
+        diagnostic.failure_phase = Some(phase);
+    }
     let cleaned = helper.shutdown().await;
+    diagnostic.helper_shutdown_observed = cleaned.is_ok();
+    if cleaned.is_err() && diagnostic.failure_phase.is_none() {
+        diagnostic.failure_phase = Some(super::diagnostics::Phase::HelperShutdown);
+    }
     private.verify()?;
     if cleaned.is_ok() {
         journal::cleanup(&root)?;
+    }
+    journal::diagnostic(&root, &diagnostic)?;
+    if diagnostic.failure_phase.is_some() {
+        status.send_modify(|s| s.summary = diagnostic.summary());
     }
     // Profile and minimal receipts are retained for explicit local recovery, never silently deleted.
     result.and(cleaned)

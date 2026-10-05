@@ -1,5 +1,6 @@
 //! Human-authorized local browser resource. Voyage remains the sole agent runtime.
 mod assets;
+mod diagnostics;
 mod helper;
 mod journal;
 pub(crate) use journal::reconcile;
@@ -85,7 +86,8 @@ impl Handle {
             .await;
             state.send_modify(|s| {
                 s.finished = true;
-                if result.is_err() && s.launcher.is_none() && s.summary != Status::default().summary { return; }
+                if result.is_err() && s.summary.starts_with("Local browser diagnostic:") { return; }
+                if result.is_err() && s.launcher.is_none() && s.summary.starts_with("Browser adapter not installed") { return; }
                 s.summary = if result.is_ok() { "Local browser closed; Voyage was not cancelled".into() }
                     else { "Local browser unavailable; sharing stopped. Cleanup or action outcome may require reconciliation".into() };
             });

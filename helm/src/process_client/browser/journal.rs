@@ -39,6 +39,10 @@ pub(super) fn record(root: &Path, record: &Dispatch) -> Result<()> {
     )?;
     Ok(())
 }
+pub(super) fn diagnostic(root: &Path, record: &super::diagnostics::Diagnostic) -> Result<()> {
+    Directory::open_existing(root)?.publish("diagnostic.json", &serde_json::to_vec(record)?)?;
+    Ok(())
+}
 pub(super) fn cleanup(root: &Path) -> Result<()> {
     Directory::open_existing(root)?.publish("cleanup.json", br#"{"observed":true}"#)?;
     Ok(())
