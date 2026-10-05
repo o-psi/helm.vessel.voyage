@@ -179,7 +179,7 @@ impl Plan {
             self.credential_unit, self.credential_unit, self.socket, self.gateway_uid, self.origin
         );
         let gateway = format!(
-            "[Unit]\nDescription=Voyage unprivileged public gateway\nWants={ROOT_UNIT}\nAfter={ROOT_UNIT}\n\n[Service]\nType=simple\nUser={}\nExecStart=:{vessel} --bind 127.0.0.1:9480 --database {database} --system-gateway-socket {} {}\nWorkingDirectory={gateway_working_directory}\nStateDirectory={state_directory}\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestart=on-failure\nRestartSec=2\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
+            "[Unit]\nDescription=Voyage unprivileged public gateway\nWants={ROOT_UNIT}\nAfter={ROOT_UNIT}\n\n[Service]\nType=simple\nUser={}\nExecStart=:{vessel} --bind 127.0.0.1:9480 --database {database} --system-gateway-socket {} --public-origin {}\nWorkingDirectory={gateway_working_directory}\nStateDirectory={state_directory}\nStateDirectoryMode=0700\nUMask=0077\nNoNewPrivileges=yes\nCapabilityBoundingSet=\nAmbientCapabilities=\nProtectSystem=strict\nProtectHome=yes\nPrivateTmp=yes\nRestart=on-failure\nRestartSec=2\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
             self.gateway_user, self.socket, self.origin
         );
         Ok(Units { root, gateway })
@@ -230,11 +230,9 @@ mod tests {
         assert!(!units.root.contains("User="));
         assert!(units.gateway.contains("User=voyagegateway\n"));
         assert!(units.gateway.contains("NoNewPrivileges=yes"));
-        assert!(
-            units
-                .gateway
-                .contains("--system-gateway-socket voyage-system-test")
-        );
+        assert!(units.gateway.contains(
+            "--system-gateway-socket voyage-system-test --public-origin https://helm.example.test"
+        ));
         assert!(!units.gateway.contains("--directory /var/lib/voyage/vessel"));
         assert!(!units.gateway.contains("KillMode=process"));
     }

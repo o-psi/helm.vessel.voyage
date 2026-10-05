@@ -609,6 +609,10 @@ in the designated disposable native Linux fixture.
 The ignored `system_service::tests::native_systemd_accepts_pinned_root_and_ordinary_gateway_units`
 test requires that fixture, an explicit `VOYAGE_DISPOSABLE_ROOT_FIXTURE=1`, and
 `systemd-analyze verify`; it checks unit syntax, not activation or rollback.
+Before activation, also extract the generated gateway `ExecStart` arguments and
+pass them to the actual reviewed Vessel binary with `--help`. This parser-only
+check must accept the explicit `--public-origin` option and its reviewed origin;
+unit syntax alone cannot detect a missing CLI option. It starts no service.
 The ignored `install::release::system_tests::root_staged_release_is_readable_by_an_ordinary_runtime_and_retains_browser_assets`
 test requires the same disposable root fixture. It creates and removes a fresh
 `/opt/voyage` in that fixture and verifies ordinary execution/read access and
