@@ -165,6 +165,7 @@ pub async fn build_authorized_agent_bundle(
         .with_completion_coordinator(subagents.coordinator)
         .with_completion_gate(gate_todos, gate_agents, gate_runtime)
         .with_context_window(config.context_window)
+        .with_pressure_policy(config.context_pressure.clone())
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,

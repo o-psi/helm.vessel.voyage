@@ -146,6 +146,7 @@ pub struct Config {
     pub system_prompt: String,
     pub max_tokens: u32,
     pub context_window: usize,
+    pub context_pressure: crate::context::PressurePolicy,
     pub temperature: Option<f32>,
     /// Omit for the provider default; explicit values are transport-validated.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -485,6 +486,7 @@ impl Default for Config {
             system_prompt: include_str!("../prompts/system.md").trim().into(),
             max_tokens: 0,
             context_window: 0,
+            context_pressure: Default::default(),
             temperature: None,
             reasoning_effort: None,
             service_tier: None,
@@ -927,6 +929,7 @@ impl Config {
             }
             crate::local_provider::validate_endpoint(self.base_url.as_deref().unwrap_or(""))?;
         }
+        self.context_pressure.validate().map_err(anyhow::Error::msg)?;
         if self.context_window > 0
             && self.max_tokens > 0
             && self.max_tokens as usize >= self.context_window
