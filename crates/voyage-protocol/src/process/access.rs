@@ -90,6 +90,8 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         // Legacy payload-free resolution can reserve an unknown ID and therefore
         // requires the host's local authority, not a read-only scoped grant.
         RuntimeCommand::Resolve { .. } | RuntimeCommand::NotificationEvents { .. } => None,
+        RuntimeCommand::CoordinationScopeRead => Some(ProcessRight::History),
+        RuntimeCommand::CoordinationScopeCommit { .. } => Some(ProcessRight::Execute),
         RuntimeCommand::Health | RuntimeCommand::Events { .. } => Some(ProcessRight::Observe),
         RuntimeCommand::Controls { section, .. } if section == "host_resources" => None,
         RuntimeCommand::Controls { section, .. }

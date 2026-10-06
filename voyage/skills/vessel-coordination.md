@@ -15,6 +15,11 @@ from conversation guesses or process IDs. Inspect the selected route's capabilit
 before relying on it. A configured route is not proof that its Vessel is reachable,
 and an unreachable owner is not evidence that its work finished or is safe to repeat.
 Use names/search to discover candidates, then retain their exact session identities.
+For target-host setup, use `accounts`, `profiles` and `account_defaults` with an
+absolute destination workspace, then `account_models` with the exact discovered
+binding. Model discovery can contact the provider for metadata, never inference.
+Do not enroll accounts, guess bindings, import profile roots/permissions or infer
+model authority from a human Helm connection. A refusal is not an empty catalogue.
 Use `controls` with `section: "models"` or `"policy"` for target metadata. Use the
 snapshot revision, registration incarnation and snapshot run_id in mutations;
 these are observations, not values to invent. Creation takes two distinct fresh

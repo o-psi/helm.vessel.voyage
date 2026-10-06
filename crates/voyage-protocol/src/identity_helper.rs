@@ -58,6 +58,12 @@ pub enum IdentityHelperOperation {
         base_config_path: Option<PathBuf>,
         initialize: crate::process::RuntimeInitialization,
     },
+    /// Validate a launch preview under the executing identity without writing config.
+    PrepareLaunch {
+        scope: IdentityAccountScope,
+        account: AccountBinding,
+        settings: crate::start_settings::StartSettings,
+    },
     CaptureLaunch {
         scope: IdentityAccountScope,
         directory: PathBuf,

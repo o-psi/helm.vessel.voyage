@@ -112,6 +112,10 @@ pub(super) async fn submit(
     );
     let saved = state.owner.snapshot().await?;
     let mut config = state.config.read().await.clone();
+    super::authorization::check_coordination_control(
+        &authorization,
+        config.vessel.enabled && !config.vessel.remotes.is_empty(),
+    )?;
     if bootstrap::workspace_recreated(&state.directory, &state.registration) {
         config
             .system_prompt

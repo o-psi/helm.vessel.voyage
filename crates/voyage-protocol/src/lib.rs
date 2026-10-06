@@ -79,3 +79,6 @@ pub mod execution_transition;
 pub mod execution_scope;
 /// Strict private migration records; no source data confers root authority.
 pub mod migration;
+
+/// Model-facing preparation and scope pins; never credentials.
+pub mod coordination_scope;

@@ -378,6 +378,21 @@ async fn account_operation(
             base_config_path.as_deref(),
             &initialize,
         ),
+        IdentityHelperOperation::PrepareLaunch {
+            scope,
+            account,
+            settings,
+        } => {
+            let mut config = select(&scope, workspace, Some(account.clone()), None)?;
+            crate::start_settings::apply(&mut config, &settings)?;
+            let redactor = crate::build::redactor(&config);
+            let portable = crate::start_settings::portable(&config, config.access_mode());
+            ensure!(
+                !redactor.contains_secret(&serde_json::to_string(&portable)?),
+                "launch preferences contain private data"
+            );
+            Ok(json!({"account":account,"settings":portable}))
+        }
         IdentityHelperOperation::CaptureLaunch {
             scope,
             directory,

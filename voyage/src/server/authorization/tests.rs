@@ -292,3 +292,29 @@ fn bound_authorization_cannot_fall_back_to_files_or_cached_credentials() {
     request.authorization = None;
     assert!(authorize_parts(actor, &registration, &request, root.path()).is_err());
 }
+
+#[test]
+fn scoped_control_cannot_borrow_owner_model_routes() {
+    let mut auth = Authorization {
+        authority: None,
+        actor: LocalActor {
+            installation_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+        },
+        grant: None,
+        owner_connection: false,
+        scope_source: None,
+        browser_history: false,
+    };
+    check_coordination_control(&auth, true).unwrap();
+    auth.grant = Some(GrantBinding {
+        grant_id: Uuid::new_v4(),
+        principal_id: auth.actor.principal_id,
+        revision: 1,
+    });
+    check_coordination_control(&auth, false).unwrap();
+    assert!(check_coordination_control(&auth, true).is_err());
+    auth.owner_connection = true;
+    // Full human connection is still not a per-Voyage model destination scope.
+    assert!(check_coordination_control(&auth, true).is_err());
+}
