@@ -467,3 +467,211 @@ async fn relinquish_exports_private_text_once_and_collision_retains_original_rec
         receipt
     );
 }
+
+#[tokio::test]
+async fn entity_initialization_has_canonical_barrier_and_rejects_changed_fence() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let generation = Uuid::new_v4();
+    let first = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 0,
+            limit: 1,
+            expected_revision: None,
+            expected_cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(first["version"], 3);
+    assert_eq!(first["events"][0]["kind"], "begin");
+    assert_eq!(first["events"][1]["entity_kind"], "session");
+    let bad = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: Some(999),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await;
+    assert!(bad.is_err());
+    let next = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: first["revision"].as_u64(),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(next["has_more"], false);
+    assert_eq!(
+        next["events"].as_array().unwrap().last().unwrap()["kind"],
+        "complete"
+    );
+    assert_eq!(next["cursor"], first["cursor"]);
+}
+
+#[test]
+fn entity_replay_refuses_retention_gaps_and_metadata_only_rows() {
+    let gap =
+        super::observations::entity_replay(json!({"replay_gap":true,"cursor":3,"latest_cursor":8}))
+            .unwrap();
+    assert_eq!(gap["reset"], "retention_gap");
+    assert!(gap.get("recovery").is_none());
+    let metadata=super::observations::entity_replay(json!({"replay_gap":false,"cursor":8,"latest_cursor":8,"has_more":false,"events":[{"payload":{}}]})).unwrap();
+    assert_eq!(metadata["reset"], "unprojected_retained_entity");
+    let replay=super::observations::entity_replay(json!({"replay_gap":false,"cursor":8,"latest_cursor":9,"has_more":true,"events":[{"cursor":8,"kind":"text_delta","payload":{"offset":0,"text":"é"}}]})).unwrap();
+    assert_eq!(replay["version"], 3);
+    assert_eq!(replay["has_more"], true);
+    assert_eq!(replay["events"][0]["payload"]["text"], "é");
+}
+
+#[tokio::test]
+async fn captured_entity_baseline_survives_concurrent_metadata_output() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let generation = Uuid::new_v4();
+    let first = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 0,
+            limit: 1,
+            expected_revision: None,
+            expected_cursor: None,
+        },
+    )
+    .await
+    .unwrap();
+    call(
+        &state,
+        RuntimeCommand::SetModel {
+            command_id: Uuid::new_v4(),
+            expected_revision: first["revision"].as_u64().unwrap(),
+            expires_at_ms: expiry(),
+            model: "changed-between-pages".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let continuation = call(
+        &state,
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset: 1,
+            limit: 64,
+            expected_revision: first["revision"].as_u64(),
+            expected_cursor: first["cursor"].as_u64(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(continuation["cursor"], first["cursor"]);
+    assert_eq!(continuation["revision"], first["revision"]);
+    assert_eq!(continuation["has_more"], false);
+}
+
+#[tokio::test]
+async fn decision_values_and_cursor_share_agent_insertion_mutex() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let owner = state.owner.clone();
+    let before = owner
+        .decisions_at_cursor(state.registration.incarnation)
+        .await
+        .unwrap();
+    // All insertion paths use this same mutex: no returned barrier can cross
+    // an unseen insertion. Empty scopes still carry their exact retained cursor.
+    let page = call(
+        &state,
+        RuntimeCommand::InitializeDecisions {
+            generation: Uuid::new_v4(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(page["cursor"].as_u64().unwrap() >= before.1);
+    assert_eq!(
+        page["events"].as_array().unwrap().first().unwrap()["kind"],
+        "begin"
+    );
+    assert_eq!(
+        page["events"].as_array().unwrap().last().unwrap()["kind"],
+        "complete"
+    );
+}
+
+#[tokio::test]
+async fn decision_insertion_races_atomic_values_and_replay_barrier() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    let mut run = admitted(&state).await;
+    run.register_local_cleanup().await.unwrap();
+    run.start_operator().await.unwrap();
+    let run_id = run.record().await.unwrap().id;
+    let incarnation = state.registration.incarnation;
+    for _ in 0..16 {
+        let id = Uuid::new_v4();
+        let owner = state.owner.clone();
+        let insert = tokio::spawn(async move {
+            owner
+                .create_decision(
+                    run_id,
+                    incarnation,
+                    id,
+                    expiry() as i64,
+                    json!({"kind":"approval","action":"atomic race"}),
+                )
+                .await
+                .unwrap();
+        });
+        let (values, cursor) = state.owner.decisions_at_cursor(incarnation).await.unwrap();
+        insert.await.unwrap();
+        let visible = values
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value["decision_id"] == id.to_string());
+        if !visible {
+            let replay = state.owner.live_observations(cursor, 128).await.unwrap();
+            assert!(
+                replay["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event["kind"] == "decision"),
+                "insertion omitted below the returned barrier"
+            );
+        }
+        state.owner.finish_decision(id, "cancelled").await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn completed_initialization_slots_do_not_refuse_fifth_quick_refresh() {
+    let (_root, state, _provider) = family_fixture::fixture().await;
+    for _ in 0..8 {
+        let page = call(
+            &state,
+            RuntimeCommand::InitializeEntities {
+                generation: Uuid::new_v4(),
+                offset: 0,
+                limit: 64,
+                expected_revision: None,
+                expected_cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page["has_more"], false);
+        assert_eq!(
+            page["events"].as_array().unwrap().last().unwrap()["kind"],
+            "complete"
+        );
+    }
+}

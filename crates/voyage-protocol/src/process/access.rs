@@ -115,6 +115,8 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         }
         RuntimeCommand::GoalReconcile { .. }
         | RuntimeCommand::GoalRead
+        | RuntimeCommand::ReplayEntities { .. }
+        | RuntimeCommand::InitializeEntities { .. }
         | RuntimeCommand::Snapshot
         | RuntimeCommand::ProviderAttempts { .. }
         | RuntimeCommand::History { .. }
@@ -122,7 +124,9 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         | RuntimeCommand::RunOutput { .. }
         | RuntimeCommand::ReadArtifact { .. }
         | RuntimeCommand::Receipt { .. } => Some(ProcessRight::History),
-        RuntimeCommand::Decisions => Some(ProcessRight::Decide),
+        RuntimeCommand::Decisions | RuntimeCommand::InitializeDecisions { .. } => {
+            Some(ProcessRight::Decide)
+        }
         RuntimeCommand::UploadImage { .. }
         | RuntimeCommand::SubmitContent { .. }
         | RuntimeCommand::Submit { .. }

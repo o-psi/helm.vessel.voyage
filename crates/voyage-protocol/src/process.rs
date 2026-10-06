@@ -10,7 +10,9 @@ impl RuntimeCommand {
     pub fn observes_saved(&self) -> bool {
         matches!(
             self,
-            Self::Snapshot
+            Self::ReplayEntities { .. }
+                | Self::InitializeEntities { .. }
+                | Self::Snapshot
                 | Self::WorkspaceChanges { .. }
                 | Self::WorkspaceFile { .. }
                 | Self::History { .. }

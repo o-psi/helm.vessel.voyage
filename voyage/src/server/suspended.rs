@@ -242,6 +242,42 @@ async fn inspect(
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
                 "relinquish","stop"],"decisions":"bounded_120_seconds"})),
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset,
+            limit,
+            expected_revision,
+            expected_cursor,
+        } => {
+            let settings = if let Ok(config) = config(owner, registration, directory).await {
+                json!({"inference":super::configuration::inference_snapshot(&config),"inference_next_turn":false,"inference_current":null,
+                    "access":crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace).ok().and_then(|p|serde_json::to_value(p.policy().access_mode()).ok())})
+            } else {
+                json!({"inference":null,"access":null,"inference_next_turn":false,"inference_current":null})
+            };
+            owner
+                .initialize_entities(
+                    generation,
+                    registration.incarnation,
+                    offset,
+                    limit,
+                    expected_revision,
+                    expected_cursor,
+                    settings,
+                )
+                .await
+        }
+        RuntimeCommand::InitializeDecisions { generation } => super::commands::decision_entities(
+            generation,
+            registration.session_id,
+            registration.incarnation,
+            0,
+            json!([]),
+        ),
+        RuntimeCommand::ReplayEntities { after, limit } => {
+            let page = owner.live_observations(after, limit).await?;
+            super::observations::entity_replay(page)
+        }
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
             if let Ok(mut config) = config(owner, registration, directory).await {

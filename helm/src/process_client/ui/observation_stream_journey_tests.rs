@@ -20,6 +20,27 @@ fn process(id: uuid::Uuid, owner: uuid::Uuid) -> ProcessInfo {
 fn snapshot(id: uuid::Uuid, cursor: u64) -> Value {
     json!({"session_id":id,"revision":17,"model":"observer-model","observation_cursor":cursor,"total_messages":1,"messages":[{"message_index":0,"role":"user","content":"Canonical observer Ω"}],"decisions":[]})
 }
+fn initialized(
+    generation: uuid::Uuid,
+    owner: uuid::Uuid,
+    requested: uuid::Uuid,
+    value: Value,
+) -> Value {
+    let session = value["session_id"].clone();
+    let cursor = value["observation_cursor"].as_u64().unwrap_or(0);
+    let fence = json!({"generation":generation,"session_id":requested,"incarnation":owner});
+    let mut events = vec![json!({"kind":"begin","fence":fence,"cursor":cursor})];
+    let mut fields = value.clone();
+    fields.as_object_mut().unwrap().remove("messages");
+    events.push(json!({"kind":"entity","fence":fence,"sequence":0,"entity_kind":"session","entity_id":"session","value":fields}));
+    for message in value["messages"].as_array().into_iter().flatten() {
+        let sequence = events.len() - 1;
+        events.push(json!({"kind":"entity","fence":fence,"sequence":sequence,"entity_kind":"message","entity_id":format!("message:{}",message["message_index"]),"value":message}));
+    }
+    let sequence = events.len() - 1;
+    events.push(json!({"kind":"complete","fence":fence,"sequence":sequence,"cursor":cursor}));
+    json!({"version":3,"revision":value["revision"],"cursor":cursor,"next_offset":sequence,"has_more":false,"events":events})
+}
 fn entry(id: uuid::Uuid, cursor: u64, kind: &str, payload: Value) -> Value {
     json!({"session_id":id,"cursor":cursor,"revision":18,"kind":kind,"payload":payload})
 }
@@ -31,7 +52,7 @@ struct State {
     subscriptions: Vec<(uuid::Uuid, VesselEventRequest)>,
     active: HashSet<uuid::Uuid>,
     retired: Vec<uuid::Uuid>,
-    held: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
+    held: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
     hold_snapshots: bool,
 }
 enum Signal {
@@ -71,8 +92,8 @@ impl Wire {
                         Some(Signal::Release)=>{
                             let pending=std::mem::take(&mut held.lock().unwrap().held);
                             held.lock().unwrap().hold_snapshots=false;
-                            for (id,session,owner) in pending {
-                                let value=held.lock().unwrap().snapshots[&session].clone();peer.voyage_reply(id,session,owner,value).await;
+                            for (id,session,owner,generation) in pending {
+                                let value=held.lock().unwrap().snapshots[&session].clone();peer.voyage_reply(id,session,owner,initialized(generation,owner,session,value)).await;
                             }
                         }
                         None=>break,
@@ -95,11 +116,11 @@ impl Wire {
                                         VesselCommand::Catalogue=>Some(serde_json::to_value(&state.processes).unwrap()),
                                         VesselCommand::Notifications {operation}=>{assert!(matches!(operation,voyage_protocol::notifications::NotificationOperation::Attention));Some(json!({"available":0}))},
                                         VesselCommand::Voyage(VoyageRequest {session_id,incarnation,command})=>{
-                                            assert!(incarnation.is_none(),"Snapshot/Controls keep their session-named wire contract");
+                                            if matches!(command,VoyageCommand::InitializeEntities{..}) { assert!(incarnation.is_some(),"entity reads fence exact owner"); } else { assert!(incarnation.is_none()); }
                                             let owner=state.processes.iter().find(|p|p.session_id==*session_id).unwrap().incarnation;
                                             let value=match command {
-                                                VoyageCommand::Snapshot if state.hold_snapshots=>{state.held.push((request_id,*session_id,owner));None},
-                                                VoyageCommand::Snapshot=>Some(state.snapshots[session_id].clone()),
+                                                VoyageCommand::InitializeEntities {generation,..} if state.hold_snapshots=>{state.held.push((request_id,*session_id,owner,*generation));None},
+                                                VoyageCommand::InitializeEntities {generation,..}=>Some(initialized(*generation,owner,*session_id,state.snapshots[session_id].clone())),
                                                 VoyageCommand::Controls {run_id,section}=>{assert!(run_id.is_none());assert_eq!(section,"terminals");Some(json!({"run_id":null,"value":[]}))},
                                                 _=>panic!("observer cannot emit a mutative or unrelated Voyage command"),
                                             };
@@ -145,7 +166,7 @@ impl Wire {
                 matches!(
                     r,
                     VesselCommand::Voyage(VoyageRequest {
-                        command: VoyageCommand::Snapshot,
+                        command: VoyageCommand::InitializeEntities { .. },
                         ..
                     })
                 )
@@ -350,26 +371,32 @@ async fn foreign_inner_snapshot_returns_no_cursor_and_preserves_app_before_valid
         let task =
             tokio::spawn(async move { refresh(&client, target.route, &info, &sender).await });
         let (id, request) = peer.command().await;
-        match request {
+        let generation = match request {
             VesselCommand::Voyage(VoyageRequest {
                 session_id,
                 incarnation,
-                command: VoyageCommand::Snapshot,
+                command: VoyageCommand::InitializeEntities { generation, .. },
             }) => {
                 assert_eq!(session_id, session);
-                assert!(incarnation.is_none());
+                assert_eq!(incarnation, Some(owner));
+                generation
             }
-            _ => panic!("only the expected session-named snapshot read"),
-        }
+            _ => panic!("only the expected canonical entity read"),
+        };
         peer.voyage_reply(
             id,
             session,
             owner,
-            if rejected {
-                snapshot(foreign, 999)
-            } else {
-                snapshot(session, 21)
-            },
+            initialized(
+                generation,
+                owner,
+                session,
+                if rejected {
+                    snapshot(foreign, 999)
+                } else {
+                    snapshot(session, 21)
+                },
+            ),
         )
         .await;
         let (id, request) = peer.command().await;
@@ -396,7 +423,7 @@ async fn foreign_inner_snapshot_returns_no_cursor_and_preserves_app_before_valid
             Update::Snapshot { result, .. } if rejected => {
                 assert_eq!(
                     result.as_ref().as_ref().err().unwrap(),
-                    "Snapshot observation session changed"
+                    "entity initialization session changed"
                 );
             }
             Update::Snapshot { result, .. } => assert!(result.is_ok()),
@@ -407,7 +434,7 @@ async fn foreign_inner_snapshot_returns_no_cursor_and_preserves_app_before_valid
             assert!(app.views[&target].snapshot.as_ref() == Some(&before));
             assert_eq!(
                 app.views[&target].error.as_deref(),
-                Some("Snapshot observation session changed")
+                Some("entity initialization session changed")
             );
         } else {
             assert!(
@@ -484,7 +511,7 @@ async fn foreign_inner_snapshot_cannot_seed_subscription_and_valid_resnapshot_re
         j.selected.subscribe(),
     ));
     j.until(|j| {
-        j.app.views[&j.target].error.as_deref() == Some("Snapshot observation session changed")
+        j.app.views[&j.target].error.as_deref() == Some("entity initialization session changed")
     })
     .await;
     assert_eq!(j.wire.snapshot_reads(), 1);
@@ -578,14 +605,17 @@ async fn held_snapshot_and_terminal_reply_owner_changes_cannot_install_old_catal
         let task =
             tokio::spawn(async move { refresh(&client, target.route, &info, &sender).await });
         let (id, command) = peer.command().await;
-        assert!(matches!(
-            command,
+        let generation = match command {
             VesselCommand::Voyage(VoyageRequest {
-                incarnation: None,
-                command: VoyageCommand::Snapshot,
+                incarnation: Some(actual),
+                command: VoyageCommand::InitializeEntities { generation, .. },
                 ..
-            })
-        ));
+            }) => {
+                assert_eq!(actual, owner);
+                generation
+            }
+            _ => panic!("canonical entity owner fence required"),
+        };
         peer.voyage_reply(
             id,
             session,
@@ -594,7 +624,16 @@ async fn held_snapshot_and_terminal_reply_owner_changes_cannot_install_old_catal
             } else {
                 owner
             },
-            snapshot(session, 90),
+            initialized(
+                generation,
+                if changed_snapshot {
+                    uuid::Uuid::new_v4()
+                } else {
+                    owner
+                },
+                session,
+                snapshot(session, 90),
+            ),
         )
         .await;
         let (id, command) = peer.command().await;

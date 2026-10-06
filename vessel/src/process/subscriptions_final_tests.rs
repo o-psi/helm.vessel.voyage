@@ -77,16 +77,7 @@ async fn subscription_tracks_current_owner_and_marks_replay_gap_only_on_change()
 }
 
 #[tokio::test]
-async fn old_runtime_rejecting_v2_field_downgrades_subscription_to_explicit_v1() {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct LegacyEvents {
-        op: String,
-        after: u64,
-        limit: u32,
-        wait_ms: u32,
-    }
-
+async fn old_runtime_rejecting_v2_field_never_retries_legacy_projection() {
     let f = Fixture::new();
     let supervisor = Arc::new(f.supervisor().await);
     let mut registration = f.registration();
@@ -103,29 +94,15 @@ async fn old_runtime_rejecting_v2_field_downgrades_subscription_to_explicit_v1()
         let envelope: serde_json::Value = read_frame(&mut first).await.unwrap();
         assert_eq!(envelope["token"], token);
         assert_eq!(envelope["command"]["projection"], "public-v2");
-        assert!(serde_json::from_value::<LegacyEvents>(envelope["command"].clone()).is_err());
+        assert_eq!(envelope["command"]["op"], "events");
         drop(first); // The old strict decoder closes without a response.
 
-        let (mut second, _) = listener.accept().await.unwrap();
-        let request: RuntimeRequest = read_frame(&mut second).await.unwrap();
-        let command = serde_json::to_value(request.command).unwrap();
-        let legacy: LegacyEvents = serde_json::from_value(command).unwrap();
-        assert_eq!(legacy.op, "events");
-        assert_eq!((legacy.after, legacy.limit, legacy.wait_ms), (7, 128, 0));
-        write_frame(
-            &mut second,
-            &RuntimeResponse {
-                protocol: PROCESS_PROTOCOL,
-                session_id,
-                incarnation,
-                resumed_from: None,
-                result: serde_json::json!({"projection":"public-v1","replay_gap":false,"cursor":8,"latest_cursor":8,"has_more":false,"events":[{"cursor":8,"kind":"run"}]}),
-                error: None,
-                outcome_unknown: false,
-            },
-        )
-        .await
-        .unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), listener.accept())
+                .await
+                .is_err(),
+            "a rejected projection must not trigger a legacy retry"
+        );
     });
     let (subscription, event, keep) = tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -142,13 +119,11 @@ async fn old_runtime_rejecting_v2_field_downgrades_subscription_to_explicit_v1()
     .await
     .unwrap();
     server.await.unwrap();
-    assert!(keep);
-    assert_eq!(subscription.projection, None);
+    assert!(!keep);
+    assert_eq!(subscription.projection.as_deref(), Some("public-v2"));
     assert_eq!(subscription.after, 7);
-    assert_eq!(event.result["projection"], "public-v1");
-    assert_eq!(event.result["events"][0]["cursor"], 8);
-    assert_eq!(event.error, None);
-    assert!(!event.outcome_unknown);
+    assert!(event.error.is_some());
+    assert!(event.outcome_unknown);
 }
 
 #[tokio::test]

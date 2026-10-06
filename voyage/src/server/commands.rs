@@ -342,6 +342,38 @@ pub(super) async fn dispatch_admitted(
                 json!({"pid":std::process::id(),"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"capabilities":capabilities,"decisions":"bounded_120_seconds"}),
             )
         }
+        RuntimeCommand::InitializeEntities {
+            generation,
+            offset,
+            limit,
+            expected_revision,
+            expected_cursor,
+        } => {
+            let _admission = state.admission.lock().await;
+            let config = state.config.read().await.clone();
+            let active = state.active.lock().await;
+            let settings = json!({"inference": super::configuration::inference_snapshot(&config),
+                "inference_next_turn":active.is_some(),
+                "inference_current":active.as_ref().map_or(Value::Null, |run| run.inference.clone()),
+                "access":crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace).ok().and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())});
+            drop(active);
+            state
+                .owner
+                .initialize_entities(
+                    generation,
+                    state.registration.incarnation,
+                    offset,
+                    limit,
+                    expected_revision,
+                    expected_cursor,
+                    settings,
+                )
+                .await
+        }
+        RuntimeCommand::ReplayEntities { after, limit } => {
+            let page = state.owner.live_observations(after, limit).await?;
+            super::observations::entity_replay(page)
+        }
         RuntimeCommand::Snapshot => {
             // Serialize with settings publication so revision and values describe one state.
             let _admission = state.admission.lock().await;
@@ -637,6 +669,20 @@ pub(super) async fn dispatch_admitted(
                 .terminal(run_id, terminal_id, operation)
                 .await
         }
+        RuntimeCommand::InitializeDecisions { generation } => {
+            let _admission = state.admission.lock().await;
+            let (decisions, cursor) = state
+                .owner
+                .decisions_at_cursor(state.registration.incarnation)
+                .await?;
+            decision_entities(
+                generation,
+                state.registration.session_id,
+                state.registration.incarnation,
+                cursor,
+                decisions,
+            )
+        }
         RuntimeCommand::Decisions => state.owner.decisions(state.registration.incarnation).await,
         command @ RuntimeCommand::Respond { .. } => {
             let _admission = state.admission.lock().await;
@@ -666,4 +712,53 @@ pub(super) async fn dispatch_admitted(
             Ok(json!({"status":"stopping","cleanup":"pending"}))
         }
     }
+}
+
+pub(super) fn decision_entities(
+    generation: Uuid,
+    session_id: Uuid,
+    incarnation: Uuid,
+    cursor: u64,
+    decisions: Value,
+) -> Result<Value> {
+    use voyage_protocol::event_connection::{
+        EntityKind, Fence, InitializationEvent, MAX_ENTITY_BYTES,
+    };
+    ensure!(!generation.is_nil(), "decision generation required");
+    let values = decisions
+        .as_array()
+        .context("invalid decision entity list")?;
+    ensure!(values.len() <= 64, "decision entity scope exceeds bound");
+    let fence = Fence {
+        generation,
+        session_id,
+        incarnation,
+    };
+    let mut events = vec![InitializationEvent::Begin {
+        fence: fence.clone(),
+        cursor,
+    }];
+    for (sequence, value) in values.iter().enumerate() {
+        ensure!(
+            serde_json::to_vec(value)?.len() <= MAX_ENTITY_BYTES,
+            "decision entity exceeds bound"
+        );
+        let id = value["decision_id"]
+            .as_str()
+            .context("missing decision identity")?
+            .to_owned();
+        events.push(InitializationEvent::Entity {
+            fence: fence.clone(),
+            sequence: sequence as u64,
+            entity_kind: EntityKind::Decision,
+            entity_id: id,
+            value: value.clone(),
+        });
+    }
+    events.push(InitializationEvent::Complete {
+        fence,
+        sequence: values.len() as u64,
+        cursor,
+    });
+    Ok(json!({"version":3,"events":events,"cursor":cursor}))
 }

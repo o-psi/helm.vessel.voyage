@@ -36,6 +36,25 @@ impl ManagedSessionOwner {
         })
         .await?
     }
+    /// Decision values and their replay barrier are observed under the same
+    /// canonical mutex used by agent decision insertion.
+    pub(crate) async fn decisions_at_cursor(
+        &self,
+        incarnation: Uuid,
+    ) -> anyhow::Result<(Value, u64)> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let values = store
+                .journal
+                .decisions(incarnation, SystemClock.now_ms()?)?;
+            let cursor = store.journal.observation_cursor(store.session_id)?;
+            Ok((values, cursor))
+        })
+        .await?
+    }
     pub(crate) async fn decisions(&self, incarnation: Uuid) -> anyhow::Result<Value> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

@@ -21,6 +21,23 @@ pub enum WorkspaceChangeScope {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    /// Explicit bounded replay; retention loss requires entity reinitialization.
+    ReplayEntities {
+        after: u64,
+        limit: u32,
+    },
+    /// Separate Decide-authorized entity stream; never included in History initialization.
+    InitializeDecisions {
+        generation: Uuid,
+    },
+    /// Bounded canonical entity initialization at an exact revision/journal fence.
+    InitializeEntities {
+        generation: Uuid,
+        offset: u64,
+        limit: u32,
+        expected_revision: Option<u64>,
+        expected_cursor: Option<u64>,
+    },
     GoalRead,
     WorkspaceFile {
         path: String,
@@ -364,6 +381,8 @@ impl RuntimeCommand {
             self,
             Self::Health
                 | Self::Stop
+                | Self::ReplayEntities { .. }
+                | Self::InitializeEntities { .. }
                 | Self::Snapshot
                 | Self::GoalRead
                 | Self::WorkspaceChanges { .. }
@@ -377,6 +396,7 @@ impl RuntimeCommand {
                 | Self::Resolve { .. }
                 | Self::Events { .. }
                 | Self::NotificationEvents { .. }
+                | Self::InitializeDecisions { .. }
                 | Self::Decisions
                 | Self::Controls { .. }
                 | Self::WorkflowPreview { .. }

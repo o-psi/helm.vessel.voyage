@@ -335,6 +335,81 @@ impl Client {
             .context("Browser snapshot revision unavailable")
     }
 
+    /// Initialize a bounded canonical entity scope with no snapshot fallback.
+    pub async fn initialize_entities(
+        &self,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+    ) -> Result<voyage_protocol::event_connection::InitializedScope> {
+        use voyage_protocol::event_connection::{EntityReducer, InitializationEvent};
+        let generation = uuid::Uuid::new_v4();
+        let mut reducer = EntityReducer::default();
+        let mut offset = 0;
+        let mut expected_revision = None;
+        let mut expected_cursor = None;
+        for _ in 0..1024 {
+            let page = self
+                .voyage(
+                    session_id,
+                    incarnation,
+                    VoyageCommand::InitializeEntities {
+                        generation,
+                        offset,
+                        limit: 64,
+                        expected_revision,
+                        expected_cursor,
+                    },
+                )
+                .await?;
+            ensure!(page["version"] == 3, "incompatible entity initialization");
+            let revision = page["revision"]
+                .as_u64()
+                .context("missing entity revision")?;
+            let cursor = page["cursor"].as_u64().context("missing entity cursor")?;
+            ensure!(
+                expected_revision.is_none_or(|old| old == revision)
+                    && expected_cursor.is_none_or(|old| old == cursor),
+                "entity fence changed"
+            );
+            let events: Vec<InitializationEvent> = serde_json::from_value(page["events"].clone())?;
+            ensure!(events.len() <= 66, "entity page exceeds bound");
+            let mut completed = None;
+            for event in events {
+                let fence = match &event {
+                    InitializationEvent::Begin { fence, .. }
+                    | InitializationEvent::Entity { fence, .. }
+                    | InitializationEvent::Complete { fence, .. }
+                    | InitializationEvent::Reset { fence, .. } => fence,
+                };
+                ensure!(
+                    fence.generation == generation
+                        && fence.session_id == session_id
+                        && fence.incarnation == incarnation,
+                    "entity owner changed"
+                );
+                if let Some(scope) = reducer.accept(&event).map_err(anyhow::Error::msg)? {
+                    ensure!(completed.is_none(), "duplicate initialization barrier");
+                    completed = Some(scope);
+                }
+            }
+            let more = page["has_more"]
+                .as_bool()
+                .context("missing entity continuation")?;
+            if !more {
+                return completed.context("missing initialization barrier");
+            }
+            ensure!(completed.is_none(), "premature initialization barrier");
+            let next = page["next_offset"]
+                .as_u64()
+                .context("missing entity offset")?;
+            ensure!(next > offset, "entity initialization made no progress");
+            offset = next;
+            expected_revision = Some(revision);
+            expected_cursor = Some(cursor);
+        }
+        anyhow::bail!("entity initialization page limit exceeded")
+    }
+
     pub async fn voyage(
         &self,
         session_id: uuid::Uuid,
