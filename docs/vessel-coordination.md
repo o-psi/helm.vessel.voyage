@@ -192,6 +192,27 @@ The target must advertise `start_settings`; older targets refuse without startin
 A private, command-bound launch file freezes resolved settings before process start.
 The task/prompt limit is 64 KiB.
 
+Account transport names come from the shared typed contract, including `xai_oauth`;
+accepting a transport name does not establish host availability or account-use rights.
+Startup refusals expose only bounded cause codes and an optional settings field,
+never the raw host diagnostic. A refused create result includes `resolution_request`
+with its exact resolved settings/account payload and original `target` alias.
+Recovery must retain that destination; omission must never redirect remote recovery
+to local. Absent nonnullable settings accept omission or equivalent null; the established
+null-bearing wire serialization is retained for pre-upgrade durable receipts.
+Explicit nullable resets remain null, and
+zero output-token caps remain explicit zero. Use that request unchanged with
+`action: "resolve_create"` on targets advertising `start_settings_resolution`.
+Its `command_id` is the start-command/session ID, **not** the initial-submit ID.
+Resolution never launches or submits the initial task, recaptures defaults, or
+selects another account. It checks the original durable payload and can fence a
+never-admitted start as `not_admitted`; `unknown` still forbids automatic replay.
+`receipt(session_id)` remains the receipt for an existing Voyage command, not a
+pre-session startup lookup. Local `receipt(command_id)` retains the create intent
+and result, and exposes the frozen `resolution_request` even if the transport result
+was lost after the wire intent was retained. Preserve both identities and the exact resolution payload after an
+uncertain effect; do not reconstruct inherited settings from mutable defaults.
+
 A create request needs two distinct fresh UUIDs: `session_id` is also its stable
 start-command ID; `command_id` is the initial-submit ID and local operation ID.
 All other mutations use a fresh stable `command_id` and the observed revision.

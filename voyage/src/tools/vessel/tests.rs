@@ -609,7 +609,7 @@ async fn dispatch_matrix_preserves_public_read_and_mutation_envelopes() {
     ];
     for value in actions {
         let action: Action = serde_json::from_value(value.clone()).unwrap();
-        let result = perform(action, &transport, &ctx, None, None).await;
+        let result = perform(action, &transport, &ctx, None, None, "local").await;
         assert!(result.is_ok(), "{value}: {result:?}");
     }
     task.abort();
@@ -627,5 +627,48 @@ fn create_schema_accepts_zero_output_tokens_but_rejects_negative() {
         });
         assert_eq!(schema.validate(&args).is_ok(), value >= 0);
         assert_eq!(serde_json::from_value::<Action>(args).is_ok(), value >= 0);
+    }
+}
+
+#[test]
+fn creation_account_transports_and_optional_settings_match_typed_contract() {
+    use voyage_protocol::accounts::{AccountBinding, Transport};
+    let schema = input_schema();
+    let compiled = jsonschema::validator_for(&schema).unwrap();
+    for transport in Transport::ALL {
+        let account = AccountBinding {
+            account_id: Uuid::new_v4(),
+            connection_id: Uuid::new_v4(),
+            identity_generation: 0,
+            connection_revision: 0,
+            transport,
+        };
+        for settings in [
+            json!({}),
+            json!({"max_output_tokens":0}),
+            json!({"max_output_tokens":2048}),
+            json!({"reasoning_effort":null,"service_tier":null,"temperature":null}),
+        ] {
+            let mut request = json!({"action":"create","command_id":Uuid::new_v4(),
+                "session_id":Uuid::new_v4(),"workspace":"/workspace","task":"offline contract",
+                "account":account,"settings":settings});
+            compiled.validate(&request).unwrap();
+            let action: Action = serde_json::from_value(request.clone()).unwrap();
+            let Action::Create {
+                account: Some(parsed),
+                ..
+            } = action
+            else {
+                panic!("account lost")
+            };
+            assert_eq!(parsed, account);
+            request["account"] = Value::Null;
+            compiled.validate(&request).unwrap();
+            serde_json::from_value::<Action>(request.clone()).unwrap();
+            request.as_object_mut().unwrap().remove("account");
+            request.as_object_mut().unwrap().remove("settings");
+            compiled.validate(&request).unwrap();
+            serde_json::from_value::<Action>(request).unwrap();
+        }
     }
 }

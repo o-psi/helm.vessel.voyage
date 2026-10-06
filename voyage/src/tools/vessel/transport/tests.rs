@@ -68,6 +68,16 @@ async fn remote_diagnostics_are_classified_not_disclosed_or_replayed() {
         ("unsupported secret", "unsupported_or_unavailable"),
         ("expired secret", "expired"),
         ("private secret", "refused"),
+        (
+            "command_timeout_secs must be positive /private/secret",
+            "invalid_start_settings",
+        ),
+        ("default_account_required secret", "account_required"),
+        ("account binding stale secret", "account_binding_stale"),
+        (
+            "start command id payload conflict secret",
+            "command_payload_conflict",
+        ),
     ] {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -92,6 +102,9 @@ async fn remote_diagnostics_are_classified_not_disclosed_or_replayed() {
         assert_eq!(value["code"], code);
         assert_eq!(value["status"], "outcome_unknown");
         assert!(!value.to_string().contains("secret"));
+        if code == "invalid_start_settings" {
+            assert_eq!(value["validation_field"], "command_timeout_secs");
+        }
         task.await.unwrap();
     }
 }
