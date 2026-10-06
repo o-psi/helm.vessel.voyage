@@ -48,7 +48,10 @@ impl Journal {
             "goal continuation is not authorized"
         );
         ensure!(goal.limit_reached().is_none(), "goal limit reached");
-        ensure!(goal.usage.unmeasured_runs == 0, "goal usage is incomplete");
+        ensure!(
+            !goal.limits.usage_required() || goal.usage.unmeasured_runs == 0,
+            "goal usage is incomplete for the configured token quota"
+        );
         let authority: String = tx.query_row(
             "SELECT authority FROM process_goals WHERE session_id=?1",
             [guard.session_id.to_string()],

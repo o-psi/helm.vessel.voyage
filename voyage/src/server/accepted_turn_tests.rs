@@ -1489,15 +1489,22 @@ async fn goal_driver_rechecks_authority_and_pending_input_before_dispatch() {
                 .unwrap();
         }
         super::goals::advance(&state).await.unwrap();
-        let stopped = goal_stopped(&state).await;
-        assert_eq!(stopped.status, GoalStatus::NeedsAttention);
+        let stopped = state.owner.goal().await.unwrap().goal.unwrap();
+        assert_eq!(
+            stopped.status,
+            if changed_authority {
+                GoalStatus::NeedsAttention
+            } else {
+                GoalStatus::Active
+            }
+        );
         assert_eq!(
             stopped.stop_reason,
-            Some(if changed_authority {
-                GoalStopReason::AuthorityRevoked
+            if changed_authority {
+                Some(GoalStopReason::AuthorityRevoked)
             } else {
-                GoalStopReason::UserInput
-            })
+                None
+            }
         );
         assert_eq!(stopped.usage.runs, 0);
         assert!(provider.requests.lock().await.is_empty());
@@ -1591,6 +1598,66 @@ async fn goal_driver_rejects_invented_completion_and_stops_without_progress() {
                 && m.tool_success == Some(false)
                 && m.content.contains("Goal evidence is missing"))
     );
+    state.shutdown.cancel();
+    driver.await.unwrap();
+}
+
+#[tokio::test]
+async fn conversational_root_goal_creation_continues_to_tool_free_full_assessment() {
+    use voyage_protocol::goals::*;
+    // Real root tool dispatch and owner driver with deterministic loopback replies:
+    // no provider account, live inference or model budget is used.
+    let mut create = Reply::tool(
+        "goal",
+        json!({"action":"create","objective":"Draft and verify the full explanation"}),
+    );
+    create.body = create.body.replace("fixture-call", "goal-create");
+    let mut complete = Reply::tool(
+        "goal",
+        json!({"action":"status","report":{
+            "outcome":"complete","summary":"Every requested explanation section has been drafted and audited"
+        }}),
+    );
+    complete.body = complete.body.replace("fixture-call", "goal-complete");
+    for reply in [&mut create, &mut complete] {
+        reply.body=reply.body.replace("data: [DONE]",&format!("data: {}\n\ndata: [DONE]",json!({"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4,"total_tokens":24}})));
+    }
+    let (_root, state, provider) = configured(vec![
+        create,
+        measured_reply(),
+        measured_reply(),
+        complete,
+        measured_reply(),
+    ])
+    .await;
+    state.config.write().await.vessel.enabled = false;
+    let driver = tokio::spawn(super::goals::drive(state.clone()));
+    let response = call(
+        &state,
+        submit("Keep working until the full explanation has been drafted and verified."),
+    )
+    .await;
+    assert!(response.error.is_none(), "{response:?}");
+    let goal = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if let Some(goal) = state.owner.goal().await.unwrap().goal
+                && goal.status == GoalStatus::Complete
+                && state.active.lock().await.is_none()
+            {
+                break goal;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("root-created Goal did not complete");
+    assert_eq!(goal.objective, "Draft and verify the full explanation");
+    assert_eq!(goal.limits, GoalLimits::default());
+    assert_eq!(goal.usage.runs, 3);
+    assert_eq!(goal.usage.unmeasured_runs, 0);
+    assert!(goal.assessment.as_ref().unwrap().report.evidence.is_empty());
+    assert!(!goal.continuation_authorized);
+    assert_eq!(provider.requests.lock().await.len(), 5);
     state.shutdown.cancel();
     driver.await.unwrap();
 }

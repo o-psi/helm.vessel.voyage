@@ -77,7 +77,7 @@ fn parse(text: &str, state: &GoalSnapshot) -> Result<Option<GoalAction>> {
                 objective: value.into(),
                 limits: GoalLimits::default(),
                 replace_goal_id: state.goal.as_ref().map(|g| g.id),
-                continue_automatically: false,
+                continue_automatically: true,
             }
         }
         "edit" => {
@@ -119,7 +119,7 @@ fn parse(text: &str, state: &GoalSnapshot) -> Result<Option<GoalAction>> {
             };
             ensure!(
                 limits.valid(),
-                "Limits: runs 1–1000, tokens 1–10000000, seconds 1–86400, no-progress turns 1–10"
+                "Optional quotas: zero means unset; runs ≤1000, tokens ≤10000000, seconds ≤86400, no-progress turns ≤10"
             );
             GoalAction::Edit {
                 goal_id: goal.id,
@@ -135,8 +135,8 @@ fn parse(text: &str, state: &GoalSnapshot) -> Result<Option<GoalAction>> {
             ensure!(
                 goal.status != GoalStatus::Complete
                     && goal.limit_reached().is_none()
-                    && goal.usage.unmeasured_runs == 0,
-                "Cannot resume: review exhausted limits or explicitly replace a goal with unknown usage"
+                    && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
+                "Cannot resume: review exhausted quotas or edit/remove the token quota with incomplete usage"
             );
             GoalAction::Resume { goal_id: goal.id }
         }
@@ -202,7 +202,7 @@ fn reason(goal: &Goal) -> &'static str {
     match goal.stop_reason {
         Some(GoalStopReason::UserPaused) => "Paused by you; an accepted run can still finish.",
         Some(GoalStopReason::UserInput) => {
-            "New input stopped continuation; review before resuming."
+            "Input is pending; continuation waits for its exact receipt."
         }
         Some(GoalStopReason::RunLimit) => "Run limit reached.",
         Some(GoalStopReason::TokenLimit) => "Token limit reached.",
@@ -484,8 +484,8 @@ impl App {
             );
         }
         match &review.action {
-            Some(GoalAction::Set { objective, limits, replace_goal_id, .. }) => text.push_str(&format!("{}\nNew objective: {}\nLimits: {} runs · {} tokens · {} seconds · {} turns without progress\nSaves paused. Use /goal resume to authorize continuation.\n", if replace_goal_id.is_some() { "CONFIRM REPLACEMENT: the current goal above will be replaced with a new budget." } else { "Create goal" }, safe(objective), limits.runs, limits.tokens, limits.elapsed_ms/1000, limits.no_progress_runs)),
-            Some(GoalAction::Edit { objective, limits, .. }) => text.push_str(&format!("Save objective: {}\nLimits: {} runs · {} tokens · {} seconds · {} turns without progress\nUsage is retained; this pauses continuation.\n", safe(objective), limits.runs, limits.tokens, limits.elapsed_ms/1000, limits.no_progress_runs)),
+            Some(GoalAction::Set { objective, limits, replace_goal_id, .. }) => text.push_str(&format!("{}\nNew objective: {}\nLimits: {} runs · {} tokens · {} seconds · {} turns without progress\nStarts active within current execution policy; zero quotas are unset.\n", if replace_goal_id.is_some() { "CONFIRM REPLACEMENT: the current goal above will be replaced with a new budget." } else { "Create goal" }, safe(objective), limits.runs, limits.tokens, limits.elapsed_ms/1000, limits.no_progress_runs)),
+            Some(GoalAction::Edit { objective, limits, .. }) => text.push_str(&format!("Save objective: {}\nLimits: {} runs · {} tokens · {} seconds · {} turns without progress\nUsage and active intent are retained; explicit pauses stay paused.\n", safe(objective), limits.runs, limits.tokens, limits.elapsed_ms/1000, limits.no_progress_runs)),
             Some(GoalAction::Pause { .. }) => text.push_str("Pause future continuation. The current run may finish; /stop cancels it.\n"),
             Some(GoalAction::Resume { .. }) => text.push_str("AUTHORIZE automatic continuation within the reviewed limits, including while Helm is disconnected.\n"),
             Some(GoalAction::Clear { .. }) => text.push_str("CONFIRM CLEAR: remove the current goal above. Existing run receipts remain.\n"),
@@ -575,13 +575,13 @@ mod tests {
         let id = state.goal.as_ref().unwrap().id;
         assert!(parse("/goal", &state).unwrap().is_none());
         assert!(
-            matches!(parse("/goal set New objective", &state).unwrap(), Some(GoalAction::Set { replace_goal_id: Some(old), continue_automatically: false, limits, .. }) if old == id && limits == GoalLimits::default())
+            matches!(parse("/goal set New objective", &state).unwrap(), Some(GoalAction::Set { replace_goal_id: Some(old), continue_automatically: true, limits, .. }) if old == id && limits == GoalLimits::default())
         );
         assert!(
             matches!(parse("/goal limits 4 5000 60 2", &state).unwrap(), Some(GoalAction::Edit { goal_id, limits, objective }) if goal_id == id && limits.elapsed_ms == 60000 && objective == "Verify the output")
         );
         for bad in [
-            "/goal limits 0 100 30 1",
+            "/goal limits 1001 100 30 1",
             "/goal limits 1 100 86401 1",
             "/goal limits 1 100 1",
             "/goal limits 1 100 18446744073709551615 1",
@@ -590,9 +590,11 @@ mod tests {
         ] {
             assert!(parse(bad, &state).is_err(), "{bad}");
         }
+        state.goal.as_mut().unwrap().limits.tokens = 100;
         state.goal.as_mut().unwrap().usage.unmeasured_runs = 1;
         assert!(parse("/goal resume", &state).is_err());
         state.goal.as_mut().unwrap().usage.unmeasured_runs = 0;
+        state.goal.as_mut().unwrap().limits.runs = 20;
         state.goal.as_mut().unwrap().usage.runs = 20;
         assert!(parse("/goal resume", &state).is_err());
         state.goal.as_mut().unwrap().status = GoalStatus::Complete;

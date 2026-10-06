@@ -41,7 +41,13 @@ fn command(j: &Journal, session: Uuid, action: GoalAction) -> RuntimeCommand {
 fn set(replace_goal_id: Option<Uuid>, active: bool) -> GoalAction {
     GoalAction::Set {
         objective: "Verify the migration and publish the result".into(),
-        limits: GoalLimits::default(),
+        // Legacy finite fixtures remain explicit; new defaults are tested separately.
+        limits: GoalLimits {
+            runs: 20,
+            tokens: 200_000,
+            elapsed_ms: 3_600_000,
+            no_progress_runs: 3,
+        },
         replace_goal_id,
         continue_automatically: active,
     }
@@ -226,7 +232,7 @@ fn bounds_reject_without_changing_canonical_state() {
         assert!(j.update_goal(&guard, a.clone(), &c, 1000).is_err());
     }
     let limits = GoalLimits {
-        runs: 0,
+        runs: 1001,
         ..GoalLimits::default()
     };
     let c = command(
@@ -862,7 +868,7 @@ fn terminal_settlement_is_once_only_and_run_completion_is_not_goal_completion() 
 }
 
 #[test]
-fn missing_usage_is_visible_and_cannot_be_resumed_by_editing_limits() {
+fn missing_usage_retains_identity_and_can_resume_after_explicit_quota_removal() {
     let (_root, mut j, session, guard, a) = fixture();
     let c = command(&j, session.id, set(None, true));
     j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
@@ -884,7 +890,11 @@ fn missing_usage_is_visible_and_cannot_be_resumed_by_editing_limits() {
     );
     j.update_goal(&guard, a.clone(), &edit, 1200).unwrap();
     let resume = command(&j, session.id, GoalAction::Resume { goal_id: g.id });
-    assert!(j.update_goal(&guard, a, &resume, 1200).is_err());
+    j.update_goal(&guard, a, &resume, 1200).unwrap();
+    let resumed = j.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(resumed.id, g.id);
+    assert_eq!(resumed.status, GoalStatus::Active);
+    assert_eq!(resumed.usage.unmeasured_runs, 1);
 }
 
 #[test]
@@ -1547,11 +1557,8 @@ fn goal_child_budget_is_clamped_to_its_parent_and_unknown_costs_survive_recovery
     let budget = j
         .allocate_goal_child(&guard, run.command_id, inc, request.clone(), 1000)
         .unwrap();
-    assert_eq!(budget.elapsed_ms, GoalLimits::default().elapsed_ms);
-    assert_eq!(
-        budget.expires_at_ms,
-        1000 + GoalLimits::default().elapsed_ms
-    );
+    assert_eq!(budget.elapsed_ms, 3_600_000);
+    assert_eq!(budget.expires_at_ms, 1000 + 3_600_000);
     let mut usage = allocation_usage(budget, 9, 3);
     usage.complete = false;
     j.settle_goal_allocation(&guard, run.command_id, inc, request.destination, usage)
@@ -2186,7 +2193,7 @@ fn pending_input_between_goal_reservation_and_admission_fences_the_goal() {
 }
 
 #[test]
-fn ordinary_turn_preempts_goal_without_changing_its_input_revision() {
+fn ordinary_turn_preserves_goal_without_changing_its_input_revision() {
     let (_root, mut j, session, guard, a) = fixture();
     let c = command(&j, session.id, set(None, true));
     j.update_goal(&guard, a.clone(), &c, 1000).unwrap();
@@ -2207,9 +2214,10 @@ fn ordinary_turn_preempts_goal_without_changing_its_input_revision() {
     let admitted = j.admit_turn(&guard, &request, 1001).unwrap();
     assert!(!admitted.duplicate);
     let goal = j.goal(session.id).unwrap().goal.unwrap();
-    assert_eq!(goal.stop_reason, Some(GoalStopReason::UserInput));
+    assert_eq!(goal.stop_reason, None);
+    assert_eq!(goal.status, GoalStatus::Active);
     assert_eq!(goal.usage.runs, 0);
-    assert!(!goal.continuation_authorized);
+    assert!(goal.continuation_authorized);
     assert_eq!(j.load_session(session.id).unwrap().revision, before + 1);
     assert!(j.admit_turn(&guard, &request, 1002).unwrap().duplicate);
 }
@@ -2401,14 +2409,329 @@ fn goal_report_finalization_requires_successful_measured_clean_uninterrupted_run
                 assert_eq!(goal.status, GoalStatus::Complete);
                 assert_eq!(goal.assessment.unwrap().report, report);
             }
-            "blocked" => assert_eq!(goal.status, GoalStatus::Blocked),
+            "blocked" => assert_eq!(goal.status, GoalStatus::Active),
             "paused" => assert_eq!(goal.status, GoalStatus::Paused),
             _ => assert_eq!(goal.status, GoalStatus::NeedsAttention, "{mode}"),
         }
-        assert!(!goal.continuation_authorized);
+        assert_eq!(goal.continuation_authorized, mode == "blocked");
         assert!(
             j.report_goal(&guard, &context, "assessment", &report)
                 .is_err()
         );
     }
+}
+
+#[test]
+fn conversational_assessment_needs_no_manufactured_tool_evidence() {
+    let report = GoalReport {
+        outcome: GoalReportOutcome::Complete,
+        summary: "The requested explanation is present in the canonical answer".into(),
+        evidence: vec![],
+    };
+    assert!(super::reporting::evidence_digest(&[], &report).is_ok());
+    let mut invalid = report;
+    invalid.summary.clear();
+    assert!(super::reporting::evidence_digest(&[], &invalid).is_err());
+}
+
+#[test]
+fn default_goal_has_no_hidden_run_token_time_or_no_tool_quota() {
+    let (_root, mut journal, session, guard, authority) = fixture();
+    let command = command(&journal, session.id, set(None, true));
+    journal
+        .update_goal(&guard, authority, &command, 1000)
+        .unwrap();
+    let mut goal = journal.goal(session.id).unwrap().goal.unwrap();
+    goal.limits = GoalLimits::default();
+    goal.usage.runs = 1001;
+    goal.usage.input_tokens = 10_000_001;
+    goal.usage.elapsed_ms = 86_400_001;
+    goal.usage.no_progress_runs = 11;
+    goal.usage.unmeasured_runs = 1;
+    assert_eq!(goal.limit_reached(), None);
+    assert!(!goal.limits.usage_required());
+    goal.limits.tokens = 100;
+    assert_eq!(goal.limit_reached(), Some(GoalStopReason::TokenLimit));
+    assert!(goal.limits.usage_required());
+}
+
+#[test]
+fn owner_root_can_create_active_goal_with_optional_budget_without_replacing() {
+    let (_root, mut journal, session, guard, authority) = fixture();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        expected_revision: 0,
+        expires_at_ms: 9000,
+        prompt: "Keep working until the explanation is complete".into(),
+        parts: vec![],
+        session_id: session.id,
+        machine_id: authority.installation_id,
+        principal_id: authority.principal_id,
+        budget: None,
+        coordination: None,
+        operator_name: None,
+    };
+    let admitted = journal.admit_turn(&guard, &request, 1000).unwrap();
+    let run = admitted.run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mut messages = journal.load_session(session.id).unwrap().session.messages;
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(crate::model::ToolCall {
+        id: "create-goal".into(),
+        name: "goal".into(),
+        arguments: json!({"action":"create","objective":"Finish the explanation"}),
+    });
+    messages.push(call);
+    journal
+        .checkpoint_canonical_at(&guard, run.id, &messages, &Usage::default(), 1100)
+        .unwrap();
+    let incarnation = Uuid::new_v4();
+    assert_eq!(
+        journal
+            .begin_goal_meter(&guard, run.command_id, incarnation, 1100)
+            .unwrap(),
+        Some((u64::MAX, u64::MAX))
+    );
+    journal
+        .model_create_goal(
+            &guard,
+            run.id,
+            authority.clone(),
+            incarnation,
+            "create-goal",
+            "Finish the explanation",
+            None,
+            1200,
+        )
+        .unwrap();
+    let snapshot = journal.goal(session.id).unwrap();
+    let goal = snapshot.goal.as_ref().unwrap();
+    assert_eq!(goal.status, GoalStatus::Active);
+    assert!(goal.continuation_authorized);
+    assert_eq!(goal.limits, GoalLimits::default());
+    assert!(
+        journal
+            .goal_report_context(session.id, run.id)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        journal
+            .model_create_goal(
+                &guard,
+                run.id,
+                authority,
+                incarnation,
+                "create-goal",
+                "Finish the explanation",
+                None,
+                1300
+            )
+            .is_err()
+    );
+    assert_eq!(journal.goal(session.id).unwrap(), snapshot);
+}
+
+#[test]
+fn same_genuine_impasse_requires_three_consecutive_assessments() {
+    let (_root, mut journal, session, guard, authority) = fixture();
+    let command = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Complete work requiring unavailable external input".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: true,
+        },
+    );
+    journal
+        .update_goal(&guard, authority, &command, 1000)
+        .unwrap();
+    for index in 0..3 {
+        let now = 2000 + index * 1000;
+        let (run, incarnation) = start_reserved(&mut journal, &guard, now);
+        journal
+            .begin_goal_meter(&guard, run.command_id, incarnation, now)
+            .unwrap();
+        let context = journal
+            .goal_report_context(session.id, run.id)
+            .unwrap()
+            .unwrap();
+        let report = GoalReport {
+            outcome: GoalReportOutcome::Blocked,
+            summary: "Required external input unavailable; no useful authorized action remains"
+                .into(),
+            evidence: vec![],
+        };
+        report_messages(&mut journal, &guard, run.id, &report, false);
+        journal
+            .report_goal(&guard, &context, "assessment", &report)
+            .unwrap();
+        let mut messages = journal.load_session(session.id).unwrap().session.messages;
+        messages.push(Message::tool_result(
+            "assessment",
+            "recorded checkpoint",
+            true,
+        ));
+        journal
+            .checkpoint_canonical_at(&guard, run.id, &messages, &Usage::default(), now + 50)
+            .unwrap();
+        journal
+            .finish(
+                &guard,
+                run.id,
+                RunState::Completed,
+                None,
+                Some("checkpoint"),
+            )
+            .unwrap();
+        journal
+            .settle_goal_run(&guard, run.id, measured(), true, now + 100)
+            .unwrap();
+        let goal = journal.goal(session.id).unwrap().goal.unwrap();
+        assert_eq!(
+            goal.status,
+            if index == 2 {
+                GoalStatus::Blocked
+            } else {
+                GoalStatus::Active
+            }
+        );
+        assert_eq!(goal.continuation_authorized, index != 2);
+    }
+}
+
+#[test]
+fn human_creation_is_active_even_without_legacy_continuation_checkbox() {
+    let (_root, mut journal, session, guard, authority) = fixture();
+    let creation = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Finish the full requested outcome".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: false,
+        },
+    );
+    journal
+        .update_goal(&guard, authority.clone(), &creation, 1000)
+        .unwrap();
+    let before = journal.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(before.status, GoalStatus::Active);
+    assert!(before.continuation_authorized);
+    let edit = command(
+        &journal,
+        session.id,
+        GoalAction::Edit {
+            goal_id: before.id,
+            objective: "Refined full outcome".into(),
+            limits: GoalLimits::default(),
+        },
+    );
+    journal.update_goal(&guard, authority, &edit, 1100).unwrap();
+    let after = journal.goal(session.id).unwrap().goal.unwrap();
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.status, GoalStatus::Active);
+    assert!(after.continuation_authorized);
+}
+
+#[test]
+fn unbudgeted_goal_continues_tool_free_turns_and_preserves_refinement_across_reopen() {
+    let (root, mut journal, session, guard, authority) = fixture();
+    let creation = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Draft the explanation and verify all requested sections".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: false,
+        },
+    );
+    journal
+        .update_goal(&guard, authority.clone(), &creation, 1000)
+        .unwrap();
+    let id = journal.goal(session.id).unwrap().goal.unwrap().id;
+    for index in 0..5 {
+        let run = finish_reserved(
+            &mut journal,
+            &guard,
+            2000 + index * 1000,
+            None,
+            RunState::Completed,
+        );
+        journal
+            .settle_goal_run(&guard, run.id, None, true, 2100 + index * 1000)
+            .unwrap();
+        let goal = journal.goal(session.id).unwrap().goal.unwrap();
+        assert_eq!(goal.id, id);
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert!(goal.continuation_authorized);
+        assert!(goal.assessment.is_none());
+        assert_eq!(goal.usage.runs, index as u32 + 1);
+    }
+    let edit = command(
+        &journal,
+        session.id,
+        GoalAction::Edit {
+            goal_id: id,
+            objective: "Draft and verify every requested section, including the human refinement"
+                .into(),
+            limits: GoalLimits::default(),
+        },
+    );
+    journal.update_goal(&guard, authority, &edit, 8000).unwrap();
+    let expected = journal.goal(session.id).unwrap();
+    drop(guard);
+    drop(journal);
+    let reopened = Journal::open(root.path().join("journal")).unwrap();
+    assert_eq!(reopened.goal(session.id).unwrap(), expected);
+    assert_eq!(expected.goal.as_ref().unwrap().status, GoalStatus::Active);
+    assert_eq!(expected.goal.as_ref().unwrap().usage.runs, 5);
+}
+
+#[test]
+fn explicit_pause_survives_terminal_settlement_and_owner_restart() {
+    let (root, mut journal, session, guard, authority) = fixture();
+    let creation = command(
+        &journal,
+        session.id,
+        GoalAction::Set {
+            objective: "Continue until all work is done".into(),
+            limits: GoalLimits::default(),
+            replace_goal_id: None,
+            continue_automatically: true,
+        },
+    );
+    journal
+        .update_goal(&guard, authority.clone(), &creation, 1000)
+        .unwrap();
+    let (run, _) = start_reserved(&mut journal, &guard, 2000);
+    let id = journal.goal(session.id).unwrap().goal.unwrap().id;
+    let pause = command(&journal, session.id, GoalAction::Pause { goal_id: id });
+    journal
+        .update_goal(&guard, authority, &pause, 2100)
+        .unwrap();
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Completed,
+            None,
+            Some("intermediate checkpoint"),
+        )
+        .unwrap();
+    journal
+        .settle_goal_run(&guard, run.id, None, true, 2200)
+        .unwrap();
+    let expected = journal.goal(session.id).unwrap();
+    assert_eq!(expected.goal.as_ref().unwrap().status, GoalStatus::Paused);
+    assert!(!expected.goal.as_ref().unwrap().continuation_authorized);
+    drop(guard);
+    drop(journal);
+    let reopened = Journal::open(root.path().join("journal")).unwrap();
+    assert_eq!(reopened.goal(session.id).unwrap(), expected);
+    assert!(reopened.goal_continuation(session.id).unwrap().is_none());
 }
