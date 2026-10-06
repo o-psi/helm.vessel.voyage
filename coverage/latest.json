@@ -1,15 +1,55 @@
 {
-  "measured_at_utc": "2026-10-05T20:26:39.916954+00:00",
-  "source_commit": "e11ee1df2d39878680bd85c024d39e33eb24ab3d",
-  "dirty": true,
-  "source_fingerprint_sha256": "84d61494c92d700a6046b9ba123f403866265c4e22df12ca6e783751d39aa276",
-  "source_fingerprint_scheme": "SHA-256 of sorted repository-relative Rust/SQL/Cargo paths and installer/src Python files,NUL,exact bytes,NUL",
+  "measured_at_utc": "2026-10-06T19:51:13.782129+00:00",
+  "source_commit": "208e86691d2cf7de6baa77a38a0e250b99ebffa7",
+  "dirty": false,
   "platform": "Linux-7.2.5-4-omarchy-x86_64-with-glibc2.44",
-  "rust": "rustc 1.98.1 (48a229cea 2026-09-01) (Arch Linux rust 1:1.98.1-1)",
-  "llvm": "LLVM (http://llvm.org/):\n  LLVM version 22.1.8\n  Optimized build.",
+  "rust": "rustc 1.99.0 (b940084d7 2026-09-28) (Arch Linux rust 1:1.99.0-1)",
+  "llvm": "LLVM (http://llvm.org/):\n  LLVM version 23.1.1\n  Optimized build.",
   "cargo_llvm_cov": "cargo-llvm-cov 0.9.1",
-  "command": "umask 0077; CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET RUSTC=$PINNED_TOOLCHAIN/usr/bin/rustc RUSTDOC=$PINNED_TOOLCHAIN/usr/bin/rustdoc LLVM_COV=$PINNED_TOOLCHAIN/usr/bin/llvm-cov LLVM_PROFDATA=$PINNED_TOOLCHAIN/usr/bin/llvm-profdata LLVM_PROFILE_FILE_NAME=hostupdate436final-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=1 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 8",
-  "report_command": "Current Cargo test --no-run JSON artifact inventory; own-prefix sparse profdata; all archived current workspace objects; LLVM JSON/LCOV/HTML with unchanged default exclusions; packaging/reconcile_coverage_lines.py",
+  "command": "umask 0077; CARGO_TARGET_DIR=$CACHED_TARGET CARGO_LLVM_COV_TARGET_DIR=$CACHED_TARGET LLVM_COV=/usr/bin/llvm-cov LLVM_PROFDATA=/usr/bin/llvm-profdata LLVM_PROFILE_FILE_NAME=issue437full-%p-%m.profraw RUSTC_WORKSPACE_WRAPPER=$CHECKOUT/packaging/rustc-workspace-forward RUST_TEST_THREADS=4 cargo llvm-cov --no-rustc-wrapper --workspace --locked --no-fail-fast --no-report -j 8",
+  "report_command": "Instrumented cargo test --workspace --locked --no-run JSON artifact inventory; own-prefix sparse profdata; every archived current workspace executable; LLVM JSON/LCOV/HTML; packaging/reconcile_coverage_lines.py",
+  "tests": {
+    "passed": 3125,
+    "failed": 0,
+    "ignored": 10
+  },
+  "totals": {
+    "lines": {
+      "count": 137457,
+      "covered": 111434,
+      "percent": 81.06826134718493
+    },
+    "functions": {
+      "count": 12521,
+      "covered": 10059,
+      "percent": 80.33703378324415
+    },
+    "instantiations": {
+      "count": 28042,
+      "covered": 14324,
+      "percent": 51.08052207403181
+    },
+    "regions": {
+      "count": 227558,
+      "covered": 175717,
+      "notcovered": 51841,
+      "percent": 77.21855526942582
+    },
+    "branches": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
+    },
+    "mcdc": {
+      "count": 0,
+      "covered": 0,
+      "notcovered": 0,
+      "percent": 0
+    }
+  },
+  "workspace_executables": 19,
+  "source_files": 545,
   "exclusions": [
     "Doctests",
     "Ignored tests including live-provider tests",
@@ -19,36 +59,10 @@
     "Native macOS/Windows behavior"
   ],
   "notes": [
-    "Measured the final #436 source against basee11ee1d with an explicit dirty-tree fingerprint, including the embedded legacy/acquisition Python and SQL inputs. The base commit alone is not the measured source.",
-    "Validated and archived all19 current objects/16 executed test binaries and546 source mappings. Detailed JSON/LCOV line counters reconciled; default scope/exclusions unchanged.",
-    "All11683 foreign raw profiles were preserved byte/mtime unchanged; only the own-prefix cohort was merged. The42 dependency warnings matched the previously audited symbols.",
-    "Compared with previous record: lines: covered111406 to111417, total137437 to137459, percentage change-0.004971 points; functions: covered10062 to10063, total12525 to12526, percentage change+0.001570 points; regions: covered175652 to175693, total227503 to227565, percentage change-0.003019 points. Small line/region percentage changes reflect added guard lines with higher covered counts; no exclusions were narrowed.",
-    "3,124 Rust tests passed, zero failed, ten ignored. Focused embedded-helper rejection cases and native journal9 inspection were separate checks; no live-provider invocation or native macOS/Windows claim."
-  ],
-  "workspace_executables": 19,
-  "executed_test_binaries": 16,
-  "source_files": 546,
-  "tests": {
-    "passed": 3124,
-    "failed": 0,
-    "ignored": 10
-  },
-  "totals": {
-    "lines": {
-      "count": 137459,
-      "covered": 111417,
-      "percent": 81.05471449668629
-    },
-    "functions": {
-      "count": 12526,
-      "covered": 10063,
-      "percent": 80.33689924956091
-    },
-    "regions": {
-      "count": 227565,
-      "covered": 175693,
-      "notcovered": 51872,
-      "percent": 77.20563355524796
-    }
-  }
+    "Clean committed #437 source measured before this coverage-summary-only edit. All current workspace executables selected from Cargo JSON; only the current own-prefix profiles merged. Foreign raw profiles preserved. Source maps audited to this checkout and JSON/LCOV line accounting reconciled.",
+    "Rejected the first wrapper-based measurement after llvm-nm found no profile counters in the cached protocol/storage libraries. The accepted run applies global instrumentation flags with --no-rustc-wrapper and audits every current object. Prior coverage included one distribution Rust standard-library helper; all 545 workspace source maps are retained here, with dependency source excluded.",
+    "Default workspace features; doctests and ignored tests excluded. Offline Linux Rust evidence only; no live-provider request, hosted build or native macOS/Windows claim.",
+    "Compared with prior LLVM 22 / Rust 1.98 measurement: lines +0.0135 percentage points; functions +0.0001 percentage points; regions +0.0129 percentage points. This measurement uses matching LLVM 23 / Rust 1.99 and the complete workspace scope. The previous accidental distribution-standard-library source is excluded explicitly.",
+    "All 54 zero-hash import diagnostics were audited as dependency definitions, with no workspace source mismatches. Optional LLVM 23 autodetect-threaded export -dump segfaulted; the identical diagnostic with -num-threads=1 succeeded. Normal JSON, LCOV, HTML and exact line accounting all succeeded."
+  ]
 }
