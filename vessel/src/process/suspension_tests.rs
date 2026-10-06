@@ -290,3 +290,36 @@ sys.stdout.buffer.write(struct.pack('>I',len(payload))+payload)
         );
     }
 }
+
+#[tokio::test]
+async fn bound_common_routes_never_use_legacy_projection_or_observer_binary() {
+    let fixture = Fixture::new();
+    let supervisor = fixture.supervisor().await;
+    let mut registration = fixture.registration();
+    registration.peer_uids = Some(ProcessPeerUids {
+        supervisor: unsafe { libc::geteuid() },
+        runtime: unsafe { libc::geteuid() },
+    });
+    // There is no protected execution binding. A runtime-writable projection
+    // or a supplied directory cannot stand in for catalogue/layout authority.
+    let supplied = fixture.0.join("untrusted-runtime");
+    std::fs::create_dir(&supplied).unwrap();
+    let listener = tokio::net::UnixListener::bind(supplied.join("runtime.sock")).unwrap();
+    for observing in [false, true] {
+        let result = if observing {
+            supervisor
+                .observe_current(&supplied, &registration, RuntimeCommand::Snapshot, None)
+                .await
+        } else {
+            supervisor
+                .forward_current(&supplied, &registration, RuntimeCommand::Snapshot, None)
+                .await
+        };
+        assert!(result.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+}

@@ -37,6 +37,16 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        // Bound coordinates come only from protected catalogue/layout metadata.
+        // Callers may still supply the legacy control projection coordinate.
+        let bound_directory;
+        let directory = if registration.peer_uids.is_some() {
+            bound_directory =
+                super::runtime_storage::directory(&self.directory, registration).await?;
+            bound_directory.as_path()
+        } else {
+            directory
+        };
         let response = observe(
             Some(&self.directory),
             directory,
@@ -59,6 +69,40 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        if registration.peer_uids.is_some() {
+            #[cfg(target_os = "linux")]
+            {
+                let directory =
+                    super::runtime_storage::directory(&self.directory, registration).await?;
+                let result = routing::forward_bound(
+                    &self.directory,
+                    &directory,
+                    &self.current_observer_registration(registration),
+                    command.clone(),
+                    authorization.clone(),
+                )
+                .await;
+                // A child-written stopped marker never authorizes this fallback.
+                if result
+                    .as_ref()
+                    .is_err_and(|error| error.downcast_ref::<routing::NotConnected>().is_some())
+                    && command.observes_saved()
+                    && registration.state != ProcessState::Relinquished
+                    && super::guardian::cleanup_observed(
+                        &self.directory,
+                        registration.session_id,
+                        registration.incarnation,
+                    )?
+                {
+                    return self
+                        .observe_current(&directory, registration, command, authorization)
+                        .await;
+                }
+                return result;
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("bound forwarding is unsupported on this host");
+        }
         // Live IPC keeps the original token/incarnation. If the owner retires
         // before forwarding, the positively fenced fallback uses current code.
         let result = routing::forward_authorized(
