@@ -397,6 +397,20 @@ Use Python without `-O`. Each guide describes bounded execution, private local
 evidence, cleanup and limits. These process checks are separate from the workspace
 Rust coverage percentage; they do not certify live models or the full-screen TUI.
 
+## TUI cleanup after suspension
+
+The offline observer regression checks that a newer catalogue observation for a
+retired owner refreshes its selected snapshot even when the conversation revision
+stays unchanged. This allows observed cleanup to clear the composer gate without
+replaying a command or assuming that a completed reply proves cleanup:
+
+```sh
+cargo test -p helm --locked suspended_catalogue_advance_refreshes_cleanup_without_changing_revision -j 8
+```
+
+The fixture uses a synthetic Vessel transport and covers the missed final
+observation path; it does not contact a provider or certify native platforms.
+
 ## Delivery recovery checks
 
 ```sh

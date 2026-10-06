@@ -198,10 +198,15 @@ pub fn spawn(
                             process.catalogue.as_ref().and_then(|c| c.summary.as_ref())
                         {
                             let key = (process.session_id, process.incarnation);
-                            if cursors
-                                .get(&key)
-                                .is_some_and(|cursor| *cursor > summary.observation_cursor)
-                            {
+                            // A retired owner has no live subscription to deliver its
+                            // final cleanup events. Hydrate newer catalogue observations
+                            // once, even when the conversation revision is unchanged.
+                            if cursors.get(&key).is_some_and(|cursor| {
+                                *cursor > summary.observation_cursor
+                                    || (process.state
+                                        != voyage_protocol::vessel::ProcessState::Live
+                                        && *cursor < summary.observation_cursor)
+                            }) {
                                 cursors.remove(&key);
                             }
                         }

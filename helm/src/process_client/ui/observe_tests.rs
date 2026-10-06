@@ -239,3 +239,53 @@ async fn catalogue_watcher_checkpoints_before_hydration_and_recovers_gaps() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn suspended_catalogue_advance_refreshes_cleanup_without_changing_revision() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let completed = Arc::new(AtomicBool::new(false));
+    let seen = completed.clone();
+    let session = Uuid::new_v4();
+    let incarnation = Uuid::new_v4();
+    let run = Uuid::new_v4();
+    let server = Server::new(move |command| {
+        let finished = seen.load(Ordering::SeqCst);
+        let cursor = if finished { 13 } else { 12 };
+        Ok(match command {
+            VesselCommand::Capabilities => json!({"features":["duplex_socket"]}),
+            VesselCommand::Catalogue => json!([{"session_id":session,"incarnation":incarnation,"workspace":"/synthetic","state":"suspended","catalogue":{"summary":{
+                "session_id":session,"revision":7,"observation_cursor":cursor,"name":null,"model":"synthetic-model","created_at":null,"last_turn_end":null,"total_messages":0,"run_id":run,"run_state":"completed","archived":false,"deleted":false,"pending_cleanup_run":if finished {None} else {Some(run)}
+            },"observed_at_ms":1,"stale":false,"error_code":null}}]),
+            VesselCommand::Voyage(request) => {
+                assert!(matches!(request.command, VoyageCommand::Snapshot));
+                json!({"session_id":session,"incarnation":incarnation,"result":{"session_id":session,"model":"synthetic-model","revision":7,"messages":[],"observation_cursor":cursor,"pending_cleanup_run":if finished {None} else {Some(run)},"cleanup":{"run_id":run,"phase":if finished {"observed"} else {"running"},"pending":if finished {vec![]} else {vec!["Outstanding run callbacks"]}}}})
+            }
+            _ => json!({}),
+        })
+    }).await;
+    let target = Target {
+        route: server.target.route,
+        session,
+    };
+    let (sender, mut receiver) = mpsc::channel(32);
+    let (_selection, selected) = tokio::sync::watch::channel(Some(target));
+    let job = spawn(server.client.clone(), target.route, sender, selected);
+    let result = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            if let Update::Snapshot { result, .. } = receiver.recv().await.unwrap() {
+                let snapshot = result.unwrap();
+                assert_eq!(snapshot.revision, 7);
+                if snapshot.observation_cursor == Some(13) {
+                    assert!(snapshot.pending_cleanup_run.is_none());
+                    break;
+                }
+                assert_eq!(snapshot.pending_cleanup_run, Some(run));
+                completed.store(true, Ordering::SeqCst);
+            }
+        }
+    })
+    .await;
+    job.abort();
+    let _ = job.await;
+    result.expect("retired owner must refresh its final cleanup projection");
+}
