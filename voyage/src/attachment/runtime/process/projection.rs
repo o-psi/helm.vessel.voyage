@@ -27,9 +27,38 @@ fn bounded(message: &Message, index: usize) -> Result<Value> {
         value["projection_truncated"] = json!(false);
         return Ok(value);
     }
+    // Complete bounded call identities survive large argument projections.
+    // Arguments remain withheld; this grants no execution or replay authority.
+    let mut summaries = Vec::new();
+    let mut summary_bytes = 0;
+    let mut complete =
+        message.role == crate::model::Role::Assistant && message.tool_calls.len() <= 64;
+    let mut ids = std::collections::BTreeSet::new();
+    for call in &message.tool_calls {
+        if !complete
+            || call.id.is_empty()
+            || call.id.len() > 128
+            || call.name.is_empty()
+            || call.name.len() > 128
+            || !ids.insert(&call.id)
+        {
+            complete = false;
+            break;
+        }
+        let value = json!({"id":call.id,"name":call.name});
+        summary_bytes += serde_json::to_vec(&value)?.len();
+        if summary_bytes > 8192 {
+            complete = false;
+            break;
+        }
+        summaries.push(value);
+    }
+    if !complete {
+        summaries.clear();
+    }
     let (content, truncated) = text_prefix(&message.content, 4096);
     Ok(
-        json!({"interrupted_attempt":interrupted_attempt(message),"coordination":message.coordination,"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
+        json!({"interrupted_attempt":interrupted_attempt(message),"coordination":message.coordination,"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_call_summaries":summaries,"tool_call_summaries_complete":complete,"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
     )
 }
 pub(super) fn page(messages: &[Message], offset: usize, limit: usize) -> Result<Vec<Value>> {
@@ -361,4 +390,28 @@ fn startup_preparation_labels_are_allowlisted() {
         )),
         None
     );
+}
+
+#[cfg(test)]
+#[test]
+fn large_tool_arguments_retain_complete_bounded_call_identity_without_arguments() {
+    let mut message = Message::new(crate::model::Role::Assistant, "");
+    message.tool_calls.push(crate::model::ToolCall {
+        id: "visual-call".into(),
+        name: "html_render".into(),
+        arguments: json!({"html":"x".repeat(65536)}),
+    });
+    let value = bounded(&message, 0).unwrap();
+    assert_eq!(value["projection_truncated"], true);
+    assert_eq!(value["tool_calls"], json!([]));
+    assert_eq!(value["tool_call_summaries_complete"], true);
+    assert_eq!(
+        value["tool_call_summaries"],
+        json!([{"id":"visual-call","name":"html_render"}])
+    );
+    assert!(!value.to_string().contains("arguments"));
+    message.tool_calls[0].id = "x".repeat(129);
+    let value = bounded(&message, 0).unwrap();
+    assert_eq!(value["tool_call_summaries_complete"], false);
+    assert_eq!(value["tool_call_summaries"], json!([]));
 }

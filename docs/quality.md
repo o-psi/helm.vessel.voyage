@@ -1578,3 +1578,13 @@ python3 -I -B installer/tests/native_legacy_history_tests.py
 Native read-only qualification is a separately authorized observation after
 restoration, with new exclusive receipts preserving failed monitor evidence.
 It must not re-inject or replay the original upgrade, fault or helper action.
+
+## HTML visual reply checks
+
+`node --test voyage/browser/test/html-preview.test.mjs` checks bounded HTML,
+isolated real Chromium rendering, content height, blocked network/storage/parent
+access, task-page preservation and observed disposable-context cleanup. It uses
+the already provisioned browser dependency and `/usr/bin/chromium`, with synthetic
+HTML and no provider request. `python3 -m unittest discover -s packaging -p test_browser_assets.py` checks the required module inventory. These checks do not
+establish a deployed runtime or native macOS/Windows behavior. Rust tool/projection
+checks remain part of the full workspace coverage measurement.

@@ -17,6 +17,7 @@ class BrowserAssets(unittest.TestCase):
         self.dest.mkdir()
         for name, data in {
             'worker.mjs': 'export {};',
+            'html-preview.mjs': 'export {};',
             'guardian.py': '# guardian',
             'mirror-source.mjs': 'export {};',
             'rrweb-vendor.mjs': 'export {};',
@@ -31,7 +32,7 @@ class BrowserAssets(unittest.TestCase):
 
     def test_stage_exact_hashed_members(self):
         assets = browser_assets.stage(self.source, self.dest)
-        self.assertEqual(len(assets), 8)
+        self.assertEqual(len(assets), 9)
         for name, info in assets.items():
             self.assertEqual(info['sha256'], hashlib.sha256((self.dest / name).read_bytes()).hexdigest())
             self.assertEqual((self.dest / name).stat().st_mode & 0o777, 0o644)
@@ -43,6 +44,11 @@ class BrowserAssets(unittest.TestCase):
         with self.assertRaises(ValueError):
             browser_assets.stage(self.source, self.dest)
         (self.source / 'worker.mjs').unlink()
+        with self.assertRaises(ValueError):
+            browser_assets.stage(self.source, self.dest)
+
+    def test_missing_preview_module_refused(self):
+        (self.source / 'html-preview.mjs').unlink()
         with self.assertRaises(ValueError):
             browser_assets.stage(self.source, self.dest)
 

@@ -14,7 +14,7 @@ def stage(source: Path, destination: Path) -> dict:
     package = source / 'package.json'
     if not package.exists():
         return {}
-    required = ['worker.mjs', 'mirror-source.mjs', 'rrweb-vendor.mjs', 'rrweb-LICENSE', 'guardian.py', 'package.json', 'package-lock.json',
+    required = ['worker.mjs', 'html-preview.mjs', 'mirror-source.mjs', 'rrweb-vendor.mjs', 'rrweb-LICENSE', 'guardian.py', 'package.json', 'package-lock.json',
                 'node_modules/playwright-core/package.json']
     for name in required:
         if not (source / name).is_file():
