@@ -1,4 +1,6 @@
 pub(crate) mod goal;
+mod html;
+pub use html::{HtmlPreview, HtmlRender};
 mod host_browser;
 pub use host_browser::HostBrowserTool;
 pub(crate) mod action_schema;
@@ -563,6 +565,7 @@ impl ToolRegistry {
     pub fn standard_with_terminal_limits(max_count: usize, max_unread_bytes: usize) -> Self {
         let mut registry = Self::default();
         registry.register(ReadFile);
+        registry.register(HtmlRender);
         registry.register(evidence::ResultTool);
         registry.register(Questions);
         registry.register(roots::RequestFilesystemRoot);
@@ -902,7 +905,8 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
             matches!(action, Some("inspect" | "screenshot"))
                 || (action == Some("tabs") && arguments["operation"] == "list")
         }
-        "questions" | "read_file" | "list_directory" | "search_files" | "result" => true,
+        "questions" | "read_file" | "list_directory" | "search_files" | "result"
+        | "html_render" | "html_preview" => true,
         "request_filesystem_root" => arguments["permission"] == "read",
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),

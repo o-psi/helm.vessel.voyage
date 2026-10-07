@@ -1,3 +1,4 @@
+import {htmlPreview} from './html-preview.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -722,6 +723,7 @@ export class Worker {
     const observedRef=async id=>{const h=await this.ref(id),binding=this.refBindings.get(h);frameIdentities.set(binding.frame,binding.frameId);return h;};
     const guard=()=>{this.guard(stamp);if(page!==this.page)refuse('tab_changed');if(documentEpoch!==this.epochs.document)refuse('document_changed');for(const [frame,id]of frameIdentities)if(frame.isDetached()||this.frameId(frame)!==id)refuse('frame_changed');};
     switch(a.kind){
+      case 'html_preview':return htmlPreview(this,a);
       case 'navigate':origin(text(a.url,8192));await page.goto(a.url,{waitUntil:'domcontentloaded'});return null;
       case 'inspect':{
         const frame=await this.observedFrame(a.frame);frameIdentities.set(frame,this.frameId(frame));guard();this.invalidate();
@@ -930,9 +932,9 @@ export class Worker {
     this.closing=true;
     this.assetEpoch++;
     try{await this.fence();}catch{}
-    const results=await Promise.allSettled([this.task?.close(),this.proxy?.close()]);
+    const results=await Promise.allSettled([this.previewContext?.close(),this.task?.close(),this.proxy?.close()]);
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');
-    this.task=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.tabs.clear();this.metadata.clear();this.viewers.clear();this.downloads.clear();this.assets.clear();this.assetBytes=0;this.closing=false;this.recorderStopObserved=false;await this.publishCaptureObservation();
+    this.previewContext=null;this.task=null;this.context=null;this.page=null;this.active=null;this.proxy=null;this.tabs.clear();this.metadata.clear();this.viewers.clear();this.downloads.clear();this.assets.clear();this.assetBytes=0;this.closing=false;this.recorderStopObserved=false;await this.publishCaptureObservation();
     if(results.some(r=>r.status==='rejected'))refuse('cleanup_failed');return null;
   }
   async releaseLock(){if(this.lock){await this.lock.close();this.lock=null;await fs.unlink(this.lockPath);}}

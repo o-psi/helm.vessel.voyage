@@ -20,6 +20,8 @@ route or Vite entry. Shared public and sign-in pages retain Flux; that does not
 make them a second console. Implement all new console behavior in
 the private [`o-psi/webhelm`](https://github.com/o-psi/webhelm) repository’s `resources/react`, with shared protocol/browser helpers in its `resources/js`.
 
+For tool-published interactive pages in chat, see [HTML visual replies](html-visual-replies.md).
+
 ## Routes and interaction
 
 - `/`: authenticated React console; signed-out requests redirect to `/landing`.
