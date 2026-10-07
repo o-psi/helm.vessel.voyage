@@ -227,20 +227,14 @@ impl Supervisor {
             }
         })
         .await;
-        if let Ok(mut info) = observed {
-            let _ = super::database::refresh_now(&self.directory, &registration).await;
-            if let Some(cached) = super::database::catalogue(&self.directory)
-                .await
-                .map_err(|error| error.context(routing::OutcomeUnknown))?
-                .into_iter()
-                .find(|p| p.session_id == session_id)
-            {
-                info.catalogue = cached.catalogue;
-            }
-            super::database::settle_creation(&self.directory, command_id, &info)
+        if let Ok(info) = observed {
+            // Readiness is the creation proof. Optional journal/catalogue work
+            // must not delay or erase it; the existing observer refreshes metadata.
+            // A concurrent observer may have already saved this exact receipt.
+            let receipt = super::database::settle_creation(&self.directory, command_id, &info)
                 .await
                 .map_err(|error| error.context(routing::OutcomeUnknown))?;
-            return Ok(serde_json::to_value(info)?);
+            return Ok(serde_json::to_value(receipt)?);
         }
         Err(anyhow::anyhow!(
             "runtime startup unconfirmed; retained registration prevents duplicate launch"
@@ -353,6 +347,22 @@ impl Supervisor {
                     let registration = registration.clone();
                     drop(registrations);
                     let process = self.inspect_registration(&registration).await;
+                    let process =
+                        if matches!(process.state, ProcessState::Live | ProcessState::Suspended) {
+                            super::database::observe_process(
+                                &self.directory,
+                                &registration,
+                                &process,
+                            )
+                            .await
+                            .map_err(|error| error.context(routing::OutcomeUnknown))?;
+                            super::database::creation_receipt(&self.directory, command_id)
+                                .await
+                                .map_err(|error| error.context(routing::OutcomeUnknown))?
+                                .unwrap_or(process)
+                        } else {
+                            process
+                        };
                     return Ok(
                         serde_json::json!({"status":"created", "command_id":command_id, "session_id":session_id, "process":process}),
                     );

@@ -880,3 +880,201 @@ async fn catalogue_metadata_refresh_does_not_invent_a_live_owner_failure() {
 
 #[path = "ordinary_contract_tests.rs"]
 mod ordinary_contract_tests;
+
+#[tokio::test]
+async fn creation_confirmation_observations_preserve_exact_first_start_receipt() {
+    for op in [
+        "start",
+        "start_configured",
+        "start_account",
+        "start_settings",
+    ] {
+        let f = Fixture::new();
+        initialize(&f.0).await.unwrap();
+        let r = f.registration();
+        let mut request: serde_json::Value = serde_json::from_slice(&bytes(&r)).unwrap();
+        request["op"] = op.into();
+        match op {
+            "start_configured" => {
+                request["config_path"] = f.0.join("launch.json").to_str().unwrap().into()
+            }
+            "start_account" => {
+                request["model"] = "offline".into();
+                request["account"] = serde_json::json!({"account_id":Uuid::new_v4(),"connection_id":Uuid::new_v4(),"identity_generation":1,"connection_revision":1,"transport":"chatgpt_oauth"});
+                request["config_path"] = serde_json::Value::Null;
+                request["reasoning_effort"] = serde_json::Value::Null;
+                request["service_tier"] = serde_json::Value::Null;
+            }
+            "start_settings" => {
+                request["settings"] =
+                    serde_json::json!({"reasoning_effort":null,"service_tier":null});
+                request["config_path"] = serde_json::Value::Null;
+                request["binding"] = serde_json::Value::Null;
+            }
+            _ => {}
+        }
+        // Includes retained null-bearing portable settings; observations never
+        // reserialize or replay this admitted wire request.
+        serde_json::from_value::<VesselCommand>(request.clone()).unwrap();
+        let raw = serde_json::to_vec(&request).unwrap();
+        admit(&f.0, &r, raw.clone()).await.unwrap();
+        let mut live = ProcessInfo::from(&r);
+        live.state = ProcessState::Live;
+        observe_process(&f.0, &r, &live).await.unwrap();
+        let first = creation_receipt(&f.0, r.command_id).await.unwrap().unwrap();
+        let mut later = live.clone();
+        later.state = ProcessState::Suspended;
+        later.name = Some("Later metadata".into());
+        observe_process(&f.0, &r, &later).await.unwrap();
+        let returned = settle_creation(&f.0, r.command_id, &later).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(returned).unwrap(),
+            serde_json::to_value(&first).unwrap()
+        );
+        assert_eq!(first.state, ProcessState::Live);
+        for conflict in ["session", "incarnation", "workspace"] {
+            let mut foreign = later.clone();
+            match conflict {
+                "session" => foreign.session_id = Uuid::new_v4(),
+                "incarnation" => foreign.incarnation = Uuid::new_v4(),
+                _ => foreign.workspace = f.0.join("foreign"),
+            }
+            assert!(settle_creation(&f.0, r.command_id, &foreign).await.is_err());
+            assert_eq!(
+                serde_json::to_value(creation_receipt(&f.0, r.command_id).await.unwrap().unwrap())
+                    .unwrap(),
+                serde_json::to_value(&first).unwrap()
+            );
+        }
+        assert!(
+            command(&f.0, "commands", r.command_id, raw, false)
+                .await
+                .unwrap()
+        );
+        initialize(&f.0).await.unwrap();
+        assert_eq!(
+            serde_json::to_value(creation_receipt(&f.0, r.command_id).await.unwrap().unwrap())
+                .unwrap(),
+            serde_json::to_value(first).unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn creation_confirmation_refuses_unready_stale_legacy_and_conflicting_observations() {
+    for case in [
+        "starting",
+        "unavailable",
+        "stopped",
+        "cleanup_unconfirmed",
+        "relinquished",
+        "foreign_session",
+        "foreign_incarnation",
+        "foreign_workspace",
+        "legacy",
+        "restart",
+        "stale",
+        "request_session",
+        "request_command",
+        "invalid_request",
+        "restarted_start",
+    ] {
+        let f = Fixture::new();
+        initialize(&f.0).await.unwrap();
+        let mut r = f.registration();
+        if case == "restarted_start" {
+            r.restart_from = Some(Uuid::new_v4());
+        }
+        let mut raw: serde_json::Value = serde_json::from_slice(&bytes(&r)).unwrap();
+        match case {
+            "request_session" => raw["session_id"] = Uuid::new_v4().to_string().into(),
+            "request_command" => raw["command_id"] = Uuid::new_v4().to_string().into(),
+            "restart" => {
+                raw = serde_json::to_value(VesselCommand::Restart {
+                    command_id: r.command_id,
+                    session_id: r.session_id,
+                    incarnation: r.incarnation,
+                })
+                .unwrap()
+            }
+            _ => {}
+        }
+        if case == "legacy" {
+            save(&f.0, &r).await.unwrap();
+        } else {
+            admit(
+                &f.0,
+                &r,
+                if case == "invalid_request" {
+                    b"invalid retained command".to_vec()
+                } else {
+                    serde_json::to_vec(&raw).unwrap()
+                },
+            )
+            .await
+            .unwrap();
+        }
+        if case == "stale" {
+            let mut next = r.clone();
+            next.incarnation = Uuid::new_v4();
+            next.command_id = Uuid::new_v4();
+            next.restart_from = Some(r.incarnation);
+            save(&f.0, &next).await.unwrap();
+        }
+        let mut info = ProcessInfo::from(&r);
+        info.state = match case {
+            "starting" => ProcessState::Starting,
+            "unavailable" => ProcessState::Unavailable,
+            "stopped" => ProcessState::Stopped,
+            "cleanup_unconfirmed" => ProcessState::CleanupUnconfirmed,
+            "relinquished" => ProcessState::Relinquished,
+            _ => ProcessState::Live,
+        };
+        match case {
+            "foreign_session" => info.session_id = Uuid::new_v4(),
+            "foreign_incarnation" => info.incarnation = Uuid::new_v4(),
+            "foreign_workspace" => info.workspace = f.0.join("foreign"),
+            _ => {}
+        }
+        observe_process(&f.0, &r, &info).await.unwrap();
+        assert!(
+            creation_receipt(&f.0, r.command_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "{case}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn creation_confirmation_does_not_infer_readiness_from_cached_live_metadata() {
+    let f = Fixture::new();
+    initialize(&f.0).await.unwrap();
+    let r = f.registration();
+    admit(&f.0, &r, bytes(&r)).await.unwrap();
+    let directory = registry::directory(&f.0, r.session_id);
+    registry::private_directory(&directory).unwrap();
+    fs::write(
+        directory.join("runtime.sock"),
+        b"not an authenticated runtime endpoint",
+    )
+    .unwrap();
+    let mut cached = ProcessInfo::from(&r);
+    cached.state = ProcessState::Live;
+    open(&f.0)
+        .unwrap()
+        .execute(
+            "UPDATE catalogue SET process_info=?1,observed_at_ms=?2",
+            params![serde_json::to_string(&cached).unwrap(), now()],
+        )
+        .unwrap();
+    refresh_now(&f.0, &r).await.unwrap();
+    assert_eq!(catalogue(&f.0).await.unwrap()[0].state, ProcessState::Live);
+    assert!(
+        creation_receipt(&f.0, r.command_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}

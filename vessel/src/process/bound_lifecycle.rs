@@ -272,10 +272,10 @@ impl Supervisor {
             anyhow::anyhow!("bound creation outcome unconfirmed; inspect retained incarnation")
                 .context(routing::OutcomeUnknown)
         })?;
-        database::settle_creation(&self.directory, command_id, &info)
+        let receipt = database::settle_creation(&self.directory, command_id, &info)
             .await
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        Ok(serde_json::to_value(info)?)
+        Ok(serde_json::to_value(receipt)?)
     }
 
     pub(super) async fn spawn_bound_guardian(

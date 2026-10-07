@@ -1208,20 +1208,84 @@ pub(super) async fn transfer_admission_observation(
         Ok(TransferAdmissionObservation { exact_admission, any_activation, registration, any_registration, completion, completed_registration })
     }).await
 }
-pub async fn settle_creation(root: &Path, id: Uuid, info: &ProcessInfo) -> Result<()> {
+// Return the immutable first receipt, including when the readiness observer won
+// the race. A later observation must not change replay's result or identity.
+fn settle_creation_tx(db: &Connection, id: Uuid, info: &ProcessInfo) -> Result<ProcessInfo> {
+    db.execute(
+        "INSERT OR IGNORE INTO creation_receipts VALUES(?1,?2,?3)",
+        params![
+            id.to_string(),
+            info.session_id.to_string(),
+            serde_json::to_string(info)?
+        ],
+    )?;
+    let saved: String = db.query_row(
+        "SELECT result FROM creation_receipts WHERE command_id=?1",
+        [id.to_string()],
+        |row| row.get(0),
+    )?;
+    let saved: ProcessInfo = serde_json::from_str(&saved)?;
+    ensure!(
+        saved.session_id == info.session_id
+            && saved.incarnation == info.incarnation
+            && saved.workspace == info.workspace,
+        "creation receipt identity conflict"
+    );
+    Ok(saved)
+}
+
+pub async fn settle_creation(root: &Path, id: Uuid, info: &ProcessInfo) -> Result<ProcessInfo> {
     let info = info.clone();
     blocking(root, move |db| {
-        db.execute(
-            "INSERT OR IGNORE INTO creation_receipts VALUES(?1,?2,?3)",
-            params![
-                id.to_string(),
-                info.session_id.to_string(),
-                serde_json::to_string(&info)?
-            ],
-        )?;
-        Ok(())
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let saved = settle_creation_tx(&tx, id, &info)?;
+        tx.commit()?;
+        Ok(saved)
     })
     .await
+}
+
+// Called only with a fresh health/suspension observation. Registration or cached
+// metadata alone is not readiness. Preserve the initial immutable start envelope;
+// recovery, restart, stale owners and legacy registration-only rows cannot mint it.
+fn settle_observed_start(
+    db: &Connection,
+    registration: &ProcessRegistration,
+    info: &ProcessInfo,
+) -> Result<()> {
+    if !matches!(
+        info.state,
+        voyage_protocol::process::ProcessState::Live
+            | voyage_protocol::process::ProcessState::Suspended
+    ) || registration.restart_from.is_some()
+        || info.session_id != registration.session_id
+        || info.incarnation != registration.incarnation
+        || info.workspace != registration.workspace
+    {
+        return Ok(());
+    }
+    let request: Option<Vec<u8>> = db.query_row(
+        "SELECT l.request FROM lifecycle_commands l JOIN voyages v ON v.session_id=?1 AND v.incarnation=?2 JOIN incarnations i ON i.session_id=v.session_id AND i.incarnation=v.incarnation AND i.command_id=?3 WHERE l.namespace='commands' AND l.command_id=?3 AND json_extract(v.registration,'$.command_id')=?3 AND json_extract(v.registration,'$.restart_from') IS NULL",
+        params![registration.session_id.to_string(), registration.incarnation.to_string(), registration.command_id.to_string()],
+        |row| row.get(0),
+    ).optional()?;
+    // Inspect just the identity-bearing fields so retained pre-upgrade null
+    // settings remain valid; never recapture, normalize or dispatch the request.
+    let Some(request) =
+        request.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return Ok(());
+    };
+    if !matches!(
+        request["op"].as_str(),
+        Some("start" | "start_configured" | "start_account" | "start_settings")
+    ) || request["command_id"].as_str() != Some(registration.command_id.to_string().as_str())
+        || request["session_id"].as_str() != Some(registration.session_id.to_string().as_str())
+    {
+        return Ok(());
+    }
+    settle_creation_tx(db, registration.command_id, info)?;
+    Ok(())
 }
 
 /// One supervisor lock surrounds import and registration publication. Legacy
@@ -1359,6 +1423,7 @@ pub async fn catalogue_changes(
 pub async fn refresh(root: &Path, registration: &ProcessRegistration) -> Result<()> {
     refresh_mode(root, registration, false).await
 }
+#[cfg(test)]
 pub async fn refresh_now(root: &Path, registration: &ProcessRegistration) -> Result<()> {
     refresh_mode(root, registration, true).await
 }
@@ -1425,6 +1490,10 @@ async fn refresh_mode(root: &Path, registration: &ProcessRegistration, force: bo
   if changed {
     tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'metadata',?2)",params![r.session_id.to_string(),now()])?;
   }
+  // This state came from exact retirement evidence, not a cached live entry.
+  if !bound && info.state == voyage_protocol::process::ProcessState::Suspended {
+    settle_observed_start(&tx, &r, &info)?;
+  }
   tx.commit()?;Ok(())
  }).await
 }
@@ -1458,6 +1527,12 @@ pub async fn observe_process(
     registration: &ProcessRegistration,
     info: &ProcessInfo,
 ) -> Result<()> {
+    if info.session_id != registration.session_id
+        || info.incarnation != registration.incarnation
+        || info.workspace != registration.workspace
+    {
+        return Ok(());
+    }
     let r = registration.clone();
     let i = info.clone();
     blocking(root,move|db|{
@@ -1467,6 +1542,9 @@ pub async fn observe_process(
         let updated=tx.execute("UPDATE catalogue SET process_info=?3,observed_at_ms=?4 WHERE session_id=?1 AND incarnation=?2",params![r.session_id.to_string(),r.incarnation.to_string(),serde_json::to_string(&i)?,now()])?;
         if updated!=0 && previous_state.as_ref()!=Some(&i.state) {
             tx.execute("INSERT INTO catalogue_events(session_id,kind,recorded_at_ms) VALUES(?1,'process',?2)",params![r.session_id.to_string(),now()])?;
+        }
+        if updated != 0 {
+            settle_observed_start(&tx, &r, &i)?;
         }
         tx.commit()?;Ok(())
     }).await

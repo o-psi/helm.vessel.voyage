@@ -22,6 +22,20 @@ command and its obligations before effects. A changed payload under an existing 
 is a conflict. An exact retry observes the original receipt; it does not dispatch
 again. Loss of a response is not permission to allocate another command ID.
 
+For ordinary start, configured start, account start and portable-settings start,
+Vessel persists the exact creation receipt as soon as the admitted initial owner
+has authenticated health or exact clean-suspension evidence. This acknowledgement
+does not wait for optional journal metadata refresh or decode other voyages' catalogue
+entries. If the initial request ends before readiness, the existing Vessel observer
+can settle the receipt from later verified readiness of that same initial incarnation;
+creation resolution also persists a matching readiness observation. Neither path
+launches a process, submits a message or replays the start. Registration alone,
+failed/unavailable owners, stale observations, legacy registration-only records and
+later restart incarnations do not supply this success proof. The first stored receipt
+remains immutable, and all matching acknowledgement paths return that same result.
+It records an observed creation outcome; clients still obtain current runtime state
+through observation rather than treating the receipt as perpetual liveness.
+
 One mutating run may be active per voyage. Input during a run is explicit steering,
 with bounded, durable queued/applied/not-applied receipts, rather than a second
 simultaneous root run. Preserve a refused or uncertain composer draft. Multiple

@@ -718,3 +718,216 @@ sock = socket.socket(socket.AF_UNIX)"#,
         receipt.incarnation
     );
 }
+
+#[tokio::test]
+async fn creation_confirmation_ignores_unrelated_catalogue_failure() {
+    let f = Fixture::new();
+    let mut s = f.supervisor().await;
+    s.binary = executable(&f);
+    let unrelated = f.registration();
+    database::admit(
+        &f.0,
+        &unrelated,
+        serde_json::to_vec(&original(&f, unrelated.command_id, unrelated.session_id)).unwrap(),
+    )
+    .await
+    .unwrap();
+    let db = rusqlite::Connection::open(f.0.join("catalogue.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE catalogue SET summary='{}' WHERE session_id=?1",
+        [unrelated.session_id.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    assert!(database::catalogue(&f.0).await.is_err());
+    let session = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    let request = original(&f, command, session);
+    let init = initialization(&f);
+    let result = s
+        .start_initialized(
+            command,
+            session,
+            f.0.clone(),
+            None,
+            Some(init.clone()),
+            request.clone(),
+        )
+        .await;
+    let receipt = database::creation_receipt(&f.0, command).await.unwrap();
+    stop(&registry::directory(&f.0, session)).await;
+    let result = result.expect("unrelated catalogue metadata must not fail a ready creation");
+    assert_eq!(result["state"], "live");
+    assert_eq!(serde_json::to_value(receipt.unwrap()).unwrap(), result);
+    assert_eq!(
+        s.start_initialized(command, session, f.0.clone(), None, Some(init), request,)
+            .await
+            .unwrap(),
+        result
+    );
+}
+
+#[tokio::test]
+async fn creation_confirmation_survives_cancelled_start_via_readiness_observer() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    for suspended in [false, true] {
+        let f = Fixture::new();
+        let mut s = f.supervisor().await;
+        s.binary = executable(&f);
+        let readiness = if suspended {
+            r#"time.sleep(0.3)
+os.umask(0o077)
+with open(os.path.join(root, 'stopped.json'), 'w') as f:
+    json.dump(dict(session_id=reg['session_id'], incarnation=reg['incarnation'],
+                   cleanup_observed=True, suspended=True), f)
+with open(os.path.join(root, 'fixture-stopped'), 'w') as f:
+    f.write('done')
+sys.exit(0)
+sock = socket.socket(socket.AF_UNIX)"#
+        } else {
+            "time.sleep(0.3)\nsock = socket.socket(socket.AF_UNIX)"
+        };
+        std::fs::write(
+            &s.binary,
+            CHILD.replace("sock = socket.socket(socket.AF_UNIX)", readiness),
+        )
+        .unwrap();
+        let s = Arc::new(s);
+        let session = Uuid::new_v4();
+        let command = Uuid::new_v4();
+        let request = original(&f, command, session);
+        let init = initialization(&f);
+        let start = {
+            let s = s.clone();
+            let workspace = f.0.clone();
+            let init = init.clone();
+            let request = request.clone();
+            tokio::spawn(async move {
+                s.start_initialized(command, session, workspace, None, Some(init), request)
+                    .await
+            })
+        };
+        let directory = registry::directory(&f.0, session);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !directory.join("fixture-argv.json").exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        start.abort();
+        assert!(start.await.unwrap_err().is_cancelled());
+        assert!(
+            database::creation_receipt(&f.0, command)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let observer = s.start_catalogue_refresh();
+        let confirmed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(receipt) = database::creation_receipt(&f.0, command).await.unwrap() {
+                    break receipt;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        observer.abort();
+        let _ = observer.await;
+        stop(&directory).await;
+        let confirmed = confirmed.expect("readiness must settle the abandoned exact creation");
+        assert_eq!(confirmed.session_id, session);
+        assert_eq!(
+            confirmed.state,
+            if suspended {
+                ProcessState::Suspended
+            } else {
+                ProcessState::Live
+            }
+        );
+        let requests = std::fs::read(directory.join("fixture-requests.jsonl")).unwrap_or_default();
+        let replay = s
+            .start_initialized(command, session, f.0.clone(), None, Some(init), request)
+            .await
+            .unwrap();
+        assert_eq!(replay, serde_json::to_value(confirmed).unwrap());
+        assert_eq!(
+            std::fs::read(directory.join("fixture-requests.jsonl")).unwrap_or_default(),
+            requests
+        );
+    }
+}
+
+#[tokio::test]
+async fn creation_confirmation_resolution_persists_readiness_without_relaunch() {
+    use std::{sync::Arc, time::Duration};
+    let f = Fixture::new();
+    let mut s = f.supervisor().await;
+    s.binary = executable(&f);
+    std::fs::write(
+        &s.binary,
+        CHILD.replace(
+            "sock = socket.socket(socket.AF_UNIX)",
+            "time.sleep(0.3)\nsock = socket.socket(socket.AF_UNIX)",
+        ),
+    )
+    .unwrap();
+    let config = f.0.join("launch.json");
+    std::fs::write(&config, "{}").unwrap();
+    let s = Arc::new(s);
+    let session = Uuid::new_v4();
+    let command = Uuid::new_v4();
+    let start = {
+        let s = s.clone();
+        let workspace = f.0.clone();
+        let config = config.clone();
+        tokio::spawn(async move { s.start(command, session, workspace, Some(config)).await })
+    };
+    let directory = registry::directory(&f.0, session);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !directory.join("fixture-argv.json").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    start.abort();
+    assert!(start.await.unwrap_err().is_cancelled());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !directory.join("runtime.sock").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        database::creation_receipt(&f.0, command)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let resolved = s
+        .resolve_start(command, session, f.0.clone(), Some(config.clone()))
+        .await
+        .unwrap();
+    let receipt = database::creation_receipt(&f.0, command).await.unwrap();
+    let requests = std::fs::read(directory.join("fixture-requests.jsonl")).unwrap();
+    let resolved_again = s
+        .resolve_start(command, session, f.0.clone(), Some(config))
+        .await
+        .unwrap();
+    stop(&directory).await;
+    assert_eq!(resolved["status"], "created");
+    assert_eq!(
+        resolved["process"],
+        serde_json::to_value(receipt.expect("resolution must persist its readiness proof"))
+            .unwrap()
+    );
+    assert_eq!(resolved_again, resolved);
+    assert_eq!(
+        std::fs::read(directory.join("fixture-requests.jsonl")).unwrap(),
+        requests
+    );
+}
