@@ -50,6 +50,23 @@ start an already-authorized build, read its logs, merge completed work or tidy u
 tracking that you can complete yourself. Delegating work does not delegate away
 responsibility for its integration and outcome.
 
+### Retire temporary infrastructure
+
+- Record each temporary VM/container's exact ID, purpose, ownership, evidence
+  location and retirement disposition in the existing delivery record when it is
+  created. Infrastructure cleanup is part of delivery.
+- Once its work is finished, check for active work and dependencies, preserve
+  required evidence privately in a verified archive with guest configuration and
+  restore information, then shut down and remove the disposable guest. Evidence
+  retention does not require leaving test machines running or indefinitely
+  retaining their live disks.
+- Preserve failed/unconfirmed receipts and their limitations unchanged. Archiving
+  or retiring a guest does not establish earlier test success, service recovery
+  or resource cleanup. Never replay uncertain updater operations for teardown.
+- Verify the exact guest and owned volumes before removal, preserve production
+  and reusable development hosts, honor protection/locks and confirm final host
+  state. See [the archived native fixtures](docs/testing/legacy-gateway-restoration-acceptance.md#archived-proxmox-fixtures).
+
 ### Discover the current delivery system
 
 - Start from the checkout and Git remote, not remembered chat context. Verify the

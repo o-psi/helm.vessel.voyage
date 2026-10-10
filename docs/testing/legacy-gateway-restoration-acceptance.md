@@ -135,3 +135,23 @@ explicit release disposition, not readiness, never-ran or whole-cleanup proof.
 #333 actual browser acceptance, #353 full100% reachable production and #375 stable
 publication remain open; this documentation update requires no new Rust
 measurement or duplicate hosted build.
+
+
+## Archived Proxmox fixtures
+
+On 2026-10-09 the disposable CT119 and CT122–131 were backed up and removed.
+Their complete guest filesystems and embedded configurations remain in private
+Proxmox archives on the qualification hypervisor under
+`/var/lib/vz/dump/v103-fixtures-20261009-a6b59fac-db3f-4118-8752-4116ccf853bc-verified`.
+`archive-complete.json` inventories each archive, SHA-256, configuration and the
+original evidence JSON hashes; `retirement-complete.json` records observed removal.
+All eleven compressed archives were streamed successfully, their embedded guest
+configurations checked, and all regular JSON files under `q401` and the installation
+update directory matched their pre-backup hashes. The archives total 5,625,575,930 bytes.
+
+CT124/126/129–131's original unconfirmed outcomes remain unconfirmed in those
+archives. Guest retirement does not manufacture historical cleanup or acceptance.
+A restored guest starts a new machine/process lifetime; do not automatically
+resume, reset or replay an old attempt. CT108 was separately removed at the
+operator's request, with its configuration retained but no volume backup.
+Production CT106 and development CT132 were excluded from retirement.
