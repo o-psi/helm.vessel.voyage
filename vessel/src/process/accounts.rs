@@ -360,6 +360,9 @@ impl Supervisor {
         command: VesselCommand,
         scope: Scope,
     ) -> Result<Value> {
+        if matches!(command, VesselCommand::PrepareStartSettings { .. }) {
+            return self.prepare_start_settings(command, scope).await;
+        }
         #[cfg(target_os = "linux")]
         if super::runtime_storage::has_bound_layout(&self.directory) {
             return self.host_identity_accounts(command, scope).await;

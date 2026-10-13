@@ -500,3 +500,46 @@ case!(
         assert_eq!(f.registry.default_account().unwrap(), before);
     }
 );
+
+case!(
+    launch_preparation_validates_under_identity_without_frozen_config,
+    {
+        let f = Fixture::new();
+        let before = fs::read(root().join("data/helm/accounts/registry.json")).unwrap();
+        let response = dispatch(&f.request(IdentityHelperOperation::PrepareLaunch {
+            scope: f.scope.clone(),
+            account: f.account.clone(),
+            settings: voyage_protocol::start_settings::StartSettings {
+                max_output_tokens: Some(0),
+                ..Default::default()
+            },
+        }))
+        .await;
+        assert_eq!(response["result"], "value");
+        assert_eq!(
+            response["value"]["account"],
+            serde_json::to_value(&f.account).unwrap()
+        );
+        assert_eq!(response["value"]["settings"]["max_output_tokens"], 0);
+        assert!(
+            !response
+                .to_string()
+                .contains("synthetic-only-helper-key-353")
+        );
+        assert!(!response.to_string().contains("config_path"));
+        assert_eq!(
+            fs::read(root().join("data/helm/accounts/registry.json")).unwrap(),
+            before
+        );
+        fs::remove_file(root().join("helper-request.bin")).unwrap();
+        fs::remove_file(root().join("helper-response.bin")).unwrap();
+        unavailable(
+            dispatch(&f.request(IdentityHelperOperation::PrepareLaunch {
+                scope: scope(&f.workspace),
+                account: f.account.clone(),
+                settings: Default::default(),
+            }))
+            .await,
+        );
+    }
+);

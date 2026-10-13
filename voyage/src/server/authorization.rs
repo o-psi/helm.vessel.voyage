@@ -39,7 +39,7 @@ impl std::fmt::Debug for AuthoritySource {
     }
 }
 impl AuthoritySource {
-    fn current(&self) -> Result<ProcessGrant> {
+    pub(super) fn current(&self) -> Result<ProcessGrant> {
         match self {
             Self::UserFile {
                 path,
@@ -255,8 +255,27 @@ pub(super) fn authorize_parts(
     })
 }
 
+/// Route authority cannot be borrowed through steering a broader active run.
+/// A scoped actor has no model-route authority until an explicit scope is committed.
+pub(super) fn check_coordination_control(
+    authorization: &Authorization,
+    routes_configured: bool,
+) -> Result<()> {
+    if routes_configured {
+        ensure!(
+            authorization.grant.is_none(),
+            "coordination control requires an explicit per-Voyage destination scope; scoped input cannot borrow host model routes"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
-fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Result<ProcessGrant> {
+pub(super) fn read_current(
+    path: &Path,
+    binding: &GrantBinding,
+    session: uuid::Uuid,
+) -> Result<ProcessGrant> {
     let grant: ProcessGrant = load_private(path)?;
     let now: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?

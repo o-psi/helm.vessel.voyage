@@ -113,6 +113,23 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expires_at_ms,
             access,
         },
+        VoyageCommand::CoordinationContextProvision {
+            command_id,
+            context,
+            routes,
+        } => RuntimeCommand::CoordinationContextProvision {
+            command_id,
+            context,
+            routes,
+        },
+        VoyageCommand::CoordinationScopeRead => RuntimeCommand::CoordinationScopeRead,
+        VoyageCommand::CoordinationScopeCommit {
+            command_id,
+            selection,
+        } => RuntimeCommand::CoordinationScopeCommit {
+            command_id,
+            selection,
+        },
         VoyageCommand::Configure {
             command_id,
             expected_revision,
@@ -713,6 +730,8 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::OperatorTool { .. }
         | VoyageCommand::WorkflowInputs { .. }
         | VoyageCommand::WorkflowSubmit { .. } => Some(ProcessRight::Execute),
+        VoyageCommand::CoordinationScopeRead => Some(ProcessRight::History),
+        VoyageCommand::CoordinationScopeCommit { .. } => Some(ProcessRight::Execute),
         VoyageCommand::Steer { .. } => Some(ProcessRight::Steer),
         VoyageCommand::Respond { response, .. } if response.get("root_grant").is_some() => None,
         VoyageCommand::Respond { .. } => Some(ProcessRight::Decide),

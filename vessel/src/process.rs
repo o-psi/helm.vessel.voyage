@@ -40,6 +40,7 @@ pub mod pair_cli;
 pub mod pairing;
 
 mod accounts;
+mod coordination_scope;
 
 mod notifications;
 

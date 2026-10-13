@@ -186,6 +186,16 @@ pub enum VoyageCommand {
         expires_at_ms: u64,
         access: String,
     },
+    CoordinationScopeRead,
+    CoordinationContextProvision {
+        command_id: Uuid,
+        context: crate::process::GrantBinding,
+        routes: Vec<crate::coordination_scope::RouteReference>,
+    },
+    CoordinationScopeCommit {
+        command_id: Uuid,
+        selection: crate::coordination_scope::ScopeSelection,
+    },
     Configure {
         command_id: Uuid,
         expected_revision: u64,
@@ -409,6 +419,8 @@ impl VoyageCommand {
             | Self::OperatorTool { command_id, .. }
             | Self::Github { command_id, .. }
             | Self::SetAccess { command_id, .. }
+            | Self::CoordinationContextProvision { command_id, .. }
+            | Self::CoordinationScopeCommit { command_id, .. }
             | Self::Configure { command_id, .. }
             | Self::WorkflowSubmit { command_id, .. }
             | Self::ExecuteTool { command_id, .. }
@@ -638,6 +650,13 @@ pub enum VesselCommand {
     AccountModels {
         workspace: PathBuf,
         account: crate::accounts::AccountBinding,
+    },
+    /// Read-only validated preference preview; never a creation receipt.
+    PrepareStartSettings {
+        workspace: PathBuf,
+        settings: crate::start_settings::StartSettings,
+        binding: Option<crate::accounts::AccountBinding>,
+        profile: Option<crate::coordination_scope::ProfilePin>,
     },
     StartSettings {
         command_id: Uuid,

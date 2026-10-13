@@ -969,6 +969,7 @@ impl Supervisor {
             | VesselCommand::AccountUsage { .. }
             | VesselCommand::AccountSetDefault { .. }
             | VesselCommand::AccountModels { .. }
+            | VesselCommand::PrepareStartSettings { .. }
             | VesselCommand::StartAccount { .. }
             | VesselCommand::StartSettings { .. }
             | VesselCommand::ResolveStartAccount { .. }

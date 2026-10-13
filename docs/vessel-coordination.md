@@ -41,6 +41,10 @@ identity/version and actual route capabilities/rights.
 | Action | Required arguments beyond `action` | Optional arguments |
 | --- | --- | --- |
 | `routes`, `capabilities` | None | `target` |
+| `prepare` | `workspace` | `settings`, `account`, `profile` |
+| `accounts` | `workspace` | `transport` |
+| `profiles`, `account_defaults` | `workspace` | — |
+| `account_models` | `workspace`, `account` | — |
 | `list`, `operations` | None | `offset`, `limit` |
 | `search` | `query` | `offset`, `limit` |
 | `inspect` | `session_id` | — |
@@ -58,6 +62,48 @@ identity/version and actual route capabilities/rights.
 | `cancel` | `session_id`, `incarnation`, `run_id`, `command_id`, `expected_revision` | — |
 | `rename` | `session_id`, `command_id`, `expected_revision`, `name` | — |
 | `archive`, `restore` | `session_id`, `command_id`, `expected_revision` | — |
+
+### Review before launch
+
+`prepare` uses an exact account binding or a profile pin (`profile_id`, catalogue
+`revision`) and portable `settings` for an absolute destination workspace. Account
+and profile cannot both be selected. The destination rechecks Create (Lifecycle
+for a session grant) and AccountUse before returning its Vessel UUID, canonical
+workspace, exact account and validated portable preferences. Profile preferences
+fill only omitted model/reasoning/tier values; explicit null clears an optional
+preference. Protected installation previews run in a dropped-identity helper,
+never by loading account credentials in the supervisor.
+
+The preview has `execution_authorized: false`: it is not a reservation, consent,
+creation receipt or proof that a future launch will succeed. It writes no frozen
+launch file and makes no inference request. Use the observed preferences and
+binding with `create`; current account/workspace/grant checks still apply. Do not
+resolve an uncertain creation by preparing again; reconcile its original exact
+start identity instead. The preview alone does not pin mutable defaults through
+creation or satisfy the full setup transaction acceptance gate.
+
+### Target-host setup discovery
+
+Use an absolute **target-host** workspace with `accounts`, `profiles` and
+`account_defaults`. These use the existing public, scope-checked catalogue:
+account-use/enrollment and workspace rights remain enforced by the destination.
+`account_models` takes the complete returned binding (account/connection IDs,
+identity generation, connection revision and transport). It validates that binding
+before a bounded provider model-metadata read; it is not an inference request.
+These actions do not expose credential values, enroll accounts, mutate profiles,
+choose an arbitrary host configuration or expand a grant. A profile is metadata,
+not a launch authorization; do not copy its roots or permissions into a child.
+
+A denied catalogue, stale binding, unavailable provider or oversized observation
+is a meaningful refusal/incomplete result, not an empty permitted destination.
+Do not guess hidden IDs or assume a human Helm connection created a model route.
+The owning Voyage's trusted routes remain separate from human connections and
+participant bindings. A reply requires its own authorized return route; a local
+final answer never substitutes for delivery. Scoped submit and steering currently refuse a Voyage with configured remote
+model routes: even a full human connection is not explicit destination authority.
+This prevents borrowing owner routes, but is not the complete per-Voyage setup
+transaction or multi-Helm superset-control implementation. Discovery does not establish the
+full multi-Helm authority matrix or authorize execution on another host.
 
 All network actions also accept `target`. `operations` and a `receipt` without
 `session_id` read the owning voyage's private local journal and do not contact a
@@ -336,3 +382,20 @@ and acknowledgements without new requests do not trigger acknowledgement loops.
 This is model-visible routing guidance, not automatic final-answer forwarding or
 a deterministic reply-completion gate. Delivery still requires an explicit tool
 call and remains subject to the receiver's policy and the target's authority.
+
+## Explicit destination scope RPC (integration in progress)
+
+The public Voyage adapter exposes `CoordinationScopeRead` and
+`CoordinationScopeCommit { command_id, selection }`. Selection contains the exact
+session, actor-context grant/revision, expected scope revision and bounded
+destination pins (alias, Vessel UUID, workspace, grant binding, rights and expiry).
+The executing Voyage authenticates the current request grant before reading its
+host-private context registry. Submitted pins never supply authority. Commit is
+idle-only and atomically retains selection and exact command receipt together;
+conflicting reuse refuses. Read access does not cancel existing work.
+
+**This is not yet a supported end-to-end setup journey.** Authenticated trusted
+context provisioning, private runtime credential routing, affirmative scoped
+execution and the actual disconnected two-Vessel fixture remain unfinished.
+Do not manually write a context file as a substitute for that setup transaction,
+or treat a successful scope commit as installation/account readiness.

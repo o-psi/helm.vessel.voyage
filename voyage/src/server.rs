@@ -15,6 +15,7 @@ mod authorization;
 pub mod bootstrap;
 mod commands;
 mod configuration;
+mod coordination_scope;
 pub mod controls;
 pub(crate) mod decisions;
 mod dispatch;

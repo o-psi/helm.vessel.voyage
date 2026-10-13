@@ -7,6 +7,7 @@ fn all_action_branches_match_serde_without_dispatch() {
     let compiled = CompiledSchema::compile(&schema).unwrap();
     let uuid = json!("00112233-4455-4677-8899-aabbccddeeff");
     let samples = json!({"cursor":uuid,"target":"local","session_id":uuid,"command_id":uuid,"incarnation":uuid,"run_id":uuid,
+        "profile":{"profile_id":uuid,"revision":0},"account":{"account_id":uuid,"connection_id":uuid,"identity_generation":0,"connection_revision":0,"transport":"anthropic"},"transport":"anthropic",
         "pattern":"error","role":"assistant","path":"","index":0,"expected_revision":1,"offset":0,"after":0,"limit":1,"wait_ms":0,"section":"models","query":"query","workspace":"/workspace","config_path":"/config","task":"task","prompt":"prompt","name":"name"});
     for branch in schema["oneOf"].as_array().unwrap() {
         let action = branch["properties"]["action"]["const"].clone();
@@ -627,5 +628,31 @@ fn create_schema_accepts_zero_output_tokens_but_rejects_negative() {
         });
         assert_eq!(schema.validate(&args).is_ok(), value >= 0);
         assert_eq!(serde_json::from_value::<Action>(args).is_ok(), value >= 0);
+    }
+}
+
+#[test]
+fn discovery_binding_schema_matches_all_supported_transports_without_mutation() {
+    let schema = CompiledSchema::compile(&input_schema()).unwrap();
+    for transport in [
+        "openai_responses",
+        "openai_chat",
+        "chatgpt_oauth",
+        "xai_oauth",
+        "anthropic",
+    ] {
+        let args = json!({"action":"account_models","workspace":"/target/work",
+            "account":{"account_id":Uuid::new_v4(),"connection_id":Uuid::new_v4(),
+                "identity_generation":0,"connection_revision":1,"transport":transport}});
+        schema.validate(&args).unwrap();
+        let action: Action = serde_json::from_value(args.clone()).unwrap();
+        assert!(action.mutation_id().is_none());
+        assert!(!action.executes());
+        for invalid in [Value::Null, json!({"transport":transport})] {
+            let mut bad = args.clone();
+            bad["account"] = invalid;
+            assert!(schema.validate(&bad).is_err());
+            assert!(serde_json::from_value::<Action>(bad).is_err());
+        }
     }
 }
