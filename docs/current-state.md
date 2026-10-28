@@ -217,8 +217,9 @@ background worker uses retained image bytes, with Kitty graphics when explicitly
 supported by passive geometry/color selection, halfblocks otherwise, and metadata
 only for no-color or oversized inputs. Previews do not alter pending submissions.
 
-Private drafts retain verified bytes and marker ownership, including legacy image
-draft migration without changing immutable pending commands. The existing bounded,
+In-memory composers retain verified picture bytes and marker ownership. Durable
+first-send recovery retains immutable pending commands, not unsent composition.
+The existing bounded,
 authorized Vessel upload/admission path, session-scoped SHA-verified raster storage,
 resume/branch retention and native provider encoders remain in place. Unsupported
 models, active image steering and unsupported transports fail with the draft intact.
@@ -239,12 +240,13 @@ Ordinary Helm chat opens a private local draft. Opening and closing the interfac
 editing its first message, or pressing Ctrl+N does not create a session or launch
 a voyage process. Blank Ctrl+N requests reuse the window's blank draft for that
 route/workspace. Drafts appear separately above the voyage list; Tab switches
-out of a draft, and clicking its row returns to it. Nonempty drafts and changed
-settings survive interface exit. Concurrent Helm windows lock individual drafts
-and do not take over each other's first sends. Completed or discarded draft JSON
+out of a draft, and clicking its row returns to it. Unsent text, pictures and
+launch settings live only in that window and are lost on interface exit.
+Concurrent Helm windows lock explicit first-send execution journals, not unsent
+drafts, and do not take over each other's first sends. Completed execution JSON
 is removed after completion is durably saved; the lock file remains for concurrent
-window safety. Legacy finished records are preserved as `.finished` files and
-excluded from recovery without decoding obsolete launch settings. Unfinished
+window safety. Legacy unsent and finished records are preserved and excluded from
+recovery without decoding obsolete launch settings. Unfinished explicit first-send
 records retain full validation and exact pending command identities. Plain chat
 also waits for a first nonempty message; EOF and `/quit` before that create no voyage.
 
@@ -263,8 +265,8 @@ never falls back to creating a temporary voyage. Scoped grants cannot submit thi
 owner-local configuration operation; existing-session model controls retain their
 own authority checks. Provider credentials stay on the executing host.
 
-An untouched local draft has no saved draft JSON; edited text/images or settings
-are still retained, as are explicit remote workspace choices. Empty, whitespace-only
+Local and remote unsent drafts never write draft JSON, including after edits to
+text, pictures, launch settings or workspace choices. Empty, whitespace-only
 and over-limit one-shot prompts are rejected before creating a voyage. Workflow
 input already cancelled before creation is rejected there as well; cancellation
 and admission are checked again during execution handoff. Intentional creation APIs

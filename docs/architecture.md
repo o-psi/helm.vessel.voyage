@@ -78,8 +78,9 @@ is separately versioned. Live-resource requests preserve observed identity fence
 and only the runtime can durably admit work. See [process access](process-access.md#wire-and-retained-state)
 for the implemented API and compatibility rules.
 
-Vessel owns supervision metadata and shared unsent drafts; the voyage owns
-authoritative session state. Draft saves never allocate a Voyage or admit a run.
+Vessel owns supervision metadata; the voyage owns authoritative session state.
+Unsent composers live only in Helm client memory, without shared storage or
+persistence. Editing a composer never allocates a Voyage or admits a run.
 A shared storage engine is possible only if it preserves these ownership fences.
 The source-checkout [embedded SQLite design](https://github.com/o-psi/voyage/blob/main/docs/sqlite-storage.md)
 describes the durable Vessel catalogue and lifecycle schema alongside each
