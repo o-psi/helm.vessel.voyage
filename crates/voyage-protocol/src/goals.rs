@@ -5,6 +5,7 @@ use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GoalLimits {
+    // Zero means no user-configured quota. Legacy positive limits retain meaning.
     pub runs: u32,
     pub tokens: u64,
     pub elapsed_ms: u64,
@@ -14,20 +15,38 @@ pub struct GoalLimits {
 impl Default for GoalLimits {
     fn default() -> Self {
         Self {
-            runs: 20,
-            tokens: 200_000,
-            elapsed_ms: 3_600_000,
-            no_progress_runs: 3,
+            runs: 0,
+            tokens: 0,
+            elapsed_ms: 0,
+            no_progress_runs: 0,
         }
     }
 }
 
 impl GoalLimits {
+    pub fn token_allowance(&self) -> u64 {
+        if self.tokens == 0 {
+            u64::MAX
+        } else {
+            self.tokens
+        }
+    }
+    pub fn time_allowance_ms(&self) -> u64 {
+        if self.elapsed_ms == 0 {
+            u64::MAX
+        } else {
+            self.elapsed_ms
+        }
+    }
+    pub fn usage_required(&self) -> bool {
+        self.tokens > 0
+    }
+
     pub fn valid(&self) -> bool {
-        (1..=1_000).contains(&self.runs)
-            && (1..=10_000_000).contains(&self.tokens)
-            && (1_000..=86_400_000).contains(&self.elapsed_ms)
-            && (1..=10).contains(&self.no_progress_runs)
+        self.runs <= 1_000
+            && self.tokens <= 10_000_000
+            && (self.elapsed_ms == 0 || (1_000..=86_400_000).contains(&self.elapsed_ms))
+            && self.no_progress_runs <= 10
     }
 }
 
@@ -42,6 +61,9 @@ pub struct GoalUsage {
     /// A known lower bound is retained, but missing aggregate usage prevents resume.
     #[serde(default)]
     pub unmeasured_runs: u32,
+    /// Consecutive model-assessed identical genuine impasses; not a tool heuristic.
+    #[serde(default)]
+    pub impasse_runs: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,18 +114,21 @@ pub struct Goal {
 
 impl Goal {
     pub fn limit_reached(&self) -> Option<GoalStopReason> {
-        if self.usage.runs >= self.limits.runs {
+        if self.limits.runs > 0 && self.usage.runs >= self.limits.runs {
             Some(GoalStopReason::RunLimit)
-        } else if self
-            .usage
-            .input_tokens
-            .saturating_add(self.usage.output_tokens)
-            >= self.limits.tokens
+        } else if self.limits.tokens > 0
+            && self
+                .usage
+                .input_tokens
+                .saturating_add(self.usage.output_tokens)
+                >= self.limits.tokens
         {
             Some(GoalStopReason::TokenLimit)
-        } else if self.usage.elapsed_ms >= self.limits.elapsed_ms {
+        } else if self.limits.elapsed_ms > 0 && self.usage.elapsed_ms >= self.limits.elapsed_ms {
             Some(GoalStopReason::TimeLimit)
-        } else if self.usage.no_progress_runs >= self.limits.no_progress_runs {
+        } else if self.limits.no_progress_runs > 0
+            && self.usage.no_progress_runs >= self.limits.no_progress_runs
+        {
             Some(GoalStopReason::NoProgress)
         } else {
             None
@@ -129,6 +154,8 @@ pub enum GoalAction {
         #[serde(default)]
         limits: GoalLimits,
         replace_goal_id: Option<Uuid>,
+        /// Legacy wire field. New creation always starts active; Pause is explicit.
+        #[serde(default)]
         continue_automatically: bool,
     },
     Edit {
@@ -159,10 +186,10 @@ pub fn valid_objective(text: &str) -> bool {
 mod tests {
     use super::*;
     #[test]
-    fn limits_and_objectives_are_finite_and_bounded() {
+    fn optional_limits_and_objectives_are_bounded() {
         assert!(GoalLimits::default().valid());
         let limits = GoalLimits {
-            tokens: 0,
+            tokens: 10_000_001,
             ..GoalLimits::default()
         };
         assert!(!limits.valid());
@@ -216,6 +243,7 @@ mod tests {
 pub struct GoalReport {
     pub outcome: GoalReportOutcome,
     pub summary: String,
+    #[serde(default)]
     pub evidence: Vec<GoalEvidence>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -353,6 +353,8 @@ impl ManagedSessionOwner {
     pub(crate) async fn goal_tool(
         &self,
         run: Uuid,
+        control: Option<crate::tools::goal::GoalControl>,
+        meter: Option<Arc<GoalMeter>>,
     ) -> anyhow::Result<Option<Arc<dyn crate::tools::Tool>>> {
         let shared = self.store.clone();
         let binding = tokio::task::spawn_blocking(move || {
@@ -362,10 +364,13 @@ impl ManagedSessionOwner {
             store.journal.goal_report_context(store.session_id, run)
         })
         .await??;
-        Ok(binding.map(|binding| {
+        Ok((binding.is_some() || control.is_some()).then(|| {
             Arc::new(crate::tools::goal::GoalTool {
                 owner: self.clone(),
+                run,
                 binding,
+                control,
+                meter,
             }) as Arc<dyn crate::tools::Tool>
         }))
     }
@@ -395,6 +400,76 @@ impl ManagedSessionOwner {
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.report_goal(guard, &binding, &call, &report)
+        })
+        .await?
+    }
+}
+
+impl ManagedSessionOwner {
+    pub(crate) async fn model_create_goal(
+        &self,
+        run: Uuid,
+        control: crate::tools::goal::GoalControl,
+        call: String,
+        objective: String,
+        tokens: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.model_create_goal(
+                guard,
+                run,
+                control.authority,
+                control.incarnation,
+                &call,
+                &objective,
+                tokens,
+                SystemClock.now_ms()?,
+            )
+        })
+        .await?
+    }
+    pub(crate) async fn model_goal_binding(
+        &self,
+        run: Uuid,
+    ) -> anyhow::Result<Option<super::super::journal::GoalReportContext>> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            store.journal.goal_report_context(store.session_id, run)
+        })
+        .await?
+    }
+}
+
+impl ManagedSessionOwner {
+    pub(crate) async fn model_edit_goal(
+        &self,
+        run: Uuid,
+        control: crate::tools::goal::GoalControl,
+        call: String,
+        objective: String,
+    ) -> anyhow::Result<Value> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.model_edit_goal(
+                guard,
+                run,
+                control.authority,
+                &call,
+                &objective,
+                SystemClock.now_ms()?,
+            )
         })
         .await?
     }

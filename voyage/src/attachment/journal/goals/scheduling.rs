@@ -111,9 +111,10 @@ pub(in super::super) fn admit(
                 && authority.principal_id == request.principal_id,
             "Goal continuation actor changed"
         );
-    } else {
-        stop(tx, request.session_id, GoalStopReason::UserInput, now)?;
     }
+    // Ordinary conversation is collaboration, not a revocation of Goal intent.
+    // Explicit Pause/Clear and cancellation retain their dedicated controls.
+    let _ = now;
     Ok(())
 }
 

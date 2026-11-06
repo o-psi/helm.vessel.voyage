@@ -706,3 +706,29 @@ async fn goal_terminal_measurement_waits_for_durable_import_and_in_memory_totals
     assert!(measured.complete);
     assert_eq!((measured.input_tokens, measured.output_tokens), (12, 3));
 }
+
+#[test]
+fn explicit_in_run_quota_tightens_existing_meter_without_usage_reset() {
+    let meter = GoalMeter::new(u64::MAX, Duration::from_millis(u64::MAX));
+    {
+        let mut totals = meter.totals.lock().unwrap();
+        totals.input = 30;
+        totals.output = 10;
+    }
+    let mut unbudgeted = request();
+    let attempt = meter.begin(&mut unbudgeted).unwrap();
+    assert_eq!(unbudgeted.max_tokens, None);
+    drop(attempt);
+    // Test retained usage independently from the intentionally uncertain drop.
+    meter.totals.lock().unwrap().uncertain = false;
+    meter.configure_token_quota(Some(100)).unwrap();
+    assert_eq!(meter.measurement().input_tokens, 30);
+    assert_eq!(meter.measurement().output_tokens, 10);
+    let mut bounded = request();
+    let attempt = meter.begin(&mut bounded).unwrap();
+    assert_eq!(bounded.max_tokens, Some(60));
+    drop(attempt);
+    meter.configure_token_quota(Some(200)).unwrap();
+    assert_eq!(meter.token_allowance(), 100);
+    assert!(meter.configure_token_quota(Some(0)).is_err());
+}

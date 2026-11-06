@@ -92,13 +92,23 @@ impl Journal {
         validate_context(&tx, guard.session_id, context, true)?;
         let saved = read_session(&tx, guard.session_id)?;
         let messages = run_messages(&saved.session, context.run)?;
-        let expected = json!({"action":"report","report":report});
+        let canonical_report = |arguments: &Value| {
+            matches!(
+                arguments.get("action").and_then(Value::as_str),
+                Some("report" | "status")
+            ) && arguments
+                .get("report")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<GoalReport>(value).ok())
+                .as_ref()
+                == Some(report)
+        };
         ensure!(
             messages
                 .iter()
                 .filter(|m| m.role == Role::Assistant)
                 .flat_map(|m| &m.tool_calls)
-                .filter(|c| c.id == call_id && c.name == "goal" && c.arguments == expected)
+                .filter(|c| c.id == call_id && c.name == "goal" && canonical_report(&c.arguments))
                 .count()
                 == 1,
             "Goal report must match its canonical tool call"
@@ -185,10 +195,10 @@ fn bounded_text(text: &str) -> bool {
             .chars()
             .any(|c| c.is_control() && c != '\n' && c != '\t')
 }
-fn evidence_digest(messages: &[Message], report: &GoalReport) -> Result<String> {
+pub(super) fn evidence_digest(messages: &[Message], report: &GoalReport) -> Result<String> {
     ensure!(
-        bounded_text(&report.summary) && (1..=16).contains(&report.evidence.len()),
-        "Goal report needs bounded summary and evidence"
+        bounded_text(&report.summary) && report.evidence.len() <= 16,
+        "Goal report needs a bounded summary and optional evidence"
     );
     let mut ids = std::collections::BTreeSet::new();
     let mut observed = Vec::new();
@@ -263,4 +273,196 @@ pub(super) fn assessment(
         report,
         evidence_sha256: digest,
     }))
+}
+
+impl Journal {
+    /// Root-owner-only explicit request creation. Never replaces unfinished work,
+    /// accepts model budget increases, or manufactures a human mutation receipt.
+    pub(crate) fn model_create_goal(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        authority: GoalAuthority,
+        incarnation: Uuid,
+        call: &str,
+        objective: &str,
+        tokens: Option<u64>,
+        now: i64,
+    ) -> Result<Value> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(
+            authority.valid() && !incarnation.is_nil() && now >= 0,
+            "invalid Goal control"
+        );
+        ensure!(
+            tokens.is_none_or(|n| n > 0),
+            "explicit Goal token budget must be positive"
+        );
+        let limits = GoalLimits {
+            tokens: tokens.unwrap_or(0),
+            ..GoalLimits::default()
+        };
+        ensure!(
+            valid_objective(objective) && limits.valid(),
+            "invalid Goal objective or quota"
+        );
+        self.require_content_schema(guard, false)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.session_id == guard.session_id
+                && run.state == RunState::Running
+                && run.machine_id == authority.installation_id
+                && run.principal_id == authority.principal_id,
+            "Goal create requires its admitted owner run"
+        );
+        let saved = read_session(&tx, guard.session_id)?;
+        let messages = run_messages(&saved.session, run_id)?;
+        let invocation = messages
+            .iter()
+            .filter(|m| m.role == Role::Assistant)
+            .flat_map(|m| &m.tool_calls)
+            .find(|c| c.id == call && c.name == "goal")
+            .context("Goal create needs its canonical call")?;
+        ensure!(
+            invocation.arguments.get("action").and_then(Value::as_str) == Some("create")
+                && invocation
+                    .arguments
+                    .get("objective")
+                    .and_then(Value::as_str)
+                    == Some(objective)
+                && invocation
+                    .arguments
+                    .get("token_budget")
+                    .and_then(Value::as_u64)
+                    == tokens,
+            "Goal create canonical arguments changed"
+        );
+        // Explicit request provenance remains canonical user task data. The model
+        // attests interpretation; it cannot infer a Goal from ordinary work.
+        ensure!(
+            messages
+                .iter()
+                .any(|m| m.role == Role::User && m.coordination.is_none()),
+            "Goal creation needs user request context"
+        );
+        let mut snapshot = read(&tx, guard.session_id)?;
+        ensure!(
+            snapshot.goal.is_none(),
+            "existing Goal requires explicit human replacement or clear"
+        );
+        let id = Uuid::new_v4();
+        snapshot.goal = Some(Goal {
+            id,
+            session_id: guard.session_id,
+            objective: objective.into(),
+            status: GoalStatus::Active,
+            continuation_authorized: true,
+            limits,
+            usage: GoalUsage {
+                runs: 1,
+                ..GoalUsage::default()
+            },
+            created_at_ms: u64::try_from(now)?,
+            updated_at_ms: u64::try_from(now)?,
+            stop_reason: None,
+            assessment: None,
+        });
+        snapshot.revision = snapshot
+            .revision
+            .checked_add(1)
+            .context("Goal revision overflow")?;
+        update_session(&tx, &saved)?;
+        persist(&tx, guard.session_id, &snapshot, Some(&authority))?;
+        // Bind the remainder/current settlement to the new Goal without replaying
+        // admission or charging it for an earlier objective's completed work.
+        let request = serde_json::to_string(
+            &json!({"source":"model_create","call_id":call,"run_id":run_id}),
+        )?;
+        tx.execute(
+            "INSERT INTO process_goal_turns VALUES(?1,?2,?3,?4,?5,'reserved',?6)",
+            params![
+                run.command_id.to_string(),
+                guard.session_id.to_string(),
+                id.to_string(),
+                incarnation.to_string(),
+                now,
+                request
+            ],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
+            params![run.command_id.to_string(), incarnation.to_string(), now],
+        )?;
+        commit(tx, &self.commit_fence)?;
+        Ok(json!({"status":"created","goal":snapshot,"explicit_user_request_required":true}))
+    }
+}
+
+impl Journal {
+    pub(crate) fn model_edit_goal(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        authority: GoalAuthority,
+        call: &str,
+        objective: &str,
+        now: i64,
+    ) -> Result<Value> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(
+            authority.valid() && now >= 0 && valid_objective(objective),
+            "invalid Goal refinement"
+        );
+        self.require_content_schema(guard, false)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.session_id == guard.session_id
+                && run.state == RunState::Running
+                && run.machine_id == authority.installation_id
+                && run.principal_id == authority.principal_id,
+            "Goal refinement requires admitted owner run"
+        );
+        let saved = read_session(&tx, guard.session_id)?;
+        let messages = run_messages(&saved.session, run_id)?;
+        ensure!(
+            messages
+                .iter()
+                .filter(|m| m.role == Role::Assistant)
+                .flat_map(|m| &m.tool_calls)
+                .any(|c| c.id == call
+                    && c.name == "goal"
+                    && c.arguments == json!({"action":"edit","objective":objective})),
+            "Goal refinement needs canonical call"
+        );
+        ensure!(
+            messages
+                .iter()
+                .any(|m| m.role == Role::User && m.coordination.is_none()),
+            "Goal refinement needs human request context"
+        );
+        let mut snapshot = read(&tx, guard.session_id)?;
+        let goal = snapshot.goal.as_mut().context("No Goal to refine")?;
+        ensure!(
+            goal.status == GoalStatus::Active && goal.continuation_authorized,
+            "model refinement cannot resume or replace stopped work"
+        );
+        goal.objective = objective.into();
+        goal.assessment = None;
+        goal.usage.impasse_runs = 0;
+        goal.updated_at_ms = u64::try_from(now)?;
+        snapshot.revision = snapshot
+            .revision
+            .checked_add(1)
+            .context("Goal revision overflow")?;
+        update_session(&tx, &saved)?;
+        persist(&tx, guard.session_id, &snapshot, Some(&authority))?;
+        commit(tx, &self.commit_fence)?;
+        Ok(json!({"status":"edited","goal":snapshot,"usage_and_limits_preserved":true}))
+    }
 }

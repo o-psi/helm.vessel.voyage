@@ -90,7 +90,7 @@ async fn goal_control_contention_is_bounded_and_rechecks_authority() {
             assert_eq!(receipt["status"], "applied");
             assert_eq!(
                 owner.goal().await.unwrap().goal.unwrap().status,
-                GoalStatus::Paused
+                GoalStatus::Active
             );
             assert_eq!(owner.update_goal(actor, command).await.unwrap(), receipt);
         } else {

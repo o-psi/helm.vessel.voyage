@@ -31,7 +31,30 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let row:Option<(String,String,String,i64)>=tx.query_row("SELECT goal_id,incarnation,state,started_at_ms FROM process_goal_turns WHERE command_id=?1 AND session_id=?2",params![command.to_string(),guard.session_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?;
         let Some((goal_id, original, state, started)) = row else {
-            return Ok(None);
+            // Observe ordinary owner runs so explicit in-run Goal creation can
+            // tighten this same meter without a provider rebuild or reset.
+            let id: Option<String> = tx
+                .query_row(
+                    "SELECT run_id FROM commands WHERE id=?1",
+                    [command.to_string()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(id) = id else {
+                return Ok(None);
+            };
+            let run = read_run(&tx, Uuid::parse_str(&id)?)?;
+            ensure!(
+                run.session_id == guard.session_id
+                    && matches!(run.state, RunState::Accepted | RunState::Running),
+                "meter run is inactive"
+            );
+            tx.execute(
+                "INSERT INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
+                params![command.to_string(), incarnation.to_string(), now],
+            )?;
+            commit(tx, &self.commit_fence)?;
+            return Ok(Some((u64::MAX, u64::MAX)));
         };
         ensure!(
             state == "reserved" && original == incarnation.to_string(),
@@ -46,7 +69,7 @@ impl Journal {
             goal.id.to_string() == goal_id
                 && goal.status == GoalStatus::Active
                 && goal.continuation_authorized
-                && goal.usage.unmeasured_runs == 0,
+                && (!goal.limits.usage_required() || goal.usage.unmeasured_runs == 0),
             "Goal meter continuation is not authorized"
         );
         let used = goal
@@ -54,21 +77,27 @@ impl Journal {
             .input_tokens
             .checked_add(goal.usage.output_tokens)
             .context("Goal token total overflow")?;
-        let tokens = goal
-            .limits
-            .tokens
-            .checked_sub(used)
-            .filter(|n| *n > 0)
-            .context("Goal token limit reached")?;
+        let tokens = if goal.limits.tokens == 0 {
+            u64::MAX
+        } else {
+            goal.limits
+                .tokens
+                .checked_sub(used)
+                .filter(|n| *n > 0)
+                .context("Goal token limit reached")?
+        };
         let elapsed = u64::try_from(now.saturating_sub(started).max(0))?
             .checked_add(goal.usage.elapsed_ms)
             .context("Goal elapsed usage overflow")?;
-        let time = goal
-            .limits
-            .elapsed_ms
-            .checked_sub(elapsed)
-            .filter(|n| *n > 0)
-            .context("Goal time limit reached")?;
+        let time = if goal.limits.elapsed_ms == 0 {
+            u64::MAX
+        } else {
+            goal.limits
+                .elapsed_ms
+                .checked_sub(elapsed)
+                .filter(|n| *n > 0)
+                .context("Goal time limit reached")?
+        };
         tx.execute(
             "INSERT INTO process_goal_meters VALUES(?1,?2,NULL,?3,NULL)",
             params![command.to_string(), incarnation.to_string(), started],
@@ -97,7 +126,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_meters m JOIN commands c ON c.id=m.command_id JOIN runs r ON r.id=c.run_id WHERE m.command_id=?1 AND m.incarnation=?2 AND r.session_id=?3 AND m.settlement IS NULL AND (m.budget IS NOT NULL OR EXISTS(SELECT 1 FROM process_goal_turns t WHERE t.command_id=m.command_id AND t.incarnation=m.incarnation AND t.state='reserved')))",params![command.to_string(),incarnation.to_string(),guard.session_id.to_string()],|r|r.get(0))?;
+        let current:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM process_goal_meters m JOIN commands c ON c.id=m.command_id JOIN runs r ON r.id=c.run_id WHERE m.command_id=?1 AND m.incarnation=?2 AND r.session_id=?3 AND m.settlement IS NULL AND (r.active=1 OR m.budget IS NOT NULL OR EXISTS(SELECT 1 FROM process_goal_turns t WHERE t.command_id=m.command_id AND t.incarnation=m.incarnation AND t.state='reserved')))",params![command.to_string(),incarnation.to_string(),guard.session_id.to_string()],|r|r.get(0))?;
         ensure!(current, "Goal usage belongs to an inactive reservation");
         if self.opened_schema >= 17 {
             let allocation: bool = tx.query_row(

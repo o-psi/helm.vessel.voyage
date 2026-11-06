@@ -120,7 +120,13 @@ async fn idle_goal_wrappers_are_read_only_and_do_not_manufacture_a_meter_or_repo
         assert!(f.owner.goal_allocations(0, limit).await.is_err());
     }
     let (_, run) = f.running().await;
-    assert!(f.owner.goal_tool(run.run_id).await.unwrap().is_none());
+    assert!(
+        f.owner
+            .goal_tool(run.run_id, None, None)
+            .await
+            .unwrap()
+            .is_none()
+    );
     run.finish_operator(Ok("ordinary non-Goal".into()), false)
         .await
         .unwrap();
@@ -535,7 +541,12 @@ async fn goal_report_read_cannot_change_control_and_report_requires_current_cano
         .await
         .unwrap()
         .unwrap();
-    let tool = f.owner.goal_tool(run.run_id).await.unwrap().unwrap();
+    let tool = f
+        .owner
+        .goal_tool(run.run_id, None, None)
+        .await
+        .unwrap()
+        .unwrap();
     let context = crate::tools::reliability_tests::context(f.root.path());
     let before = f.owner.goal().await.unwrap();
     let read = tool

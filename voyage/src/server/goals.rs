@@ -105,7 +105,7 @@ pub(super) async fn advance(state: &Arc<State>) -> Result<()> {
     }
     let obstruction = if let Some(reason) = goal.limit_reached() {
         Some(reason)
-    } else if goal.usage.unmeasured_runs > 0 {
+    } else if goal.limits.usage_required() && goal.usage.unmeasured_runs > 0 {
         Some(GoalStopReason::UsageUnknown)
     } else if state.workflows.pending().await {
         Some(GoalStopReason::UserInput)
@@ -113,12 +113,20 @@ pub(super) async fn advance(state: &Arc<State>) -> Result<()> {
         state.owner.goal_obstruction().await?
     };
     if let Some(reason) = obstruction {
+        // Pending human input and unanswered decisions temporarily defer a wake.
+        // Keep the Goal active so normal collaboration needs no second Resume.
+        if matches!(
+            reason,
+            GoalStopReason::UserInput | GoalStopReason::ApprovalRequired
+        ) {
+            return Ok(());
+        }
         return state.owner.stop_goal(snapshot.revision, reason).await;
     }
     // Objective/context remain bounded user task data, never a system message
     // or an instruction granting tools, credentials, approvals or more budget.
     let prompt = format!(
-        "Continue the authorized Goal using the remaining budget. Report progress truthfully; a finished run does not by itself complete the Goal. Goal task data:\n{}",
+        "Continue pursuing the full authorized objective within current execution policy and any explicitly configured limits. A normal final response is a checkpoint, not completion. Audit the entire outcome before reporting complete; never omit requested scope or invent verification. Reasoning, drafting and verified waits are useful progress. Report blocked only after the same genuine impasse recurs across at least three consecutive Goal turns with no useful authorized action remaining. Ordinary collaboration is not a pause. Goal task data:\n{}",
         serde_json::to_string(&snapshot)?
     );
     let reserved = match state
@@ -135,7 +143,12 @@ pub(super) async fn advance(state: &Arc<State>) -> Result<()> {
                 .goal_obstruction()
                 .await?
                 .unwrap_or(GoalStopReason::UnresolvedEffects);
-            state.owner.stop_goal(snapshot.revision, reason).await?;
+            if !matches!(
+                reason,
+                GoalStopReason::UserInput | GoalStopReason::ApprovalRequired
+            ) {
+                state.owner.stop_goal(snapshot.revision, reason).await?;
+            }
             return Err(error);
         }
     };

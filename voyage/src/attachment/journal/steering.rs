@@ -350,12 +350,8 @@ impl Journal {
         )?;
         current.session.request_title(request.receipt_id);
         update_session(&tx, &current)?;
-        super::goals::scheduling::stop(
-            &tx,
-            request.session_id,
-            voyage_protocol::goals::GoalStopReason::UserInput,
-            now_ms,
-        )?;
+        // Steering supplies context to ongoing work; it does not revoke the
+        // persistent objective. Explicit Goal Pause/Clear still fence admission.
         append_event(&tx, &run, EventKind::SteeringQueued(request.receipt_id))?;
         commit(tx, &self.commit_fence)?;
         Ok(SteeringOutcome {

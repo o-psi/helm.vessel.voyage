@@ -111,6 +111,9 @@ pub struct Config {
     /// One admitted Goal turn's local aggregate; configuration cannot grant a budget.
     #[serde(skip)]
     pub goal_meter: Option<std::sync::Arc<crate::provider::goal_meter::GoalMeter>>,
+    /// Private root-owner Goal control, installed only by authenticated admission.
+    #[serde(skip)]
+    pub(crate) goal_control: Option<crate::tools::goal::GoalControl>,
     /// Runtime-owned artifact storage; never accepted from configuration.
     #[serde(skip)]
     pub artifact_scope: Option<crate::artifacts::Scope>,
@@ -513,6 +516,7 @@ impl Default for Config {
             live_access: None,
             provider_authority: None,
             goal_meter: None,
+            goal_control: None,
             artifact_scope: None,
             extension_private_files: Vec::new(),
             extension_private_files_complete: false,
@@ -874,6 +878,7 @@ impl Config {
         updated.live_access = self.live_access.clone();
         updated.provider_authority = self.provider_authority.clone();
         updated.goal_meter = self.goal_meter.clone();
+        updated.goal_control = self.goal_control.clone();
         updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();

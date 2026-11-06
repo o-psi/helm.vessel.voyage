@@ -120,7 +120,7 @@ impl Journal {
         };
         let unresolved:u64=tx.query_row("SELECT count(*) FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL",[guard.session_id.to_string()],|r|r.get(0))?;
         let decisions: u64 = tx.query_row(
-            "SELECT count(*) FROM process_decisions WHERE run_id=?1",
+            "SELECT count(*) FROM process_decisions WHERE run_id=?1 AND response IS NULL",
             [run_id.to_string()],
             |r| r.get(0),
         )?;
@@ -131,16 +131,18 @@ impl Journal {
                 GoalStopReason::UnresolvedEffects,
             ))
         } else if run.state == RunState::Cancelled {
-            if goal
-                .usage
-                .input_tokens
-                .saturating_add(goal.usage.output_tokens)
-                >= goal.limits.tokens
+            if goal.limits.tokens > 0
+                && goal
+                    .usage
+                    .input_tokens
+                    .saturating_add(goal.usage.output_tokens)
+                    >= goal.limits.tokens
             {
                 Some((GoalStatus::Limited, GoalStopReason::TokenLimit))
-            } else if goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
+            } else if goal.limits.elapsed_ms > 0 && goal.usage.elapsed_ms >= goal.limits.elapsed_ms
+            {
                 Some((GoalStatus::Limited, GoalStopReason::TimeLimit))
-            } else if !measured {
+            } else if !measured && goal.limits.usage_required() {
                 // Missing provider usage can cancel the metered execution itself.
                 // Expose the unresolved accounting rather than suggesting a human
                 // cancelled a fully measured run that can safely resume.
@@ -152,18 +154,19 @@ impl Journal {
             Some((GoalStatus::NeedsAttention, GoalStopReason::Interrupted))
         } else if decisions > 0 {
             Some((GoalStatus::NeedsAttention, GoalStopReason::ApprovalRequired))
-        } else if goal
-            .usage
-            .input_tokens
-            .saturating_add(goal.usage.output_tokens)
-            >= goal.limits.tokens
+        } else if goal.limits.tokens > 0
+            && goal
+                .usage
+                .input_tokens
+                .saturating_add(goal.usage.output_tokens)
+                >= goal.limits.tokens
         {
             Some((GoalStatus::Limited, GoalStopReason::TokenLimit))
-        } else if goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
+        } else if goal.limits.elapsed_ms > 0 && goal.usage.elapsed_ms >= goal.limits.elapsed_ms {
             Some((GoalStatus::Limited, GoalStopReason::TimeLimit))
         } else if run.state != RunState::Completed {
             Some((GoalStatus::NeedsAttention, GoalStopReason::ProviderFailure))
-        } else if !measured {
+        } else if !measured && goal.limits.usage_required() {
             Some((GoalStatus::NeedsAttention, GoalStopReason::UsageUnknown))
         } else {
             goal.limit_reached()
@@ -171,7 +174,7 @@ impl Journal {
         };
         let report_eligible = goal.status == GoalStatus::Active
             && run.state == RunState::Completed
-            && measured
+            && (measured || !goal.limits.usage_required())
             && cleanup_observed
             && unresolved == 0
             && decisions == 0
@@ -184,13 +187,35 @@ impl Journal {
                 )
             });
         if report_eligible && let Some(assessment) = assessment {
-            goal.status = match assessment.report.outcome {
-                GoalReportOutcome::Complete => GoalStatus::Complete,
-                GoalReportOutcome::Blocked => GoalStatus::Blocked,
+            let blocked = assessment.report.outcome == GoalReportOutcome::Blocked;
+            // An intermediate blocker is a checkpoint, not termination. Only
+            // three consecutive reports of the same genuine impasse stop intent.
+            let same_impasse = blocked
+                && goal.assessment.as_ref().is_some_and(|previous| {
+                    previous.report.outcome == GoalReportOutcome::Blocked
+                        && previous.report.summary == assessment.report.summary
+                });
+            let repeated_impasse = if same_impasse {
+                goal.usage.impasse_runs.saturating_add(1)
+            } else if blocked {
+                1
+            } else {
+                0
             };
+            goal.usage.impasse_runs = repeated_impasse;
+            if !blocked || repeated_impasse >= 3 {
+                goal.status = if blocked {
+                    GoalStatus::Blocked
+                } else {
+                    GoalStatus::Complete
+                };
+                goal.continuation_authorized = false;
+            }
             goal.stop_reason = None;
-            goal.continuation_authorized = false;
             goal.assessment = Some(assessment);
+        }
+        if !report_eligible || goal.assessment.as_ref().is_none_or(|a| a.run_id != run_id) {
+            goal.usage.impasse_runs = 0;
         }
         // A concurrent explicit pause wins over every automatic transition.
         if goal.status == GoalStatus::Active
@@ -212,7 +237,7 @@ impl Journal {
         } else {
             None
         };
-        let receipt = json!({"command_id":run.command_id,"goal_id":goal.id,"run_id":run_id,"status":"settled","usage_complete":measured,"goal_status":goal.status,"stop_reason":goal.stop_reason,"usage":goal.usage});
+        let receipt = json!({"command_id":run.command_id,"goal_id":goal.id,"run_id":run_id,"status":"settled","usage_complete":measured,"goal_status":goal.status,"stop_reason":goal.stop_reason,"usage":goal.usage,"assessment":goal.assessment});
         current.revision = current
             .revision
             .checked_add(1)
