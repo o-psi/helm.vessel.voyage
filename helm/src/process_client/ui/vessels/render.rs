@@ -405,6 +405,9 @@ fn metadata(rows: &mut Vec<Row>, metadata: &crate::process_client::connections::
         "Server features: {}",
         text(&format!("{:?}", metadata.features))
     )));
+    rows.push(Row::plain("Connected is not task-ready: installation, services, execution identity and gateway still need separate evidence."));
+    rows.push(Row::plain("First task: choose a workspace, review account/model usage and ordinary access, then inspect the resulting file."));
+    rows.push(Row::plain("Administrator work requires separate local authorization and a separately verified execution result."));
     for workspace in &metadata.workspaces {
         rows.push(Row::plain(format!(
             "Workspace {}: {} · {} · provider ready: {}",

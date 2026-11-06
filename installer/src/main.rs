@@ -4,6 +4,8 @@ mod install;
 mod planning;
 mod remote;
 mod service;
+#[allow(dead_code)] // Adapter admission is not exposed until authenticated journaling is implemented.
+mod setup;
 mod source;
 #[cfg(target_os = "linux")]
 mod system_install;
