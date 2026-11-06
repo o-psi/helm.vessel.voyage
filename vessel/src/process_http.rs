@@ -51,7 +51,7 @@ impl ProcessRoute {
             Self::System(name) => {
                 let response = vessel::process::gateway_ipc::exchange(
                     name,
-                    &vessel::process::gateway_ipc::GatewayRequest::PairPreflight,
+                    &vessel::process::gateway_ipc::GatewayRequest::PairPreflight {},
                 )
                 .await?;
                 anyhow::ensure!(
