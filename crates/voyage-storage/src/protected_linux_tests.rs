@@ -224,6 +224,44 @@ fn runtime_parent_fences_names_ownership_and_child_control() {
 }
 
 #[test]
+fn protected_namespaces_reject_special_permission_bits_without_repair() {
+    let fixture = Fixture::new();
+    let owner = unsafe { libc::geteuid() };
+    let group = unsafe { libc::getegid() };
+    let control = fixture.open();
+    control
+        .publish_new(OsStr::new("record"), b"opaque", 100)
+        .unwrap();
+    for special in [0o1000, 0o2000, 0o4000] {
+        mode(&fixture.0, 0o700 | special);
+        assert!(RootDirectory::open_owned(&fixture.0, owner).is_err());
+        assert!(control.read(OsStr::new("record"), 100).is_err());
+        mode(&fixture.0, 0o700);
+        mode(&fixture.0.join("record"), 0o600 | special);
+        assert!(control.read(OsStr::new("record"), 100).is_err());
+        mode(&fixture.0.join("record"), 0o600);
+    }
+    mode(&fixture.0, 0o711);
+    let runtime = RuntimeRoot::open_owned(&fixture.0, owner).unwrap();
+    let session = OsStr::new("641458d0-9562-46e6-b617-a34d1c0e53b7");
+    runtime.create_session(session, owner, group).unwrap();
+    for special in [0o1000, 0o2000, 0o4000] {
+        mode(&fixture.0, 0o711 | special);
+        assert!(RuntimeRoot::open_owned(&fixture.0, owner).is_err());
+        assert!(runtime.session(session, owner, group).is_err());
+        mode(&fixture.0, 0o711);
+        mode(&fixture.0.join(session), 0o700 | special);
+        assert!(runtime.session(session, owner, group).is_err());
+        assert!(runtime.create_session(session, owner, group).is_err());
+        assert_eq!(
+            fs::metadata(fixture.0.join(session)).unwrap().mode() & 0o7777,
+            0o700 | special
+        );
+        mode(&fixture.0.join(session), 0o700);
+    }
+}
+
+#[test]
 #[ignore = "requires an explicitly disposable native Linux root fixture"]
 fn native_root_records_exclude_ordinary_identity() {
     assert_eq!(

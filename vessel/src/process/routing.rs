@@ -66,7 +66,18 @@ pub(super) async fn forward_bound(
         registration.peer_uids.is_some(),
         "protected runtime binding required"
     );
-    if super::recovery::suspended(directory, registration) && command.observes_suspended() {
+    ensure!(
+        directory == super::runtime_storage::directory(root, registration).await?,
+        "bound forwarding runtime directory mismatch"
+    );
+    if command.observes_suspended()
+        && super::guardian::cleanup_observed(
+            root,
+            registration.session_id,
+            registration.incarnation,
+        )
+        .unwrap_or(false)
+    {
         return super::suspension::observe(
             Some(root),
             directory,

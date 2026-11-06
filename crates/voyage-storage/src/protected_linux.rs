@@ -23,6 +23,7 @@ pub struct RootDirectory {
 }
 
 /// A root-controlled, execute-only parent for per-voyage runtime directories.
+/// Special permission bits are refused, including on later descriptor checks.
 /// Children own their own journals and IPC; the parent contains no root secrets.
 /// A child may change contents of its directory but cannot replace its entry in
 /// this parent. Never use child-owned data as supervisor authority.
@@ -81,12 +82,12 @@ fn file_at(parent: &File, name: &CString, flags: i32, mode: libc::mode_t) -> Res
 fn check_directory(directory: &File, owner: u32, private: bool) -> Result<()> {
     let m = directory.metadata()?;
     ensure!(
-        m.is_dir() && (m.uid() == 0 || m.uid() == owner) && m.mode() & 0o022 == 0,
-        "control directory has an unsafe owner or writable permissions"
+        m.is_dir() && (m.uid() == 0 || m.uid() == owner) && m.mode() & 0o7022 == 0,
+        "control directory has an unsafe owner, writable permissions, or special bits"
     );
     if private {
         ensure!(
-            m.uid() == owner && m.mode() & 0o077 == 0,
+            m.uid() == owner && m.mode() & 0o7077 == 0,
             "control directory must be private and owned by its authority"
         );
     }
@@ -97,7 +98,7 @@ fn check_file(file: &File, owner: u32, limit: u64) -> Result<()> {
     ensure!(
         m.is_file()
             && m.uid() == owner
-            && m.mode() & 0o077 == 0
+            && m.mode() & 0o7077 == 0
             && m.nlink() == 1
             && m.len() <= limit,
         "unsafe or oversized control record"
@@ -133,7 +134,7 @@ impl RuntimeRoot {
         }
         let metadata = directory.metadata()?;
         ensure!(
-            metadata.uid() == owner && metadata.mode() & 0o777 == 0o711,
+            metadata.uid() == owner && metadata.mode() & 0o7777 == 0o711,
             "runtime parent must be authority-owned with mode 0711"
         );
         Ok(Self { directory, owner })
@@ -141,7 +142,7 @@ impl RuntimeRoot {
     fn current(&self) -> Result<()> {
         let metadata = self.directory.metadata()?;
         ensure!(
-            metadata.is_dir() && metadata.uid() == self.owner && metadata.mode() & 0o777 == 0o711,
+            metadata.is_dir() && metadata.uid() == self.owner && metadata.mode() & 0o7777 == 0o711,
             "runtime parent authority or mode changed"
         );
         Ok(())
@@ -161,7 +162,7 @@ impl RuntimeRoot {
             metadata.is_dir()
                 && metadata.uid() == uid
                 && metadata.gid() == gid
-                && metadata.mode() & 0o777 == 0o700,
+                && metadata.mode() & 0o7777 == 0o700,
             "runtime session directory identity or mode changed"
         );
         self.current()?;

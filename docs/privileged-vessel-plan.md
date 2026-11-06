@@ -411,6 +411,14 @@ Recommended Linux system layout, subject to packaging conventions:
 | `/run/voyage/` | Protected discovery and authenticated local control endpoints |
 | Explicit per-identity runtime roots | Private journals, artifacts and runtime IPC; accessible only as designed |
 
+Protected Linux control records and directories reject special permission bits
+(setuid, setgid and sticky), as well as unsafe ownership and writable permissions.
+Runtime parents require exactly mode 0711 and per-voyage directories exactly
+0700, including those special bits. Descriptor revalidation refuses later mode
+changes; existing unsafe entries are not repaired to make admission succeed.
+Ordinary-UID regression fixtures exercise these checks; this is not native
+administrator/service adoption evidence.
+
 Do not execute a user-writable binary as root, including an existing per-user
 `current` link. Validate parents, symlinks, hardlinks, ownership and descriptor
 identity before publishing privileged paths. The systemd supervisor must retain
@@ -424,6 +432,14 @@ route; no catalogue key, raw root token, arbitrary filesystem access or automati
 administrator right. End-user authenticated authority must survive forwarding.
 
 ## 5. Safe launch and cross-identity IPC
+
+Common supervisor observation and forwarding entry points resolve bound runtime
+coordinates from the protected catalogue/layout, not caller-supplied legacy
+registration paths. Bound scoped IPC uses the explicit control-root authority
+route. Saved-state fallback requires protected guardian cleanup observation;
+child-written stopped markers alone never select the privileged helper. The
+ordinary user-scope path and its existing saved-state behavior remain separate.
+
 
 A protected launch specification comes from authoritative supervisor metadata,
 not from a runtime-writable registration, workspace config or request-supplied
