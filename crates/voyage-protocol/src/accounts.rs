@@ -11,6 +11,16 @@ pub enum Transport {
     XaiOauth,
     Anthropic,
 }
+impl Transport {
+    /// All transports understood by this protocol, not an entitlement or host grant.
+    pub const ALL: [Self; 5] = [
+        Self::OpenaiResponses,
+        Self::OpenaiChat,
+        Self::ChatgptOauth,
+        Self::XaiOauth,
+        Self::Anthropic,
+    ];
+}
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ConnectionDescriptor {
     pub id: Uuid,

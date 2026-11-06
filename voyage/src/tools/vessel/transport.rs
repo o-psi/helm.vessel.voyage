@@ -186,6 +186,7 @@ impl Transport {
         let mutation_id = match &command {
             VesselCommand::Start { command_id, .. }
             | VesselCommand::StartSettings { command_id, .. }
+            | VesselCommand::ResolveStartSettings { command_id, .. }
             | VesselCommand::StartConfigured { command_id, .. }
             | VesselCommand::Restart { command_id, .. } => Some(*command_id),
             VesselCommand::Voyage(r) if !matches!(r.command, VoyageCommand::Receipt { .. }) => {
@@ -255,7 +256,33 @@ impl Transport {
         // Server diagnostics may contain private paths or credentials; never return them.
         if let Some(error) = reply.error {
             let error = error.to_ascii_lowercase();
-            let code = if error.contains("revision") {
+            let validation_field = if error == "invalid model" {
+                Some("model")
+            } else {
+                [
+                    "model",
+                    "command_timeout_secs",
+                    "max_output_bytes",
+                    "terminal_max_count",
+                    "terminal_max_unread_bytes",
+                    "subagent_max_concurrency",
+                ]
+                .into_iter()
+                .find(|field| error.contains(&format!("{field} must")))
+            };
+            let code = if validation_field.is_some() {
+                "invalid_start_settings"
+            } else if error.contains("default_account_required")
+                || error.contains("configuration has no account")
+            {
+                "account_required"
+            } else if error.contains("account")
+                && (error.contains("mismatch") || error.contains("stale"))
+            {
+                "account_binding_stale"
+            } else if error.contains("payload conflict") || error.contains("request conflict") {
+                "command_payload_conflict"
+            } else if error.contains("revision") {
                 "stale_revision"
             } else if error.contains("denied")
                 || error.contains("right")
@@ -277,7 +304,7 @@ impl Transport {
                 "refused"
             };
             return Ok(
-                json!({"status": if reply.outcome_unknown {"outcome_unknown"} else {"refused"}, "code":code, "detail":"Inspect current state/capabilities or query receipt before deciding a new action; never replay uncertain effects"}),
+                json!({"status": if reply.outcome_unknown {"outcome_unknown"} else {"refused"}, "code":code, "validation_field":validation_field, "detail":"Inspect current state/capabilities or query receipt before deciding a new action; never replay uncertain effects"}),
             );
         }
         // These internal chunks are reassembled, decoded and scrubbed in read_text

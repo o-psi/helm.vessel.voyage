@@ -666,3 +666,151 @@ async fn wrong_chunk_bounds_revision_or_run_identity_refuse_without_partial_publ
         f.finish().await;
     }
 }
+
+#[tokio::test]
+async fn creation_start_refusal_or_unknown_never_submits_and_retains_exact_resolution() {
+    for unknown in [false, true] {
+        let mut f = Fixture::new().await;
+        std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
+        let submit_id = Uuid::new_v4();
+        let start_id = Uuid::new_v4();
+        let request = json!({"action":"create","command_id":submit_id,"session_id":start_id,
+            "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"settings":{"max_output_tokens":0},"task":"owned"});
+        let task = f.start(request.clone());
+        let caps = f.peer.next().await;
+        assert_eq!(caps.wire["op"], "capabilities");
+        caps.ok(json!({"features":["start_settings"]}));
+        let start = f.peer.next().await;
+        assert_eq!(start.wire["op"], "start_settings");
+        assert_eq!(start.wire["command_id"], start_id.to_string());
+        assert_eq!(start.wire["settings"]["max_output_tokens"], 0);
+        start.refused(unknown);
+        let result = done(task).await.unwrap();
+        assert_eq!(result["result"]["initial_task_submitted"], false);
+        assert_eq!(result["result"]["resolution_request"]["target"], "local");
+        crate::tools::schema::CompiledSchema::compile(&input_schema())
+            .unwrap()
+            .validate(&result["result"]["resolution_request"])
+            .unwrap();
+        assert_no_secret(&result);
+        assert_eq!(f.peer.count(), 2);
+        f.reopen_registry();
+        assert_eq!(done(f.start(request)).await.unwrap(), result);
+        let receipt = done(f.start(json!({"action":"receipt","command_id":submit_id})))
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt["resolution_request"]["command_id"],
+            start_id.to_string()
+        );
+        assert_eq!(
+            receipt["resolution_request"]["settings"]["max_output_tokens"],
+            0
+        );
+        assert_eq!(f.peer.count(), 2);
+        f.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn creation_lost_start_response_keeps_wire_resolution_and_never_replays() {
+    let mut f = Fixture::new().await;
+    std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
+    let id = Uuid::new_v4();
+    let start_id = Uuid::new_v4();
+    let request = json!({"action":"create","command_id":id,"session_id":start_id,
+        "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"task":"owned"});
+    let task = f.start(request.clone());
+    f.peer
+        .next()
+        .await
+        .ok(json!({"features":["start_settings"]}));
+    let start = f.peer.next().await;
+    assert_eq!(start.wire["op"], "start_settings");
+    start.lost();
+    let result = done(task).await.unwrap();
+    assert_eq!(result["status"], "outcome_unknown");
+    f.reopen_registry();
+    assert_eq!(done(f.start(request)).await.unwrap(), result);
+    let receipt = done(f.start(json!({"action":"receipt","command_id":id})))
+        .await
+        .unwrap();
+    assert_eq!(
+        receipt["resolution_request"]["session_id"],
+        start_id.to_string()
+    );
+    assert_eq!(
+        receipt["resolution_request"]["config_path"],
+        f.root.path().join("host-base").to_string_lossy().as_ref()
+    );
+    assert_eq!(f.peer.count(), 2);
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn creation_first_submit_has_distinct_identity_and_unknown_submit_is_not_replayed() {
+    for lost_submit in [false, true] {
+        let mut f = Fixture::new().await;
+        std::fs::write(f.root.path().join("host-base"), b"offline").unwrap();
+        let id = Uuid::new_v4();
+        let start_id = f.session;
+        let request = json!({"action":"create","command_id":id,"session_id":start_id,
+            "workspace":f.root.path(),"config_path":f.root.path().join("host-base"),"task":"owned initial task"});
+        let task = f.start(request.clone());
+        f.peer
+            .next()
+            .await
+            .ok(json!({"features":["start_settings"]}));
+        let start = f.peer.next().await;
+        assert_eq!(start.wire["command_id"], start_id.to_string());
+        start.ok(json!({"session_id":start_id,"state":"live"}));
+        let snapshot = f.peer.next().await;
+        assert_eq!(snapshot.wire["op"], "snapshot");
+        snapshot.ok(f.envelope(json!({"revision":17})));
+        let submit = f.peer.next().await;
+        assert_eq!(submit.wire["op"], "submit");
+        assert_eq!(submit.wire["command_id"], id.to_string());
+        assert_eq!(submit.wire["expected_revision"], 17);
+        assert_eq!(submit.wire["prompt"], "owned initial task");
+        if lost_submit {
+            submit.lost();
+        } else {
+            submit.ok(f.envelope(json!({"command_id":id,"status":"accepted"})));
+        }
+        let result = done(task).await.unwrap();
+        if lost_submit {
+            assert_eq!(result["status"], "outcome_unknown");
+        } else {
+            assert_eq!(result["result"]["submit"]["status"], "accepted");
+        }
+        f.reopen_registry();
+        assert_eq!(done(f.start(request)).await.unwrap(), result);
+        assert_eq!(f.peer.count(), 4);
+        f.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn resolution_readonly_or_cancelled_policy_refuses_before_fence_or_http() {
+    let f = Fixture::new().await;
+    let request = json!({"action":"resolve_create","command_id":Uuid::new_v4(),
+        "session_id":f.session,"workspace":"/workspace","settings":{"max_output_tokens":0}});
+    let mut ctx = f.context.clone();
+    ctx.policy = Arc::new(
+        crate::policy::Policy::new(
+            &crate::Config {
+                access: Some(AccessMode::ReadOnly),
+                ..Default::default()
+            },
+            f.root.path().into(),
+        )
+        .unwrap(),
+    );
+    assert!(done(f.with_context(request.clone(), ctx)).await.is_err());
+    let ctx = f.context.clone();
+    ctx.cancellation.cancel();
+    assert!(done(f.with_context(request, ctx)).await.is_err());
+    assert_eq!(f.peer.count(), 0);
+    assert!(!f.journal_root().exists());
+    f.finish().await;
+}

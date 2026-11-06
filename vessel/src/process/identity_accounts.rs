@@ -345,6 +345,7 @@ impl Supervisor {
             command,
             VesselCommand::StartAccount { .. }
                 | VesselCommand::StartSettings { .. }
+                | VesselCommand::ResolveStartSettings { .. }
                 | VesselCommand::ResolveStartAccount { .. }
         ) {
             return self.start_identity_request(command, scope).await;

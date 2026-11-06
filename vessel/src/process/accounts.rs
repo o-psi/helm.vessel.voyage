@@ -745,6 +745,17 @@ impl Supervisor {
                 .clone()
         };
         let _lock = lock.lock().await;
+        ensure!(
+            !super::start::resolution_record(
+                &self.directory,
+                "intent",
+                command_id,
+                &original,
+                false
+            )
+            .await?,
+            "start command was fenced as not admitted"
+        );
         // Bind the exact public request before retaining private host configuration.
         registry::command_record(&self.directory, command_id, &original, false).await?;
         registry::private_directory(&directory)?;
@@ -806,6 +817,61 @@ impl Supervisor {
             reasoning_effort,
             service_tier,
         ) = match &command {
+            VesselCommand::ResolveStartSettings {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+                settings,
+                binding,
+            } => {
+                let right = match &scope {
+                    Scope::Session(_) => ProcessRight::Lifecycle,
+                    _ => ProcessRight::Create,
+                };
+                scope.check(&self.directory, workspace, right)?;
+                ensure!(
+                    matches!(scope, Scope::Owner) || config_path.is_none(),
+                    "scoped starts cannot select host configuration files"
+                );
+                if let Scope::Connection(grant) = &scope {
+                    self.connection_session(grant, *session_id, workspace)?;
+                }
+                if let Scope::Session(grant) = &scope {
+                    ensure!(
+                        grant.session_id == *session_id,
+                        "session creation scope denied"
+                    );
+                }
+                let lock = {
+                    let mut locks = self.lifecycle_locks.lock().await;
+                    locks
+                        .entry(*session_id)
+                        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+                        .clone()
+                };
+                let _lock = lock.lock().await;
+                let captured = self
+                    .directory
+                    .join("account-launch")
+                    .join(format!("{session_id}-{command_id}-settings.json"));
+                return self
+                    .resolve_start_original(
+                        *command_id,
+                        *session_id,
+                        workspace.clone(),
+                        Some(captured),
+                        VesselCommand::StartSettings {
+                            command_id: *command_id,
+                            session_id: *session_id,
+                            workspace: workspace.clone(),
+                            config_path: config_path.clone(),
+                            settings: settings.clone(),
+                            binding: binding.clone(),
+                        },
+                    )
+                    .await;
+            }
             VesselCommand::StartSettings {
                 command_id,
                 session_id,
