@@ -271,3 +271,63 @@ do not establish reliable repeated TUI operation or real failed-cleanup recovery
 Remote-host policy, native platforms, live providers and an actual unkillable
 Chromium remain outside this evidence. Prior helper-level synthetic close rejection
 must not be relabeled transport failed-cleanup acceptance.
+
+## #274 failure-boundary diagnostics
+
+The opt-in local browser runner retains private `diagnostic.json` alongside its
+minimal journal. Fixed `failure_phase` values identify the last failing boundary;
+`socket_unchanged`, `helper_transport_disconnected`, `local_fence_observed` and
+`helper_shutdown_observed` are independent observations, not operation receipts.
+A completed action remains completed even if a later heartbeat/observation fails.
+No error strings, companion URLs/tokens, frames, action arguments or pixels belong
+in this record. A pre-helper startup failure can precede journal creation and is
+not represented as a successful cleanup.
+
+The synthetic transport probe now writes `pre-teardown.json` before sending any
+stop/signal. It records a fixed fixture stage, provider stage, owned child PIDs
+and observed exit codes (null means still running), plus a bounded failure category.
+It never derives initiating process death from finally-block termination. The
+historical fixture remains failed with unknown initiating cause; instrumentation
+is not a reproduction or a stability fix. Native host-browser qualification and
+live-provider/public-network checks remain separate gates.
+
+Image pre-submission rejection carries fixed `diagnostic_code` values:
+`image_local_validation_failed`, `image_upload_transport_unknown`,
+`image_upload_refused`, `image_upload_metadata_invalid` or
+`image_upload_metadata_mismatch`. `submission_outcome=not_dispatched` states only
+that the message submission was not sent; it does not settle an uncertain upload.
+The complete draft stays available. Encoded bytes and remote error details are
+not echoed, and no automatic resubmit is introduced.
+
+The current host viewer also retains fixed human-facing failure observations:
+`viewer_startup_unavailable`, `viewer_socket_changed`, `viewer_dispatch_unknown`,
+`viewer_dispatch_refused`, `viewer_control_exchange_failed`, `viewer_server_ended`,
+`viewer_server_retirement_failed` and `viewer_private_cleanup_failed`.
+Its finished status keeps the failure code even when local launcher/server cleanup
+succeeds. A separately observed detach reply does not attest remote browser closure
+or resolve earlier effects. These values contain no native error text or private
+page/frame content and are not inserted into canonical conversation history.
+Read-only mirror failures retain the existing independent mirror-code behavior.
+
+Offline source/privacy contracts for the synthetic diagnostic capture:
+
+```sh
+python3 -I -B helm/browser/diagnostics-probe-tests.py
+```
+
+These tests validate capture-before-teardown ordering, the fixed evidence fields
+and literal fixture stages without launching a browser, provider or service.
+They are not Rust tests, runtime reproduction or native platform acceptance.
+
+PR #423 review follow-up: helper startup refusal now publishes a fixed `startup`
+phase to finished status and attempts private diagnostic retention without masking
+the initiating error. A helper reader cancellation is recorded only as
+`helper_transport_disconnected`, never process exit; malformed output/EOF can
+occur while the child still runs. The focused malformed-output child regression
+remains a Rust test gate until the coordinated slot executes it.
+
+Probe evidence writes are protected by nested teardown `finally`; capture failure
+cannot skip child teardown. Original fixture exceptions remain primary, and a
+fixed evidence failure is raised only when no original exception exists. The
+cleanup audit write is likewise guarded. Offline injected disk-write failure
+contracts pass without launching product processes.

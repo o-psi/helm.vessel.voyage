@@ -88,3 +88,13 @@ process statuses before finally-block teardown and retain its exact timeout/erro
 stage. Do not expose companion tokens or raw subprocess diagnostics in the TUI.
 No narrowly proven transport-probe cause was found, so this investigation makes
 no harness or Rust fix and does not launch another likely non-diagnostic pass.
+
+## Current diagnostic instrumentation (#274)
+
+The local runner now retains fixed failure-boundary and independent socket/helper
+fence/shutdown observations in private `diagnostic.json`. The maintained synthetic
+probe snapshots its fixed stage and owned process status in `pre-teardown.json`
+before signalling children. See [browser verification](../../helm/browser/VERIFICATION.md#274-failure-boundary-diagnostics)
+for the schema and limits. These changes do not retroactively recover this
+fixture's original trigger, establish a reproduction, or prove native host-browser
+stability. Exact action receipts remain authoritative and are not rewritten.

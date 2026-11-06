@@ -530,6 +530,13 @@ async fn socket_retirement_while_start_is_pending_does_not_reconnect_or_replay()
             .is_none()
     );
     assert!(live.handle.control(Control::Close).is_err());
+    let state = live.handle.state.borrow();
+    assert!(matches!(
+        state.diagnostic.failure,
+        Some(Failure::SocketChanged | Failure::DispatchUnknown)
+    ));
+    assert!(state.diagnostic.local_cleanup_observed);
+    assert!(state.summary.contains("require exact receipts"));
 }
 
 #[tokio::test]
@@ -910,6 +917,14 @@ async fn failed_native_control_reports_unknown_but_still_observes_local_cleanup_
             .summary
             .contains("unknown effects are not replayed")
     );
+    {
+        let state = live.handle.state.borrow();
+        assert_eq!(state.diagnostic.failure, Some(Failure::DispatchUnknown));
+        assert!(state.diagnostic.local_cleanup_observed);
+        assert_eq!(state.diagnostic.detach_reply_observed, Some(true));
+        assert!(state.summary.contains("viewer_dispatch_unknown"));
+        assert!(!state.summary.contains("synthetic native control uncertain"));
+    }
     assert!(live.handle.control(Control::Private).is_err());
     live.no_command().await;
 }

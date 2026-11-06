@@ -387,16 +387,6 @@ pub(super) fn pending_matches(pending: &state::Pending, view: &View) -> bool {
     content(&view.draft, &view.images).is_ok_and(|current| current == *original)
 }
 
-fn verify_upload(image: &Image, response: serde_json::Value) -> Result<()> {
-    let attachment: ImageAttachment =
-        serde_json::from_value(response).context("Upload omitted image metadata")?;
-    ensure!(
-        attachment == image.metadata(),
-        "Upload returned different image identity or metadata"
-    );
-    Ok(())
-}
-
 /// Only the original dispatch calls this after durably saving its execution command.
 /// Resolve/Receipt requests bypass uploads, even if they contain original refs.
 pub(super) async fn upload_then_submit(
@@ -424,6 +414,7 @@ where
     Fut: std::future::Future<Output = Result<serde_json::Value>>,
 {
     if is_image_submission(&command) {
+        let mut diagnostic_code = "image_local_validation_failed";
         let uploads: Result<()> = async {
             validate_set(images)?;
             ensure!(
@@ -450,7 +441,30 @@ where
             for image in images {
                 let upload = image.upload_command();
                 wire_bound(&upload)?;
-                verify_upload(image, send(upload).await?)?;
+                diagnostic_code = "image_upload_transport_unknown";
+                let response = match send(upload).await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        if error
+                            .downcast_ref::<crate::process_client::transport::Refusal>()
+                            .is_some()
+                        {
+                            diagnostic_code = "image_upload_refused";
+                        }
+                        return Err(error);
+                    }
+                };
+                if response["status"] == "rejected" || response["status"] == "refused" {
+                    diagnostic_code = "image_upload_refused";
+                    anyhow::bail!("Image upload refused");
+                }
+                diagnostic_code = "image_upload_metadata_invalid";
+                let attachment: ImageAttachment = serde_json::from_value(response)?;
+                diagnostic_code = "image_upload_metadata_mismatch";
+                ensure!(
+                    attachment == image.metadata(),
+                    "Image upload metadata mismatch"
+                );
             }
             Ok(())
         }
@@ -461,7 +475,9 @@ where
             // transport diagnostics that might contain encoded image bytes.
             return Ok(serde_json::json!({
                 "status": "rejected", "command_id": command_id,
-                "detail": "Image upload failed or returned invalid metadata. Message not submitted; full draft retained."
+                "diagnostic_code": diagnostic_code,
+                "submission_outcome": "not_dispatched",
+                "detail": format!("Image upload unavailable ({diagnostic_code}). Message not submitted; full draft retained.")
             }));
         }
     }

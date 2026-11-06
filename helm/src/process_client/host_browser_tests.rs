@@ -4,6 +4,7 @@ fn adapter() -> Adapter {
         summary: String::new(),
         launcher: None,
         finished: false,
+        diagnostic: Diagnostic::default(),
     });
     Adapter {
         client: Client::local(
@@ -333,6 +334,7 @@ async fn unknown_control_failure_poisoning_prevents_a_second_effect_dispatch() {
             request_id: id,
             response: VesselResponse {
                 error: Some("uncertain synthetic effect".into()),
+                outcome_unknown: true,
                 ..response(json!(null))
             },
         },
@@ -340,6 +342,63 @@ async fn unknown_control_failure_poisoning_prevents_a_second_effect_dispatch() {
     .await;
     assert!(task.await.unwrap().is_err());
     assert!(a.stop.is_cancelled());
+    assert_eq!(
+        a.status.borrow().diagnostic.failure,
+        Some(Failure::DispatchUnknown)
+    );
+    assert!(
+        !a.status
+            .borrow()
+            .diagnostic
+            .summary()
+            .contains("uncertain synthetic effect")
+    );
+    assert!(a.exchange(Op::Status {}).await.is_err());
+}
+#[tokio::test]
+async fn definite_control_refusal_has_a_fixed_distinct_code_and_never_echoes_details() {
+    use crate::process_client::loopback_tests::{Peer, response, send};
+    use voyage_protocol::{duplex::ServerFrame, vessel::*};
+    let mut peer = Peer::open().await;
+    let mut a = adapter();
+    a.client = peer.client.clone();
+    a.socket = a.client.connection_state().borrow().socket_id.unwrap();
+    let binding = current_binding(&a);
+    let a = Arc::new(a);
+    let worker = a.clone();
+    let task = tokio::spawn(async move {
+        worker
+            .exchange(Op::Close {
+                command_id: Uuid::new_v4(),
+                binding,
+            })
+            .await
+    });
+    let (id, _) = peer.command().await;
+    send(
+        &mut peer.socket,
+        ServerFrame::Reply {
+            request_id: id,
+            response: VesselResponse {
+                error: Some("uncertain synthetic effect".into()),
+                ..response(json!(null))
+            },
+        },
+    )
+    .await;
+    assert!(task.await.unwrap().is_err());
+    assert!(a.stop.is_cancelled());
+    assert_eq!(
+        a.status.borrow().diagnostic.failure,
+        Some(Failure::DispatchRefused)
+    );
+    assert!(
+        !a.status
+            .borrow()
+            .diagnostic
+            .summary()
+            .contains("uncertain synthetic effect")
+    );
     assert!(a.exchange(Op::Status {}).await.is_err());
 }
 #[tokio::test]

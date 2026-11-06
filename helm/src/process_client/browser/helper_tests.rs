@@ -147,3 +147,52 @@ async fn ipc_admission_limits_timeouts_and_closed_writer() {
     helper.events.send(json!({"event":"private"})).unwrap();
     assert_eq!(events.recv().await.unwrap()["event"], "private");
 }
+
+#[tokio::test]
+async fn malformed_output_disconnect_is_not_child_exit_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let script = root.path().join("malformed.mjs");
+    std::fs::write(
+        &script,
+        "console.log('not-json'); setInterval(()=>{},1000);",
+    )
+    .unwrap();
+    let helper = Helper::start(&script).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), helper.stopped().cancelled())
+        .await
+        .unwrap();
+    let still_running = helper
+        .child
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .try_wait()
+        .unwrap()
+        .is_none();
+    let shutdown = helper.shutdown().await;
+    assert!(
+        still_running,
+        "reader disconnection must not attest child exit"
+    );
+    assert!(
+        shutdown.is_err(),
+        "disconnected IPC cannot attest graceful shutdown"
+    );
+    let exit = helper
+        .child
+        .lock()
+        .await
+        .as_mut()
+        .unwrap()
+        .try_wait()
+        .unwrap();
+    assert!(
+        exit.is_some(),
+        "owned child exit must be independently observed after shutdown"
+    );
+    assert!(
+        helper.reader.lock().await.is_none(),
+        "reader task must be retired"
+    );
+}
