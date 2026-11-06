@@ -36,6 +36,11 @@ all workspace targets returned by `cargo metadata --no-deps --format-version 1`
 without changing bytes, verify clean Git content, clear raw profiles only, and
 repeat the full measurement. Preserve rejected reports and dependency caches;
 never publish the reduced inventory or hide missing source (#251).
+Use the [current-workspace artifact selection procedure](testing/shared-target-coverage.md)
+and `packaging/coverage_artifacts.py` for shared-target exports. The guard selects
+all current Cargo workspace executables, fingerprints source/objects and refuses
+foreign/duplicate maps or LLVM diagnostics. Synthetic tests are separate from the
+required native main/worktree/main qualification and final-source measurement.
 The maintained forwarding wrapper uses Cargo's
 [`RUSTC_WORKSPACE_WRAPPER` filename namespace](https://doc.rust-lang.org/cargo/reference/environment-variables.html)
 without changing compiler arguments. Use its checkout-absolute path to separate
