@@ -14,6 +14,37 @@ use voyage_protocol::process::ProcessRegistration;
 #[cfg(target_os = "linux")]
 #[allow(dead_code)] // Activated with the protected system-install execution path.
 pub fn validate_identity(identity: &ConfiguredExecutionIdentity) -> Result<()> {
+    validate_identity_configuration(identity)?;
+    validate_host_identity(identity)
+}
+
+/// Reject malformed reviewed configuration before consulting mutable host data.
+#[cfg(target_os = "linux")]
+fn validate_identity_configuration(identity: &ConfiguredExecutionIdentity) -> Result<()> {
+    use std::path::Component;
+    let mut groups = identity.supplementary_groups.clone();
+    groups.sort_unstable();
+    ensure!(
+        !identity.identity.id.is_nil()
+            && !identity.account_context.id.is_nil()
+            && !identity.user_name.is_empty()
+            && !identity.user_name.as_bytes().contains(&0)
+            && identity.home.is_absolute()
+            && !identity.home.as_os_str().as_bytes().contains(&0)
+            && identity
+                .home
+                .components()
+                .all(|part| matches!(part, Component::RootDir | Component::Normal(_)))
+            && groups.len() <= 64
+            && !groups.contains(&identity.gid)
+            && !groups.windows(2).any(|pair| pair[0] == pair[1]),
+        "invalid configured execution identity"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn validate_host_identity(identity: &ConfiguredExecutionIdentity) -> Result<()> {
     ensure!(
         matches!(
             (identity.authority, identity.uid),
@@ -79,13 +110,8 @@ pub fn configure_identity(
         "privileged supervisor required"
     );
     ensure!(
-        identity.enabled
-            && !identity.identity.id.is_nil()
-            && !identity.account_context.id.is_nil()
-            && identity.home.is_absolute()
-            && identity.supplementary_groups.len() <= 64
-            && !identity.supplementary_groups.contains(&identity.gid),
-        "invalid configured execution identity"
+        identity.enabled,
+        "configured execution identity is disabled"
     );
     validate_identity(identity)?;
     command.env_clear();

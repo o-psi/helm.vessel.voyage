@@ -36,6 +36,29 @@ fn bound_registration_cannot_use_the_legacy_same_identity_launcher() {
     );
 }
 
+fn current_host_user() -> String {
+    let mut password = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut found = std::ptr::null_mut();
+    let mut buffer = vec![0u8; 16384];
+    assert_eq!(
+        unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                password.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut found,
+            )
+        },
+        0
+    );
+    assert!(!found.is_null());
+    unsafe { CStr::from_ptr(password.assume_init().pw_name) }
+        .to_str()
+        .unwrap()
+        .into()
+}
+
 fn host_identity(name: &str) -> ConfiguredExecutionIdentity {
     let name = CString::new(name).unwrap();
     let mut password = std::mem::MaybeUninit::<libc::passwd>::uninit();
@@ -100,7 +123,7 @@ fn host_identity(name: &str) -> ConfiguredExecutionIdentity {
 
 #[test]
 fn host_account_changes_refuse_a_saved_execution_identity() {
-    let user = std::env::var("USER").unwrap();
+    let user = current_host_user();
     let mut identity = host_identity(&user);
     validate_identity(&identity).unwrap();
     identity.uid = identity.uid.wrapping_add(1);
@@ -159,4 +182,63 @@ fn native_root_launch_drops_to_ordinary_user_without_regain() {
             "0000000000000000"
         );
     }
+}
+
+#[test]
+fn malformed_reviewed_identity_refuses_before_host_lookup() {
+    let base = host_identity(&current_host_user());
+    validate_identity(&base).unwrap();
+    let mut cases = Vec::new();
+    let mut identity = base.clone();
+    identity.identity.id = Uuid::nil();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.account_context.id = Uuid::nil();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.user_name.clear();
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.user_name.push('\0');
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from(std::ffi::OsStr::from_bytes(b"/home/fixture\0"));
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from("relative");
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.home = PathBuf::from("/home/../root");
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = vec![identity.gid];
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = vec![u32::MAX, u32::MAX];
+    cases.push(identity);
+    let mut identity = base.clone();
+    identity.supplementary_groups = (1..=65).collect();
+    cases.push(identity);
+    for identity in cases {
+        assert!(
+            validate_identity(&identity)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid configured execution identity")
+        );
+    }
+}
+
+#[test]
+fn reviewed_group_order_is_not_host_authority() {
+    let mut identity = host_identity(&current_host_user());
+    identity.supplementary_groups.reverse();
+    validate_identity(&identity).unwrap();
+}
+
+#[test]
+fn disabled_identity_remains_available_for_nonexecuting_host_validation() {
+    let mut identity = host_identity(&current_host_user());
+    identity.enabled = false;
+    validate_identity(&identity).unwrap();
 }

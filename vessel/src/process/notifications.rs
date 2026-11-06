@@ -15,6 +15,26 @@ use voyage_protocol::{
     vessel::{VoyageCommand, VoyageRequest},
 };
 
+// A bound runtime cannot attest retirement through its own stopped.json.
+// Missing or invalid protected guardian evidence is unavailable, never drained.
+fn producer_stopped(root: &std::path::Path, registration: &ProcessRegistration) -> bool {
+    if registration.peer_uids.is_some() {
+        #[cfg(target_os = "linux")]
+        return super::guardian::cleanup_available(
+            root,
+            registration.session_id,
+            registration.incarnation,
+        )
+        .unwrap_or(false);
+        #[cfg(not(target_os = "linux"))]
+        return false;
+    }
+    super::recovery::clean_stop(
+        &registry::directory(root, registration.session_id),
+        registration,
+    )
+}
+
 enum RecipientAuthority {
     Local,
     Session(ProcessGrant),
@@ -576,10 +596,7 @@ impl Supervisor {
                 .checked_add(1000u64 << attempt.failures.min(5))
                 .ok_or_else(|| anyhow::anyhow!("clock overflow"))?;
             access::save(&attempt_path, &attempt)?;
-            let stopped = super::recovery::clean_stop(
-                &registry::directory(&self.directory, registration.session_id),
-                &registration,
-            );
+            let stopped = producer_stopped(&self.directory, &registration);
             (
                 record.destination,
                 accepted_at,
@@ -724,13 +741,7 @@ impl Supervisor {
         }
         attempt.failures = 0;
         attempt.next_attempt_ms = 0;
-        if stopped_before
-            && !page.has_more
-            && super::recovery::clean_stop(
-                &registry::directory(&self.directory, current.session_id),
-                current,
-            )
-        {
+        if stopped_before && !page.has_more && producer_stopped(&self.directory, current) {
             attempt.drained_incarnation = Some(current.incarnation);
         }
         access::save(&attempt_path, &attempt)?;
@@ -834,10 +845,7 @@ impl Supervisor {
                 .checked_add(1000u64 << attempt.state.failures.min(5))
                 .ok_or_else(|| anyhow::anyhow!("clock overflow"))?;
             access::save(&path, &attempt)?;
-            let stopped = super::recovery::clean_stop(
-                &registry::directory(&self.directory, registration.session_id),
-                &registration,
-            );
+            let stopped = producer_stopped(&self.directory, &registration);
             (record.destination, accepted, registration, attempt, stopped)
         };
         // Compatibility boundary with #71's separately delivered owner accounting
@@ -962,13 +970,7 @@ impl Supervisor {
         attempt.after = page.next_after;
         attempt.state.failures = 0;
         attempt.state.next_attempt_ms = 0;
-        if count < 64
-            && stopped
-            && super::recovery::clean_stop(
-                &registry::directory(&self.directory, current.session_id),
-                current,
-            )
-        {
+        if count < 64 && stopped && producer_stopped(&self.directory, current) {
             attempt.state.drained_incarnation = Some(current.incarnation);
         }
         access::save(&path, &attempt)?;
@@ -979,6 +981,46 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_producer_never_trusts_legacy_stop_evidence() {
+        use voyage_protocol::process::{PROCESS_PROTOCOL, ProcessPeerUids};
+        let root = std::env::temp_dir().join(format!("notification-stop-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut registration = ProcessRegistration {
+            executable: None,
+            protocol: PROCESS_PROTOCOL,
+            session_id: Uuid::new_v4(),
+            incarnation: Uuid::new_v4(),
+            command_id: Uuid::new_v4(),
+            restart_from: None,
+            initialize: None,
+            config_path: None,
+            token: "fixture-only".into(),
+            peer_uids: None,
+            workspace: root.clone(),
+            state: ProcessState::Stopped,
+            name: None,
+        };
+        let directory = registry::directory(&root, registration.session_id);
+        std::fs::create_dir_all(&directory).unwrap();
+        access::save(
+            &directory.join("stopped.json"),
+            &json!({
+                "session_id": registration.session_id,
+                "incarnation": registration.incarnation,
+                "cleanup_observed": true
+            }),
+        )
+        .unwrap();
+        assert!(producer_stopped(&root, &registration));
+        registration.peer_uids = Some(ProcessPeerUids {
+            supervisor: 0,
+            runtime: 1000,
+        });
+        assert!(!producer_stopped(&root, &registration));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn destination() -> Destination {
         Destination {

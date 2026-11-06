@@ -5,6 +5,10 @@ use uuid::Uuid;
 use voyage_protocol::execution_identity::{ExecutionOutcome, IdentityRef, ReviewApproval};
 use voyage_protocol::execution_review_control::*;
 
+fn reviewed_facts(facts: &voyage_protocol::execution_identity::ReviewFacts) -> String {
+    super::safe(&serde_json::to_string_pretty(facts).unwrap_or_default())
+}
+
 #[cfg(unix)]
 fn receipt_root() -> std::path::PathBuf {
     let root =
@@ -286,13 +290,14 @@ impl App {
                         view.execution_pending = None;
                     }
                     view.panel = Some(super::safe(&format!(
-                        "EXECUTION REVIEW\nState: {:?}\nVoyage: {}\nWorkspace: {}\nAccount: {}\nReview: {}\nExpires: {}\n\nAdministrator execution can alter host files, processes, credentials and Vessel. Namespaces/mounts still constrain actual authority; root can alter local receipts.\n\n/execution approve explicitly authorizes this exact voyage/account/workspace until revoked.\n/execution cancel cancels only pending review; /execution revoke fences authorization, without claiming cleanup.\n/execution check observes the retained receipt. Ready is a launch observation, not a completed run. /use VOYAGE_UUID opens the new voyage.\nCurrent draft remains in its original voyage.",
+                        "EXECUTION REVIEW\nState: {:?}\nVoyage: {}\nWorkspace: {}\nAccount: {}\nReview: {}\nExpires: {}\n\nExact reviewed facts (digests bind host identity, policy, release and pending work):\n{}\n\nAdministrator execution can alter host files, processes, credentials and Vessel. Namespaces/mounts still constrain actual authority; root can alter local receipts.\n\n/execution approve explicitly authorizes this exact voyage/account/workspace until revoked.\n/execution cancel cancels only pending review; /execution revoke fences authorization, without claiming cleanup.\n/execution check observes the retained receipt. Ready is a launch observation, not a completed run. /use VOYAGE_UUID opens the new voyage.\nCurrent draft remains in its original voyage.",
                         saved.receipt.outcome,
                         saved.review.facts.session_id,
                         saved.review.facts.workspace.display(),
                         saved.review.facts.account.account_id,
                         saved.review.review_id,
-                        saved.review.expires_at_ms
+                        saved.review.expires_at_ms,
+                        reviewed_facts(&saved.review.facts)
                     )));
                     view.execution_review = Some(saved);
                 } else {
