@@ -1248,3 +1248,24 @@ named `xai_oauth` credentials for each native HTTP dispatch and owns inference,
 tools and conversation. The direct xAI API uses subscription OAuth with fenced
 refresh, exact endpoint binding and no API billing fallback. Provider denial, quota
 and unknown model availability remain explicit. See [named accounts](provider-accounts.md#supergrok-subscription-access).
+
+### Request pressure accounting
+
+Voyage has an adapter seam for complete, exact-request context pressure facts
+(enabled capacity, input tokens, output/reasoning reserve and safety headroom).
+Anthropic uses its count_tokens endpoint with the shared dispatch input encoder;
+its result is labeled a provider count estimate, and absent retrieved input capacity
+remains unknown. Other production adapters do not supply complete accounting; unknown
+occupancy does not trigger byte-based proactive compaction. The old 192 KiB
+unsaved-message trigger is removed. Saved-tool-evidence payload projection and
+bounded explicit provider-rejection recovery remain distinct. A model-callable runtime `context` status/compaction tool is implemented with
+durable projection receipts. Both Helm clients expose request-scoped read-only accounting (TUI operator
+header and Web refresh panel); broader transport counter qualification and
+final-source coverage remain pending. See [configuration](configuration.md#working-context-compaction).
+
+Pressure preparation has an explicit `[context_pressure]` token policy for enabled
+capacity, reserve, safety and target occupancy. Absent applicable input counting
+still prevents a pressure trigger; a policy override is not a tokenizer. Model
+compaction optionally pins projection generation and refuses stale projections.
+These follow-up policy/generation changes require their own focused verification;
+prior focused results do not qualify subsequently edited source.

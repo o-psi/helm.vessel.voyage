@@ -112,6 +112,14 @@ impl App {
                     }
                     _ => values[2]["archive_unavailable"] = serde_json::json!(true),
                 }
+                // Accounting observation is optional on old/idle runtimes.
+                if let Ok(context) = client.voyage(target.session, observation.incarnation,
+                    VoyageCommand::Controls { run_id: observation.run_id, section: "context".into() }).await
+                    && context["section"] == "context"
+                    && observation.run_id.is_none_or(|run| context["run_id"] == run.to_string())
+                {
+                    values[0]["request_context"] = context["value"].clone();
+                }
                 Ok(values.try_into().expect("three controls"))
             }
             .await;
@@ -151,6 +159,13 @@ impl App {
                 self.views[&loaded.observation.target].title(),
                 self.route_label(loaded.observation.target.route)
             );
+            if let Some(context) = tools.get("request_context") {
+                let count = |key: &str| context[key].as_u64().map_or_else(|| "unknown".into(), |n| n.to_string());
+                panel.context.push_str(&format!(" · request input {} / capacity {} / reserve {} · {} · {}",
+                    count("input_tokens"), count("enabled_capacity"), count("reserve_tokens"),
+                    context["method"].as_str().unwrap_or("unknown"),
+                    context["scope"].as_str().unwrap_or("unknown")));
+            }
             Ok(panel)
         })();
         match result {

@@ -117,6 +117,8 @@ mod tests {
         let canonical = serde_json::to_value(&before.session.messages).unwrap();
         let mut context = journal.load_working_context(&guard, run.id).unwrap();
         assert!(context.compact(&before.session.messages, 4).unwrap() > 0);
+        context.request_status = Some(serde_json::json!({"scope":"prior exact request",
+            "input_tokens":123,"enabled_capacity":null,"method":"offline oracle"}));
         journal
             .save_working_context(&guard, run.id, &context)
             .unwrap();

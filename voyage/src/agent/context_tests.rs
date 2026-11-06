@@ -90,6 +90,10 @@ impl RunCheckpoint for Checkpoint {
         }
         Ok(())
     }
+    async fn request_accounting(&self, status: &serde_json::Value) -> Result<(), CheckpointError> {
+        self.working.lock().unwrap().request_status = Some(status.clone());
+        Ok(())
+    }
     async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
         Ok(())
     }
@@ -370,4 +374,321 @@ async fn explicit_context_limit_still_refuses_dispatch_and_retains_input() {
     );
     assert!(requests.lock().unwrap().is_empty());
     assert_eq!(effects.load(Ordering::SeqCst), 0);
+}
+
+/// A deterministic offline counter oracle: the fixture protocol assigns the
+/// unprojected result 900 units and its excerpt 100; no byte conversion occurs.
+struct PressureProvider {
+    effects: Arc<AtomicUsize>,
+    dispatches: Arc<AtomicUsize>,
+}
+#[async_trait]
+impl Provider for PressureProvider {
+    async fn request_pressure(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<crate::context::RequestPressure> {
+        let unprojected = request
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Tool && !m.content.contains("Extractive working context"));
+        Some(crate::context::RequestPressure {
+            enabled_capacity: Some(1000),
+            input_tokens: Some(if unprojected { 900 } else { 100 }),
+            complete: true,
+            method: "offline protocol oracle".into(),
+            reserve_tokens: Some(100),
+            safety_tokens: 0,
+        })
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let step = self.dispatches.fetch_add(1, Ordering::SeqCst);
+        let mut message = Message::new(Role::Assistant, "done");
+        if step == 0 {
+            message.tool_calls.push(ToolCall {
+                id: "pressure-effect".into(),
+                name: "fixture_effect".into(),
+                arguments: serde_json::json!({}),
+            });
+        } else {
+            assert_eq!(self.effects.load(Ordering::SeqCst), 1);
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.content.contains("Extractive working context"))
+            );
+            assert!(request.messages.iter().any(|m| m.role == Role::Tool));
+        }
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn pressure_prepares_after_effect_without_replaying_it() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, effects, checkpoint) = fixture(root.path(), false);
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    agent.provider = Box::new(PressureProvider {
+        effects: effects.clone(),
+        dispatches: dispatches.clone(),
+    });
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Do one effect".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.answer, "done");
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        checkpoint
+            .working
+            .lock()
+            .unwrap()
+            .request_status
+            .as_ref()
+            .unwrap()["input_tokens"],
+        100
+    );
+    assert!(checkpoint.working.lock().unwrap().generation > 0);
+    assert!(
+        outcome
+            .messages
+            .iter()
+            .any(|m| m.role == Role::Tool && !m.content.contains("Extractive working context"))
+    );
+}
+
+struct ControlProvider(AtomicUsize);
+#[async_trait]
+impl Provider for ControlProvider {
+    async fn request_pressure(
+        &self,
+        request: &ModelRequest,
+    ) -> Option<crate::context::RequestPressure> {
+        Some(crate::context::RequestPressure {
+            enabled_capacity: Some(10000),
+            input_tokens: Some(request.messages.len() as u64 * 10),
+            complete: true,
+            method: "offline message-framing oracle".into(),
+            reserve_tokens: Some(100),
+            safety_tokens: 0,
+        })
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let step = self.0.fetch_add(1, Ordering::SeqCst);
+        let mut message = Message::new(Role::Assistant, "continued");
+        if step < 2 {
+            message.tool_calls.push(ToolCall {
+                id: format!("context-{step}"),
+                name: "context".into(),
+                arguments: if step == 0 {
+                    serde_json::json!({"action":"compact","retain":1,"notes":"boundary"})
+                } else {
+                    serde_json::json!({"action":"status"})
+                },
+            });
+        } else {
+            let receipts: Vec<_> = request
+                .messages
+                .iter()
+                .filter(|m| m.role == Role::Tool)
+                .collect();
+            assert_eq!(receipts.len(), 2);
+            let receipt: serde_json::Value = serde_json::from_str(&receipts[0].content).unwrap();
+            assert_eq!(receipt["status"], "no_op");
+            assert_eq!(receipt["generation"], 0);
+            assert_eq!(receipt["before_tokens"], receipt["after_tokens"]);
+            assert!(receipt["before_tokens"].as_u64().is_some());
+            assert!(
+                receipt["count_scope"]
+                    .as_str()
+                    .unwrap()
+                    .contains("not next-request")
+            );
+            assert_eq!(receipt["notes"], "boundary");
+            let status: serde_json::Value = serde_json::from_str(&receipts[1].content).unwrap();
+            assert!(status["input_tokens"].as_u64().is_some());
+        }
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn model_control_noop_has_exact_receipt_and_continues() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, checkpoint) = fixture(root.path(), false);
+    agent.provider = Box::new(ControlProvider(AtomicUsize::new(0)));
+    let outcome = agent
+        .run_checkpointed(
+            vec![],
+            "Continue safely".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(outcome.answer, "continued");
+    assert_eq!(
+        outcome
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn model_control_failed_checkpoint_never_dispatches_followup() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, mut checkpoint) = fixture(root.path(), false);
+    checkpoint.fail_compaction = true;
+    agent.provider = Box::new(ControlProvider(AtomicUsize::new(0)));
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Continue safely".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::Checkpoint(_)));
+    assert!(
+        !checkpoint
+            .canonical
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.role == Role::Tool)
+    );
+}
+
+#[tokio::test]
+async fn model_control_cancellation_after_persistence_stops_followup() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, mut checkpoint) = fixture(root.path(), false);
+    let cancel = CancellationToken::new();
+    checkpoint.cancel_after_compaction = Some(cancel.clone());
+    agent.provider = Box::new(ControlProvider(AtomicUsize::new(0)));
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Continue safely".into(),
+            cancel,
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::Cancelled));
+}
+
+struct Irreducible(Arc<AtomicUsize>);
+#[async_trait]
+impl Provider for Irreducible {
+    async fn request_pressure(&self, _: &ModelRequest) -> Option<crate::context::RequestPressure> {
+        Some(crate::context::RequestPressure {
+            enabled_capacity: Some(100),
+            input_tokens: Some(100),
+            complete: true,
+            method: "offline irreducible oracle".into(),
+            reserve_tokens: Some(10),
+            safety_tokens: 0,
+        })
+    }
+    async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(ProviderError::ContextLength)
+    }
+}
+#[tokio::test]
+async fn measured_irreducible_task_is_preserved_without_unchanged_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, checkpoint) = fixture(root.path(), false);
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    agent.provider = Box::new(Irreducible(dispatches.clone()));
+    let error = agent
+        .run_checkpointed(
+            vec![],
+            "Preserve mandatory task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::ContextExhausted(_)));
+    assert_eq!(dispatches.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        error.recovery().unwrap().messages[0].content,
+        "Preserve mandatory task"
+    );
+}
+
+struct StaleControl;
+#[async_trait]
+impl Provider for StaleControl {
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let mut message = Message::new(Role::Assistant, "done");
+        if !request.messages.iter().any(|m| m.role == Role::Tool) {
+            message.tool_calls.push(ToolCall {
+                id: "stale-context".into(),
+                name: "context".into(),
+                arguments: serde_json::json!({"action":"compact","retain":1,"generation":99}),
+            });
+        } else {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.role == Role::Tool
+                        && m.content.contains("stale projection generation"))
+            );
+        }
+        Ok(ModelResponse {
+            message,
+            usage: Usage::default(),
+            service_tier: None,
+        })
+    }
+}
+#[tokio::test]
+async fn stale_generation_refuses_without_projection_change() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, _, _, checkpoint) = fixture(root.path(), false);
+    agent.provider = Box::new(StaleControl);
+    agent
+        .run_checkpointed(
+            vec![],
+            "continue".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(checkpoint.working.lock().unwrap().generation, 0);
 }

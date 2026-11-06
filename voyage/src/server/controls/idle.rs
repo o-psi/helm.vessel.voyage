@@ -12,6 +12,8 @@ pub(super) async fn inspect(
     let workspace = workspace.canonicalize()?;
     let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
     let value = match section {
+        "context" => json!({"scope":"idle; no outgoing request counted","input_tokens":null,
+            "enabled_capacity":null,"remaining_tokens":null,"method":"unknown"}),
         "tools" => builtin_preflight(resolved.config(), resolved.policy())?,
         "skills" => {
             let tools = builtin_preflight(resolved.config(), resolved.policy())?;

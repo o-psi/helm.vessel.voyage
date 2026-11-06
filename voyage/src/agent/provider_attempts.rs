@@ -77,6 +77,7 @@ impl RecoveryState {
 }
 
 pub(super) enum RequestOutcome {
+    Pressure(crate::context::RequestPressure),
     Completed(Box<crate::model::ModelResponse>),
     /// No tools from this response have been admitted. Caller must checkpoint
     /// its safe text as a distinct interrupted segment before the next request.

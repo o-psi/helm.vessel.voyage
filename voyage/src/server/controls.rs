@@ -101,6 +101,7 @@ impl LiveControls {
             .try_acquire_owned()
             .context("runtime controls busy")?;
         let value = match section {
+            "context" => active.agent.request_context_status().await,
             "tools" => serde_json::to_value(active.agent.tool_inventory())?,
             "models" => serde_json::to_value(
                 tokio::time::timeout(

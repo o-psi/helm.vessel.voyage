@@ -95,6 +95,13 @@ impl Provider for ChatGptOAuth {
                 let reasoning_efforts =
                     super::catalog::strings(entry, "supported_reasoning_levels", Some("effort"))?;
                 Ok(ModelInfo {
+                    context_capacity: Some(super::ContextCapacity {
+                        default_tokens: entry.get("context_window").and_then(Value::as_u64).filter(|n| *n > 0),
+                        maximum_tokens: entry.get("max_context_window").and_then(Value::as_u64).filter(|n| *n > 0),
+                        enabled_tokens: None, provenance: "executing account model catalog; not endpoint admission proof".into(),
+                        observed_at_ms: super::catalog::now_ms(), model: id.clone(), transport: "chatgpt_oauth".into(),
+                        account_applicability: "executing account at observation; no cross-account reuse".into(),
+                    }),
                     display_name: super::catalog::optional_text(entry, "display_name", &id)?
                         .to_owned(),
                     description: super::catalog::optional_text(entry, "description", "")?

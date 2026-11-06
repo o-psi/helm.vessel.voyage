@@ -91,6 +91,16 @@ impl SessionCheckpoint {
 
 #[async_trait]
 impl RunCheckpoint for SessionCheckpoint {
+    async fn request_accounting(&self, status: &serde_json::Value) -> Result<(), CheckpointError> {
+        let mut session = self.session.lock().await;
+        self.validate(&session)?;
+        let mut next = session.clone();
+        next.working_context.request_status = Some(status.clone());
+        self.persist(&mut next).await?;
+        *session = next;
+        Ok(())
+    }
+
     fn run_id(&self) -> Uuid {
         self.run_id
     }
